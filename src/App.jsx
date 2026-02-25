@@ -566,8 +566,7 @@ const COMBOS = [
 // ============================================================
 // EASTER EGG — secret card names that trigger special responses
 // ============================================================
-// ROT13 decode — used to obscure easter egg text from casual source inspection
-const rot13 = s => s.replace(/[a-zA-Z]/g, c =>
+const undo = s => s.replace(/[a-zA-Z]/g, c =>
   String.fromCharCode(c.charCodeAt(0) + (c.toLowerCase() < 'n' ? 13 : -13))
 );
 
@@ -2751,7 +2750,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
                 fontStyle: i > 0 ? "italic" : "normal",
                 marginBottom: i < secret.lines.length - 1 ? "6px" : 0,
                 lineHeight: 1.5,
-              }}>{rot13(line)}</div>
+              }}>{undo(line)}</div>
             ))}
             <div style={{ marginTop: "10px", fontSize: "11px", color: COLORS.textDim,
               fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
