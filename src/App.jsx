@@ -2799,7 +2799,8 @@ export default function YevaAdvisor() {
     <>
       <style>{fonts}</style>
       <style>{`
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body, #root { margin: 0; padding: 0; background: ${COLORS.bg}; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #07100788; }
         ::-webkit-scrollbar-thumb { background: #2d5a2d; border-radius: 3px; }
