@@ -566,75 +566,80 @@ const COMBOS = [
 // ============================================================
 // EASTER EGG — secret card names that trigger special responses
 // ============================================================
+// ROT13 decode — used to obscure easter egg text from casual source inspection
+const rot13 = s => s.replace(/[a-zA-Z]/g, c =>
+  String.fromCharCode(c.charCodeAt(0) + (c.toLowerCase() < 'n' ? 13 : -13))
+);
+
 const SECRET_CARDS = {
-  "Black Lotus": {
+  "21a2934d0b5a529b2a952af3701bf8e5bda6241c92da60d86be286bce55e045c": {
     lines: [
-      "Ah yes, the Black Lotus. That would certainly help the mana situation.",
-      "Sadly, it's not in the 99. Or the 100. Or legal in this format.",
-      "Perhaps consider Gaea's Cradle as a spiritual successor.",
+      "Nu lrf, gur Oynpx Ybghf. Gung jbhyq pregnvayl uryc gur znan fvghngvba.",
+      "Fnqyl, vg'f abg va gur 99. Be gur 100. Be yrtny va guvf sbezng.",
+      "Creuncf pbafvqre Tnrn'f Penqyr nf n fcvevghny fhpprffbe.",
     ],
     color: "#9b59b6",
     emoji: "🪷",
   },
-  "Thassa's Oracle": {
+  "a57712a775b5a07187ee39381f4b349acbdd4d6b6fc9e9e9ab2e9483075c8f14": {
     lines: [
-      "A worthy win condition — but this is a mono-green deck.",
-      "We win by out-ramping everyone and bouncing creatures, not peering into the abyss.",
-      "Though if you had Thassa's Oracle, you'd probably just cast Demonic Consultation and end it there.",
+      "N jbegul jva pbaqvgvba — ohg guvf vf n zbab-terra qrpx.",
+      "Jr jva ol bhg-enzcvat rirelbar naq obhapvat perngherf, abg crrevat vagb gur nolff.",
+      "Gubhtu vs lbh unq Gunffn'f Benpyr, lbh'q cebonoyl whfg pnfg Qrzbavp Pbafhygngvba naq raq vg gurer.",
     ],
     color: "#2980b9",
     emoji: "🔮",
   },
-  "Sol Ring": {
+  "29e29f45850c995b7b8a4630202bd637b707d5710b7e8578363447be87a15299": {
     lines: [
-      "Sol Ring is already in the deck. But nice try.",
-      "…wait, is it? Check the Rocks & Artifacts section.",
-      "If you're asking because someone just blew it up, that's a valid reason to feel bad.",
+      "Fby Evat vf nyernql va gur qrpx. Ohg avpr gel.",
+      "…jnvg, vf vg? Purpx gur Ebpxf & Negvsnpgf frpgvba.",
+      "Vs lbh'er nfxvat orpnhfr fbzrbar whfg oyrj vg hc, gung'f n inyvq ernfba gb srry onq.",
     ],
     color: "#f1c40f",
     emoji: "💍",
   },
-  "Emrakul, the Aeons Torn": {
+  "4cacc9a719e6f2bc17d688f5d6994e342adec57726ffcd98fb99bc42a9fce8af": {
     lines: [
-      "Fifteen mana. Sure, we could get there.",
-      "With infinite mana this is technically castable.",
-      "Though at that point you've already won via Sanitarium. But respect the ambition.",
+      "Svsgrra znan. Fher, jr pbhyq trg gurer.",
+      "Jvgu vasvavgr znan guvf vf grpuavpnyyl pnfgnoyr.",
+      "Gubhtu ng gung cbvag lbh'ir nyernql jba ivn Fnavgnevhz. Ohg erfcrpg gur nzovgvba.",
     ],
     color: "#e74c3c",
     emoji: "🦑",
   },
-  "Yeva's Ghost": {
+  "fb96bddeef6a38cbb70a823bc4390a2e2bd049b9a3b1c66d66b9e49da783ba06": {
     lines: [
-      "She's not a card. Yet.",
-      "But her spirit guides every forest walk you take.",
-      "Nature's Herald would be proud.",
+      "Fur'f abg n pneq. Lrg.",
+      "Ohg ure fcvevg thvqrf rirel sberfg jnyx lbh gnxr.",
+      "Angher'f Urenyq jbhyq or cebhq.",
     ],
     color: "#27ae60",
     emoji: "👻",
   },
-  "Forest": {
+  "619a2ccf126ce837dc7cd3bdb4d7f44280a0ea4f721e5a738f859aa19d52a78f": {
     lines: [
-      "Yes. More forests. This is correct.",
-      "Have you considered… more forests?",
-      "Yavimaya agrees. Everything is a forest. Everything.",
+      "Lrf. Zber sberfgf. Guvf vf pbeerpg.",
+      "Unir lbh pbafvqrerq… zber sberfgf?",
+      "Lnivznln nterrf. Rirelguvat vf n sberfg. Rirelguvat.",
     ],
     color: "#27ae60",
     emoji: "🌲",
   },
-  "Swamp": {
+  "d83a900c42d48e2ad9ba1cf89baeef3edf9e52a180440eee9a77a9db4a9c7d17": {
     lines: [
-      "This is a mono-green deck.",
-      "There are no swamps here.",
-      "There will never be swamps here.",
+      "Guvf vf n zbab-terra qrpx.",
+      "Gurer ner ab fjnzcf urer.",
+      "Gurer jvyy arire or fjnzcf urer.",
     ],
     color: "#2c3e50",
     emoji: "🚫",
   },
-  "Lightning Bolt": {
+  "ba84bc221570650adf0427cf675640c462a359c3fdc76e4b0e9d89e6929e5de0": {
     lines: [
-      "Wrong colour. Wrong format. Wrong deck.",
-      "Though it would kill Endurance, which is admittedly relevant.",
-      "Green has Beast Within. Close enough.",
+      "Jebat pbybhe. Jebat sbezng. Jebat qrpx.",
+      "Gubhtu vg jbhyq xvyy Raqhenapr, juvpu vf nqzvggrqyl eryrinag.",
+      "Terra unf Ornfg Jvguva. Pybfr rabhtu.",
     ],
     color: "#e67e22",
     emoji: "⚡",
@@ -2625,19 +2630,21 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
   const handleChange = (v) => {
     setInput(v);
     if (v.length < 2) { setSuggs([]); return; }
-    // Check for secret card names first
-    const secretMatch = Object.keys(SECRET_CARDS).find(
-      k => k.toLowerCase() === v.toLowerCase()
-    );
-    if (secretMatch) {
-      setSecret(SECRET_CARDS[secretMatch]);
-      setSuggs([]);
-      return;
-    }
-    setSecret(null);
-    setSuggs(ALL_CARD_NAMES.filter(n =>
-      n.toLowerCase().includes(v.toLowerCase()) && !cards.includes(n)
-    ).slice(0, 7));
+    // Check for secret card names via SHA-256 hash (async)
+    crypto.subtle.digest("SHA-256",
+      new TextEncoder().encode(v.toLowerCase())
+    ).then(buf => {
+      const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+      if (SECRET_CARDS[hex]) {
+        setSecret(SECRET_CARDS[hex]);
+        setSuggs([]);
+      } else {
+        setSecret(null);
+        setSuggs(ALL_CARD_NAMES.filter(n =>
+          n.toLowerCase().includes(v.toLowerCase()) && !cards.includes(n)
+        ).slice(0, 7));
+      }
+    });
   };
 
   const add = (name) => {
@@ -2744,7 +2751,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
                 fontStyle: i > 0 ? "italic" : "normal",
                 marginBottom: i < secret.lines.length - 1 ? "6px" : 0,
                 lineHeight: 1.5,
-              }}>{line}</div>
+              }}>{rot13(line)}</div>
             ))}
             <div style={{ marginTop: "10px", fontSize: "11px", color: COLORS.textDim,
               fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
