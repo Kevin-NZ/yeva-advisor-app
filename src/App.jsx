@@ -562,6 +562,85 @@ const COMBOS = [
 ];
 
 // ============================================================
+
+// ============================================================
+// EASTER EGG — secret card names that trigger special responses
+// ============================================================
+const SECRET_CARDS = {
+  "Black Lotus": {
+    lines: [
+      "Ah yes, the Black Lotus. That would certainly help the mana situation.",
+      "Sadly, it's not in the 99. Or the 100. Or legal in this format.",
+      "Perhaps consider Gaea's Cradle as a spiritual successor.",
+    ],
+    color: "#9b59b6",
+    emoji: "🪷",
+  },
+  "Thassa's Oracle": {
+    lines: [
+      "A worthy win condition — but this is a mono-green deck.",
+      "We win by out-ramping everyone and bouncing creatures, not peering into the abyss.",
+      "Though if you had Thassa's Oracle, you'd probably just cast Demonic Consultation and end it there.",
+    ],
+    color: "#2980b9",
+    emoji: "🔮",
+  },
+  "Sol Ring": {
+    lines: [
+      "Sol Ring is already in the deck. But nice try.",
+      "…wait, is it? Check the Rocks & Artifacts section.",
+      "If you're asking because someone just blew it up, that's a valid reason to feel bad.",
+    ],
+    color: "#f1c40f",
+    emoji: "💍",
+  },
+  "Emrakul, the Aeons Torn": {
+    lines: [
+      "Fifteen mana. Sure, we could get there.",
+      "With infinite mana this is technically castable.",
+      "Though at that point you've already won via Sanitarium. But respect the ambition.",
+    ],
+    color: "#e74c3c",
+    emoji: "🦑",
+  },
+  "Yeva's Ghost": {
+    lines: [
+      "She's not a card. Yet.",
+      "But her spirit guides every forest walk you take.",
+      "Nature's Herald would be proud.",
+    ],
+    color: "#27ae60",
+    emoji: "👻",
+  },
+  "Forest": {
+    lines: [
+      "Yes. More forests. This is correct.",
+      "Have you considered… more forests?",
+      "Yavimaya agrees. Everything is a forest. Everything.",
+    ],
+    color: "#27ae60",
+    emoji: "🌲",
+  },
+  "Swamp": {
+    lines: [
+      "This is a mono-green deck.",
+      "There are no swamps here.",
+      "There will never be swamps here.",
+    ],
+    color: "#2c3e50",
+    emoji: "🚫",
+  },
+  "Lightning Bolt": {
+    lines: [
+      "Wrong colour. Wrong format. Wrong deck.",
+      "Though it would kill Endurance, which is admittedly relevant.",
+      "Green has Beast Within. Close enough.",
+    ],
+    color: "#e67e22",
+    emoji: "⚡",
+  },
+};
+
 // CARD CATEGORIES for display
 // ============================================================
 const CATEGORIES = {
@@ -2541,9 +2620,21 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
   const [input, setInput] = useState("");
   const [suggs, setSuggs] = useState([]);
 
+  const [secret, setSecret] = useState(null);
+
   const handleChange = (v) => {
     setInput(v);
     if (v.length < 2) { setSuggs([]); return; }
+    // Check for secret card names first
+    const secretMatch = Object.keys(SECRET_CARDS).find(
+      k => k.toLowerCase() === v.toLowerCase()
+    );
+    if (secretMatch) {
+      setSecret(SECRET_CARDS[secretMatch]);
+      setSuggs([]);
+      return;
+    }
+    setSecret(null);
     setSuggs(ALL_CARD_NAMES.filter(n =>
       n.toLowerCase().includes(v.toLowerCase()) && !cards.includes(n)
     ).slice(0, 7));
@@ -2553,6 +2644,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
     onAdd(name);
     setInput("");
     setSuggs([]);
+    setSecret(null);
   };
 
   const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim };
@@ -2635,6 +2727,29 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
                 )}
               </div>
             ))}
+          </div>
+        )}
+        {secret && (
+          <div style={{
+            position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
+            background: "#0d1a0d", border: `1px solid ${secret.color}55`,
+            borderRadius: "6px", padding: "14px 16px",
+            boxShadow: `0 12px 40px rgba(0,0,0,0.8), 0 0 20px ${secret.color}22`,
+          }}>
+            <div style={{ fontSize: "20px", marginBottom: "8px" }}>{secret.emoji}</div>
+            {secret.lines.map((line, i) => (
+              <div key={i} style={{
+                fontSize: "13px", fontFamily: "'Crimson Text', serif",
+                color: i === 0 ? secret.color : COLORS.textMid,
+                fontStyle: i > 0 ? "italic" : "normal",
+                marginBottom: i < secret.lines.length - 1 ? "6px" : 0,
+                lineHeight: 1.5,
+              }}>{line}</div>
+            ))}
+            <div style={{ marginTop: "10px", fontSize: "11px", color: COLORS.textDim,
+              fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
+              — NOT IN THE 99 —
+            </div>
           </div>
         )}
       </div>
@@ -2758,7 +2873,6 @@ export default function YevaAdvisor() {
   const [isMyTurn, setIsMyTurn] = useState(false);
   const [advice, setAdvice] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
-
   // Each card is unique — adding to one zone removes it from the other two
   const addTo = (zone) => (card) => {
     if (zone !== "hand")        setHand(prev        => prev.filter(c => c !== card));
