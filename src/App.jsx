@@ -113,16 +113,6 @@ const ALL_CARD_NAMES = Object.keys(CARDS).sort();
 // ============================================================
 // COMBO DATABASE — sourced directly from the official primer
 // ============================================================
-
-// Helper: does the battlefield contain at least N elves?
-// Helper: does the battlefield contain a big-dork tapping for >= N?
-// These are evaluated at analysis time via analyzeGameState context.
-
-
-
-// ============================================================
-// COMBO DATABASE — sourced directly from the official primer
-// ============================================================
 const COMBOS = [
 
   // ── 1. Ashaya + Quirion Ranger + Dork (≥2 mana) ───────────────────────
@@ -575,14 +565,14 @@ const COMBOS = [
 // CARD CATEGORIES for display
 // ============================================================
 const CATEGORIES = {
-  "1-Drop Dorks": ["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Quirion Ranger","Wirewood Symbiote","Elvish Reclaimer","Elvish Spirit Guide","Magus of the Candelabra"],
-  "2-3 Drop Creatures": ["Scryb Ranger","Priest of Titania","Earthcraft","Elvish Archdruid","Circle of Dreams Druid","Duskwatch Recruiter","Heartwood Storyteller","Hyrax Tower Scout","Eternal Witness","Fauna Shaman","Formidable Speaker","Beast Whisperer","Destiny Spinner","Collector Ouphe","Glademuse","Allosaurus Shepherd","Delighted Halfling","Badgermole Cub","Chomping Changeling","Yisan, the Wanderer Bard","Elvish Harbinger","Fierce Empath","Tireless Provisioner","Nature's Rhythm"],
-  "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Fanatic of Rhonas","Argothian Elder","Seedborn Muse","Eladamri, Korvecdal","Growing Rites of Itlimoc","Endurance"],
+  "1-Drop Dorks": ["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Quirion Ranger","Wirewood Symbiote","Elvish Reclaimer","Elvish Spirit Guide","Magus of the Candelabra","Allosaurus Shepherd"],
+  "2-3 Drop Creatures": ["Scryb Ranger","Priest of Titania","Earthcraft","Elvish Archdruid","Circle of Dreams Druid","Duskwatch Recruiter","Heartwood Storyteller","Hyrax Tower Scout","Eternal Witness","Fauna Shaman","Formidable Speaker","Destiny Spinner","Collector Ouphe","Glademuse","Delighted Halfling","Badgermole Cub","Chomping Changeling","Yisan, the Wanderer Bard","Elvish Harbinger","Fierce Empath","Tireless Provisioner","Nature's Rhythm","Endurance"],
+  "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Fanatic of Rhonas","Argothian Elder","Seedborn Muse","Eladamri, Korvecdal","Growing Rites of Itlimoc","Beast Whisperer","Yeva, Nature's Herald"],
   "6+ Drop Creatures": ["Kogla, the Titan Ape","Disciple of Freyalise","Woodland Bellower","Regal Force","Woodcaller Automaton","Sowing Mycospawn"],
   "Rocks & Artifacts": ["Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal"],
   "Enchantments": ["Utopia Sprawl","Wild Growth","Survival of the Fittest"],
   "Instants & Sorceries": ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons","Green Sun's Zenith","Natural Order","Eldritch Evolution","Crop Rotation","Sylvan Scrying","Archdruid's Charm","Beast Within","Force of Vigor","Infectious Bite","Legolas's Quick Reflexes"],
-  "Key Lands": ["Gaea's Cradle","Nykthos, Shrine to Nyx","Yavimaya, Cradle of Growth","Wirewood Lodge","Deserted Temple","Geier Reach Sanitarium","Ancient Tomb","Emergence Zone","Boseiju, Who Endures","Shifting Woodland","Talon Gates of Madara","War Room","Urza's Cave","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills"],
+  "Key Lands": ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Yavimaya, Cradle of Growth","Wirewood Lodge","Deserted Temple","Geier Reach Sanitarium","Ancient Tomb","Emergence Zone","Boseiju, Who Endures","Shifting Woodland","Talon Gates of Madara","War Room","Urza's Cave","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills"],
   "Basic Lands": ["Forest"],
 };
 
