@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Analytics } from "@vercel/analytics/react";
 
 // ============================================================
 // CARD DATABASE — every card in the deck with metadata
@@ -2987,6 +2988,7 @@ export default function YevaAdvisor() {
           </div>
         </div>
       </div>
+      <Analytics />
     </>
   );
 }
