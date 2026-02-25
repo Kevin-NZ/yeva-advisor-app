@@ -2988,6 +2988,7 @@ export default function YevaAdvisor() {
           </div>
         </div>
       </div>
+      <Analytics />
       <hr />
     </>
   );
