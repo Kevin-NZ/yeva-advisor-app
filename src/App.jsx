@@ -1762,33 +1762,37 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     } else if (missing.length === 1 && extras.ok) {
       // One named piece missing
-      const missingCard = missing[0];
-      const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana);
-      if (tutorOptions.length > 0) {
-        results.push({
-          priority: combo.priority + 1,
-          category: "🎯 ONE PIECE AWAY",
-          headline: `Find ${missingCard} to enable ${combo.name}`,
-          detail: `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`,
-          steps: [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines],
-          combo: combo.id,
-          color: "#58d68d",
-        });
+      if (combo.type == "infinite-mana" && !infiniteManaActive) {
+        const missingCard = missing[0];
+        const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana);
+        if (tutorOptions.length > 0) {
+          results.push({
+            priority: combo.priority + 1,
+            category: "🎯 ONE PIECE AWAY",
+            headline: `Find ${missingCard} to enable ${combo.name}`,
+            detail: `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`,
+            steps: [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines],
+            combo: combo.id,
+            color: "#58d68d",
+          });
+        }
       }
     } else if (missing.length === 0 && !extras.ok) {
       // Named pieces present but need an extra condition satisfied
-      const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana);
-      results.push({
-        priority: combo.priority,
-        category: "🔧 NEARLY THERE",
-        headline: `${combo.name} — still need: ${extras.missing}`,
-        detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
-        steps: tutorOptions.length > 0
-          ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
-          : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
-        combo: combo.id,
-        color: "#85c1e9",
-      });
+      if (combo.type == "infinite-mana" && !infiniteManaActive) {
+        const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana);
+        results.push({
+          priority: combo.priority,
+          category: "🔧 NEARLY THERE",
+          headline: `${combo.name} — still need: ${extras.missing}`,
+          detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
+          steps: tutorOptions.length > 0
+            ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
+            : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
+          combo: combo.id,
+          color: "#85c1e9",
+        });
+      }
     }
   }
 
