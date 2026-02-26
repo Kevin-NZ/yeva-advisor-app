@@ -402,20 +402,19 @@ const COMBOS = [
     name: "Sanitarium Mill — Temur Variant (Endurance ETB on Stack + Temur Sabertooth)",
     description: "Use Endurance's ETB as a floating 'library reset shield' while looping Sanitarium infinitely. Cast Endurance, hold its ETB on the stack, bounce Endurance with Sabertooth (ETB stays on stack), then loop Sanitarium until all opponents' libraries are empty. Requires infinite mana + a Sanitarium untap method.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Temur Sabertooth"],
-    needsAlso: ["Deserted Temple", "Magus of the Candelabra"],
+    needsInfiniteMana: true,
+    needsUntapLand: true,
     priority: 10,
     type: "win-mill",
     lines: [
-      "SETUP: Infinite mana established. Geier Reach Sanitarium on battlefield with an untap method (Deserted Temple, Magus of the Candelabra, or Argothian Elder via Ashaya). Temur Sabertooth on battlefield.",
+      "SETUP: Infinite mana established. Geier Reach Sanitarium on battlefield with an untap method. Temur Sabertooth on battlefield.",
       "STEP 1: Cast Endurance. Pass priority.",
       "STEP 2: Endurance resolves, enters the battlefield. Its ETB trigger goes on the stack. Hold priority — do NOT let it resolve yet.",
       "STEP 3: Pay {1}{G} — activate Temur Sabertooth, bouncing Endurance back to hand. Pass priority. (The ETB trigger remains on the stack even though Endurance has left the battlefield.)",
-      "STEP 4: Pay {2}, activate Geier Reach Sanitarium: each player draws a card then discards a card. Hold priority.",
+      "STEP 4: Pay {2}, activate Geier Reach Sanitarium. Hold priority.",
       "STEP 5: Untap Geier Reach Sanitarium using your chosen method. Pass priority.",
-      "STEP 6: Repeat steps 4–5 until all opponents' libraries are exhausted.",
-      "STEP 7: Allow the Endurance ETB to resolve — target yourself, shuffling your graveyard back into your library (protecting you from decking).",
-      "STEP 8: Recast Endurance to create a new ETB shield and repeat if needed.",
-      "RESULT: Opponents attempt to draw from an empty library on the next Sanitarium activation — state-based loss.",
+      "STEP 6: Repeat steps 1–5.",
+      "RESULT: Each player draws a card, then discards a card. Put all cards from our graveyard on the bottom of the library. Each player draws a card, then discards a card... etc. Opponents will draw from an empty library — state-based loss.",
     ]
   },
 
@@ -425,7 +424,8 @@ const COMBOS = [
     name: "Sanitarium Mill — Kogla Variant (Endurance + Kogla + Eternal Witness)",
     description: "Kill Endurance while its ETB is suspended on the stack (using Beast Within or Legolas's Quick Reflexes), then loop it back via Eternal Witness + Kogla. The ETB stays on the stack as protection while you loop Sanitarium. LQR only needs to be cast once per turn — its tap triggers persist and kill Endurance each iteration.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Kogla, the Titan Ape", "Eternal Witness"],
-    needsAlso: ["Deserted Temple", "Magus of the Candelabra"],
+    needsInfiniteMana: true,
+    needsUntapLand: true,
     needsRemoval: true,
     priority: 10,
     type: "win-mill",
@@ -452,6 +452,8 @@ const COMBOS = [
     name: "Sanitarium Mill — Ashaya Variant (Endurance + Quirion/Scryb Ranger + LQR)",
     description: "Uses the Ashaya infinite Ranger loop as the Sanitarium untap engine. Legolas's Quick Reflexes is cast once; its tap triggers kill both Endurance and the Ranger while Endurance's First ETB is still on the stack. A Second Endurance ETB (from recasting) resets your graveyard, returning Endurance and the Ranger to your library so Duskwatch Recruiter can find them again to continue the loop.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Ashaya, Soul of the Wild", "Legolas's Quick Reflexes"],
+    needsInfiniteMana: true,
+    needsUntapLand: true,
     needsRanger: true,
     priority: 10,
     type: "win-mill",
@@ -786,81 +788,49 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (!hasRanger) return { ok: false, missing: "Quirion Ranger or Scryb Ranger" };
     }
 
+    // needsInfiniteMana: requires infinite mana to already be established
+    if (combo.needsInfiniteMana && !infiniteManaActive) {
+      return { ok: false, missing: "infinite mana (establish a mana loop first)" };
+    }
+
+    // needsUntapLand: combo requires a way to repeatedly untap Geier Reach Sanitarium.
+    // Valid methods:
+    //   1. Woodcaller Automaton (ETB untaps a land)
+    //   2. Destiny Spinner + Hyrax Tower Scout (animate land, Scout untaps)
+    //   3. Ashaya + Magus of the Candelabra (creatures are lands, Magus untaps X)
+    //   4. Ashaya + Quirion Ranger (return Forest to hand = untap a land)
+    //   5. Ashaya + Scryb Ranger (same, instant speed)
+    //   6. Wirewood Symbiote + Destiny Spinner (Spinner animates land, Symbiote untaps via elf bounce)
+    //   7. Ashaya + Argothian Elder (tap Elder to untap 2 lands)
+    if (combo.needsUntapLand) {
+      const hasAshaya      = board.has("Ashaya, Soul of the Wild");
+      const hasQuirion     = board.has("Quirion Ranger")  || inHand.has("Quirion Ranger");
+      const hasScryb       = board.has("Scryb Ranger")    || inHand.has("Scryb Ranger");
+      const hasMagus       = board.has("Magus of the Candelabra");
+      const hasElder       = board.has("Argothian Elder");
+      const hasSpinner     = board.has("Destiny Spinner");
+      const hasHyrax       = board.has("Hyrax Tower Scout");
+      const hasSymbiote    = board.has("Wirewood Symbiote");
+      const hasWoodcaller  = board.has("Woodcaller Automaton") || inHand.has("Woodcaller Automaton");
+
+      const hasUntapMethod =
+        hasWoodcaller ||                          // 1. Woodcaller Automaton
+        (hasSpinner && hasHyrax) ||               // 2. Destiny Spinner + Hyrax Tower Scout
+        (hasAshaya && hasMagus) ||                // 3. Ashaya + Magus of the Candelabra
+        (hasAshaya && hasQuirion) ||              // 4. Ashaya + Quirion Ranger
+        (hasAshaya && hasScryb) ||                // 5. Ashaya + Scryb Ranger
+        (hasSymbiote && hasSpinner) ||            // 6. Wirewood Symbiote + Destiny Spinner
+        (hasAshaya && hasElder);                  // 7. Ashaya + Argothian Elder
+
+      if (!hasUntapMethod) return {
+        ok: false,
+        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; or Wirewood Symbiote + Destiny Spinner",
+      };
+    }
+
     return { ok: true };
   }
 
-  // ---- CHECK ACTIVE COMBOS ----
-  for (const combo of COMBOS) {
-    const missing = combo.requires.filter(r => !board.has(r) && !inHand.has(r));
-    const extras = comboExtrasSatisfied(combo);
-
-    if (missing.length === 0 && extras.ok) {
-      // Type metadata: label, headline prefix, priority boost, color
-      const typeMeta = {
-        "infinite-mana": { ready: "⚙️ INFINITE MANA ONLINE", cast: "⚡ CAST TO ENABLE MANA LOOP",  readyPrefix: "LOOP READY:",  boost: 2, color: "#58d68d" },
-        "win-mill":      { ready: "🔥 WIN NOW — MILL",        cast: "⚡ ASSEMBLE MILL WIN",          readyPrefix: "EXECUTE:",     boost: 5, color: "#ff6b35" },
-        "win-poison":    { ready: "🔥 WIN NOW — POISON",      cast: "⚡ ASSEMBLE POISON WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#27ae60" },
-        "win-draw":      { ready: "📚 DRAW YOUR LIBRARY",     cast: "⚡ ASSEMBLE DRAW LOOP",         readyPrefix: "EXECUTE:",     boost: 4, color: "#5dade2" },
-        "win-combat":    { ready: "🔥 WIN NOW — COMBAT",      cast: "⚡ ASSEMBLE COMBAT WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#e74c3c" },
-        "engine":        { ready: "🔄 ENGINE READY",          cast: "⚡ ACTIVATE ENGINE",            readyPrefix: "ACTIVATE:",    boost: 1, color: "#a569bd" },
-      }[combo.type] || { ready: "🔄 COMBO ASSEMBLED",  cast: "⚡ ASSEMBLE COMBO", readyPrefix: "EXECUTE:", boost: 3, color: "#58d68d" };
-
-      const needToCast = combo.requires.filter(r => inHand.has(r));
-      if (needToCast.length === 0) {
-        results.push({
-          priority: combo.priority + typeMeta.boost,
-          category: typeMeta.ready,
-          headline: `${typeMeta.readyPrefix} ${combo.name}`,
-          detail: combo.description,
-          steps: combo.lines,
-          combo: combo.id,
-          color: typeMeta.color,
-        });
-      } else {
-        const totalCost = needToCast.reduce((acc, c) => acc + (CARDS[c]?.cmc || 0), 0);
-        if (mana >= totalCost || !isMyTurn) {
-          results.push({
-            priority: combo.priority + typeMeta.boost - 2,
-            category: typeMeta.cast,
-            headline: `Cast ${needToCast.join(" + ")} → ${combo.name}`,
-            detail: `You have all named pieces! Cast ${needToCast.join(", ")} to complete ${combo.name}.`,
-            steps: combo.lines,
-            combo: combo.id,
-            color: typeMeta.color,
-          });
-        }
-      }
-    } else if (missing.length === 1 && extras.ok) {
-      // One named piece missing
-      const missingCard = missing[0];
-      const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana);
-      if (tutorOptions.length > 0) {
-        results.push({
-          priority: combo.priority + 1,
-          category: "🎯 ONE PIECE AWAY",
-          headline: `Find ${missingCard} to enable ${combo.name}`,
-          detail: `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`,
-          steps: [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines],
-          combo: combo.id,
-          color: "#58d68d",
-        });
-      }
-    } else if (missing.length === 0 && !extras.ok) {
-      // Named pieces present but need an extra condition satisfied
-      const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana);
-      results.push({
-        priority: combo.priority,
-        category: "🔧 NEARLY THERE",
-        headline: `${combo.name} — still need: ${extras.missing}`,
-        detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
-        steps: tutorOptions.length > 0
-          ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
-          : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
-        combo: combo.id,
-        color: "#85c1e9",
-      });
-    }
-  }
 
   // ---- YEVA FLASH TIMING ADVICE ----
   if (!isMyTurn && board.has("Yeva, Nature's Herald")) {
@@ -1746,9 +1716,85 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     return false;
   })();
 
+  // ---- CHECK ACTIVE COMBOS ----
+  for (const combo of COMBOS) {
+    const missing = combo.requires.filter(r => !board.has(r) && !inHand.has(r));
+    const extras = comboExtrasSatisfied(combo);
+
+    if (missing.length === 0 && extras.ok) {
+      // Type metadata: label, headline prefix, priority boost, color
+      const typeMeta = {
+        "infinite-mana": { ready: "⚙️ INFINITE MANA ONLINE", cast: "⚡ CAST TO ENABLE MANA LOOP",  readyPrefix: "LOOP READY:",  boost: 2, color: "#58d68d" },
+        "win-mill":      { ready: "🔥 WIN NOW — MILL",        cast: "⚡ ASSEMBLE MILL WIN",          readyPrefix: "EXECUTE:",     boost: 5, color: "#ff6b35" },
+        "win-poison":    { ready: "🔥 WIN NOW — POISON",      cast: "⚡ ASSEMBLE POISON WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#27ae60" },
+        "win-draw":      { ready: "📚 DRAW YOUR LIBRARY",     cast: "⚡ ASSEMBLE DRAW LOOP",         readyPrefix: "EXECUTE:",     boost: 4, color: "#5dade2" },
+        "win-combat":    { ready: "🔥 WIN NOW — COMBAT",      cast: "⚡ ASSEMBLE COMBAT WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#e74c3c" },
+        "engine":        { ready: "🔄 ENGINE READY",          cast: "⚡ ACTIVATE ENGINE",            readyPrefix: "ACTIVATE:",    boost: 1, color: "#a569bd" },
+      }[combo.type] || { ready: "🔄 COMBO ASSEMBLED",  cast: "⚡ ASSEMBLE COMBO", readyPrefix: "EXECUTE:", boost: 3, color: "#58d68d" };
+
+      const needToCast = combo.requires.filter(r => inHand.has(r));
+      if (needToCast.length === 0) {
+        results.push({
+          priority: combo.priority + typeMeta.boost,
+          category: typeMeta.ready,
+          headline: `${typeMeta.readyPrefix} ${combo.name}`,
+          detail: combo.description,
+          steps: combo.lines,
+          combo: combo.id,
+          color: typeMeta.color,
+        });
+      } else {
+        const totalCost = needToCast.reduce((acc, c) => acc + (CARDS[c]?.cmc || 0), 0);
+        if (mana >= totalCost || !isMyTurn) {
+          results.push({
+            priority: combo.priority + typeMeta.boost - 2,
+            category: typeMeta.cast,
+            headline: `Cast ${needToCast.join(" + ")} → ${combo.name}`,
+            detail: `You have all named pieces! Cast ${needToCast.join(", ")} to complete ${combo.name}.`,
+            steps: combo.lines,
+            combo: combo.id,
+            color: typeMeta.color,
+          });
+        }
+      }
+    } else if (missing.length === 1 && extras.ok) {
+      // One named piece missing
+      const missingCard = missing[0];
+      const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana);
+      if (tutorOptions.length > 0) {
+        results.push({
+          priority: combo.priority + 1,
+          category: "🎯 ONE PIECE AWAY",
+          headline: `Find ${missingCard} to enable ${combo.name}`,
+          detail: `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`,
+          steps: [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines],
+          combo: combo.id,
+          color: "#58d68d",
+        });
+      }
+    } else if (missing.length === 0 && !extras.ok) {
+      // Named pieces present but need an extra condition satisfied
+      const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana);
+      results.push({
+        priority: combo.priority,
+        category: "🔧 NEARLY THERE",
+        headline: `${combo.name} — still need: ${extras.missing}`,
+        detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
+        steps: tutorOptions.length > 0
+          ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
+          : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
+        combo: combo.id,
+        color: "#85c1e9",
+      });
+    }
+  }
+
+
   // Endurance is required for any Sanitarium mill win — it prevents self-decking.
   // Check if it's accessible: on board, in hand and castable, or in the graveyard
   // (retrievable by Eternal Witness). Flash means it can be cast at instant speed.
+  const yevaFlash         = board.has("Yeva, Nature's Herald");
+
   const enduranceOnBoard     = board.has("Endurance");
   const enduranceInHand      = inHand.has("Endurance");
   const enduranceInGrave     = inGrave.has("Endurance");
@@ -1764,7 +1810,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Direct: on board, in hand on our turn, or in hand with Yeva (flash)
   const duskwatchOnBoard  = board.has("Duskwatch Recruiter");
   const duskwatchInHand   = inHand.has("Duskwatch Recruiter");
-  const yevaFlash         = board.has("Yeva, Nature's Herald");
   const duskwatchDirect   = duskwatchOnBoard
     || (duskwatchInHand && isMyTurn)
     || (duskwatchInHand && yevaFlash);
