@@ -699,6 +699,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Exact green devotion: sum of devotion field for every permanent on the battlefield
   const devotionOnBoard = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
 
+  // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
+  const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+  // Badgermole Cub needs Temur Sabertooth specifically — Kogla only bounces Humans, not Badgers
+  const badgermoleActive = (board.has("Badgermole Cub") || inHand.has("Badgermole Cub")) && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
+  const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
+
   // Compute infiniteManaActive early so all subsequent checks can use it safely
   const infiniteManaActive = (() => {
     for (const combo of COMBOS) {
@@ -767,8 +773,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // needsAlsoBouncer: need Temur Sabertooth or Kogla anywhere
     if (combo.needsAlsoBouncer) {
-      const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")
-        || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+      const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
       if (!hasBouncer) return { ok: false, missing: "Temur Sabertooth or Kogla, the Titan Ape" };
     }
 
@@ -824,8 +829,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const hasQuirion     = board.has("Quirion Ranger")  || inHand.has("Quirion Ranger");
       const hasScryb       = board.has("Scryb Ranger")    || inHand.has("Scryb Ranger");
       const hasSpinner     = board.has("Destiny Spinner");
-      const hasBouncer     = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")
-        || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+      const hasBouncer     = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
       // Badgermole Cub animates a land (like Destiny Spinner) when a bouncer is available to re-use its ETB
       const hasBadgermole  = board.has("Badgermole Cub") && hasBouncer;
       const hasLandAnimate = hasSpinner || hasBadgermole; // either animates lands
@@ -1203,7 +1207,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   {
     const regalOnBoard  = board.has("Regal Force");
     const regalInHand   = inHand.has("Regal Force");
-    const hasBouncer    = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    const hasBouncer    = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
     const bouncer       = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
     const regalCastable = regalInHand && (infiniteManaActive || (mana >= 7 || infiniteManaActive)) && isMyTurn;
     const regalActive   = (regalOnBoard || regalCastable) && hasBouncer && infiniteManaActive;
@@ -1763,7 +1767,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Type metadata: label, headline prefix, priority boost, color
       const typeMeta = {
         "infinite-mana": { ready: "⚙️ INFINITE MANA ONLINE", cast: "⚡ CAST TO ENABLE MANA LOOP",  readyPrefix: "LOOP READY:",  boost: 2, color: "#58d68d" },
-        "win-mill":      { ready: "🔥 WIN NOW — MILL",        cast: "⚡ ASSEMBLE MILL WIN",          readyPrefix: "EXECUTE:",     boost: 5, color: "#ff6b35" },
+        "win-mill":      { ready: hasLandAnimate ? "🔥 WIN NOW — MILL" : "⚡ ASSEMBLE MILL WIN", cast: "⚡ ASSEMBLE MILL WIN", readyPrefix: hasLandAnimate ? "EXECUTE:" : "SETUP:", boost: hasLandAnimate ? 5 : 2, color: hasLandAnimate ? "#ff6b35" : "#e67e22" },
         "win-poison":    { ready: "🔥 WIN NOW — POISON",      cast: "⚡ ASSEMBLE POISON WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#27ae60" },
         "win-draw":      { ready: "📚 DRAW YOUR LIBRARY",     cast: "⚡ ASSEMBLE DRAW LOOP",         readyPrefix: "EXECUTE:",     boost: 4, color: "#5dade2" },
         "win-combat":    { ready: "🔥 WIN NOW — COMBAT",      cast: "⚡ ASSEMBLE COMBAT WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#e74c3c" },
@@ -1953,11 +1957,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     return name;
   }
 
-  // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
-  const hasBouncer     = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
-  const badgermoleActive = board.has("Badgermole Cub") && hasBouncer;
-  const hasLandAnimate = board.has("Destiny Spinner") || badgermoleActive;
-
   const duskwatchAccessNote = duskwatchOnBoard                    ? ""
     : (duskwatchInHand && isMyTurn)                              ? "Cast Duskwatch → "
     : (duskwatchInHand && yevaFlash)                             ? "Flash Duskwatch (Yeva) → "
@@ -2112,7 +2111,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
       results.push({
         priority: topPriority,
-        category: best.priority >= 13 && best.land === "Geier Reach Sanitarium"
+        category: best.priority >= 13 && best.land === "Geier Reach Sanitarium" && hasLandAnimate
           ? "🔥 WIN NOW — MILL"
           : "🏔️ LAND TUTOR",
         headline: `${actionPrefix} → fetch ${best.land}`,
@@ -2130,7 +2129,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             ? [`Other strong targets: ${landTargets.slice(1, 3).map(t => t.land).join(", ")}`]
             : []),
         ],
-        color: best.priority >= 13 && best.land === "Geier Reach Sanitarium" ? "#ff6b35" : "#5dade2",
+        color: best.priority >= 13 && best.land === "Geier Reach Sanitarium" && hasLandAnimate ? "#ff6b35" : "#5dade2",
       });
     }
   }
@@ -2280,7 +2279,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Bellower ETB puts any non-legendary green CMC<=3 creature directly onto the battlefield.
   // This is a tutor AND a tempo play — the creature enters immediately, no casting cost.
   if (bellowerCastable) {
-    const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
 
     // Determine best target based on board state
     const winTarget = bellowerKeyTargets.find(c =>
@@ -2348,7 +2347,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Fauna Shaman in hand + infinite mana: casting it enables finding Duskwatch or Eternal Witness.
   if (inHand.has("Fauna Shaman") && !board.has("Fauna Shaman") && (infiniteManaActive || mana >= 20)) {
     const hasteNow    = board.has("Destiny Spinner");
-    const hasBouncer  = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    const hasBouncer  = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
     const biteAvail   = inHand.has("Infectious Bite") || inGrave.has("Infectious Bite");
     // Determine the best target: Duskwatch (pile win) vs Eternal Witness (poison win)
     // Prefer Duskwatch unless Bite is available and a bouncer is on board (poison is cleaner)
@@ -2432,7 +2431,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const biteInGrave = inGrave.has("Infectious Bite");
     const biteAvail   = biteInHand || biteInGrave;
     const witnessOnBrd = board.has("Eternal Witness");
-    const hasBouncer   = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    const hasBouncer   = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
     const bouncer      = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
 
     // Fauna Shaman can find Eternal Witness if Witness isn't already on board
