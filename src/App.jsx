@@ -704,20 +704,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- HELPER: exact mana output of a dork given board context ----
   function estimateDorkOutput(cardName) {
     const t = CARDS[cardName]?.tapsFor;
-    if (typeof t === "number") return t;
-    if (t === "elves")    return elvesOnBoard;      // Priest of Titania, Elvish Archdruid
-    if (t === "creatures") return creaturesOnBoard;  // Circle of Dreams Druid
-    if (t === "devotion") return devotionOnBoard;    // Karametra's Acolyte — exact devotion count
+    // Badgermole Cub: animates a land and grants +1 mana to all creatures while on board
+    const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
+    if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
+    if (t === "elves")    return elvesOnBoard    + badgermoleBonus; // Priest of Titania, Elvish Archdruid
+    if (t === "creatures") return creaturesOnBoard + badgermoleBonus; // Circle of Dreams Druid
+    if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
     if (t === "arbor") {
       // Arbor Elf untaps an enchanted Forest or (with Yavimaya) any land
       const hasAura = board.has("Utopia Sprawl") || board.has("Wild Growth");
       const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
       // With Yavimaya + Cradle/Nykthos: can untap a big land
       if (hasYavimaya && (board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx")))
-        return Math.max(creaturesOnBoard, devotionOnBoard); // proxy for Cradle/Nykthos output
+        return Math.max(creaturesOnBoard, devotionOnBoard) + badgermoleBonus;
       // With aura enchantment: tap Forest for base mana + enchantment bonus
-      if (hasAura) return 2; // minimum with one enchantment
-      return 1; // plain untap of a basic Forest
+      if (hasAura) return 2 + badgermoleBonus;
+      return 1 + badgermoleBonus;
     }
     return 0;
   }
@@ -810,24 +812,29 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const hasQuirion     = board.has("Quirion Ranger")  || inHand.has("Quirion Ranger");
       const hasScryb       = board.has("Scryb Ranger")    || inHand.has("Scryb Ranger");
       const hasSpinner     = board.has("Destiny Spinner");
-      const hasMagus       = board.has("Magus of the Candelabra") || (inHand.has("Magus of the Candelabra") && hasSpinner);
-      const hasElder       = board.has("Argothian Elder") || (inHand.has("Argothian Elder") && hasSpinner); 
+      const hasBouncer     = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")
+        || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+      // Badgermole Cub animates a land (like Destiny Spinner) when a bouncer is available to re-use its ETB
+      const hasBadgermole  = board.has("Badgermole Cub") && hasBouncer;
+      const hasLandAnimate = hasSpinner || hasBadgermole; // either animates lands
+      const hasMagus       = board.has("Magus of the Candelabra") || (inHand.has("Magus of the Candelabra") && hasLandAnimate);
+      const hasElder       = board.has("Argothian Elder") || (inHand.has("Argothian Elder") && hasLandAnimate);
       const hasHyrax       = inHand.has("Hyrax Tower Scout");
       const hasSymbiote    = board.has("Wirewood Symbiote") || inHand.has("Wirewood Symbiote");
       const hasWoodcaller  = board.has("Woodcaller Automaton") || inHand.has("Woodcaller Automaton");
 
       const hasUntapMethod =
-        hasWoodcaller ||                          // 1. Woodcaller Automaton
-        (hasSpinner && hasHyrax) ||               // 2. Destiny Spinner + Hyrax Tower Scout
-        (hasAshaya && hasMagus) ||                // 3. Ashaya + Magus of the Candelabra
-        (hasAshaya && hasQuirion) ||              // 4. Ashaya + Quirion Ranger
-        (hasAshaya && hasScryb) ||                // 5. Ashaya + Scryb Ranger
-        (hasSymbiote && hasSpinner) ||            // 6. Wirewood Symbiote + Destiny Spinner
-        (hasAshaya && hasElder);                  // 7. Ashaya + Argothian Elder
+        hasWoodcaller ||                              // 1. Woodcaller Automaton
+        (hasLandAnimate && hasHyrax) ||               // 2. Destiny Spinner / Badgermole + Hyrax Tower Scout
+        (hasAshaya && hasMagus) ||                    // 3. Ashaya + Magus of the Candelabra
+        (hasAshaya && hasQuirion) ||                  // 4. Ashaya + Quirion Ranger
+        (hasAshaya && hasScryb) ||                    // 5. Ashaya + Scryb Ranger
+        (hasSymbiote && hasLandAnimate) ||            // 6. Wirewood Symbiote + Destiny Spinner / Badgermole
+        (hasAshaya && hasElder);                      // 7. Ashaya + Argothian Elder
 
       if (!hasUntapMethod) return {
         ok: false,
-        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; or Wirewood Symbiote + Destiny Spinner",
+        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner (or Badgermole Cub + bouncer) + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; or Wirewood Symbiote + Destiny Spinner/Badgermole Cub",
       };
     }
 
@@ -1946,6 +1953,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     return name;
   }
 
+  // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
+  const hasBouncer     = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+  const badgermoleActive = board.has("Badgermole Cub") && hasBouncer;
+  const hasLandAnimate = board.has("Destiny Spinner") || badgermoleActive;
+
   const duskwatchAccessNote = duskwatchOnBoard                    ? ""
     : (duskwatchInHand && isMyTurn)                              ? "Cast Duskwatch → "
     : (duskwatchInHand && yevaFlash)                             ? "Flash Duskwatch (Yeva) → "
@@ -1957,16 +1969,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const untapMethods = [];
     if (board.has("Woodcaller Automaton") && board.has("Temur Sabertooth"))
       untapMethods.push("Woodcaller Automaton + Temur Sabertooth");
-    if (board.has("Hyrax Tower Scout") && board.has("Destiny Spinner"))
-      untapMethods.push("Hyrax Tower Scout + Destiny Spinner (haste)");
+    if (board.has("Hyrax Tower Scout") && hasLandAnimate)
+      untapMethods.push(`Hyrax Tower Scout + ${badgermoleActive ? "Badgermole Cub" : "Destiny Spinner"} (haste)`);
     if (board.has("Ashaya, Soul of the Wild") && board.has("Magus of the Candelabra"))
       untapMethods.push("Ashaya + Magus of the Candelabra");
-    if (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger")) && board.has("Destiny Spinner"))
-      untapMethods.push("Ashaya + Ranger + Destiny Spinner (haste)");
-    if (board.has("Ashaya, Soul of the Wild") && board.has("Wirewood Symbiote") && board.has("Destiny Spinner"))
-      untapMethods.push("Ashaya + Wirewood Symbiote + Destiny Spinner (haste)");
-    if (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder") && board.has("Destiny Spinner"))
-      untapMethods.push("Ashaya + Argothian Elder + Destiny Spinner (haste)");
+    if (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger")) && hasLandAnimate)
+      untapMethods.push(`Ashaya + Ranger + ${badgermoleActive ? "Badgermole Cub" : "Destiny Spinner"} (haste)`);
+    if (board.has("Ashaya, Soul of the Wild") && board.has("Wirewood Symbiote") && hasLandAnimate)
+      untapMethods.push(`Ashaya + Wirewood Symbiote + ${badgermoleActive ? "Badgermole Cub" : "Destiny Spinner"} (haste)`);
+    if (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder") && hasLandAnimate)
+      untapMethods.push(`Ashaya + Argothian Elder + ${badgermoleActive ? "Badgermole Cub" : "Destiny Spinner"} (haste)`);
 
     // Determine which pile pieces are already on board
     const pileNeeded = ["Destiny Spinner","Elvish Reclaimer","Ashaya, Soul of the Wild",
@@ -2029,7 +2041,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   //   a) it has haste (Destiny Spinner on board, or Concordant Crossroads) — tap immediately
   //   b) it has been on board since our turn started (no haste needed, not summoning sick)
   //     → we approximate this as: on board AND it's our turn (player is responsible for tracking sickness)
-  const reclaimerHaste = reclaimerOnBoard && board.has("Destiny Spinner");
+  const reclaimerHaste = reclaimerOnBoard && hasLandAnimate;
   const reclaimerCanActivate = reclaimerOnBoard && (reclaimerHaste || isMyTurn);
 
   if (reclaimerCastable || reclaimerCanActivate) {
@@ -2049,11 +2061,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           const hasUntapMethod =
             // Woodcaller+Temur only valid if they're NOT the sole mana engine
             (board.has("Woodcaller Automaton") && board.has("Temur Sabertooth")) ||
-            (board.has("Hyrax Tower Scout") && board.has("Destiny Spinner")) ||
+            (board.has("Hyrax Tower Scout") && hasLandAnimate) ||
             (board.has("Ashaya, Soul of the Wild") && board.has("Magus of the Candelabra")) ||
-            (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger")) && board.has("Destiny Spinner")) ||
-            (board.has("Ashaya, Soul of the Wild") && board.has("Wirewood Symbiote") && board.has("Destiny Spinner")) ||
-            (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder") && board.has("Destiny Spinner"));
+            (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger")) && hasLandAnimate) ||
+            (board.has("Ashaya, Soul of the Wild") && board.has("Wirewood Symbiote") && hasLandAnimate) ||
+            (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder") && hasLandAnimate);
           // Even with untap method, still need Endurance to avoid self-mill
           if (!hasUntapMethod) return 6;
           return enduranceReady ? 13 : 7;
@@ -2103,8 +2115,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         steps: [
           ...(reclaimerInHand && !reclaimerOnBoard ? [
             `Cast Elvish Reclaimer ({G}).`
-            + (!reclaimerHaste && !board.has("Destiny Spinner")
-              ? " Note: needs haste (Destiny Spinner) or must wait until next turn to activate."
+            + (!reclaimerHaste
+              ? " Note: needs haste (Destiny Spinner or Badgermole Cub + bouncer) or must wait until next turn to activate."
               : ""),
           ] : []),
           `Pay {1}, tap Elvish Reclaimer, sacrifice a land: search your library for ${best.land} and put it onto the battlefield tapped.`,
