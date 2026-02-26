@@ -119,6 +119,7 @@ const COMBOS = [
   {
     id: "ashaya_quirion",
     name: "Ashaya + Quirion Ranger + Dork (≥2 mana)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     description: "Infinite mana. Ashaya makes all nontoken creatures Forests. Quirion Ranger returns itself (now a Forest) to untap any creature. With a dork producing ≥2 mana, each loop nets at least {G}.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsBigDork: 2,
@@ -137,6 +138,7 @@ const COMBOS = [
   {
     id: "ashaya_scryb",
     name: "Ashaya + Scryb Ranger + Dork (≥3 mana)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Scryb Ranger"],
     description: "Infinite mana. Same as Quirion Ranger variant but Scryb Ranger costs {1}{G} to recast, requiring the dork to produce ≥3 mana. Key upside: Scryb Ranger has flash — it can go off at instant speed even if Yeva is removed.",
     requires: ["Ashaya, Soul of the Wild", "Scryb Ranger"],
     needsBigDork: 3,
@@ -155,6 +157,8 @@ const COMBOS = [
   {
     id: "ashaya_argothian",
     name: "Ashaya + Argothian Elder (2-Card Infinite Mana!)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Argothian Elder"],
+    mustPreExist: ["Argothian Elder"],
     description: "Infinite mana with only 2 cards. Ashaya turns Argothian Elder into a Forest, allowing Elder to target itself with its 'untap two lands' ability. Tap Elder as a Forest for {G}, then untap Elder + any other land. Repeat.",
     requires: ["Ashaya, Soul of the Wild", "Argothian Elder"],
     priority: 10,
@@ -172,6 +176,8 @@ const COMBOS = [
   {
     id: "argothian_lodge",
     name: "Argothian Elder + Wirewood Lodge + Big Land (≥2 mana)",
+    onBattlefield: ["Argothian Elder", "Wirewood Lodge"],
+    mustPreExist: ["Argothian Elder"],
     description: "Infinite mana. Tap a land producing ≥2 mana (Gaea's Cradle, Nykthos, Itlimoc, or a Forest enchanted with Utopia Sprawl/Wild Growth). Elder untaps that land + Lodge. Lodge untaps Elder. Net mana each loop.",
     requires: ["Argothian Elder", "Wirewood Lodge"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
@@ -192,6 +198,7 @@ const COMBOS = [
   {
     id: "earthcraft_ashaya_quirion",
     name: "Earthcraft + Ashaya + Quirion Ranger",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger"],
     description: "Infinite mana. With Earthcraft, Quirion Ranger can tap itself to untap a basic land. Ashaya makes all creatures Forests (which are basic lands). Tap Quirion for {G}, tap another creature via Earthcraft to untap Quirion, bounce Quirion to untap any creature, recast — net {G} each loop.",
     requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger"],
     priority: 9,
@@ -210,6 +217,8 @@ const COMBOS = [
   {
     id: "magus_ashaya",
     name: "Magus of the Candelabra + Ashaya + Dork or Land (≥3 mana)",
+    onBattlefield: ["Magus of the Candelabra", "Ashaya, Soul of the Wild"],
+    mustPreExist: ["Magus of the Candelabra"],
     description: "Infinite mana. Ashaya makes your big dork count as a land for Magus to target. Tap the dork for ≥3 mana, spend {2} activating Magus (X=2) to untap itself and the dork. Net {G}+ each loop. The mana source doesn't have to be a real land — any big dork becomes a valid target via Ashaya.",
     requires: ["Magus of the Candelabra", "Ashaya, Soul of the Wild"],
     needsBigDork: 3,
@@ -228,6 +237,7 @@ const COMBOS = [
   {
     id: "sabertooth_symbiote",
     name: "Temur Sabertooth + Wirewood Symbiote + 1-Drop Elf + Dork (≥5 mana)",
+    onBattlefield: ["Temur Sabertooth", "Wirewood Symbiote"],
     description: "Infinite mana. Symbiote bounces a 1-drop elf to untap the big dork. Sabertooth bounces Symbiote back to hand. Recast both. Net mana when dork produces ≥5 (covering {1}{G} Sabertooth bounce + {G} Symbiote recast + {G} 1-drop recast = {3}{G} total cost).",
     requires: ["Temur Sabertooth", "Wirewood Symbiote"],
     needsBigDork: 5,
@@ -248,6 +258,7 @@ const COMBOS = [
   {
     id: "sabertooth_scout",
     name: "Temur Sabertooth / Kogla + Hyrax Tower Scout + Dork (≥6 mana)",
+    onBattlefield: ["Hyrax Tower Scout"],
     description: "Infinite mana. Scout's ETB untaps a creature. Bounce Scout with Sabertooth/Kogla, recast it to untap the big dork. Loop cost: {1}{G} bounce + {2} recast = {3}{G}. Net positive when dork produces ≥6 (need 1 left over for loop mana).",
     requires: ["Hyrax Tower Scout"],
     needsBigDork: 6,
@@ -268,6 +279,7 @@ const COMBOS = [
   {
     id: "sabertooth_woodcaller",
     name: "Temur Sabertooth + Woodcaller Automaton + Cradle/Nykthos (≥7 mana)",
+    onBattlefield: ["Temur Sabertooth", "Woodcaller Automaton"],
     description: "Infinite mana. Woodcaller Automaton's ETB (when cast) untaps a land and turns it into a haste creature-land. Bounce Automaton with Sabertooth and recast it targeting Cradle/Nykthos. Loop cost is the recast cost; net positive when Cradle/Nykthos taps for ≥7.",
     requires: ["Temur Sabertooth", "Woodcaller Automaton"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx"],
@@ -287,6 +299,8 @@ const COMBOS = [
   {
     id: "fanatic_ashaya_ranger",
     name: "Fanatic of Rhonas + Ashaya + Quirion/Scryb Ranger",
+    onBattlefield: ["Fanatic of Rhonas", "Ashaya, Soul of the Wild"],
+    mustPreExist: ["Fanatic of Rhonas"],
     description: "Infinite mana. Fanatic of Rhonas taps for {4} as a creature (=Forest via Ashaya). Quirion Ranger returns itself to untap Fanatic (loop cost {G}), netting {3}. Scryb Ranger variant costs {1}{G} to recast, netting {2}. Both are clean infinite mana lines.",
     requires: ["Fanatic of Rhonas", "Ashaya, Soul of the Wild"],
     needsRanger: true,
@@ -305,6 +319,7 @@ const COMBOS = [
   {
     id: "provisioner_ashaya",
     name: "Tireless Provisioner + Ashaya + Quirion Ranger",
+    onBattlefield: ["Tireless Provisioner", "Ashaya, Soul of the Wild", "Quirion Ranger"],
     description: "Infinite mana. Each time Quirion Ranger re-enters the battlefield via Ashaya loop, it triggers Tireless Provisioner's landfall (creatures are Forests). Each loop creates a Treasure token and returns one, netting mana. Requires Provisioner + Quirion Ranger + Ashaya + any dork for the loop to be mana-positive.",
     requires: ["Tireless Provisioner", "Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsBigDork: 2,
@@ -324,6 +339,7 @@ const COMBOS = [
   {
     id: "circle_symbiote_loop",
     name: "Circle of Dreams Druid / Karametra's Acolyte + Wirewood Symbiote or Hyrax Tower Scout",
+    onBattlefield: ["Ashaya, Soul of the Wild"],
     description: "Infinite mana. Circle of Dreams Druid taps for {G} per creature (=Gaea's Cradle on a body). Karametra's Acolyte taps for {G} per green devotion. With Wirewood Symbiote or Hyrax Tower Scout providing a repeatable untap via Temur Sabertooth or Kogla, the loop is infinite when output ≥5 (Symbiote loop) or ≥6 (Scout loop).",
     requires: ["Ashaya, Soul of the Wild"],
     needsAlso: ["Circle of Dreams Druid", "Karametra's Acolyte"],
@@ -344,6 +360,7 @@ const COMBOS = [
   {
     id: "woodcaller_ashaya_loop",
     name: "Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout",
+    onBattlefield: ["Woodcaller Automaton", "Ashaya, Soul of the Wild"],
     description: "Infinite mana. Woodcaller Automaton's ETB untaps a land AND turns it into a haste creature-land. With Ashaya in play, Automaton itself becomes a Forest. Bounce Automaton with Temur Sabertooth and recast targeting Cradle/Nykthos. Also goes infinite via Ashaya Ranger loops when Automaton's land-creature produces ≥2 mana.",
     requires: ["Woodcaller Automaton", "Ashaya, Soul of the Wild"],
     needsAlsoBouncer: true,
@@ -362,6 +379,8 @@ const COMBOS = [
   {
     id: "arbor_ashaya_loop",
     name: "Arbor Elf + Ashaya + Quirion Ranger (enchanted Forest or Yavimaya)",
+    onBattlefield: ["Arbor Elf", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    mustPreExist: ["Arbor Elf"],
     description: "Infinite mana. Arbor Elf untaps any Forest. With Utopia Sprawl or Wild Growth on a Forest, it produces ≥2 mana. With Yavimaya making all lands Forests, Arbor Elf can untap Gaea's Cradle or Nykthos. Goes infinite via Ashaya+Quirion Ranger loop when the enchanted Forest produces ≥2 mana.",
     requires: ["Arbor Elf", "Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsAuraLand: true,
@@ -379,6 +398,7 @@ const COMBOS = [
   {
     id: "draw_loop_neutral",
     name: "Mana-Neutral Draw Loop (Ashaya + Ranger + 1-Drop Dork + Draw Engine)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     description: "Ashaya + Quirion Ranger + any 1-mana dork loops infinitely but nets 0 mana. Add Beast Whisperer or Glademuse to draw your entire library for free. Then find Elvish Spirit Guide + Tireless Provisioner (each Ranger cast = Forest ETB = Treasure) to convert to infinite mana, or Temur Sabertooth to pivot to another line.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsDrawEngine: true,
@@ -402,7 +422,7 @@ const COMBOS = [
     name: "Sanitarium Mill — Temur Variant (Endurance ETB on Stack + Temur Sabertooth)",
     description: "Use Endurance's ETB as a floating 'library reset shield' while looping Sanitarium infinitely. Cast Endurance, hold its ETB on the stack, bounce Endurance with Sabertooth (ETB stays on stack), then loop Sanitarium until all opponents' libraries are empty. Requires infinite mana + a Sanitarium untap method.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Temur Sabertooth"],
-    onBattlefield: ["Geier Reach Sanitarium"],
+    onBattlefield: ["Geier Reach Sanitarium", "Temur Sabertooth"],
     needsInfiniteMana: true,
     needsUntapLand: true,
     priority: 10,
@@ -425,7 +445,7 @@ const COMBOS = [
     name: "Sanitarium Mill — Kogla Variant (Endurance + Kogla + Eternal Witness)",
     description: "Kill Endurance while its ETB is suspended on the stack (using Beast Within or Legolas's Quick Reflexes), then loop it back via Eternal Witness + Kogla. The ETB stays on the stack as protection while you loop Sanitarium. LQR only needs to be cast once per turn — its tap triggers persist and kill Endurance each iteration.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Kogla, the Titan Ape", "Eternal Witness"],
-    onBattlefield: ["Geier Reach Sanitarium"],
+    onBattlefield: ["Geier Reach Sanitarium", "Kogla, the Titan Ape", "Eternal Witness"],
     needsInfiniteMana: true,
     needsUntapLand: true,
     needsRemoval: true,
@@ -454,7 +474,7 @@ const COMBOS = [
     name: "Sanitarium Mill — Ashaya Variant (Endurance + Quirion/Scryb Ranger + LQR)",
     description: "Uses the Ashaya infinite Ranger loop as the Sanitarium untap engine. Legolas's Quick Reflexes is cast once; its tap triggers kill both Endurance and the Ranger while Endurance's First ETB is still on the stack. A Second Endurance ETB (from recasting) resets your graveyard, returning Endurance and the Ranger to your library so Duskwatch Recruiter can find them again to continue the loop.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Ashaya, Soul of the Wild", "Legolas's Quick Reflexes"],
-    onBattlefield: ["Geier Reach Sanitarium"],
+    onBattlefield: ["Geier Reach Sanitarium", "Ashaya, Soul of the Wild"],
     needsInfiniteMana: true,
     needsUntapLand: true,
     needsRanger: true,
@@ -482,6 +502,7 @@ const COMBOS = [
   {
     id: "poison_win",
     name: "Infectious Bite + Eternal Witness + Temur Sabertooth / Kogla (Poison Win)",
+    onBattlefield: ["Eternal Witness"],
     description: "Requires infinite mana. Cast Infectious Bite 10 times via Eternal Witness recursion. Each cast gives every opponent 1 poison counter. 10 poison counters = loss. Works with Sabertooth (bounce Witness) or Kogla (return Witness as Human on attack).",
     requires: ["Infectious Bite", "Eternal Witness"],
     needsAlsoBouncer: true,
@@ -501,6 +522,7 @@ const COMBOS = [
   {
     id: "glademuse_draw",
     name: "Ashaya + Quirion Ranger + Glademuse (Draw Library, Instant Speed)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger", "Glademuse"],
     description: "On an opponent's turn with Yeva flash active: each Quirion Ranger cast triggers Glademuse (you cast a spell off-turn → you draw). The mana-neutral loop now draws your entire library. Then find Tireless Provisioner to generate Treasures each loop → infinite mana.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger", "Glademuse"],
     priority: 9,
@@ -519,6 +541,7 @@ const COMBOS = [
   {
     id: "eladamri_yavimaya",
     name: "Eladamri + Yavimaya (Unblockable Army — Combat Win)",
+    onBattlefield: ["Eladamri, Korvecdal", "Yavimaya, Cradle of Growth"],
     description: "Non-infinite but game-winning. Yavimaya makes all lands Forests for all players. Eladamri gives all your creatures forestwalk and shroud from opponents. Since all opponents always control a Forest (Yavimaya), your entire army is completely unblockable and untargetable.",
     requires: ["Eladamri, Korvecdal", "Yavimaya, Cradle of Growth"],
     priority: 6,
@@ -535,6 +558,8 @@ const COMBOS = [
   {
     id: "yisan_engine",
     name: "Yisan the Wanderer Bard — Verse Tutor Chain",
+    onBattlefield: ["Yisan, the Wanderer Bard"],
+    mustPreExist: ["Yisan, the Wanderer Bard"],
     description: "Yisan tutors a creature of CMC equal to its current verse counter count. With Quirion Ranger you can untap Yisan after activating and activate again at the same verse — 2 tutors per activation window. Seedborn Muse gives you a Yisan activation on every opponent's turn.",
     requires: ["Yisan, the Wanderer Bard"],
     priority: 6,
@@ -553,6 +578,7 @@ const COMBOS = [
   {
     id: "survival_witness",
     name: "Survival of the Fittest + Eternal Witness (Infinite Tutoring)",
+    onBattlefield: ["Survival of the Fittest"],
     description: "With infinite mana: discard any creature to Survival to search for Eternal Witness. Witness ETB retrieves the discarded creature. Discard it again to search for any creature in library. Repeat to assemble any board state.",
     requires: ["Survival of the Fittest", "Eternal Witness"],
     priority: 7,
@@ -704,6 +730,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Badgermole Cub needs Temur Sabertooth specifically — Kogla only bounces Humans, not Badgers
   const badgermoleActive = (board.has("Badgermole Cub") || inHand.has("Badgermole Cub")) && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
+  const yevaFlash        = board.has("Yeva, Nature's Herald");
 
   // Compute infiniteManaActive early so all subsequent checks can use it safely
   const infiniteManaActive = (() => {
@@ -716,6 +743,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
     return false;
   })();
+
+  // Can we cast permanents into play this turn? (our turn, Yeva flash, or infinite mana)
+  const canCastNow = isMyTurn || yevaFlash || infiniteManaActive;
+  // Haste enabler: Ashaya (board or castable) + Destiny Spinner/Badgermole makes all creature-Forests tap immediately
+  const ashayaAvailable   = board.has("Ashaya, Soul of the Wild") || (inHand.has("Ashaya, Soul of the Wild") && canCastNow);
+  const hasHasteEnabler   = ashayaAvailable && hasLandAnimate;
 
   const results = [];
 
@@ -1760,7 +1793,37 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- CHECK ACTIVE COMBOS ----
   for (const combo of COMBOS) {
-    const missing = combo.requires.filter(r => !board.has(r) && !inHand.has(r));
+    // mustPreExist: cards with summoning sickness that must tap to function
+    //   Argothian Elder, Magus of the Candelabra, Arbor Elf, Fanatic of Rhonas, Yisan
+    //   (Lands like Sanitarium and Wirewood Lodge do NOT enter tapped — no mustPreExist needed)
+    const mustPreExist   = combo.mustPreExist ?? [];
+    // onBattlefield: cards that must be in play to execute, but can be cast this turn
+    const onBattlefield  = combo.onBattlefield ?? combo.requires;
+    // requires: all needed cards — those not in onBattlefield are spells cast during the combo
+    const canBeAnywhere  = combo.requires;
+
+    // Tier 1: mustPreExist — summoning-sick tappers must already be on board.
+    //   Exception: if a haste enabler is available (Ashaya + Destiny Spinner/Badgermole),
+    //   these cards can be cast this turn and tap immediately.
+    const missingPreExist   = mustPreExist.filter(r => {
+      if (board.has(r)) return false;                              // already there
+      if (inHand.has(r) && hasHasteEnabler && canCastNow) return false; // haste available
+      return true;
+    });
+    // Tier 2: onBattlefield (non-mustPreExist) — can be in hand and cast/played this turn
+    const castableOnBoard   = onBattlefield.filter(r => !mustPreExist.includes(r));
+    const missingCastable   = castableOnBoard.filter(r => {
+      if (board.has(r)) return false;
+      if (!inHand.has(r)) return true;                            // not accessible at all
+      if (CARDS[r]?.type === "land") return !isMyTurn;           // lands: only on our turn
+      return !canCastNow;                                         // spells/creatures: canCastNow
+    });
+    // Tier 3: requires-only (spells cast during combo) — anywhere in hand or board
+    const requiresOnly      = canBeAnywhere.filter(r => !onBattlefield.includes(r));
+    const missingAnywhere   = requiresOnly.filter(r => !board.has(r) && !inHand.has(r));
+
+    const missing = [...new Set([...missingPreExist, ...missingCastable, ...missingAnywhere])];
+
     const extras = comboExtrasSatisfied(combo);
 
     if (missing.length === 0 && extras.ok) {
@@ -1774,7 +1837,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "engine":        { ready: "🔄 ENGINE READY",          cast: "⚡ ACTIVATE ENGINE",            readyPrefix: "ACTIVATE:",    boost: 1, color: "#a569bd" },
       }[combo.type] || { ready: "🔄 COMBO ASSEMBLED",  cast: "⚡ ASSEMBLE COMBO", readyPrefix: "EXECUTE:", boost: 3, color: "#58d68d" };
 
-      const needToCast = combo.onBattlefield ? combo.onBattlefield.filter(r => inHand.has(r)) : combo.requires.filter(r => inHand.has(r));
+      // needToCast = castable-on-board cards in hand + requires-only spell cards in hand
+      const needToCast = [
+        ...castableOnBoard.filter(r => inHand.has(r) && !board.has(r)), // permanents to cast
+        ...requiresOnly.filter(r => inHand.has(r)),                     // spells cast during combo
+      ];
       if (needToCast.length === 0) {
         results.push({
           priority: combo.priority + typeMeta.boost,
@@ -1839,7 +1906,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Endurance is required for any Sanitarium mill win — it prevents self-decking.
   // Check if it's accessible: on board, in hand and castable, or in the graveyard
   // (retrievable by Eternal Witness). Flash means it can be cast at instant speed.
-  const yevaFlash         = board.has("Yeva, Nature's Herald");
+  // yevaFlash moved to top-of-function early declarations
 
   const enduranceOnBoard     = board.has("Endurance");
   const enduranceInHand      = inHand.has("Endurance");
