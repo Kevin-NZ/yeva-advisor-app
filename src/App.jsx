@@ -564,6 +564,25 @@ const COMBOS = [
 // ============================================================
 
 // ============================================================
+// URL STATE — compress JSON with DeflateRaw, base64 encode into ?s= param
+// ============================================================
+async function compressState(obj) {
+  const json = JSON.stringify(obj);
+  const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  const buf = await new Response(stream).arrayBuffer();
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); // URL-safe base64
+}
+
+async function decompressState(encoded) {
+  const bin = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
+  const buf = Uint8Array.from(bin, c => c.charCodeAt(0));
+  const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  const text = await new Response(stream).text();
+  return JSON.parse(text);
+}
+
+// ============================================================
 // EASTER EGG — secret card names that trigger special responses
 // ============================================================
 const undo = s => s.replace(/[a-zA-Z]/g, c =>
@@ -2879,6 +2898,23 @@ export default function YevaAdvisor() {
   const [isMyTurn, setIsMyTurn] = useState(false);
   const [advice, setAdvice] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  // Load state from ?s= URL param on first mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const encoded = params.get("s");
+    if (!encoded) return;
+    decompressState(encoded).then(state => {
+      if (state.hand)        setHand(state.hand);
+      if (state.battlefield) setBattlefield(state.battlefield);
+      if (state.graveyard)   setGraveyard(state.graveyard);
+      if (state.mana != null) setMana(String(state.mana));
+      if (state.isMyTurn != null) setIsMyTurn(state.isMyTurn);
+      // Clean the URL without reloading
+      window.history.replaceState({}, "", window.location.pathname);
+    }).catch(() => {}); // silently ignore malformed params
+  }, []);
   // Each card is unique — adding to one zone removes it from the other two
   const addTo = (zone) => (card) => {
     if (zone !== "hand")        setHand(prev        => prev.filter(c => c !== card));
@@ -3023,6 +3059,21 @@ export default function YevaAdvisor() {
                       borderRadius: "5px", padding: "4px 10px",
                       color: COLORS.textMid, cursor: "pointer", fontSize: "11px",
                     }}>📋 Copy JSON</button>
+                    <button onClick={() => {
+                      const state = { hand, battlefield, graveyard, mana: Number(mana), isMyTurn };
+                      compressState(state).then(encoded => {
+                        const url = `${window.location.origin}${window.location.pathname}?s=${encoded}`;
+                        navigator.clipboard.writeText(url);
+                        setLinkCopied(true);
+                        setTimeout(() => setLinkCopied(false), 2000);
+                      });
+                    }} style={{
+                      background: "#1a2a3a", border: `1px solid ${COLORS.border}`,
+                      borderRadius: "5px", padding: "4px 10px",
+                      color: linkCopied ? "#5dade2" : COLORS.textMid,
+                      cursor: "pointer", fontSize: "11px",
+                      transition: "color 0.2s",
+                    }}>{linkCopied ? "✓ Copied!" : "🔗 Copy Link"}</button>
                     <button onClick={() => setShowDebug(false)} style={{
                       background: "none", border: `1px solid ${COLORS.border}`,
                       borderRadius: "5px", padding: "4px 10px",
