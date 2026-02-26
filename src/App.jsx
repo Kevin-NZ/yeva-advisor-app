@@ -402,6 +402,7 @@ const COMBOS = [
     name: "Sanitarium Mill — Temur Variant (Endurance ETB on Stack + Temur Sabertooth)",
     description: "Use Endurance's ETB as a floating 'library reset shield' while looping Sanitarium infinitely. Cast Endurance, hold its ETB on the stack, bounce Endurance with Sabertooth (ETB stays on stack), then loop Sanitarium until all opponents' libraries are empty. Requires infinite mana + a Sanitarium untap method.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Temur Sabertooth"],
+    onBattlefield: ["Geier Reach Sanitarium"],
     needsInfiniteMana: true,
     needsUntapLand: true,
     priority: 10,
@@ -424,6 +425,7 @@ const COMBOS = [
     name: "Sanitarium Mill — Kogla Variant (Endurance + Kogla + Eternal Witness)",
     description: "Kill Endurance while its ETB is suspended on the stack (using Beast Within or Legolas's Quick Reflexes), then loop it back via Eternal Witness + Kogla. The ETB stays on the stack as protection while you loop Sanitarium. LQR only needs to be cast once per turn — its tap triggers persist and kill Endurance each iteration.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Kogla, the Titan Ape", "Eternal Witness"],
+    onBattlefield: ["Geier Reach Sanitarium"],
     needsInfiniteMana: true,
     needsUntapLand: true,
     needsRemoval: true,
@@ -452,6 +454,7 @@ const COMBOS = [
     name: "Sanitarium Mill — Ashaya Variant (Endurance + Quirion/Scryb Ranger + LQR)",
     description: "Uses the Ashaya infinite Ranger loop as the Sanitarium untap engine. Legolas's Quick Reflexes is cast once; its tap triggers kill both Endurance and the Ranger while Endurance's First ETB is still on the stack. A Second Endurance ETB (from recasting) resets your graveyard, returning Endurance and the Ranger to your library so Duskwatch Recruiter can find them again to continue the loop.",
     requires: ["Geier Reach Sanitarium", "Endurance", "Ashaya, Soul of the Wild", "Legolas's Quick Reflexes"],
+    onBattlefield: ["Geier Reach Sanitarium"],
     needsInfiniteMana: true,
     needsUntapLand: true,
     needsRanger: true,
@@ -803,14 +806,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     //   6. Wirewood Symbiote + Destiny Spinner (Spinner animates land, Symbiote untaps via elf bounce)
     //   7. Ashaya + Argothian Elder (tap Elder to untap 2 lands)
     if (combo.needsUntapLand) {
-      const hasAshaya      = board.has("Ashaya, Soul of the Wild");
+      const hasAshaya      = board.has("Ashaya, Soul of the Wild") || inHand.has("Ashaya, Soul of the Wild");
       const hasQuirion     = board.has("Quirion Ranger")  || inHand.has("Quirion Ranger");
       const hasScryb       = board.has("Scryb Ranger")    || inHand.has("Scryb Ranger");
-      const hasMagus       = board.has("Magus of the Candelabra");
-      const hasElder       = board.has("Argothian Elder");
       const hasSpinner     = board.has("Destiny Spinner");
-      const hasHyrax       = board.has("Hyrax Tower Scout");
-      const hasSymbiote    = board.has("Wirewood Symbiote");
+      const hasMagus       = board.has("Magus of the Candelabra") || (inHand.has("Magus of the Candelabra") && hasSpinner);
+      const hasElder       = board.has("Argothian Elder") || (inHand.has("Argothian Elder") && hasSpinner); 
+      const hasHyrax       = inHand.has("Hyrax Tower Scout");
+      const hasSymbiote    = board.has("Wirewood Symbiote") || inHand.has("Wirewood Symbiote");
       const hasWoodcaller  = board.has("Woodcaller Automaton") || inHand.has("Woodcaller Automaton");
 
       const hasUntapMethod =
@@ -1732,7 +1735,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "engine":        { ready: "🔄 ENGINE READY",          cast: "⚡ ACTIVATE ENGINE",            readyPrefix: "ACTIVATE:",    boost: 1, color: "#a569bd" },
       }[combo.type] || { ready: "🔄 COMBO ASSEMBLED",  cast: "⚡ ASSEMBLE COMBO", readyPrefix: "EXECUTE:", boost: 3, color: "#58d68d" };
 
-      const needToCast = combo.requires.filter(r => inHand.has(r));
+      const needToCast = combo.onBattlefield ? combo.onBattlefield.filter(r => inHand.has(r)) : combo.requires.filter(r => inHand.has(r));
       if (needToCast.length === 0) {
         results.push({
           priority: combo.priority + typeMeta.boost,
