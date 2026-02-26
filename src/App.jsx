@@ -2899,6 +2899,7 @@ export default function YevaAdvisor() {
   const [advice, setAdvice] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [jsonCopied, setJsonCopied] = useState(false);
 
   // Load state from ?s= URL param on first mount
   useEffect(() => {
@@ -3054,11 +3055,15 @@ export default function YevaAdvisor() {
                         advice: advice.map(a => ({ priority: a.priority, category: a.category, headline: a.headline })),
                       };
                       navigator.clipboard.writeText(JSON.stringify(dump, null, 2));
+                      setJsonCopied(true);
+                      setTimeout(() => setJsonCopied(false), 2000);
                     }} style={{
                       background: "#1a3a1a", border: `1px solid ${COLORS.border}`,
                       borderRadius: "5px", padding: "4px 10px",
-                      color: COLORS.textMid, cursor: "pointer", fontSize: "11px",
-                    }}>📋 Copy JSON</button>
+                      color: jsonCopied ? "#5dade2" : COLORS.textMid,
+                      cursor: "pointer", fontSize: "11px",
+                      transition: "color 0.2s",
+                    }}>{jsonCopied ? "✓ Copied!" : "📋 Copy JSON"}</button>
                     <button onClick={() => {
                       const state = { hand, battlefield, graveyard, mana: Number(mana), isMyTurn };
                       compressState(state).then(encoded => {
@@ -3164,7 +3169,6 @@ export default function YevaAdvisor() {
                 marginBottom: "10px",
               }}>GAME STATE</div>
               <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "12px" }}>
-                <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.textDim, letterSpacing: "1px" }}>TURN</label>
                 {["My Turn", "Opponent's Turn"].map(label => {
                   const isMine = label === "My Turn";
                   const active = isMyTurn === isMine;
