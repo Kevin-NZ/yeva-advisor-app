@@ -699,6 +699,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Exact green devotion: sum of devotion field for every permanent on the battlefield
   const devotionOnBoard = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
 
+  // Compute infiniteManaActive early so all subsequent checks can use it safely
+  const infiniteManaActive = (() => {
+    for (const combo of COMBOS) {
+      if (combo.type !== "infinite-mana") continue;
+      const allOnBoard = combo.requires.every(r => board.has(r));
+      if (!allOnBoard) continue;
+      const extras = comboExtrasSatisfied(combo);
+      if (extras.ok) return true;
+    }
+    return false;
+  })();
+
   const results = [];
 
   // ---- HELPER: exact mana output of a dork given board context ----
@@ -913,7 +925,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- ARBOR ELF + AURA SYNERGY ----
-  if (board.has("Arbor Elf") && (inHand.has("Utopia Sprawl") || inHand.has("Wild Growth")) && mana >= 1) {
+  if (board.has("Arbor Elf") && (inHand.has("Utopia Sprawl") || inHand.has("Wild Growth")) && (mana >= 1 || infiniteManaActive)) {
     const aura = inHand.has("Utopia Sprawl") ? "Utopia Sprawl" : "Wild Growth";
     results.push({
       priority: 9,
@@ -1694,18 +1706,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- DUSKWATCH RECRUITER (infinite mana → full win pile) ----
-  // Detect whether infinite mana is active on the board
-  const infiniteManaActive = (() => {
-    // Check each infinite-mana combo: are all required named pieces on the battlefield?
-    for (const combo of COMBOS) {
-      if (combo.type !== "infinite-mana") continue;
-      const allOnBoard = combo.requires.every(r => board.has(r));
-      if (!allOnBoard) continue;
-      const extras = comboExtrasSatisfied(combo);
-      if (extras.ok) return true;
-    }
-    return false;
-  })();
 
   if (inHand.has("Crop Rotation")) {
     const keyLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Geier Reach Sanitarium","Wirewood Lodge","Deserted Temple"];
@@ -1799,7 +1799,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // One named piece missing
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const missingCard = missing[0];
-        const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana);
+        const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive);
         if (tutorOptions.length > 0) {
           results.push({
             priority: combo.priority + 1,
@@ -1815,7 +1815,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     } else if (missing.length === 0 && !extras.ok) {
       // Named pieces present but need an extra condition satisfied
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
-        const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana);
+        const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana, infiniteManaActive);
         results.push({
           priority: combo.priority,
           category: "🔧 NEARLY THERE",
@@ -2038,10 +2038,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     || (reclaimerInHand && yevaFlash);
 
   // Reclaimer's ability can activate if it's on the board AND:
-  //   a) it has haste (Destiny Spinner on board, or Concordant Crossroads) — tap immediately
+  //   a) it has haste — Destiny Spinner animates LANDS as creatures with haste, so Reclaimer
+  //      only gets this if Ashaya is also in play (making Reclaimer a Forest/creature).
+  //      Badgermole Cub works the same way (also needs Ashaya + bouncer via badgermoleActive).
   //   b) it has been on board since our turn started (no haste needed, not summoning sick)
   //     → we approximate this as: on board AND it's our turn (player is responsible for tracking sickness)
-  const reclaimerHaste = reclaimerOnBoard && hasLandAnimate;
+  const reclaimerHaste = reclaimerOnBoard && board.has("Ashaya, Soul of the Wild") && hasLandAnimate;
   const reclaimerCanActivate = reclaimerOnBoard && (reclaimerHaste || isMyTurn);
 
   if (reclaimerCastable || reclaimerCanActivate) {
@@ -2054,7 +2056,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         reason: `Taps for {G} per creature (currently ${creaturesOnBoard}) — Gaea's Cradle as a land. Fetch when Cradle isn't available.`,
         priority: infiniteManaActive ? 6 : 8 },
       { land: "Geier Reach Sanitarium", missing: !board.has("Geier Reach Sanitarium"),
-        reason: "Win condition with infinite mana — but ONLY if an untap method is also available (Woodcaller+Temur, Hyrax+Destiny, Ashaya+Magus, Ashaya+Ranger+Destiny, Ashaya+Symbiote+Destiny, or Ashaya+Elder+Destiny).",
+        reason: "Win condition with infinite mana — untap Sanitarium via: Woodcaller+Temur, Hyrax+Destiny Spinner, Ashaya+Magus, Ashaya+Ranger, Ashaya+Elder, Ashaya+Wirewood Symbiote, or Ashaya+Destiny Spinner (Reclaimer fetches it with haste, Ashaya makes it a Forest for your existing loop).",
         // Only a true win con if infinite mana is live AND a Sanitarium untap method is already on board
         priority: (() => {
           if (!infiniteManaActive) return 5;
@@ -2063,9 +2065,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             (board.has("Woodcaller Automaton") && board.has("Temur Sabertooth")) ||
             (board.has("Hyrax Tower Scout") && hasLandAnimate) ||
             (board.has("Ashaya, Soul of the Wild") && board.has("Magus of the Candelabra")) ||
-            (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger")) && hasLandAnimate) ||
+            (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger"))) ||
             (board.has("Ashaya, Soul of the Wild") && board.has("Wirewood Symbiote") && hasLandAnimate) ||
-            (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder") && hasLandAnimate);
+            (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder")) ||
+            // Ashaya + Destiny Spinner/Badgermole: Reclaimer fetches Sanitarium with haste,
+            // Ashaya makes Sanitarium a Forest so existing Ranger/Elder loops untap it
+            (board.has("Ashaya, Soul of the Wild") && hasLandAnimate);
           // Even with untap method, still need Endurance to avoid self-mill
           if (!hasUntapMethod) return 6;
           return enduranceReady ? 13 : 7;
@@ -2099,7 +2104,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Determine the action prefix
       const actionPrefix = reclaimerCanActivate
         ? (reclaimerHaste
-            ? "Tap Elvish Reclaimer (haste via Destiny Spinner)"
+            ? `Tap Elvish Reclaimer (haste via ${board.has("Ashaya, Soul of the Wild") && hasLandAnimate ? "Ashaya + " + (board.has("Destiny Spinner") ? "Destiny Spinner" : "Badgermole Cub") : board.has("Destiny Spinner") ? "Destiny Spinner" : "Badgermole Cub"})`
             : "Tap Elvish Reclaimer")
         : reclaimerInHand && isMyTurn
             ? "Cast + tap Elvish Reclaimer (needs haste or wait a turn)"
@@ -2604,27 +2609,27 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   return results.slice(0, 5); // Top 5 recommendations
 }
 
-function getTutorOptions(target, hand, battlefield, mana) {
+function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false) {
   const options = [];
   const board = new Set(battlefield);
   const inHand = new Set(hand);
 
   if (CARDS[target]?.type === "creature" || CARDS[target]?.type === "land") {
-    if (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteManaActive) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
+    if (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteMana) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
     if (inHand.has("Summoner's Pact") && CARDS[target]?.type === "creature") options.push("Summoner's Pact");
-    if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "creature" && (mana >= 3 || infiniteManaActive)) options.push("Archdruid's Charm (mode 2: find creature)");
+    if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
     if (inHand.has("Chord of Calling")) {
       const targetCmc = CARDS[target]?.cmc ?? 2;
       const chordCost = Math.max(0, targetCmc + 3 - (battlefield?.length ?? 0));
-      if (mana >= chordCost || infiniteManaActive) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, battlefield?.length ?? 0)} creatures)`);
+      if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, battlefield?.length ?? 0)} creatures)`);
     }
-    if (inHand.has("Green Sun's Zenith") && (mana >= 1 || infiniteManaActive)) options.push("Green Sun's Zenith");
-    if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteManaActive) && hand.some(c => CARDS[c]?.type === "creature")) options.push("Survival of the Fittest");
-    if (inHand.has("Crop Rotation") && CARDS[target]?.type === "land" && (mana >= 1 || infiniteManaActive)) options.push("Crop Rotation");
+    if (inHand.has("Green Sun's Zenith") && (mana >= 1 || infiniteMana)) options.push("Green Sun's Zenith");
+    if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteMana) && hand.some(c => CARDS[c]?.type === "creature")) options.push("Survival of the Fittest");
+    if (inHand.has("Crop Rotation") && CARDS[target]?.type === "land" && (mana >= 1 || infiniteMana)) options.push("Crop Rotation");
     if ((board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && CARDS[target]?.type === "land") options.push("Elvish Reclaimer");
-    if (inHand.has("Sylvan Scrying") && CARDS[target]?.type === "land" && (mana >= 2 || infiniteManaActive)) options.push("Sylvan Scrying");
-    if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "land" && (mana >= 3 || infiniteManaActive)) options.push("Archdruid's Charm");
-    if (inHand.has("Natural Order") && (mana >= 4 || infiniteManaActive)) options.push("Natural Order");
+    if (inHand.has("Sylvan Scrying") && CARDS[target]?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
+    if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
+    if (inHand.has("Natural Order") && (mana >= 4 || infiniteMana)) options.push("Natural Order");
   }
   return options;
 }
