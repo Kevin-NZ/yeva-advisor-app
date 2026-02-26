@@ -2916,6 +2916,15 @@ export default function YevaAdvisor() {
         ::-webkit-scrollbar-track { background: #07100788; }
         ::-webkit-scrollbar-thumb { background: #2d5a2d; border-radius: 3px; }
         input::placeholder { color: #3d6b3d; }
+        @media (max-width: 768px) {
+          .panels-wrapper { flex-direction: column; min-height: unset; }
+          .panel-input {
+            width: 100% !important; min-width: unset !important;
+            border-right: none !important;
+            border-bottom: 1px solid ${COLORS.border};
+          }
+          .panel-advice { padding: 16px !important; }
+        }
       `}</style>
 
       <div style={{
@@ -3085,12 +3094,12 @@ export default function YevaAdvisor() {
           )}
         </div>
 
-        <div style={{
+        <div className="panels-wrapper" style={{
           display: "flex", gap: "0", minHeight: "calc(100vh - 75px)",
         }}>
 
           {/* LEFT PANEL — Input */}
-          <div style={{
+          <div className="panel-input" style={{
             width: "360px", minWidth: "300px",
             borderRight: `1px solid ${COLORS.border}`,
             padding: "20px", overflowY: "auto",
@@ -3159,7 +3168,7 @@ export default function YevaAdvisor() {
           </div>
 
           {/* RIGHT PANEL — Advice */}
-          <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}>
+          <div className="panel-advice" style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}>
             {advice.length === 0 ? (
               <div style={{
                 display: "flex", flexDirection: "column",
