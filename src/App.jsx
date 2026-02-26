@@ -1762,7 +1762,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     } else if (missing.length === 1 && extras.ok) {
       // One named piece missing
-      if (combo.type == "infinite-mana" && !infiniteManaActive) {
+      if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const missingCard = missing[0];
         const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana);
         if (tutorOptions.length > 0) {
@@ -1779,7 +1779,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     } else if (missing.length === 0 && !extras.ok) {
       // Named pieces present but need an extra condition satisfied
-      if (combo.type == "infinite-mana" && !infiniteManaActive) {
+      if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana);
         results.push({
           priority: combo.priority,
