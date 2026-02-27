@@ -3045,10 +3045,11 @@ export default function YevaAdvisor() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
 
-  // Load state from ?s= URL param on first mount
+  // Load state from ?s= URL param on first mount; open debug panel if ?debug=1
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const encoded = params.get("s");
+    if (params.get("debug") === "1") setShowDebug(true);
     if (!encoded) return;
     decompressState(encoded).then(state => {
       if (state.hand)        setHand(state.hand);
@@ -3211,7 +3212,7 @@ export default function YevaAdvisor() {
                     <button onClick={() => {
                       const state = { hand, battlefield, graveyard, mana: Number(mana), isMyTurn };
                       compressState(state).then(encoded => {
-                        const url = `${window.location.origin}${window.location.pathname}?s=${encoded}`;
+                        const url = `${window.location.origin}${window.location.pathname}?s=${encoded}&debug=1`;
                         navigator.clipboard.writeText(url);
                         setLinkCopied(true);
                         setTimeout(() => setLinkCopied(false), 2000);
