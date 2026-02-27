@@ -3088,18 +3088,6 @@ export default function YevaAdvisor() {
   const creaturesOnBoard = battlefield.filter(c => CARDS[c]?.type === "creature").length;
   const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
 
-  // ?debug=1 — return raw JSON output instead of the full UI
-  const debugMode = new URLSearchParams(window.location.search).get("debug") === "1";
-  if (debugMode) {
-    const debugResults = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: mana, isMyTurn });
-    return (
-      <pre style={{ margin: 0, padding: 16, background: "#0a0f0a", color: "#c8e6c8",
-        fontFamily: "monospace", fontSize: 12, minHeight: "100vh", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {JSON.stringify({ input: { hand, battlefield, graveyard, mana, isMyTurn }, output: debugResults }, null, 2)}
-      </pre>
-    );
-  }
-
   return (
     <>
       <style>{fonts}</style>
@@ -3437,4 +3425,23 @@ export default function YevaAdvisor() {
       </div>
     </>
   );
+}
+
+// ?debug=1 — if present, decode ?s= state, run analysis, and output plain JSON.
+// Runs synchronously before React mounts so the page is never rendered as UI.
+if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "1") {
+  const params = new URLSearchParams(window.location.search);
+  const encoded = params.get("s");
+  const renderDebug = (state) => {
+    const { hand = [], battlefield = [], graveyard = [], mana = "0", isMyTurn = true } = state;
+    const output = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: String(mana), isMyTurn });
+    document.open("text/plain");
+    document.write(JSON.stringify({ input: { hand, battlefield, graveyard, mana, isMyTurn }, output }, null, 2));
+    document.close();
+  };
+  if (encoded) {
+    decompressState(encoded).then(state => renderDebug(state)).catch(() => renderDebug({}));
+  } else {
+    renderDebug({});
+  }
 }
