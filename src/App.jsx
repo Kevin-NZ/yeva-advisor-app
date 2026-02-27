@@ -3045,11 +3045,11 @@ export default function YevaAdvisor() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
 
-  // Load state from ?s= URL param on first mount; open debug panel if ?debug=1
+  // Load state from ?s= URL param on first mount
+  // If ?debug=1 is present, render raw JSON output instead of the full UI
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const encoded = params.get("s");
-    if (params.get("debug") === "1") setShowDebug(true);
     if (!encoded) return;
     decompressState(encoded).then(state => {
       if (state.hand)        setHand(state.hand);
@@ -3087,6 +3087,18 @@ export default function YevaAdvisor() {
   const elvesOnBoard     = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => CARDS[c]?.type === "creature").length;
   const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
+
+  // ?debug=1 — return raw JSON output instead of the full UI
+  const debugMode = new URLSearchParams(window.location.search).get("debug") === "1";
+  if (debugMode) {
+    const debugResults = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: mana, isMyTurn });
+    return (
+      <pre style={{ margin: 0, padding: 16, background: "#0a0f0a", color: "#c8e6c8",
+        fontFamily: "monospace", fontSize: 12, minHeight: "100vh", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        {JSON.stringify({ input: { hand, battlefield, graveyard, mana, isMyTurn }, output: debugResults }, null, 2)}
+      </pre>
+    );
+  }
 
   return (
     <>
@@ -3212,7 +3224,7 @@ export default function YevaAdvisor() {
                     <button onClick={() => {
                       const state = { hand, battlefield, graveyard, mana: Number(mana), isMyTurn };
                       compressState(state).then(encoded => {
-                        const url = `${window.location.origin}${window.location.pathname}?s=${encoded}&debug=1`;
+                        const url = `${window.location.origin}${window.location.pathname}?s=${encoded}`;
                         navigator.clipboard.writeText(url);
                         setLinkCopied(true);
                         setTimeout(() => setLinkCopied(false), 2000);
