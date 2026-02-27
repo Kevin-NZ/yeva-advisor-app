@@ -2855,7 +2855,8 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
         setSecret(null);
         setSuggs(ALL_CARD_NAMES.filter(n => {
           if (!n.toLowerCase().includes(v.toLowerCase())) return false;
-          if (cards.includes(n)) return false;
+          const isBasic = CARDS[n]?.tags?.includes("basic");
+          if (!isBasic && cards.includes(n)) return false;
           if (zone === "battlefield") {
             const type = CARDS[n]?.type;
             if (type === "instant" || type === "sorcery") return false;
@@ -2904,7 +2905,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
             {placeholder}
           </span>
         )}
-        {cards.map(n => <CardPill key={n} name={n} zone={zone} onRemove={onRemove} />)}
+        {cards.map((n, i) => <CardPill key={`${n}-${i}`} name={n} zone={zone} onRemove={onRemove} />)}
       </div>
 
       <div style={{ position: "relative" }}>
@@ -3063,27 +3064,27 @@ function PlayfieldCard({ name, tapped, onToggleTap, onRemove, draggable = false,
 }
 
 function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield, onMoveToBattlefield }) {
-  const [tapped,    setTapped]    = useState(new Set());
+  const [tapped,    setTapped]    = useState(new Set()); // indices into battlefield
   const [open,      setOpen]      = useState(false);
   const [dropOver,  setDropOver]  = useState(false);
 
-  // When battlefield changes, clear tapped state for removed cards
+  // When battlefield changes, drop any out-of-range indices
   useEffect(() => {
     setTapped(prev => {
-      const next = new Set([...prev].filter(n => battlefield.includes(n)));
+      const next = new Set([...prev].filter(i => i < battlefield.length));
       return next.size === prev.size ? prev : next;
     });
   }, [battlefield]);
 
-  const toggleTap = useCallback((name) => {
+  const toggleTap = useCallback((i) => {
     setTapped(prev => {
       const next = new Set(prev);
-      next.has(name) ? next.delete(name) : next.add(name);
+      next.has(i) ? next.delete(i) : next.add(i);
       return next;
     });
   }, []);
 
-  const tapAll   = () => setTapped(new Set(battlefield));
+  const tapAll   = () => setTapped(new Set(battlefield.map((_, i) => i)));
   const untapAll = () => setTapped(new Set());
 
   const handleDragOver = e => {
@@ -3178,11 +3179,11 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
             DROP TO CAST
           </span>
         )}
-        {battlefield.map(name => (
+        {battlefield.map((name, i) => (
           <PlayfieldCard
-            key={name} name={name}
-            tapped={tapped.has(name)}
-            onToggleTap={toggleTap}
+            key={`${name}-${i}`} name={name}
+            tapped={tapped.has(i)}
+            onToggleTap={() => toggleTap(i)}
             onRemove={onRemoveFromBattlefield}
           />
         ))}
@@ -3202,12 +3203,12 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
             No cards in hand
           </span>
         )}
-        {hand.map(name => {
+        {hand.map((name, i) => {
           const type = CARDS[name]?.type;
           const canCast = type !== "instant" && type !== "sorcery";
           return (
             <PlayfieldCard
-              key={name} name={name}
+              key={`${name}-${i}`} name={name}
               tapped={false}
               onToggleTap={() => {}}
               onRemove={onRemoveFromHand}
@@ -3363,11 +3364,12 @@ export default function YevaAdvisor() {
       const type = CARDS[card]?.type;
       if (type === "instant" || type === "sorcery") return;
     }
+    const isBasic = CARDS[card]?.tags?.includes("basic");
     if (zone !== "hand")        setHand(prev        => prev.filter(c => c !== card));
-    if (zone !== "battlefield") setBattlefield(prev => prev.filter(c => c !== card));
-    if (zone !== "graveyard")   setGraveyard(prev   => prev.filter(c => c !== card));
+    if (zone !== "battlefield") setBattlefield(prev => isBasic ? prev : prev.filter(c => c !== card));
+    if (zone !== "graveyard")   setGraveyard(prev   => isBasic ? prev : prev.filter(c => c !== card));
     const setter = zone === "hand" ? setHand : zone === "battlefield" ? setBattlefield : setGraveyard;
-    setter(prev => prev.includes(card) ? prev : [...prev, card]);
+    setter(prev => (!isBasic && prev.includes(card)) ? prev : [...prev, card]);
   };
   const removeFrom = (setter) => (card) => setter(prev => prev.filter(c => c !== card));
 
