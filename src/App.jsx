@@ -2853,9 +2853,15 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
         setSuggs([]);
       } else {
         setSecret(null);
-        setSuggs(ALL_CARD_NAMES.filter(n =>
-          n.toLowerCase().includes(v.toLowerCase()) && !cards.includes(n)
-        ).slice(0, 7));
+        setSuggs(ALL_CARD_NAMES.filter(n => {
+          if (!n.toLowerCase().includes(v.toLowerCase())) return false;
+          if (cards.includes(n)) return false;
+          if (zone === "battlefield") {
+            const type = CARDS[n]?.type;
+            if (type === "instant" || type === "sorcery") return false;
+          }
+          return true;
+        }).slice(0, 7));
       }
     });
   };
@@ -2978,21 +2984,32 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
 }
 
 // ── PLAYFIELD VISUALISER ──────────────────────────────────────────────────────
-function PlayfieldCard({ name, tapped, onToggleTap, onRemove }) {
+function PlayfieldCard({ name, tapped, onToggleTap, onRemove, draggable = false, onDragStart }) {
   const url = useScryfallImage(name);
   const [hovered, setHovered] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const cardW = 80, cardH = 112;
 
   return (
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      draggable={draggable}
+      onDragStart={e => {
+        e.dataTransfer.setData("text/plain", name);
+        e.dataTransfer.effectAllowed = "move";
+        setDragging(true);
+        onDragStart?.();
+      }}
+      onDragEnd={() => setDragging(false)}
       style={{
         position: "relative",
         width: tapped ? cardH : cardW,
         height: tapped ? cardW : cardH,
         flexShrink: 0,
         transition: "width 0.2s, height 0.2s",
+        opacity: dragging ? 0.4 : 1,
+        cursor: draggable ? "grab" : "default",
       }}
     >
       {/* Card image or placeholder */}
@@ -3005,7 +3022,7 @@ function PlayfieldCard({ name, tapped, onToggleTap, onRemove }) {
           transformOrigin: "top left",
           transform: tapped ? `rotate(90deg) translateY(-${cardH}px)` : "none",
           transition: "transform 0.2s",
-          cursor: "pointer",
+          cursor: draggable ? "grab" : "pointer",
           boxShadow: hovered
             ? "0 0 0 2px #4ade80, 0 4px 16px rgba(0,0,0,0.7)"
             : "0 2px 8px rgba(0,0,0,0.6)",
@@ -3014,7 +3031,7 @@ function PlayfieldCard({ name, tapped, onToggleTap, onRemove }) {
         }}
       >
         {url && url !== "error" ? (
-          <img src={url} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          <img src={url} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} draggable={false} />
         ) : (
           <div style={{
             width: "100%", height: "100%", display: "flex", alignItems: "center",
@@ -3045,9 +3062,10 @@ function PlayfieldCard({ name, tapped, onToggleTap, onRemove }) {
   );
 }
 
-function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield }) {
-  const [tapped, setTapped]   = useState(new Set());
-  const [open,   setOpen]     = useState(false);
+function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield, onMoveToBattlefield }) {
+  const [tapped,    setTapped]    = useState(new Set());
+  const [open,      setOpen]      = useState(false);
+  const [dropOver,  setDropOver]  = useState(false);
 
   // When battlefield changes, clear tapped state for removed cards
   useEffect(() => {
@@ -3065,8 +3083,24 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
     });
   }, []);
 
-  const tapAll = () => setTapped(new Set(battlefield));
+  const tapAll   = () => setTapped(new Set(battlefield));
   const untapAll = () => setTapped(new Set());
+
+  const handleDragOver = e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropOver(true);
+  };
+  const handleDragLeave = () => setDropOver(false);
+  const handleDrop = e => {
+    e.preventDefault();
+    setDropOver(false);
+    const name = e.dataTransfer.getData("text/plain");
+    if (!name || !hand.includes(name)) return;
+    const type = CARDS[name]?.type;
+    if (type === "instant" || type === "sorcery") return;
+    onMoveToBattlefield(name);
+  };
 
   if (!open) {
     return (
@@ -3117,17 +3151,31 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
         }}>▲ hide</button>
       </div>
 
-      {/* Battlefield */}
+      {/* Battlefield — drop target */}
       {zoneLabel("Battlefield", battlefield.length, COLORS.green3,
         <>{actionBtn("tap all", tapAll)}{actionBtn("untap all", untapAll)}</>
       )}
-      <div style={{
-        minHeight: 120, display: "flex", flexWrap: "wrap", gap: 6,
-        alignItems: "flex-start", padding: "6px 0 8px",
-      }}>
-        {battlefield.length === 0 && (
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        style={{
+          minHeight: 120, display: "flex", flexWrap: "wrap", gap: 6,
+          alignItems: "flex-start", padding: "6px 0 8px",
+          borderRadius: 6,
+          border: dropOver ? `2px dashed ${COLORS.green3}` : "2px dashed transparent",
+          background: dropOver ? COLORS.green3 + "11" : "transparent",
+          transition: "border-color 0.15s, background 0.15s",
+        }}
+      >
+        {battlefield.length === 0 && !dropOver && (
           <span style={{ color: COLORS.textDim, fontSize: 11, fontStyle: "italic", padding: "4px 0" }}>
-            No permanents
+            No permanents — drag cards here from hand
+          </span>
+        )}
+        {dropOver && (
+          <span style={{ color: COLORS.green3, fontSize: 11, padding: "4px 0", fontFamily: "'Cinzel', serif", letterSpacing: 1 }}>
+            DROP TO CAST
           </span>
         )}
         {battlefield.map(name => (
@@ -3143,7 +3191,7 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
       {/* Divider */}
       <div style={{ height: 1, background: COLORS.border, margin: "4px 0 0" }} />
 
-      {/* Hand */}
+      {/* Hand — draggable cards */}
       {zoneLabel("Hand", hand.length, COLORS.green1, null)}
       <div style={{
         display: "flex", flexWrap: "wrap", gap: 6,
@@ -3154,17 +3202,22 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
             No cards in hand
           </span>
         )}
-        {hand.map(name => (
-          <PlayfieldCard
-            key={name} name={name}
-            tapped={false}
-            onToggleTap={() => {}}
-            onRemove={onRemoveFromHand}
-          />
-        ))}
+        {hand.map(name => {
+          const type = CARDS[name]?.type;
+          const canCast = type !== "instant" && type !== "sorcery";
+          return (
+            <PlayfieldCard
+              key={name} name={name}
+              tapped={false}
+              onToggleTap={() => {}}
+              onRemove={onRemoveFromHand}
+              draggable={canCast}
+            />
+          );
+        })}
       </div>
       <div style={{ marginTop: 6, fontSize: 10, color: COLORS.textDim, fontStyle: "italic" }}>
-        Click a battlefield card to tap / untap · hover for full image
+        Drag hand → battlefield to cast · click battlefield card to tap/untap · hover for image
       </div>
     </div>
   );
@@ -3306,6 +3359,10 @@ export default function YevaAdvisor() {
   }, []);
   // Each card is unique — adding to one zone removes it from the other two
   const addTo = (zone) => (card) => {
+    if (zone === "battlefield") {
+      const type = CARDS[card]?.type;
+      if (type === "instant" || type === "sorcery") return;
+    }
     if (zone !== "hand")        setHand(prev        => prev.filter(c => c !== card));
     if (zone !== "battlefield") setBattlefield(prev => prev.filter(c => c !== card));
     if (zone !== "graveyard")   setGraveyard(prev   => prev.filter(c => c !== card));
@@ -3614,6 +3671,7 @@ export default function YevaAdvisor() {
               battlefield={battlefield}
               onRemoveFromHand={removeFrom(setHand)}
               onRemoveFromBattlefield={removeFrom(setBattlefield)}
+              onMoveToBattlefield={addTo("battlefield")}
             />
 
           </div>
