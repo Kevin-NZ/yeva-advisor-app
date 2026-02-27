@@ -1617,10 +1617,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ---- CROP ROTATION FOR KEY LAND ----
-
-
-
   // ---- ARBOR ELF ADVICE ----
   if (board.has("Arbor Elf")) {
     const hasAura    = board.has("Utopia Sprawl") || board.has("Wild Growth");
@@ -1739,7 +1735,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   }
 
-  // ---- DUSKWATCH RECRUITER (infinite mana → full win pile) ----
+  // ---- CROP ROTATION FOR KEY LAND ----
 
   if (inHand.has("Crop Rotation")) {
     const keyLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Geier Reach Sanitarium","Wirewood Lodge","Deserted Temple"];
@@ -1916,6 +1912,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const enduranceReady       = enduranceOnBoard || enduranceInHand;
 
 
+  // ---- DUSKWATCH RECRUITER (infinite mana → full win pile) ----
   // Can we access Duskwatch Recruiter right now?
   // Direct: on board, in hand on our turn, or in hand with Yeva (flash)
   const duskwatchOnBoard  = board.has("Duskwatch Recruiter");
