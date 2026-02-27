@@ -727,6 +727,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
   const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+  const speakerHasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
   // Badgermole Cub needs Temur Sabertooth specifically — Kogla only bounces Humans, not Badgers
   const badgermoleActive = (board.has("Badgermole Cub") || inHand.has("Badgermole Cub")) && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
@@ -1959,7 +1960,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     && (hasCreatureToDiscard || infiniteManaActive);
   // Formidable Speaker: ETB looks at top X cards (X = creatures), puts a creature into hand.
   // Repeatable with Temur Sabertooth or Kogla bounce. No discard cost.
-  const speakerHasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
   const speakerCanActivate = board.has("Formidable Speaker") && speakerHasBouncer;
   const activatedCreatureTutors = [
     ...(faunaCanActivate    ? ["Fauna Shaman"]              : []),
