@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
 // CARD DATABASE — every card in the deck with metadata
@@ -2753,16 +2753,73 @@ function Tag({ label, color }) {
   );
 }
 
+// ── Scryfall image cache (module-level, persists across renders) ──────────────
+const scryfallCache = new Map(); // cardName → image URL or "error"
+
+function useScryfallImage(name) {
+  const [url, setUrl] = useState(() => scryfallCache.get(name) || null);
+  useEffect(() => {
+    if (!name) return;
+    if (scryfallCache.has(name)) { setUrl(scryfallCache.get(name)); return; }
+    const encoded = encodeURIComponent(name);
+    fetch(`https://api.scryfall.com/cards/named?exact=${encoded}`)
+      .then(r => r.json())
+      .then(data => {
+        const imgUrl = data?.image_uris?.normal
+          || data?.card_faces?.[0]?.image_uris?.normal
+          || "error";
+        scryfallCache.set(name, imgUrl);
+        setUrl(imgUrl);
+      })
+      .catch(() => { scryfallCache.set(name, "error"); setUrl("error"); });
+  }, [name]);
+  return url;
+}
+
+// Floating card image tooltip (portal-style, fixed position)
+function CardTooltip({ name, anchorRect }) {
+  const url = useScryfallImage(name);
+  if (!url || url === "error" || !anchorRect) return null;
+  // Position: prefer right of anchor, fall back to left if near edge
+  const viewW = window.innerWidth;
+  const tipW = 200, tipH = 279;
+  let left = anchorRect.right + 8;
+  if (left + tipW > viewW - 8) left = anchorRect.left - tipW - 8;
+  const top = Math.min(anchorRect.top, window.innerHeight - tipH - 8);
+  return (
+    <div style={{
+      position: "fixed", left, top, zIndex: 9999,
+      width: tipW, borderRadius: 8,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.08)",
+      pointerEvents: "none", overflow: "hidden",
+      transition: "opacity 0.1s",
+    }}>
+      <img src={url} alt={name} style={{ width: "100%", display: "block" }} />
+    </div>
+  );
+}
+
 function CardPill({ name, onRemove, zone }) {
   const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim };
   const c = zoneColors[zone] || COLORS.green1;
+  const [hovered, setHovered] = useState(false);
+  const [rect, setRect]       = useState(null);
+  const ref = useRef(null);
+
+  const onEnter = () => {
+    setRect(ref.current?.getBoundingClientRect() || null);
+    setHovered(true);
+  };
+  const onLeave = () => setHovered(false);
+
   return (
-    <span style={{
+    <span ref={ref} onMouseEnter={onEnter} onMouseLeave={onLeave} style={{
       display: "inline-flex", alignItems: "center", gap: "5px",
       background: c + "18", border: `1px solid ${c}44`,
       borderRadius: "5px", padding: "3px 8px 3px 10px",
       margin: "2px", color: COLORS.text,
       fontSize: "12px", fontFamily: "'Crimson Text', serif",
+      cursor: "default", position: "relative",
     }}>
       {name}
       {onRemove && (
@@ -2772,6 +2829,7 @@ function CardPill({ name, onRemove, zone }) {
           padding: "0 0 1px 0", fontWeight: "bold",
         }}>×</button>
       )}
+      {hovered && <CardTooltip name={name} anchorRect={rect} />}
     </span>
   );
 }
@@ -2914,6 +2972,199 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── PLAYFIELD VISUALISER ──────────────────────────────────────────────────────
+function PlayfieldCard({ name, tapped, onToggleTap, onRemove }) {
+  const url = useScryfallImage(name);
+  const [hovered, setHovered] = useState(false);
+  const cardW = 80, cardH = 112;
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        position: "relative",
+        width: tapped ? cardH : cardW,
+        height: tapped ? cardW : cardH,
+        flexShrink: 0,
+        transition: "width 0.2s, height 0.2s",
+      }}
+    >
+      {/* Card image or placeholder */}
+      <div
+        onClick={() => onToggleTap(name)}
+        style={{
+          width: cardW, height: cardH,
+          borderRadius: 5,
+          overflow: "hidden",
+          transformOrigin: "top left",
+          transform: tapped ? `rotate(90deg) translateY(-${cardH}px)` : "none",
+          transition: "transform 0.2s",
+          cursor: "pointer",
+          boxShadow: hovered
+            ? "0 0 0 2px #4ade80, 0 4px 16px rgba(0,0,0,0.7)"
+            : "0 2px 8px rgba(0,0,0,0.6)",
+          background: "#1a2e1a",
+          border: "1px solid #2a4a2a",
+        }}
+      >
+        {url && url !== "error" ? (
+          <img src={url} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        ) : (
+          <div style={{
+            width: "100%", height: "100%", display: "flex", alignItems: "center",
+            justifyContent: "center", padding: 4, textAlign: "center",
+            color: "#4ade80", fontSize: 9, fontFamily: "'Crimson Text', serif",
+            lineHeight: 1.3,
+          }}>
+            {url === null ? "…" : name}
+          </div>
+        )}
+      </div>
+      {/* Remove button — shows on hover */}
+      {hovered && onRemove && (
+        <button
+          onClick={e => { e.stopPropagation(); onRemove(name); }}
+          style={{
+            position: "absolute", top: tapped ? "auto" : -6, right: tapped ? -6 : -6,
+            bottom: tapped ? -6 : "auto",
+            width: 16, height: 16, borderRadius: "50%",
+            background: "#ef4444", border: "none", color: "#fff",
+            fontSize: 10, fontWeight: "bold", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 10, padding: 0, lineHeight: 1,
+          }}
+        >×</button>
+      )}
+    </div>
+  );
+}
+
+function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield }) {
+  const [tapped, setTapped]   = useState(new Set());
+  const [open,   setOpen]     = useState(false);
+
+  // When battlefield changes, clear tapped state for removed cards
+  useEffect(() => {
+    setTapped(prev => {
+      const next = new Set([...prev].filter(n => battlefield.includes(n)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [battlefield]);
+
+  const toggleTap = useCallback((name) => {
+    setTapped(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  }, []);
+
+  const tapAll = () => setTapped(new Set(battlefield));
+  const untapAll = () => setTapped(new Set());
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{
+        width: "100%", marginTop: 8, padding: "6px 0",
+        background: "none", border: `1px solid ${COLORS.border}`,
+        borderRadius: 6, color: COLORS.textDim, cursor: "pointer",
+        fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px",
+      }}>▼ SHOW PLAYFIELD</button>
+    );
+  }
+
+  const zoneLabel = (label, count, color, actions) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, marginTop: 12 }}>
+      <span style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px", color, textTransform: "uppercase" }}>
+        {label}
+      </span>
+      <span style={{ fontSize: "10px", color: COLORS.textDim }}>({count})</span>
+      <div style={{ flex: 1, height: 1, background: color + "33" }} />
+      {actions}
+    </div>
+  );
+
+  const actionBtn = (label, onClick) => (
+    <button onClick={onClick} style={{
+      background: "none", border: `1px solid ${COLORS.border}`,
+      borderRadius: 4, padding: "2px 8px", color: COLORS.textDim,
+      cursor: "pointer", fontSize: "10px", fontFamily: "'Cinzel', serif",
+      letterSpacing: "0.5px",
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{
+      marginTop: 8,
+      background: "#07100788",
+      border: `1px solid ${COLORS.border}`,
+      borderRadius: 8, padding: "10px 12px",
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px", color: COLORS.textDim }}>
+          PLAYFIELD
+        </span>
+        <button onClick={() => setOpen(false)} style={{
+          background: "none", border: "none", color: COLORS.textDim,
+          cursor: "pointer", fontSize: "11px", padding: 0,
+        }}>▲ hide</button>
+      </div>
+
+      {/* Battlefield */}
+      {zoneLabel("Battlefield", battlefield.length, COLORS.green3,
+        <>{actionBtn("tap all", tapAll)}{actionBtn("untap all", untapAll)}</>
+      )}
+      <div style={{
+        minHeight: 120, display: "flex", flexWrap: "wrap", gap: 6,
+        alignItems: "flex-start", padding: "6px 0 8px",
+      }}>
+        {battlefield.length === 0 && (
+          <span style={{ color: COLORS.textDim, fontSize: 11, fontStyle: "italic", padding: "4px 0" }}>
+            No permanents
+          </span>
+        )}
+        {battlefield.map(name => (
+          <PlayfieldCard
+            key={name} name={name}
+            tapped={tapped.has(name)}
+            onToggleTap={toggleTap}
+            onRemove={onRemoveFromBattlefield}
+          />
+        ))}
+      </div>
+
+      {/* Divider */}
+      <div style={{ height: 1, background: COLORS.border, margin: "4px 0 0" }} />
+
+      {/* Hand */}
+      {zoneLabel("Hand", hand.length, COLORS.green1, null)}
+      <div style={{
+        display: "flex", flexWrap: "wrap", gap: 6,
+        alignItems: "flex-start", padding: "6px 0 4px",
+      }}>
+        {hand.length === 0 && (
+          <span style={{ color: COLORS.textDim, fontSize: 11, fontStyle: "italic", padding: "4px 0" }}>
+            No cards in hand
+          </span>
+        )}
+        {hand.map(name => (
+          <PlayfieldCard
+            key={name} name={name}
+            tapped={false}
+            onToggleTap={() => {}}
+            onRemove={onRemoveFromHand}
+          />
+        ))}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 10, color: COLORS.textDim, fontStyle: "italic" }}>
+        Click a battlefield card to tap / untap · hover for full image
       </div>
     </div>
   );
@@ -3356,6 +3607,14 @@ export default function YevaAdvisor() {
             <CardInput label="Graveyard" zone="graveyard" cards={graveyard}
               onAdd={addTo("graveyard")} onRemove={removeFrom(setGraveyard)}
               placeholder="Cards in your graveyard…" />
+
+            {/* Playfield visualiser */}
+            <Playfield
+              hand={hand}
+              battlefield={battlefield}
+              onRemoveFromHand={removeFrom(setHand)}
+              onRemoveFromBattlefield={removeFrom(setBattlefield)}
+            />
 
           </div>
 
