@@ -229,6 +229,28 @@ const COMBOS = [
     ]
   },
 
+  // ── 4b. Argothian Elder + Deserted Temple + Wirewood Lodge + Big Land ──
+  {
+    id: "argothian_deserted_lodge",
+    name: "Argothian Elder + Deserted Temple + Wirewood Lodge + Big Land",
+    onBattlefield: ["Argothian Elder", "Deserted Temple", "Wirewood Lodge"],
+    mustPreExist: ["Argothian Elder"],
+    description: "Infinite mana. Elder taps two lands: Cradle + Deserted Temple. Temple then untaps Cradle for a second tap. Lodge untaps Elder. Result: Cradle taps twice per loop while only spending {G} (Lodge). Net: (2 × Cradle output) − 1 per loop. Enormous output with even a modest Cradle.",
+    requires: ["Argothian Elder", "Deserted Temple", "Wirewood Lodge"],
+    needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    priority: 10,
+    type: "infinite-mana",
+    lines: [
+      "Argothian Elder + Deserted Temple + Wirewood Lodge + Gaea's Cradle or Nykthos on battlefield.",
+      "Tap big land for N mana.",
+      "Tap Argothian Elder: untap two lands — target the big land AND Deserted Temple.",
+      "Tap Deserted Temple (free — just tap): untap the big land again.",
+      "Tap big land again for N mana. (Two taps of Cradle per Elder activation.)",
+      "Spend {G}: activate Wirewood Lodge, untapping Argothian Elder.",
+      "Net: (2N − 1) mana per loop. With even a 3-creature Cradle nets 5 per loop. Repeat for infinite.",
+    ]
+  },
+
   // ── 5. Earthcraft + Ashaya + Quirion Ranger ───────────────────────────
   {
     id: "earthcraft_ashaya_quirion",
@@ -245,6 +267,26 @@ const COMBOS = [
       "Activate Quirion Ranger: return itself to hand, untapping any other creature.",
       "Recast Quirion Ranger for {G}. Net: {G} per loop.",
       "Repeat for infinite green mana.",
+    ]
+  },
+
+  // ── 5b. Earthcraft + Ashaya + Scryb Ranger (Flash! Instant Speed) ──────
+  {
+    id: "earthcraft_ashaya_scryb",
+    name: "Earthcraft + Ashaya + Scryb Ranger (Instant Speed!)",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Scryb Ranger"],
+    description: "Infinite mana at instant speed. Identical to the Quirion Ranger variant but Scryb Ranger has flash — the loop goes off on any opponent's turn without needing Yeva. Costs {1}{G} to recast vs Quirion's {G}, so needs one additional creature on board to Earthcraft-untap and fund the extra {1}.",
+    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Scryb Ranger"],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Earthcraft + Ashaya + Scryb Ranger + at least two other creatures on battlefield.",
+      "KEY ADVANTAGE: Scryb Ranger has flash — this loop works on any player's turn without Yeva.",
+      "Tap Scryb Ranger as a Forest (via Ashaya) for {G}.",
+      "Tap two creatures to Earthcraft: untap two basic Forests (creature-Forests via Ashaya), untapping Scryb Ranger and one other creature.",
+      "Activate Scryb Ranger: return itself to hand, untapping any creature.",
+      "Recast Scryb Ranger for {1}{G}. Net: {G} per loop (needs 2 Earthcraft targets to fund the {1}).",
+      "Repeat for infinite green mana at instant speed.",
     ]
   },
 
@@ -722,18 +764,18 @@ const COMBOS = [
     name: "Big Elf Dork + Wirewood Lodge (≥2 elves/creatures)",
     onBattlefield: ["Wirewood Lodge"],
     mustPreExist: ["Wirewood Lodge"],
-    description: "Infinite mana. Priest of Titania, Elvish Archdruid, or Circle of Dreams Druid taps for N mana (elf/creature count). Wirewood Lodge pays {G} to untap the dork (all three are elves). Net N−1 per loop. Infinite when N ≥ 2, which is almost always true once the dork itself is in play.",
+    description: "Infinite mana. Any big elf dork (Priest of Titania, Elvish Archdruid, Fanatic of Rhonas, Circle of Dreams Druid) taps for N ≥ 2 mana. Wirewood Lodge pays {G} to untap the dork (it's an elf). Net N−1 per loop. Infinite whenever N ≥ 2.",
     requires: ["Wirewood Lodge"],
     needsBigElfDorkOnBoard: 2,
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Priest of Titania, Elvish Archdruid, or Circle of Dreams Druid on battlefield with ≥2 elves/creatures.",
+      "A big elf dork on battlefield: Priest of Titania, Elvish Archdruid, Fanatic of Rhonas (fixed 4), or Circle of Dreams Druid — producing ≥2 mana.",
       "Wirewood Lodge on battlefield.",
       "Tap the big dork for N mana (N ≥ 2).",
       "Spend {G}: activate Wirewood Lodge to untap the big dork (it's an elf).",
       "Net: N − 1 mana per loop. Repeat for infinite green mana.",
-      "Circle of Dreams Druid counts all creatures, not just elves — counts itself too.",
+      "Circle of Dreams Druid counts all creatures — counts itself, so minimum output is 1 (usually much more).",
     ]
   },
 
@@ -1579,6 +1621,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           `${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}.`,
           "After use: Nature's Rhythm goes to exile and can be cast again once — a built-in second activation.",
           ...(nrTargets.length > 1 ? [`Other options: ${nrTargets.slice(1,2).map(t => `X=${t.xCost} → ${t.name}`).join(", ")}.`] : []),
+        ],
+        color: "#5dade2",
+      });
+    }
+  }
+
+  // ---- NATURE'S RHYTHM ON BATTLEFIELD ----
+  // Each upkeep: search library for a creature with CMC ≤ lands you control.
+  // Persistent tutor engine — advise what to find next upkeep based on current board.
+  if (board.has("Nature's Rhythm")) {
+    const landsOnBoard = battlefield.filter(c => CARDS[c]?.type === "land").length;
+    const nrBoardTargets = [
+      { name: "Ashaya, Soul of the Wild",  xCost: 5, reason: "unlocks all infinite mana combos" },
+      { name: "Duskwatch Recruiter",        xCost: 2, reason: "win condition with infinite mana" },
+      { name: "Priest of Titania",          xCost: 2, reason: "big mana dork" },
+      { name: "Elvish Archdruid",           xCost: 3, reason: "big mana dork + elf pump" },
+      { name: "Quirion Ranger",             xCost: 1, reason: "infinite mana loop piece" },
+      { name: "Argothian Elder",            xCost: 4, reason: "untap engine, goes infinite with Lodge" },
+      { name: "Temur Sabertooth",           xCost: 4, reason: "bounce engine for ETB loops" },
+      { name: "Eternal Witness",            xCost: 3, reason: "recursion for any missing piece" },
+      { name: "Hope Tender",                xCost: 2, reason: "untap big land, Kogla resets exert" },
+      { name: "Destiny Spinner",            xCost: 2, reason: "haste + uncounterable protection" },
+      { name: "Allosaurus Shepherd",        xCost: 1, reason: "makes elves uncounterable" },
+    ].filter(t => !board.has(t.name) && t.xCost <= landsOnBoard);
+
+    if (nrBoardTargets.length > 0) {
+      const best = nrBoardTargets[0];
+      results.push({
+        priority: 6,
+        category: "🔄 NATURE'S RHYTHM ENGINE",
+        headline: `Nature's Rhythm: fetch ${best.name} next upkeep (CMC ${best.xCost} ≤ ${landsOnBoard} lands)`,
+        detail: `Nature's Rhythm tutors a creature with CMC ≤ your land count (${landsOnBoard}) at each upkeep for free. Plan your next fetch now.`,
+        steps: [
+          `Next upkeep: search for ${best.name} (CMC ${best.xCost}) — ${best.reason}.`,
+          ...(nrBoardTargets.length > 1 ? [
+            `Alternative targets: ${nrBoardTargets.slice(1, 3).map(t => `${t.name} (${t.xCost})`).join(", ")}.`,
+          ] : []),
+          `Current land count: ${landsOnBoard}. Max CMC you can find: ${landsOnBoard}.`,
+          landsOnBoard >= 5 ? "With 5+ lands you can tutor Ashaya or Temur Sabertooth directly." : `Play more lands to unlock higher-CMC targets (need ${5 - landsOnBoard} more for Ashaya).`,
         ],
         color: "#5dade2",
       });
