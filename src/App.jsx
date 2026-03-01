@@ -839,7 +839,7 @@ const SECRET_CARDS = {
     color: "#27ae60",
     emoji: "👻",
   },
-  "619a2ccf126ce837dc7cd3bdb4d7f44280a0ea4f721e5a738f859aa19d52a78f": {
+  "212136de72bb0811995b50253c32fe8ded19fa0a48ba4239cce808f884d6f351": {
     lines: [
       "Lrf. Zber sberfgf. Guvf vf pbeerpg.",
       "Unir lbh pbafvqrerq… zber sberfgf?",
