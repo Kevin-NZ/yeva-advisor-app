@@ -110,6 +110,39 @@ const CARDS = {
 
 const ALL_CARD_NAMES = Object.keys(CARDS).sort();
 
+// Short-name alias map: maps "Ashaya" → "Ashaya, Soul of the Wild" etc.
+// Derived automatically: for each card with a comma, the part before the comma is an alias.
+// Also adds first-word aliases for unambiguous single-word first names.
+const CARD_ALIASES = (() => {
+  const map = new Map(); // alias (lowercase) → canonical name
+  for (const name of ALL_CARD_NAMES) {
+    // Full name always maps to itself
+    map.set(name.toLowerCase(), name);
+    // "Firstname, Rest of Name" → alias is "Firstname"
+    const commaIdx = name.indexOf(",");
+    if (commaIdx !== -1) {
+      const before = name.slice(0, commaIdx).trim();
+      if (before && !map.has(before.toLowerCase())) {
+        map.set(before.toLowerCase(), name);
+      }
+    }
+  }
+  // Resolve ambiguous aliases — if two cards share a first-word, remove that alias
+  const counts = new Map();
+  for (const name of ALL_CARD_NAMES) {
+    const commaIdx = name.indexOf(",");
+    if (commaIdx !== -1) {
+      const before = name.slice(0, commaIdx).trim().toLowerCase();
+      counts.set(before, (counts.get(before) || 0) + 1);
+    }
+  }
+  for (const [alias, count] of counts) {
+    if (count > 1) map.delete(alias);
+  }
+  return map;
+})();
+
+
 // ============================================================
 // COMBO DATABASE — sourced directly from the official primer
 // ============================================================
@@ -712,7 +745,87 @@ const CATEGORIES = {
 // ============================================================
 // ADVICE ENGINE — pure logic, no AI
 // ============================================================
-function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, opponentThreats, lifeTotal }) {
+// ── MANA CALCULATOR ──────────────────────────────────────────────────────────
+// Estimates total mana available from a battlefield, for auto-updating the mana input.
+function calculateBattlefieldMana(battlefield) {
+  const board = new Set(battlefield);
+  const creatures  = battlefield.filter(c => CARDS[c]?.type === "creature");
+  const elves      = creatures.filter(c => CARDS[c]?.tags?.includes("elf")).length;
+  const creatureCount = creatures.length;
+  const devotion   = battlefield.reduce((s, c) => s + (CARDS[c]?.devotion ?? 0), 0);
+  const hasBadgermole = board.has("Badgermole Cub");
+  const badgermoleBonus = hasBadgermole ? 1 : 0;
+  const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
+  const hasAura     = board.has("Utopia Sprawl") || board.has("Wild Growth");
+  const hasCradle   = board.has("Gaea's Cradle");
+  const hasNykthos  = board.has("Nykthos, Shrine to Nyx");
+
+  let total = 0;
+  for (const card of battlefield) {
+    const data = CARDS[card];
+    if (!data) continue;
+    if (data.type === "land") {
+      if (card === "Gaea's Cradle" || card === "Itlimoc, Cradle of the Sun") {
+        total += creatureCount;
+      } else if (card === "Nykthos, Shrine to Nyx") {
+        total += Math.max(0, devotion - 2); // spend {2} to activate
+      } else if (card === "Ancient Tomb") {
+        total += 2; // taps for {C}{C}
+      } else if (data.tags?.includes("fetch")) {
+        // fetch lands sacrifice themselves — no standing mana contribution
+      } else {
+        total += 1; // all other lands tap for at least 1 (Forest, Yavimaya, Lodge, Sanitarium, etc.)
+      }
+    } else if (data.tags?.includes("dork") || data.tags?.includes("big-dork")) {
+      const t = data.tapsFor;
+      if (typeof t === "number")  total += t + (t > 0 ? badgermoleBonus : 0);
+      else if (t === "elves")     total += elves + badgermoleBonus;
+      else if (t === "creatures") total += creatureCount + badgermoleBonus;
+      else if (t === "devotion")  total += devotion + badgermoleBonus;
+      else if (t === "arbor") {
+        if (hasYavimaya && (hasCradle || hasNykthos))
+          total += Math.max(creatureCount, devotion - 2) + badgermoleBonus;
+        else if (hasAura) total += 2 + badgermoleBonus;
+        else total += 1 + badgermoleBonus;
+      } else {
+        total += 1 + badgermoleBonus; // generic dork taps for {G}
+      }
+    } else if (data.tags?.includes("rock")) {
+      // Mana rocks — only count reliable ongoing mana
+      if (card === "Sol Ring")    total += 2; // {T}: add {C}{C}
+      else if (card === "Chrome Mox" || card === "Mox Diamond") total += 1; // conditional but usually online
+      // Lotus Petal sacrifices itself — no ongoing contribution
+    }
+  }
+
+  // Earthcraft bonus: each creature can tap to untap a basic land.
+  // With Yavimaya all lands are basic Forests, so each creature effectively doubles
+  // its own mana output. Without Yavimaya only real basic Forests are untappable.
+  if (board.has("Earthcraft")) {
+    const basicForests = battlefield.filter(c =>
+      CARDS[c]?.tags?.includes("basic") || CARDS[c]?.tags?.includes("forest")
+    ).length;
+    const untapTargets = hasYavimaya
+      ? battlefield.filter(c => CARDS[c]?.type === "land").length  // all lands are basics
+      : basicForests;
+    // Each creature can tap to untap one land — effectively adds 1 mana per creature
+    // up to the number of untappable lands available (each creature + land pair = 1 extra {G})
+    const earthcraftBonus = Math.min(creatureCount, untapTargets);
+    total += earthcraftBonus;
+  }
+
+  // Utopia Sprawl / Wild Growth: each copy adds +1 to the enchanted Forest's output.
+  // A Forest normally taps for 1, with an aura it taps for 2 (or 3 with both).
+  // We already counted the Forest as 1, so add +1 per aura in play.
+  const auraCount = battlefield.filter(c =>
+    c === "Utopia Sprawl" || c === "Wild Growth"
+  ).length;
+  total += auraCount; // each aura enchants a Forest and adds +1 mana
+
+  return total;
+}
+
+function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal }) {
   const board = new Set(battlefield);
   const inHand = new Set(hand);
   const inGrave = new Set(graveyard);
@@ -1017,32 +1130,76 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
   // ---- NATURAL ORDER ----
   if (inHand.has("Natural Order") && isMyTurn) {
-    // Natural Order sacrifices a green creature to find any green creature.
-    // Best line: sac a 3-drop to find Woodland Bellower (CMC 6), which then ETBs a CMC<=3 creature.
-    const has3drop = battlefield.some(c => CARDS[c]?.cmc === 3 && CARDS[c]?.type === "creature");
     const hasSacTarget = battlefield.some(c => CARDS[c]?.type === "creature");
-    const bellowerMissing = !board.has("Woodland Bellower");
-    const ashayaMissing   = !board.has("Ashaya, Soul of the Wild");
-    const primaryTarget   = bellowerMissing ? "Woodland Bellower"
-      : ashayaMissing ? "Ashaya, Soul of the Wild"
-      : "Kogla, the Titan Ape";
-    const bellowerFollow  = bellowerMissing ? [
-      "Woodland Bellower ETB: search for any non-legendary green CMC≤3 creature onto battlefield.",
-      "Best Bellower targets: Duskwatch Recruiter (win con), Elvish Reclaimer (land tutor), Destiny Spinner (haste+protection), Eternal Witness, Quirion Ranger.",
-    ] : [];
     if (hasSacTarget && (mana >= 4 || infiniteManaActive)) {
+      // Prioritise targets based on current board state
+      const has3drop = battlefield.some(c => CARDS[c]?.cmc === 3 && CARDS[c]?.type === "creature");
+      const has1drop = battlefield.some(c => CARDS[c]?.cmc === 1 && CARDS[c]?.type === "creature");
+
+      // Build ranked target list based on what's missing and what unlocks
+      const targetList = [
+        {
+          name: "Woodland Bellower",
+          condition: !board.has("Woodland Bellower") && !board.has("Duskwatch Recruiter"),
+          why: "ETB fetches any non-legendary CMC≤3 creature — effectively 2 creatures for 1 card",
+          sacNote: "Sac a 3-drop for best mana efficiency",
+          follow: "Best Bellower targets: Duskwatch Recruiter (win con with ∞ mana), Destiny Spinner (haste), Eternal Witness, Quirion Ranger",
+        },
+        {
+          name: "Ashaya, Soul of the Wild",
+          condition: !board.has("Ashaya, Soul of the Wild"),
+          why: "unlocks all infinite mana combos — all creatures become Forests",
+          sacNote: "Sac a 3-drop (CMC 3 = optimal sacrifice for CMC 5 target)",
+          follow: "With Ashaya in play, any dork + ranger creates infinite mana",
+        },
+        {
+          name: "Temur Sabertooth",
+          condition: !board.has("Temur Sabertooth") && !board.has("Kogla, the Titan Ape") && board.has("Ashaya, Soul of the Wild"),
+          why: "bouncer for infinite ETB loops — needed to convert ∞ mana into a win",
+          sacNote: "Sac any creature you can spare",
+          follow: "Sabertooth + any ETB creature + infinite mana = loop to win",
+        },
+        {
+          name: "Kogla, the Titan Ape",
+          condition: !board.has("Kogla, the Titan Ape") && !board.has("Temur Sabertooth") && board.has("Ashaya, Soul of the Wild"),
+          why: "bouncer for humans + artifact/enchantment removal",
+          sacNote: "Sac any creature you can spare",
+          follow: "Kogla returns humans to hand on attack — pairs with Eternal Witness",
+        },
+        {
+          name: "Duskwatch Recruiter",
+          condition: !board.has("Duskwatch Recruiter") && infiniteManaActive,
+          why: "win condition — activate repeatedly to pull entire library",
+          sacNote: "Sac anything",
+          follow: "With infinite mana, Duskwatch finds Endurance + win pile",
+        },
+        {
+          name: "Woodland Bellower",
+          condition: !board.has("Woodland Bellower"),
+          why: "ETB finds any non-legendary CMC≤3 creature",
+          sacNote: "Sac a 3-drop",
+          follow: "Best targets: Duskwatch Recruiter, Eternal Witness, Destiny Spinner",
+        },
+      ].filter(t => t.condition && !board.has(t.name));
+
+      const best = targetList[0] || {
+        name: "Ashaya, Soul of the Wild",
+        why: "combo engine",
+        sacNote: "Sac a 3-drop",
+        follow: "",
+      };
+
       results.push({
-        priority: 8,
-        category: "🎯 TUTOR",
-        headline: `Natural Order → ${primaryTarget}${bellowerMissing ? " → ETB finds combo piece" : ""}`,
-        detail: bellowerMissing
-          ? "Classic line: sacrifice any green creature to find Woodland Bellower. Bellower's ETB then puts any non-legendary CMC≤3 green creature directly onto the battlefield — effectively a 2-for-1 tutor."
-          : `Sacrifice a green creature to find ${primaryTarget} directly onto the battlefield.`,
+        priority: 9,
+        category: "🎯 NATURAL ORDER",
+        headline: `Natural Order → ${best.name}`,
+        detail: `Sacrifice a green creature to put ${best.name} directly onto the battlefield. ${best.why}. Natural Order costs {2}{G}{G} — pay 4 total.`,
         steps: [
-          `Cast Natural Order ({2}{G}{G}): sacrifice ${has3drop ? "a 3-drop creature (most efficient)" : "any green creature"} → search for ${primaryTarget}.`,
-          ...bellowerFollow,
-          ...((mana >= 4 || infiniteManaActive) && !has3drop ? ["Tip: 3-drop creatures are the optimal sacrifice — they maximise the mana efficiency of the exchange."] : []),
-        ],
+          `Cast Natural Order ({2}{G}{G}): ${best.sacNote}. Sacrifice → put ${best.name} onto battlefield.`,
+          best.follow,
+          ...(!has3drop && best.sacNote.includes("3-drop") ? ["Tip: no 3-drop available — sac any green creature. A 1-drop is still fine."] : []),
+          ...(targetList.length > 1 ? [`Other strong targets right now: ${targetList.slice(1, 3).map(t => t.name).join(", ")}.`] : []),
+        ].filter(Boolean),
         color: "#5dade2",
       });
     }
@@ -1430,6 +1587,92 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
 
+  // ---- YISAN, THE WANDERER BARD ----
+  if (board.has("Yisan, the Wanderer Bard")) {
+    const hasRanger      = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const rangerName     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+    const hasSeedbornMuse = board.has("Seedborn Muse");
+    const canActivate    = isMyTurn || hasSeedbornMuse;
+    const canAfford      = mana >= 3 || infiniteManaActive;
+
+    // What does each verse counter fetch?
+    // verse 1 → CMC 1: Quirion Ranger, Arbor Elf, Wirewood Symbiote, Magus of the Candelabra
+    // verse 2 → CMC 2: Priest of Titania, Wirewood Symbiote (already), Duskwatch Recruiter, Destiny Spinner, Earthcraft
+    // verse 3 → CMC 3: Temur Sabertooth, Circle of Dreams Druid, Hyrax Tower Scout, Eternal Witness, Yisan himself
+    // verse 4 → CMC 4: Argothian Elder, Temur Sabertooth, Fanatic of Rhonas, Karametra's Acolyte, Eladamri
+    // verse 5+ → CMC 5+: Ashaya, Kogla, Woodcaller (8)
+    const yisanTargetsByVerse = {
+      1: [
+        { name: "Quirion Ranger",         reason: "infinite mana loop with Ashaya — the most powerful 1-drop" },
+        { name: "Arbor Elf",              reason: "untaps enchanted Forests or big lands with Yavimaya" },
+        { name: "Wirewood Symbiote",      reason: "untap engine, also enables Yisan re-use via elf bounce" },
+        { name: "Magus of the Candelabra",reason: "untaps lands equal to mana spent — key combo piece" },
+      ],
+      2: [
+        { name: "Duskwatch Recruiter",    reason: "win condition — find this first if infinite mana is close" },
+        { name: "Priest of Titania",      reason: "big dork tapping for elf count — often 3-6+ mana" },
+        { name: "Destiny Spinner",        reason: "haste enabler + land animation for combo sequencing" },
+        { name: "Wirewood Symbiote",      reason: "untap engine if not yet in play" },
+        { name: "Earthcraft",             reason: "tap creatures to untap basics — enables fast loops" },
+      ],
+      3: [
+        { name: "Temur Sabertooth",       reason: "bouncer for infinite ETB loops — core win piece" },
+        { name: "Circle of Dreams Druid", reason: "taps for creature count — Gaea's Cradle on a body" },
+        { name: "Hyrax Tower Scout",      reason: "untaps a land on ETB — pairs with Temur Sabertooth for loops" },
+        { name: "Eternal Witness",        reason: "retrieves key pieces from graveyard" },
+      ],
+      4: [
+        { name: "Argothian Elder",        reason: "2-card infinite mana with Wirewood Lodge (already 2 pieces)" },
+        { name: "Fanatic of Rhonas",      reason: "taps for {4} with Ashaya — big mana dork" },
+        { name: "Karametra's Acolyte",    reason: "taps for devotion count — huge in a mono-green deck" },
+        { name: "Eladamri, Korvecdal",    reason: "gives all creatures forestwalk and +1/+1 pump" },
+      ],
+      5: [
+        { name: "Ashaya, Soul of the Wild", reason: "turns all creatures into Forests — enables all infinite mana loops" },
+        { name: "Kogla, the Titan Ape",     reason: "bouncer for human ETB loops, destroys artifacts/enchantments" },
+      ],
+    };
+
+    const nextVerse   = yisanCounters + 1;
+    const targets     = (yisanTargetsByVerse[nextVerse] || yisanTargetsByVerse[5])
+      .filter(t => !board.has(t.name) && !inHand.has(t.name));
+    const bestTarget  = targets[0];
+
+    if (canActivate && canAfford && bestTarget) {
+      const doubleActivate = hasRanger && mana >= 6 && isMyTurn;
+      results.push({
+        priority: 8,
+        category: "🎯 YISAN TUTOR",
+        headline: `Yisan verse ${nextVerse} → ${bestTarget.name}`,
+        detail: `Yisan currently has ${yisanCounters} verse counter${yisanCounters !== 1 ? "s" : ""}. Next activation adds 1 counter (reaching verse ${nextVerse}) and tutors a CMC ${nextVerse} creature directly onto the battlefield.${doubleActivate ? ` With ${rangerName} available, you can double-activate this turn.` : ""}`,
+        steps: [
+          `Pay {2}{G}, tap Yisan: add a verse counter (now at ${nextVerse}), search for a CMC ${nextVerse} creature → battlefield.`,
+          `Best target: ${bestTarget.name} — ${bestTarget.reason}.`,
+          ...(targets.length > 1 ? [`Alternatives: ${targets.slice(1, 3).map(t => t.name).join(", ")}.`] : []),
+          ...(doubleActivate ? [
+            `${rangerName}: return itself to hand, untapping Yisan.`,
+            `Pay {2}{G} again: Yisan activates at verse ${nextVerse} again — fetch a second CMC ${nextVerse} creature.`,
+          ] : []),
+          ...(hasSeedbornMuse ? ["Seedborn Muse untaps Yisan on each opponent's turn — activate once per round for rapid verse progression."] : []),
+          `After fetching, increment Yisan's counter in the tracker above.`,
+        ],
+        color: "#27ae60",
+      });
+    } else if (!canAfford) {
+      results.push({
+        priority: 3,
+        category: "🎯 YISAN TUTOR",
+        headline: `Yisan ready at verse ${nextVerse} — need {2}{G}`,
+        detail: `Yisan has ${yisanCounters} verse counter${yisanCounters !== 1 ? "s" : ""}. Next activation costs {2}{G} and fetches a CMC ${nextVerse} creature. Generate at least 3 mana to activate.`,
+        steps: [
+          `Need {2}{G} (3 mana) to activate Yisan.`,
+          ...(bestTarget ? [`Best target at verse ${nextVerse}: ${bestTarget.name} — ${bestTarget.reason}.`] : []),
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
   // ---- TALON GATES OF MADARA ----
   // {T}: Phase out target creature you control or an opponent controls until your next turn.
   // No mana cost — just a tap. Phased-out creatures are effectively removed from the game
@@ -1649,17 +1892,41 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- SEEDBORN MUSE ADVICE ----
   if (board.has("Seedborn Muse")) {
+    // Build a list of what Seedborn specifically unlocks right now
+    const activatables = [];
+    if (board.has("Yisan, the Wanderer Bard"))
+      activatables.push({ what: "Yisan, the Wanderer Bard", benefit: `activate at verse ${yisanCounters + 1} on each opponent's turn — full verse progression every round` });
+    if (board.has("Survival of the Fittest"))
+      activatables.push({ what: "Survival of the Fittest", benefit: "discard-tutor on each opponent's end step — find any creature every turn" });
+    if (board.has("Fauna Shaman"))
+      activatables.push({ what: "Fauna Shaman", benefit: "tutor a creature on each opponent's turn" });
+    if (board.has("War Room"))
+      activatables.push({ what: "War Room", benefit: "draw a card each opponent's turn for {3} life — free card advantage every round" });
+    if (board.has("Geier Reach Sanitarium"))
+      activatables.push({ what: "Geier Reach Sanitarium", benefit: "loot on each opponent's turn — accelerate toward combo pieces" });
+    if (board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx") || board.has("Itlimoc, Cradle of the Sun"))
+      activatables.push({ what: board.has("Gaea's Cradle") ? "Gaea's Cradle" : board.has("Nykthos, Shrine to Nyx") ? "Nykthos, Shrine to Nyx" : "Itlimoc, Cradle of the Sun", benefit: "tap for big mana on each opponent's turn — bank mana or activate costly abilities" });
+    if (dorksOnBoard >= 2)
+      activatables.push({ what: `${dorksOnBoard} mana dorks`, benefit: "full mana every turn — treat this as having effectively infinite mana for casting" });
+
+    const hasTutorable = activatables.some(a =>
+      ["Yisan, the Wanderer Bard","Survival of the Fittest","Fauna Shaman"].includes(a.what));
+    const priority = hasTutorable ? 9 : activatables.length >= 2 ? 8 : 6;
+
     results.push({
-      priority: 6,
-      category: "🌙 ENGINE ACTIVE",
-      headline: "Seedborn Muse: untap everything on each opponent's turn",
-      detail: "With Seedborn Muse active, every mana dork and utility land untaps on each opponent's untap step. You have full mana every turn. Use this to activate Yisan multiple times per round, or hold up interaction on every turn.",
+      priority,
+      category: "🌙 SEEDBORN ENGINE",
+      headline: activatables.length > 0
+        ? `Seedborn Muse: untap ${activatables[0].what} every opponent's turn`
+        : "Seedborn Muse active — full mana on every turn",
+      detail: `Seedborn Muse untaps all permanents you control on each opponent's untap step — effectively giving you full mana four times per round in a 4-player game. ${activatables.length > 0 ? `Key activations available this turn: ${activatables.map(a => a.what).join(", ")}.` : "Use your mana dorks and lands freely — they refill each turn."}`,
       steps: [
-        "Keep all mana sources untapped — Seedborn will refill them.",
-        "Activate Yisan the Wanderer Bard on each opponent's turn for rapid verse progression.",
-        "Use War Room or Geier Reach Sanitarium on each opponent's turn freely.",
-        "Flash in creatures on each end step — the mana is essentially free."
-      ],
+        ...activatables.slice(0, 4).map(a => `${a.what}: ${a.benefit}.`),
+        activatables.length === 0
+          ? "Even with no activated abilities, Seedborn means every opponent's spell you could flash in is free — hold threats in hand and respond freely."
+          : "Pass turn with mana open — flash threats in on each end step as needed.",
+        "Seedborn Muse is a high-value removal target for opponents — protect it with Allosaurus Shepherd or Destiny Spinner if available.",
+      ].filter(Boolean),
       color: "#8e44ad",
     });
   }
@@ -1677,6 +1944,61 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "NOTE: Make sure Collector Ouphe doesn't interfere with your own Sol Ring/Chrome Mox if you need them."
       ],
       color: "#e74c3c",
+    });
+  }
+
+  // Collector Ouphe conflict warning — if Ouphe is on the battlefield, warn about self-disruption
+  if (board.has("Collector Ouphe")) {
+    // Cards in our deck that Ouphe shuts down
+    const ownArtifactsWithActivations = ["Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal"]
+      .filter(c => board.has(c) || inHand.has(c));
+    // Non-artifact cards that Ouphe does NOT affect (just for clarity — Ouphe only hits artifacts)
+    // Key activated abilities that ARE affected: artifact mana rocks
+    // Key activated abilities NOT affected (they're creatures/lands/enchantments):
+    //   Yisan, Survival of the Fittest, Duskwatch Recruiter, Fauna Shaman, War Room, etc.
+    // Ouphe only shuts down ARTIFACT activated abilities.
+    const selfConflicts = ownArtifactsWithActivations;
+
+    if (selfConflicts.length > 0) {
+      results.push({
+        priority: 13,
+        category: "⚠️ OUPHE CONFLICT",
+        headline: `Collector Ouphe is live — your ${selfConflicts.join(", ")} cannot activate`,
+        detail: `Collector Ouphe shuts down ALL artifact activated abilities — including your own. ${selfConflicts.join(", ")} cannot tap for mana while Ouphe is on the battlefield. This affects your mana base.`,
+        steps: [
+          `Affected artifacts: ${selfConflicts.join(", ")}.`,
+          "These cannot tap for mana while Collector Ouphe is in play.",
+          "If you need mana from these artifacts, you must remove Ouphe first (or sacrifice it via Kogla/Natural Order targets).",
+          "Duskwatch Recruiter, Yisan, Survival of the Fittest, Fauna Shaman, and War Room are creatures/enchantments/lands — Ouphe does NOT affect them.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+  }
+
+  // ---- BOSEIJU, WHO ENDURES ----
+  if (board.has("Boseiju, Who Endures")) {
+    // Identify what opponents might have that Boseiju can hit:
+    // artifacts, enchantments, nonbasic lands. We can't know opponent boards,
+    // but we can flag it's available and give guidance on timing.
+    const boseijuTargetTypes = ["artifact", "enchantment", "nonbasic land"];
+    // Check if we have a combo that's being blocked by an enchantment/artifact
+    const hasOuphe       = board.has("Collector Ouphe"); // friendly stax
+    const hasPoisonPath  = inHand.has("Infectious Bite") || inGrave.has("Infectious Bite");
+
+    results.push({
+      priority: 5,
+      category: "💚 INTERACTION",
+      headline: "Boseiju, Who Endures — instant-speed removal available",
+      detail: "Boseiju's channel ability is free (just discard it), uncounterable, and hits artifacts, enchantments, or nonbasic lands at instant speed. It's one of the most efficient removal spells in cEDH — use it to answer stax pieces, combo enablers, or problematic lands threatening you.",
+      steps: [
+        "Channel cost: discard Boseiju, pay {1}{G} — destroy target artifact, enchantment, or nonbasic land.",
+        "This ability is UNCOUNTERABLE — safe to use into open blue mana.",
+        "Priority targets: Rule of Law / Teferi's Ageless Insight (stax enchantments), Isochron Scepter, Thassa's Oracle, ABUR duals / Cradle (opponent's mana base).",
+        "You can also simply play it as a land that taps for {G} — no need to hold it purely for removal if no threats are visible.",
+        ...(hasOuphe ? ["⚠️ You have Collector Ouphe — Boseiju hits artifacts but Ouphe shuts down artifact activations. Both can coexist since Boseiju is a channel ability (discarded), not an artifact activation."] : []),
+      ],
+      color: "#27ae60",
     });
   }
 
@@ -1908,8 +2230,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     || (enduranceInHand && isMyTurn)
     || (enduranceInHand && yevaFlash) // Endurance has flash naturally
     || enduranceInGrave; // retrievable via Eternal Witness
-  // For WIN NOW the bar is higher: must be on board or in hand right now
-  const enduranceReady       = enduranceOnBoard || enduranceInHand;
+  // For WIN NOW the bar is higher: must be on board or in hand right now.
+  // BUT if Duskwatch Recruiter is castable, it can fetch Endurance from the library
+  // as the first activation — so we treat endurance as effectively ready.
+  const enduranceReady = enduranceOnBoard || enduranceInHand;
 
 
   // ---- DUSKWATCH RECRUITER (infinite mana → full win pile) ----
@@ -2001,6 +2325,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const duskwatchViaTutor = tutorsThatFindDuskwatch.length > 0;
   const duskwatchCastable = duskwatchDirect || duskwatchViaTutor;
 
+  // Duskwatch can find Endurance as its first activation — so if Duskwatch is
+  // castable we treat Endurance as effectively in hand for win-now purposes.
+  const enduranceEffectivelyReady = enduranceReady || duskwatchCastable;
+
   // Helper: add mode/obligation note to tutor names in step text
   function tutorNote(name) {
     if (name === "Chord of Calling")  {
@@ -2044,12 +2372,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       "Temur Sabertooth","Endurance"].filter(c => !board.has(c));
 
     results.push({
-      priority: enduranceReady ? 15 : 11,
-      category: enduranceReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
-      headline: enduranceReady
+      priority: enduranceEffectivelyReady ? 15 : 11,
+      category: enduranceEffectivelyReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
+      headline: enduranceEffectivelyReady
         ? `${duskwatchAccessNote}Assemble the Win Pile → Sanitarium Mill`
         : `${duskwatchAccessNote}Assemble Win Pile — find Endurance before executing`,
-      detail: enduranceReady
+      detail: enduranceEffectivelyReady
         ? "With infinite mana, activate Duskwatch Recruiter repeatedly to pull the win pile from your library, then use Geier Reach Sanitarium to mill all opponents out."
         : "⚠️ Endurance is REQUIRED before activating Sanitarium — without it you will mill yourself out. Find Endurance via Duskwatch before starting the Sanitarium loop.",
       steps: [
@@ -2132,7 +2460,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             (board.has("Ashaya, Soul of the Wild") && hasLandAnimate);
           // Even with untap method, still need Endurance to avoid self-mill
           if (!hasUntapMethod) return 6;
-          return enduranceReady ? 13 : 7;
+          return enduranceEffectivelyReady ? 13 : 7;
         })() },
       { land: "Nykthos, Shrine to Nyx", missing: !board.has("Nykthos, Shrine to Nyx"),
         reason: `Taps for {G} equal to green devotion (currently ${devotionOnBoard}). Spend {2} to net ${Math.max(0, devotionOnBoard - 2)} mana.`,
@@ -2234,12 +2562,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           : witnessTutors.length > 0           ? `${witnessTutors[0]} → Eternal Witness`
           : "Cast Eternal Witness";
         results.push({
-          priority: enduranceReady ? 14 : 10,
-          category: enduranceReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
-          headline: enduranceReady
+          priority: enduranceEffectivelyReady ? 14 : 10,
+          category: enduranceEffectivelyReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
+          headline: enduranceEffectivelyReady
             ? `${accessNote} → retrieve Duskwatch → Assemble Win Pile`
             : `${accessNote} → retrieve Duskwatch → find Endurance → Sanitarium Mill`,
-          detail: enduranceReady
+          detail: enduranceEffectivelyReady
             ? "Duskwatch Recruiter is in your graveyard. Eternal Witness retrieves it, then infinite Duskwatch activations assemble the win pile for a Sanitarium mill finish."
             : "⚠️ Endurance is REQUIRED — without it Sanitarium mills you out too. Retrieve Duskwatch, then use it to find Endurance before starting the Sanitarium loop.",
           steps: [
@@ -2247,13 +2575,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
               ? "Eternal Witness is already on the battlefield — use Temur Sabertooth or Kogla to bounce and recast it to retrieve Duskwatch from the graveyard."
               : `Cast Eternal Witness ({2}{G})${witnessTutors.length > 0 && !witnessInHand ? ` (find it via ${tutorNote(witnessTutors[0])})` : ""}: ETB retrieves Duskwatch Recruiter from graveyard.`,
             "Cast Duskwatch Recruiter ({1}{G}{G}).",
-            ...(!enduranceReady ? ["⚠️ Use Duskwatch to find Endurance FIRST before activating Sanitarium."] : []),
+            ...(!enduranceEffectivelyReady ? ["⚠️ Use Duskwatch to find Endurance FIRST before activating Sanitarium."] : []),
             "With infinite mana, activate Duskwatch ({2}{G}) repeatedly to assemble the win pile:",
             "  • Destiny Spinner + Elvish Reclaimer → tutor Geier Reach Sanitarium",
             "  • Ashaya + Temur Sabertooth + Endurance + one untap method",
             "Activate Sanitarium repeatedly (untapping each loop) until all opponents mill out.",
           ],
-          color: enduranceReady ? "#ff6b35" : "#e67e22",
+          color: enduranceEffectivelyReady ? "#ff6b35" : "#e67e22",
         });
       }
 
@@ -2264,19 +2592,19 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (graveTutors.length > 0 && !duskwatchCastable && !inGrave.has("Duskwatch Recruiter")) {
         const accessNote = witnessOnBoard ? "Eternal Witness" : `${witnessTutors.length > 0 && !witnessInHand ? witnessTutors[0] + " → " : ""}Eternal Witness`;
         results.push({
-          priority: enduranceReady ? 13 : 9,
-          category: enduranceReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
+          priority: enduranceEffectivelyReady ? 13 : 9,
+          category: enduranceEffectivelyReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
           headline: `${accessNote} → retrieve ${graveTutors[0]} → find Duskwatch`,
-          detail: enduranceReady
+          detail: enduranceEffectivelyReady
             ? `${graveTutors[0]} is in the graveyard. Eternal Witness retrieves it, then use it to find Duskwatch Recruiter and execute the full win pile.`
             : `⚠️ ${graveTutors[0]} is in the graveyard. Retrieve it, find Duskwatch, then find Endurance BEFORE activating Sanitarium or you will self-mill.`,
           steps: [
             `Cast Eternal Witness${witnessInHand ? "" : witnessTutors.length > 0 ? ` (via ${tutorNote(witnessTutors[0])})` : ""}: ETB retrieves ${graveTutors[0]} from graveyard.`,
             `Cast ${graveTutors[0]} to find Duskwatch Recruiter.`,
-            ...(!enduranceReady ? ["⚠️ Use Duskwatch to find Endurance BEFORE activating Sanitarium."] : []),
+            ...(!enduranceEffectivelyReady ? ["⚠️ Use Duskwatch to find Endurance BEFORE activating Sanitarium."] : []),
             "Cast Duskwatch Recruiter. Activate repeatedly to assemble win pile → Sanitarium mill win.",
           ],
-          color: enduranceReady ? "#ff6b35" : "#e67e22",
+          color: enduranceEffectivelyReady ? "#ff6b35" : "#e67e22",
         });
       }
 
@@ -2629,6 +2957,69 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- INFINITE MANA — NO WIN CONDITION REACHABLE ----
+  // If infinite mana is active but no win-con advice has fired at high priority,
+  // guide the player on what to tutor for to close out.
+  if (infiniteManaActive && results.filter(r => r.priority >= 11).length === 0) {
+    const winConOptions = [
+      {
+        name: "Duskwatch Recruiter",
+        available: duskwatchCastable,
+        why: "activates to pull entire creature library → assemble win pile → Sanitarium mill",
+      },
+      {
+        name: "Infectious Bite",
+        available: inHand.has("Infectious Bite") || inGrave.has("Infectious Bite"),
+        why: "with Eternal Witness + bouncer → 10 poison counters on all opponents",
+      },
+      {
+        name: "Geier Reach Sanitarium",
+        available: board.has("Geier Reach Sanitarium"),
+        why: "mill win with Endurance — opponents draw from empty library",
+      },
+      {
+        name: "Glademuse",
+        available: inHand.has("Glademuse") || board.has("Glademuse"),
+        why: "draw entire library with Ashaya + Quirion Ranger loop, then win from hand",
+      },
+    ];
+
+    const available = winConOptions.filter(w => w.available);
+    const missing   = winConOptions.filter(w => !w.available);
+
+    // Build tutor chain — what can we fetch with infinite mana?
+    const tutorChain = [];
+    if (!board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")) {
+      const tutors = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Fauna Shaman",
+        "Survival of the Fittest","Green Sun's Zenith","Elvish Harbinger","Formidable Speaker"]
+        .filter(t => board.has(t) || inHand.has(t));
+      if (tutors.length > 0) tutorChain.push(`${tutors[0]} → Duskwatch Recruiter`);
+    }
+
+    results.push({
+      priority: 12,
+      category: "⚡ INFINITE MANA — FIND WIN CON",
+      headline: available.length > 0
+        ? `Infinite mana active — use ${available[0].name} to win`
+        : "Infinite mana active — tutor for a win condition",
+      detail: available.length > 0
+        ? `You have infinite mana. ${available[0].name} ${available[0].why}.`
+        : `You have infinite mana but no win condition is currently reachable. Use your tutor chain to find one.`,
+      steps: [
+        ...(available.length > 0 ? available.map(w => `✅ ${w.name}: ${w.why}.`) : []),
+        ...(missing.length > 0 && available.length === 0 ? [
+          `Missing win conditions: ${missing.map(w => w.name).join(", ")}.`,
+          ...tutorChain.map(t => `With infinite mana: ${t} → onto battlefield.`),
+          tutorChain.length === 0
+            ? "No tutors available — check graveyard for Eternal Witness to retrieve a win piece."
+            : "Activate Duskwatch Recruiter repeatedly (infinite mana) to pull all creatures from library.",
+        ] : []),
+        ...(missing.length > 0 && available.length > 0 ? [`Also available: ${available.slice(1).map(w=>w.name).join(", ")}.`] : []),
+      ].filter(Boolean),
+      color: "#ff6b35",
+    });
+  }
+
   // ---- GENERIC HIGH PRIORITY TUTOR WHEN NOTHING ELSE ----
   if (results.filter(r => r.priority >= 7).length === 0) {
     const tutors = hand.filter(c => CARDS[c]?.tags?.includes("tutor") && (CARDS[c]?.cmc <= mana || infiniteManaActive));
@@ -2665,7 +3056,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // Sort by priority descending
   results.sort((a, b) => b.priority - a.priority);
-  return results.slice(0, 5); // Top 5 recommendations
+  return { results: results.slice(0, 5), infiniteManaActive };
 }
 
 function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false) {
@@ -3063,10 +3454,11 @@ function PlayfieldCard({ name, tapped, onToggleTap, onRemove, draggable = false,
   );
 }
 
-function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield, onMoveToBattlefield }) {
-  const [tapped,    setTapped]    = useState(new Set()); // indices into battlefield
-  const [open,      setOpen]      = useState(false);
-  const [dropOver,  setDropOver]  = useState(false);
+function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield, onMoveToBattlefield, onMoveToHand }) {
+  const [tapped,       setTapped]       = useState(new Set()); // indices into battlefield
+  const [open,         setOpen]         = useState(false);
+  const [dropOver,     setDropOver]     = useState(false);
+  const [dropOverHand, setDropOverHand] = useState(false);
 
   // When battlefield changes, drop any out-of-range indices
   useEffect(() => {
@@ -3087,6 +3479,7 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
   const tapAll   = () => setTapped(new Set(battlefield.map((_, i) => i)));
   const untapAll = () => setTapped(new Set());
 
+  // Battlefield drop handlers (hand → battlefield)
   const handleDragOver = e => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -3101,6 +3494,21 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
     const type = CARDS[name]?.type;
     if (type === "instant" || type === "sorcery") return;
     onMoveToBattlefield(name);
+  };
+
+  // Hand drop handlers (battlefield → hand)
+  const handleHandDragOver = e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropOverHand(true);
+  };
+  const handleHandDragLeave = () => setDropOverHand(false);
+  const handleHandDrop = e => {
+    e.preventDefault();
+    setDropOverHand(false);
+    const name = e.dataTransfer.getData("text/plain");
+    if (!name || !battlefield.includes(name)) return;
+    onMoveToHand(name);
   };
 
   if (!open) {
@@ -3185,6 +3593,7 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
             tapped={tapped.has(i)}
             onToggleTap={() => toggleTap(i)}
             onRemove={onRemoveFromBattlefield}
+            draggable={true}
           />
         ))}
       </div>
@@ -3192,15 +3601,30 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
       {/* Divider */}
       <div style={{ height: 1, background: COLORS.border, margin: "4px 0 0" }} />
 
-      {/* Hand — draggable cards */}
+      {/* Hand — draggable cards, also drop target for battlefield → hand */}
       {zoneLabel("Hand", hand.length, COLORS.green1, null)}
-      <div style={{
-        display: "flex", flexWrap: "wrap", gap: 6,
-        alignItems: "flex-start", padding: "6px 0 4px",
-      }}>
-        {hand.length === 0 && (
+      <div
+        onDragOver={handleHandDragOver}
+        onDragLeave={handleHandDragLeave}
+        onDrop={handleHandDrop}
+        style={{
+          display: "flex", flexWrap: "wrap", gap: 6,
+          alignItems: "flex-start", padding: "6px 0 4px",
+          minHeight: 30,
+          borderRadius: 6,
+          border: dropOverHand ? `2px dashed ${COLORS.green1}` : "2px dashed transparent",
+          background: dropOverHand ? COLORS.green1 + "11" : "transparent",
+          transition: "border-color 0.15s, background 0.15s",
+        }}
+      >
+        {hand.length === 0 && !dropOverHand && (
           <span style={{ color: COLORS.textDim, fontSize: 11, fontStyle: "italic", padding: "4px 0" }}>
             No cards in hand
+          </span>
+        )}
+        {dropOverHand && (
+          <span style={{ color: COLORS.green1, fontSize: 11, padding: "4px 0", fontFamily: "'Cinzel', serif", letterSpacing: 1 }}>
+            RETURN TO HAND
           </span>
         )}
         {hand.map((name, i) => {
@@ -3218,14 +3642,76 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
         })}
       </div>
       <div style={{ marginTop: 6, fontSize: 10, color: COLORS.textDim, fontStyle: "italic" }}>
-        Drag hand → battlefield to cast · click battlefield card to tap/untap · hover for image
+        Drag hand → battlefield to cast · drag battlefield → hand to bounce · click to tap/untap
       </div>
     </div>
   );
 }
 
-function AdviceCard({ advice, index }) {
+// ── CARD NAME HIGHLIGHTING ────────────────────────────────────────────────────
+// Inline card span — highlighted if active in zones, with hover image tooltip.
+function CardNameSpan({ name, active, color }) {
+  const [hovered, setHovered] = useState(false);
+  const [rect, setRect]       = useState(null);
+  const ref = useRef(null);
+
+  return (
+    <span
+      ref={ref}
+      onMouseEnter={() => { setRect(ref.current?.getBoundingClientRect()); setHovered(true); }}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        color:        active ? (color || "#4ade80") : COLORS.textMid,
+        fontWeight:   active ? 600 : 400,
+        borderBottom: active
+          ? `1px dotted ${(color || "#4ade80")}88`
+          : `1px dotted ${COLORS.textDim}55`,
+        cursor: "default",
+        position: "relative",
+      }}
+    >
+      {name}
+      {hovered && <CardTooltip name={name} anchorRect={rect} />}
+    </span>
+  );
+}
+
+function HighlightedText({ text, activeCards, color }) {
+  if (!text) return <span>{text}</span>;
+
+  // Build regex from all full card names AND all aliases, longest first
+  const allPatterns = [
+    ...ALL_CARD_NAMES,
+    ...[...CARD_ALIASES.keys()].filter(k => !ALL_CARD_NAMES.map(n=>n.toLowerCase()).includes(k)),
+  ].sort((a, b) => b.length - a.length);
+
+  const escaped = allPatterns.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const regex   = new RegExp(`(${escaped.join("|")})`, "gi");
+  const parts   = text.split(regex);
+  const activeSet = activeCards || new Set();
+
+  return (
+    <span>
+      {parts.map((part, i) => {
+        // Resolve to canonical name via alias map
+        const canonical = CARD_ALIASES.get(part.toLowerCase());
+        if (!canonical) return <span key={i}>{part}</span>;
+        const active = activeSet.has(canonical) ||
+          [...activeSet].some(n => n.toLowerCase() === canonical.toLowerCase());
+        return <CardNameSpan key={i} name={canonical} active={active} color={color} />;
+      })}
+    </span>
+  );
+}
+
+function AdviceCard({ advice, index, activeCards, collapseKey }) {
   const [open, setOpen] = useState(index === 0);
+
+  // When collapseKey changes, collapse all (negative) or expand all (positive)
+  useEffect(() => {
+    if (collapseKey === 0) return;
+    setOpen(collapseKey > 0);
+  }, [collapseKey]);
 
   return (
     <div style={{
@@ -3264,7 +3750,7 @@ function AdviceCard({ advice, index }) {
             color: COLORS.textMid, fontFamily: "'Crimson Text', serif",
             fontSize: "14px", lineHeight: 1.6, margin: "12px 0 10px",
           }}>
-            {advice.detail}
+            <HighlightedText text={advice.detail} activeCards={activeCards} color={advice.color} />
           </p>
           {advice.steps && advice.steps.length > 0 && (
             <div>
@@ -3290,7 +3776,9 @@ function AdviceCard({ advice, index }) {
                   <span style={{
                     color: COLORS.text, fontSize: "13px",
                     fontFamily: "'Crimson Text', serif", lineHeight: 1.55,
-                  }}>{step}</span>
+                  }}>
+                    <HighlightedText text={step} activeCards={activeCards} color={advice.color} />
+                  </span>
                 </div>
               ))}
             </div>
@@ -3338,7 +3826,22 @@ export default function YevaAdvisor() {
   const [graveyard, setGraveyard] = useState([]);
   const [mana, setMana] = useState("3");
   const [isMyTurn, setIsMyTurn] = useState(false);
+  const [yisanCounters, setYisanCounters] = useState(0);
   const [advice, setAdvice] = useState([]);
+  const [infiniteMana, setInfiniteMana] = useState(false);
+  const [collapseKey, setCollapseKey] = useState(0);
+  const advicePanelRef = useRef(null);
+
+  // Preserve scroll position when advice updates
+  const scrollPosRef = useRef(0);
+  useEffect(() => {
+    const el = advicePanelRef.current;
+    if (!el) return;
+    el.scrollTop = scrollPosRef.current;
+  }, [advice]);
+  const handleAdviceScroll = useCallback(() => {
+    scrollPosRef.current = advicePanelRef.current?.scrollTop ?? 0;
+  }, []);
   const [showDebug, setShowDebug] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
@@ -3354,6 +3857,7 @@ export default function YevaAdvisor() {
       if (state.graveyard)   setGraveyard(state.graveyard);
       if (state.mana != null) setMana(String(state.mana));
       if (state.isMyTurn != null) setIsMyTurn(state.isMyTurn);
+      if (state.yisanCounters != null) setYisanCounters(state.yisanCounters);
       // Clean the URL without reloading
       window.history.replaceState({}, "", window.location.pathname);
     }).catch(() => {}); // silently ignore malformed params
@@ -3376,15 +3880,30 @@ export default function YevaAdvisor() {
   const reset = () => {
     setHand([]); setBattlefield([]); setGraveyard([]);
     setMana("3"); setIsMyTurn(false); setAdvice([]);
+    setYisanCounters(0); setInfiniteMana(false);
   };
+
+  // Auto-calculate mana from battlefield contents
+  useEffect(() => {
+    const calculated = calculateBattlefieldMana(battlefield);
+    setMana(String(calculated));
+  }, [battlefield]);
+
+  // Reset Yisan counter when Yisan leaves the battlefield
+  useEffect(() => {
+    if (!battlefield.includes("Yisan, the Wanderer Bard")) {
+      setYisanCounters(0);
+    }
+  }, [battlefield]);
 
   // Live analysis as state changes
   useEffect(() => {
     if (hand.length + battlefield.length > 0) {
-      const results = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: mana, isMyTurn });
+      const { results, infiniteManaActive } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: mana, isMyTurn, yisanCounters });
       setAdvice(results);
+      setInfiniteMana(infiniteManaActive);
     }
-  }, [hand, battlefield, graveyard, mana, isMyTurn]);
+  }, [hand, battlefield, graveyard, mana, isMyTurn, yisanCounters]);
 
   const elvesOnBoard     = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => CARDS[c]?.type === "creature").length;
@@ -3400,6 +3919,10 @@ export default function YevaAdvisor() {
         ::-webkit-scrollbar-track { background: #07100788; }
         ::-webkit-scrollbar-thumb { background: #2d5a2d; border-radius: 3px; }
         input::placeholder { color: #3d6b3d; }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.65; }
+        }
         @media (max-width: 768px) {
           .panels-wrapper { flex-direction: column; min-height: unset; }
           .panel-input {
@@ -3450,6 +3973,21 @@ export default function YevaAdvisor() {
             }}>
               {creaturesOnBoard} creatures · {elvesOnBoard} elves · {devotionOnBoard}🌲 devotion
             </div>
+            {infiniteMana && (
+              <div style={{
+                padding: "4px 12px",
+                background: "#1a0a2e",
+                border: `1px solid #a855f7`,
+                borderRadius: "6px",
+                fontSize: "12px", color: "#c084fc",
+                fontFamily: "'Cinzel', serif",
+                letterSpacing: "1px",
+                boxShadow: "0 0 10px #a855f722",
+                animation: "pulse 2s ease-in-out infinite",
+              }}>
+                ⚡ ∞ INFINITE MANA
+              </div>
+            )}
             <button onClick={() => setShowDebug(true)} style={{
               background: "none", border: `1px solid ${COLORS.border}`,
               borderRadius: "6px", padding: "5px 14px",
@@ -3512,7 +4050,7 @@ export default function YevaAdvisor() {
                       transition: "color 0.2s",
                     }}>{jsonCopied ? "✓ Copied!" : "📋 Copy JSON"}</button>
                     <button onClick={() => {
-                      const state = { hand, battlefield, graveyard, mana: Number(mana), isMyTurn };
+                      const state = { hand, battlefield, graveyard, mana: Number(mana), isMyTurn, yisanCounters };
                       compressState(state).then(encoded => {
                         const url = `${window.location.origin}${window.location.pathname}?s=${encoded}`;
                         navigator.clipboard.writeText(url);
@@ -3632,9 +4170,12 @@ export default function YevaAdvisor() {
                 })}
               </div>
               <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.textDim, letterSpacing: "1px", whiteSpace: "nowrap" }}>MANA AVAILABLE</label>
+                <div>
+                  <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.textDim, letterSpacing: "1px", whiteSpace: "nowrap", display: "block" }}>MANA AVAILABLE</label>
+                  <span style={{ fontSize: "9px", color: COLORS.textDim, opacity: 0.6, fontFamily: "'Crimson Text', serif", fontStyle: "italic" }}>auto · override manually</span>
+                </div>
                 <input
-                  type="number" min="0" max="99" value={mana}
+                  type="number" min="0" max="999" value={mana}
                   onChange={e => setMana(e.target.value)}
                   style={{
                     width: "70px", background: "#07100788",
@@ -3645,6 +4186,32 @@ export default function YevaAdvisor() {
                   }}
                 />
               </div>
+
+              {/* Yisan counter tracker — only shown when Yisan is on the battlefield */}
+              {battlefield.includes("Yisan, the Wanderer Bard") && (
+                <div style={{ marginTop: "12px", display: "flex", gap: "10px", alignItems: "center" }}>
+                  <div>
+                    <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: "#27ae60", letterSpacing: "1px", display: "block" }}>YISAN VERSE</label>
+                    <span style={{ fontSize: "9px", color: COLORS.textDim, opacity: 0.6, fontFamily: "'Crimson Text', serif", fontStyle: "italic" }}>current counters</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <button onClick={() => setYisanCounters(v => Math.max(0, v - 1))} style={{
+                      width: 28, height: 28, borderRadius: "50%", border: `1px solid ${COLORS.border}`,
+                      background: "#07100788", color: COLORS.textMid, cursor: "pointer",
+                      fontSize: "16px", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>−</button>
+                    <span style={{
+                      width: 36, textAlign: "center",
+                      fontFamily: "'Cinzel', serif", fontSize: "20px", fontWeight: 700, color: "#27ae60",
+                    }}>{yisanCounters}</span>
+                    <button onClick={() => setYisanCounters(v => Math.min(10, v + 1))} style={{
+                      width: 28, height: 28, borderRadius: "50%", border: `1px solid ${COLORS.border}`,
+                      background: "#07100788", color: COLORS.textMid, cursor: "pointer",
+                      fontSize: "16px", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>+</button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ height: "1px", background: COLORS.border, marginBottom: "16px" }} />
@@ -3674,12 +4241,18 @@ export default function YevaAdvisor() {
               onRemoveFromHand={removeFrom(setHand)}
               onRemoveFromBattlefield={removeFrom(setBattlefield)}
               onMoveToBattlefield={addTo("battlefield")}
+              onMoveToHand={addTo("hand")}
             />
 
           </div>
 
           {/* RIGHT PANEL — Advice */}
-          <div className="panel-advice" style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}>
+          <div
+            ref={advicePanelRef}
+            onScroll={handleAdviceScroll}
+            className="panel-advice"
+            style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}
+          >
             {advice.length === 0 ? (
               <div style={{
                 display: "flex", flexDirection: "column",
@@ -3707,12 +4280,30 @@ export default function YevaAdvisor() {
                   }}>RECOMMENDED PLAYS</div>
                   <div style={{ flex: 1, height: "1px", background: COLORS.border }} />
                   <div style={{ fontSize: "12px", color: COLORS.textDim }}>
-                    {advice.length} line{advice.length !== 1 ? "s" : ""} found
+                    {advice.length} line{advice.length !== 1 ? "s" : ""}
                   </div>
+                  <button
+                    onClick={() => setCollapseKey(k => k <= 0 ? 1 : k + 1)}
+                    title="Expand all"
+                    style={{
+                      background: "none", border: `1px solid ${COLORS.border}`,
+                      borderRadius: "4px", padding: "2px 8px",
+                      color: COLORS.textDim, cursor: "pointer",
+                      fontSize: "11px", fontFamily: "'Cinzel', serif",
+                    }}>▾ all</button>
+                  <button
+                    onClick={() => setCollapseKey(k => k >= 0 ? -1 : k - 1)}
+                    title="Collapse all"
+                    style={{
+                      background: "none", border: `1px solid ${COLORS.border}`,
+                      borderRadius: "4px", padding: "2px 8px",
+                      color: COLORS.textDim, cursor: "pointer",
+                      fontSize: "11px", fontFamily: "'Cinzel', serif",
+                    }}>▸ all</button>
                 </div>
 
                 {advice.map((a, i) => (
-                  <AdviceCard key={i} advice={a} index={i} />
+                  <AdviceCard key={i} advice={a} index={i} activeCards={new Set([...hand, ...battlefield])} collapseKey={collapseKey} />
                 ))}
 
                 {/* Philosophy reminder */}
