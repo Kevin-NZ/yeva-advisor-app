@@ -194,16 +194,17 @@ const COMBOS = [
     name: "Ashaya + Argothian Elder (2-Card Infinite Mana!)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Argothian Elder"],
     mustPreExist: ["Argothian Elder"],
-    description: "Infinite mana with only 2 cards. Ashaya turns Argothian Elder into a Forest, allowing Elder to target itself with its 'untap two lands' ability. Tap Elder as a Forest for {G}, then untap Elder + any other land. Repeat.",
+    description: "Infinite mana with only 2 cards. Ashaya turns Argothian Elder into a Forest/land, allowing Elder to target itself with its 'untap two lands' ability. Tap Elder as a land for {G} (via Ashaya making it a Forest), then activate Elder's untap ability targeting itself + any other land. Elder untaps, tap it again for {G}. Repeat.",
     requires: ["Ashaya, Soul of the Wild", "Argothian Elder"],
     priority: 10,
     type: "infinite-mana",
     lines: [
-      "Ashaya in play — Argothian Elder is now a Forest.",
-      "Tap Argothian Elder as a Forest for {G}.",
-      "Activate Argothian Elder's ability: untap two target lands — target itself AND any other land.",
-      "Elder is now untapped. Tap it for {G} again. Repeat for infinite {G}.",
-      "This is a clean 2-card combo — no other pieces required!",
+      "Ashaya in play — Argothian Elder is now a Forest land (taps for {G} like any Forest).",
+      "Tap Argothian Elder for {G} (its Forest mana ability via Ashaya).",
+      "Activate Argothian Elder's tap ability ({T}): untap two target lands — target itself AND any other land.",
+      "Elder resolves: it untaps itself. It is now untapped again and ready.",
+      "Tap Elder for {G} again. Also tap the second untapped land for bonus mana. Repeat for infinite {G}.",
+      "This is a clean 2-card combo. The second land untapped each loop is a free bonus.",
     ]
   },
 
@@ -251,41 +252,46 @@ const COMBOS = [
     ]
   },
 
-  // ── 5. Earthcraft + Ashaya + Quirion Ranger ───────────────────────────
+  // ── 5. Earthcraft + Ashaya + Quirion Ranger + Yavimaya ────────────────
+  // IMPORTANT: Ashaya makes creatures Forest lands but NOT basic lands.
+  // Earthcraft requires "basic land" — needs Yavimaya to make lands basic Forests.
   {
     id: "earthcraft_ashaya_quirion",
-    name: "Earthcraft + Ashaya + Quirion Ranger",
-    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger"],
-    description: "Infinite mana. With Earthcraft, Quirion Ranger can tap itself to untap a basic land. Ashaya makes all creatures Forests (which are basic lands). Tap Quirion for {G}, tap another creature via Earthcraft to untap Quirion, bounce Quirion to untap any creature, recast — net {G} each loop.",
-    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    name: "Earthcraft + Ashaya + Quirion Ranger + Yavimaya",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger", "Yavimaya, Cradle of Growth"],
+    description: "Infinite mana. Earthcraft requires basic lands — Ashaya makes creatures Forest lands but NOT basic. Yavimaya, Cradle of Growth fixes this by making all lands (including creature-lands) basic Forests. With Yavimaya + Ashaya, tap Quirion Ranger as a Forest for {G}, tap another creature via Earthcraft to untap a basic Forest (=any creature via Yavimaya+Ashaya), bounce Ranger to untap the dork, recast — net {G} each loop.",
+    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger", "Yavimaya, Cradle of Growth"],
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Earthcraft + Ashaya + Quirion Ranger + at least one other creature on battlefield.",
-      "Tap Quirion Ranger as a Forest (via Ashaya) for {G}.",
-      "Tap another creature to Earthcraft: untap a basic Forest — since all creatures ARE Forests/basics via Ashaya, tap any creature to untap Quirion Ranger.",
+      "Earthcraft + Ashaya + Quirion Ranger + Yavimaya, Cradle of Growth + at least one other creature on battlefield.",
+      "WHY YAVIMAYA: Ashaya makes creatures Forest lands but not BASIC lands. Earthcraft needs basic lands. Yavimaya makes all lands basic Forests — including creature-lands via Ashaya.",
+      "Tap Quirion Ranger as a Forest (via Ashaya+Yavimaya) for {G}.",
+      "Tap another creature to Earthcraft: untap a basic Forest (all creature-lands are basic via Yavimaya) — untap Quirion Ranger.",
       "Activate Quirion Ranger: return itself to hand, untapping any other creature.",
       "Recast Quirion Ranger for {G}. Net: {G} per loop.",
       "Repeat for infinite green mana.",
     ]
   },
 
-  // ── 5b. Earthcraft + Ashaya + Scryb Ranger (Flash! Instant Speed) ──────
+  // ── 5b. Earthcraft + Ashaya + Scryb Ranger + Yavimaya (Flash! Instant Speed) ─
+  // Same Yavimaya requirement as Quirion variant — Ashaya creatures are non-basic.
   {
     id: "earthcraft_ashaya_scryb",
-    name: "Earthcraft + Ashaya + Scryb Ranger (Instant Speed!)",
-    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Scryb Ranger"],
-    description: "Infinite mana at instant speed. Identical to the Quirion Ranger variant but Scryb Ranger has flash — the loop goes off on any opponent's turn without needing Yeva. Costs {1}{G} to recast vs Quirion's {G}, so needs one additional creature on board to Earthcraft-untap and fund the extra {1}.",
-    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Scryb Ranger"],
+    name: "Earthcraft + Ashaya + Scryb Ranger + Yavimaya (Instant Speed!)",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Scryb Ranger", "Yavimaya, Cradle of Growth"],
+    description: "Infinite mana at instant speed. Same as the Quirion Ranger variant but Scryb Ranger has flash — goes off on any opponent's turn without needing Yeva. Requires Yavimaya to make creature-lands basic (Ashaya alone is not enough for Earthcraft). Costs {1}{G} to recast, so needs two Earthcraft targets per loop.",
+    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Scryb Ranger", "Yavimaya, Cradle of Growth"],
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Earthcraft + Ashaya + Scryb Ranger + at least two other creatures on battlefield.",
+      "Earthcraft + Ashaya + Scryb Ranger + Yavimaya + at least two other creatures on battlefield.",
       "KEY ADVANTAGE: Scryb Ranger has flash — this loop works on any player's turn without Yeva.",
-      "Tap Scryb Ranger as a Forest (via Ashaya) for {G}.",
-      "Tap two creatures to Earthcraft: untap two basic Forests (creature-Forests via Ashaya), untapping Scryb Ranger and one other creature.",
+      "WHY YAVIMAYA: Ashaya makes creatures Forest lands but not BASIC. Yavimaya makes all lands basic Forests.",
+      "Tap Scryb Ranger as a Forest for {G}.",
+      "Tap two creatures to Earthcraft: untap two basic Forests (all creature-lands are basic via Yavimaya+Ashaya), untapping Scryb Ranger and one other creature.",
       "Activate Scryb Ranger: return itself to hand, untapping any creature.",
-      "Recast Scryb Ranger for {1}{G}. Net: {G} per loop (needs 2 Earthcraft targets to fund the {1}).",
+      "Recast Scryb Ranger for {1}{G}. Net: {G} per loop.",
       "Repeat for infinite green mana at instant speed.",
     ]
   },
@@ -315,7 +321,7 @@ const COMBOS = [
     id: "sabertooth_symbiote",
     name: "Temur Sabertooth + Wirewood Symbiote + 1-Drop Elf + Dork (≥5 mana)",
     onBattlefield: ["Temur Sabertooth", "Wirewood Symbiote"],
-    description: "Infinite mana. Symbiote bounces a 1-drop elf to untap the big dork. Sabertooth bounces Symbiote back to hand. Recast both. Net mana when dork produces ≥5 (covering {1}{G} Sabertooth bounce + {G} Symbiote recast + {G} 1-drop recast = {3}{G} total cost).",
+    description: "Infinite mana. Symbiote bounces a 1-drop elf to untap the big dork. Sabertooth bounces Symbiote to hand (resetting its once-per-turn restriction — it re-enters as a new object). Recast both. Net mana when dork produces ≥5 (covering {1}{G} Sabertooth bounce + {G} Symbiote recast + {G} 1-drop recast = {3}{G} total cost).",
     requires: ["Temur Sabertooth", "Wirewood Symbiote"],
     needsBigDork: 5,
     needsOneDrop: true,
@@ -325,7 +331,7 @@ const COMBOS = [
       "Temur Sabertooth + Wirewood Symbiote + a 1-drop elf + a dork tapping for ≥5 all on battlefield.",
       "Tap the big dork for ≥5 mana.",
       "Activate Wirewood Symbiote: return the 1-drop elf to hand, untapping the big dork.",
-      "Pay {1}{G}: Sabertooth bounces Wirewood Symbiote to hand.",
+      "Pay {1}{G}: Sabertooth bounces Wirewood Symbiote to hand — this resets its once-per-turn restriction (re-enters as a new object).",
       "Recast Symbiote ({G}) + recast 1-drop elf ({G}). Total cost this loop: {1}{G}+{G}+{G} = {3}{G}.",
       "Net positive mana when dork taps for ≥5. Repeat for infinite mana.",
     ]
@@ -417,7 +423,7 @@ const COMBOS = [
     id: "circle_symbiote_loop",
     name: "Circle of Dreams Druid / Karametra's Acolyte + Wirewood Symbiote or Hyrax Tower Scout",
     onBattlefield: ["Ashaya, Soul of the Wild"],
-    description: "Infinite mana. Circle of Dreams Druid taps for {G} per creature (=Gaea's Cradle on a body). Karametra's Acolyte taps for {G} per green devotion. With Wirewood Symbiote or Hyrax Tower Scout providing a repeatable untap via Temur Sabertooth or Kogla, the loop is infinite when output ≥5 (Symbiote loop) or ≥6 (Scout loop).",
+    description: "Infinite mana. Circle of Dreams Druid taps for {G} per creature (=Gaea's Cradle on a body). Karametra's Acolyte taps for {G} per green devotion. Wirewood Symbiote bounces a 1-drop to untap the dork; Sabertooth bounces Symbiote resetting its once-per-turn restriction. Net positive when output ≥5 (Symbiote loop) or ≥6 (Scout loop).",
     requires: ["Ashaya, Soul of the Wild"],
     needsAlso: ["Circle of Dreams Druid", "Karametra's Acolyte"],
     needsBigDork: 5,
@@ -426,7 +432,7 @@ const COMBOS = [
     lines: [
       "Circle of Dreams Druid (=Gaea's Cradle on a body) OR Karametra's Acolyte (=Nykthos on a body).",
       "With Ashaya, these creatures are Forests — enabling all the standard Ranger/Symbiote/Scout loops.",
-      "Wirewood Symbiote loop: tap Circle/Acolyte for X mana, Symbiote bounces a 1-drop to untap it. Sabertooth bounces Symbiote. Net positive when X ≥ 5.",
+      "Wirewood Symbiote loop: tap Circle/Acolyte for X mana, Symbiote bounces a 1-drop to untap it. Sabertooth bounces Symbiote (resetting once-per-turn). Net positive when X ≥ 5.",
       "Hyrax Tower Scout loop: Scout ETB untaps Circle/Acolyte. Sabertooth/Kogla bounces Scout. Net positive when X ≥ 6.",
       "Quirion Ranger loop (with Ashaya): Ranger returns itself as a Forest to untap Circle/Acolyte. Net positive when X ≥ 2.",
       "Scryb Ranger loop (with Ashaya): same but needs X ≥ 3.",
@@ -781,28 +787,32 @@ const COMBOS = [
 
   // ── Magus of the Candelabra + Wirewood Symbiote + Big Land ───────────
   // NOTE: Magus is NOT an elf — Wirewood Lodge cannot untap it.
+  // NOTE: Magus is NOT an elf — Wirewood Lodge cannot untap it.
   // Wirewood Symbiote bounces any elf to untap any creature (including Magus).
+  // Sabertooth bounces Symbiote to hand, resetting its once-per-turn restriction.
   {
     id: "magus_symbiote",
-    name: "Magus of the Candelabra + Wirewood Symbiote + Big Land (≥3 mana)",
+    name: "Magus of the Candelabra + Wirewood Symbiote + Sabertooth + Big Land (≥5 mana)",
     onBattlefield: ["Magus of the Candelabra", "Wirewood Symbiote"],
     mustPreExist: ["Magus of the Candelabra", "Wirewood Symbiote"],
-    description: "Infinite mana. Tap big land for N (≥3). Pay {1} to Magus (X=1) to untap the big land. Wirewood Symbiote bounces a 1-drop elf to untap Magus. Recast the 1-drop for {G}. Net: N − 2 mana per loop. Infinite when big land produces ≥3.",
+    description: "Infinite mana. Tap big land for N. Pay {1} to Magus to untap it, tap again. Symbiote bounces 1-drop elf to untap Magus. Sabertooth bounces Symbiote resetting its once-per-turn restriction. Recast both. Total cost per loop: {1}+{1}{G}+{G}+{G} = {3}{G}+{2}. Net positive when land produces ≥5.",
     requires: ["Magus of the Candelabra", "Wirewood Symbiote"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
     needsAuraLand: true,
     needsAuraLand3: true,
     needsOneDrop: true,
+    needsAlsoBouncer: true,
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Magus of the Candelabra + Wirewood Symbiote + a 1-drop elf + big land (≥3 mana) on battlefield.",
-      "Tap big land for N mana (≥3).",
-      "Pay {1}: activate Magus with X=1, untapping 1 land (the big land).",
-      "Tap big land again for N mana.",
-      "Activate Wirewood Symbiote: bounce the 1-drop elf to hand → untap Magus (any creature).",
-      "Recast the 1-drop elf for {G}.",
-      "Net: N − 2 mana per loop. Gaea's Cradle grows as elves accumulate. Repeat for infinite mana.",
+      "Magus of the Candelabra + Wirewood Symbiote + Temur Sabertooth + a 1-drop elf + big land (≥5 mana) on battlefield.",
+      "Tap big land for N mana.",
+      "Pay {1}: activate Magus (X=1), untapping the big land.",
+      "Tap big land again for N mana. (2N total so far.)",
+      "Activate Wirewood Symbiote: bounce 1-drop elf to hand → untap Magus.",
+      "Pay {1}{G}: Sabertooth bounces Symbiote to hand — re-entering resets its once-per-turn restriction.",
+      "Recast Symbiote ({G}) and 1-drop elf ({G}).",
+      "Total cost: {1}+{1}{G}+{G}+{G} = {3}{G}+{2}. Net positive when 2N ≥ 5. Repeat for infinite mana.",
     ]
   },
 ];
@@ -1041,7 +1051,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (combo.type !== "infinite-mana") continue;
       const allOnBoard = combo.requires.every(r => board.has(r));
       if (!allOnBoard) continue;
-      const extras = comboExtrasSatisfied(combo);
+      const extras = comboExtrasSatisfied(combo, false); // bootstrap: infinite mana not yet known
       if (extras.ok) return { infiniteManaActive: true, activeComboName: combo.name };
     }
     return { infiniteManaActive: false, activeComboName: null };
@@ -1049,20 +1059,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // Can we cast permanents into play this turn? (our turn, Yeva flash, or infinite mana)
   const canCastNow = isMyTurn || yevaFlash || infiniteManaActive;
-  // Haste enabler: Ashaya (board or castable) + Destiny Spinner/Badgermole makes all creature-Forests tap immediately
-  const ashayaAvailable   = board.has("Ashaya, Soul of the Wild") || (inHand.has("Ashaya, Soul of the Wild") && canCastNow);
-  const hasHasteEnabler   = ashayaAvailable && hasLandAnimate;
+  // Haste enabler: Ashaya (board or castable) + Destiny Spinner/Badgermole makes all creature-Forests tap immediately.
+  // The land-animate piece must already be on the battlefield — if it is also only in hand we
+  // would need to cast two cards sequentially before the mustPreExist tapper could fire, which
+  // is too optimistic. Ashaya itself may still be in hand as long as the animator is in play.
+  const ashayaAvailable      = board.has("Ashaya, Soul of the Wild") || (inHand.has("Ashaya, Soul of the Wild") && canCastNow);
+  const landAnimateOnBoard   = board.has("Destiny Spinner") || (board.has("Badgermole Cub") && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth")));
+  const hasHasteEnabler      = ashayaAvailable && landAnimateOnBoard;
 
   const results = [];
 
   // ---- HELPER: exact mana output of a dork given board context ----
-  function estimateDorkOutput(cardName) {
+  function estimateDorkOutput(cardName, extraElves = 0) {
     const t = CARDS[cardName]?.tapsFor;
     // Badgermole Cub: animates a land and grants +1 mana to all creatures while on board
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
-    if (t === "elves")    return elvesOnBoard    + badgermoleBonus; // Priest of Titania, Elvish Archdruid
-    if (t === "creatures") return creaturesOnBoard + badgermoleBonus; // Circle of Dreams Druid
+    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid
+    if (t === "creatures") return creaturesOnBoard + extraElves + badgermoleBonus; // Circle of Dreams Druid
     if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
     if (t === "arbor") {
       // Arbor Elf untaps an enchanted Forest or (with Yavimaya) any land
@@ -1079,19 +1093,36 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- HELPER: find the best big dork available and its output ----
+  // extraElves: elves in hand that would enter the battlefield as part of assembling the combo,
+  // boosting elf-counting dorks like Priest of Titania before the loop begins.
   function findBigDork(threshold) {
+    // Count castable elves in hand — casting them first raises elf/creature count before the loop starts.
+    // NOTE: canCastNow may not be initialized yet when called from the infiniteManaActive IIFE,
+    // so we use a try/catch to safely fall back to false in that case.
+    let _canCast = false;
+    try { _canCast = canCastNow; } catch(e) { _canCast = false; }
+    const elvesInHand = _canCast
+      ? hand.filter(c => CARDS[c]?.tags?.includes("elf")).length
+      : 0;
     const all = [...battlefield, ...hand];
     const candidates = all.filter(c => {
       if (!CARDS[c]?.tags?.includes("dork") && !CARDS[c]?.tags?.includes("big-dork")) return false;
-      return estimateDorkOutput(c) >= threshold;
+      // If the dork itself is in hand and is an elf, don't double-count it in the bonus
+      const effectiveBonus = Math.max(0, (inHand.has(c) && CARDS[c]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      return estimateDorkOutput(c, effectiveBonus) >= threshold;
     });
     if (candidates.length === 0) return null;
-    // Return the highest-output candidate
-    return candidates.sort((a,b) => estimateDorkOutput(b) - estimateDorkOutput(a))[0];
+    return candidates.sort((a, b) => {
+      const bonusA = Math.max(0, (inHand.has(a) && CARDS[a]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      const bonusB = Math.max(0, (inHand.has(b) && CARDS[b]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      return estimateDorkOutput(b, bonusB) - estimateDorkOutput(a, bonusA);
+    })[0];
   }
 
   // ---- HELPER: check combo-specific extra requirements ----
-  function comboExtrasSatisfied(combo) {
+  // infiniteMana is passed explicitly so this function is safe to call from the
+  // infiniteManaActive IIFE before the closure variable is initialised.
+  function comboExtrasSatisfied(combo, infiniteMana = false) {
 
     // needsBigDork: need a dork producing >= N mana
     if (combo.needsBigDork) {
@@ -1129,33 +1160,39 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsBigElfDorkOnBoard: like needsBigDork but restricted to battlefield only
-    // and requires the dork to be an elf (so Wirewood Lodge can untap it)
+    // and requires the dork to be an elf (so Wirewood Lodge can untap it).
+    // Uses the same extraElves logic as findBigDork for consistency.
     if (combo.needsBigElfDorkOnBoard) {
       const threshold = combo.needsBigElfDorkOnBoard;
+      let _canCast2 = false;
+      try { _canCast2 = canCastNow; } catch(e) { _canCast2 = false; }
+      const elvesInHand2 = _canCast2
+        ? hand.filter(c => CARDS[c]?.tags?.includes("elf")).length
+        : 0;
       const dork = battlefield.find(c => {
         if (!CARDS[c]?.tags?.includes("elf")) return false;
         if (!CARDS[c]?.tags?.includes("dork") && !CARDS[c]?.tags?.includes("big-dork")) return false;
-        return estimateDorkOutput(c) >= threshold;
+        return estimateDorkOutput(c, elvesInHand2) >= threshold;
       });
       if (!dork) return { ok: false, missing: `a big elf dork on battlefield producing ≥${threshold} mana (Priest of Titania, Elvish Archdruid, or Circle of Dreams Druid with ${threshold}+ elves/creatures)` };
     }
 
-    // needsAuraLand: combo also works with an enchanted Forest (producing ≥2)
-    // For Hope Tender + Lodge we need ≥3 mana — double aura counts, single doesn't
+    // needsAlso / needsAuraLand: combo needs one of the named lands OR an enchanted Forest.
+    // For Hope Tender + Lodge we need ≥3 mana output — needsAuraLand3 flag.
+    // Both the aura AND a Forest must be on the battlefield (not merely in hand).
     if (combo.needsAlso) {
       const hasNamedLand = combo.needsAlso.some(c => board.has(c) || inHand.has(c));
-      const auraCount = (board.has("Utopia Sprawl") ? 1 : 0) + (board.has("Wild Growth") ? 1 : 0)
-        + (board.has("Elvish Guidance") ? 1 : 0); // Guidance can also boost output
-      const hasForest = board.has("Forest") || board.has("Dryad Arbor") || board.has("Yavimaya, Cradle of Growth");
-      // Standard aura land: needs ≥1 aura for most combos (produces 2+)
-      // needsAuraLand3: needs to produce ≥3, so requires 2 auras OR Guidance with ≥3 elves
-      const hasAuraLand = combo.needsAuraLand && hasForest && (
+      const aurasOnBoard = (board.has("Utopia Sprawl") ? 1 : 0) + (board.has("Wild Growth") ? 1 : 0)
+        + (board.has("Elvish Guidance") ? 1 : 0);
+      const forestOnBoard = board.has("Forest") || board.has("Dryad Arbor") || board.has("Yavimaya, Cradle of Growth");
+      const auraLandReady = forestOnBoard && (
         combo.needsAuraLand3
-          ? (auraCount >= 2 || (board.has("Elvish Guidance") && battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length >= 3))
-          : auraCount >= 1
+          ? (aurasOnBoard >= 2 || (board.has("Elvish Guidance") && elvesOnBoard >= 3))
+          : aurasOnBoard >= 1
       );
+      const hasAuraLand = combo.needsAuraLand && auraLandReady;
       if (!hasNamedLand && !hasAuraLand) {
-        return { ok: false, missing: combo.needsAlso.join(" or ") + (combo.needsAuraLand ? " (or a Forest enchanted with Utopia Sprawl/Wild Growth)" : "") };
+        return { ok: false, missing: combo.needsAlso.join(" or ") + (combo.needsAuraLand ? " (or a Forest enchanted with Utopia Sprawl/Wild Growth — both must be on the battlefield)" : "") };
       }
     }
 
@@ -1174,7 +1211,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsInfiniteMana: requires infinite mana to already be established
-    if (combo.needsInfiniteMana && !infiniteManaActive) {
+    if (combo.needsInfiniteMana && !infiniteMana) {
       return { ok: false, missing: "infinite mana (establish a mana loop first)" };
     }
 
@@ -1202,6 +1239,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const hasSymbiote    = board.has("Wirewood Symbiote") || inHand.has("Wirewood Symbiote");
       const hasWoodcaller  = board.has("Woodcaller Automaton") || inHand.has("Woodcaller Automaton");
 
+      const hasHopeTender  = board.has("Hope Tender") || inHand.has("Hope Tender");
+      const hasLodge       = board.has("Wirewood Lodge") || inHand.has("Wirewood Lodge");
       const hasUntapMethod =
         hasWoodcaller ||                              // 1. Woodcaller Automaton
         (hasLandAnimate && hasHyrax) ||               // 2. Destiny Spinner / Badgermole + Hyrax Tower Scout
@@ -1209,11 +1248,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         (hasAshaya && hasQuirion) ||                  // 4. Ashaya + Quirion Ranger
         (hasAshaya && hasScryb) ||                    // 5. Ashaya + Scryb Ranger
         (hasSymbiote && hasLandAnimate) ||            // 6. Wirewood Symbiote + Destiny Spinner / Badgermole
-        (hasAshaya && hasElder);                      // 7. Ashaya + Argothian Elder
+        (hasAshaya && hasElder) ||                    // 7. Ashaya + Argothian Elder
+        (hasHopeTender && hasLodge);                  // 8. Hope Tender + Wirewood Lodge (exert + Lodge bypass)
 
       if (!hasUntapMethod) return {
         ok: false,
-        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner (or Badgermole Cub + bouncer) + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; or Wirewood Symbiote + Destiny Spinner/Badgermole Cub",
+        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner (or Badgermole + bouncer) + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; Wirewood Symbiote + Destiny Spinner/Badgermole; or Hope Tender + Wirewood Lodge",
       };
     }
 
@@ -1369,7 +1409,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       steps: [
         "Tap each creature via Earthcraft to untap a basic Forest.",
         `${creaturesOnBoard} creatures = ${creaturesOnBoard} untaps. Stack with Wild Growth/Utopia Sprawl for double value.`,
-        "If Ashaya resolves: creatures ARE basic lands. Each taps to untap another → infinite mana."
+        "If Ashaya + Yavimaya both resolve: Yavimaya makes all lands (including creature-lands) basic Forests → each creature taps to untap another → infinite mana."
       ],
       color: "#f39c12",
     });
@@ -2631,7 +2671,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     const missing = [...new Set([...missingPreExist, ...missingCastable, ...missingAnywhere])];
 
-    const extras = comboExtrasSatisfied(combo);
+    const extras = comboExtrasSatisfied(combo, infiniteManaActive);
 
     if (missing.length === 0 && extras.ok) {
       // Type metadata: label, headline prefix, priority boost, color
@@ -2674,37 +2714,69 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         }
       }
     } else if (missing.length === 1 && extras.ok) {
-      // One named piece missing
+      // One named piece missing — always emit advice even without a tutor in hand.
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const missingCard = missing[0];
         const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive);
-        if (tutorOptions.length > 0) {
+        results.push({
+          priority: combo.priority + 1,
+          category: "🎯 ONE PIECE AWAY",
+          headline: `Find ${missingCard} to enable ${combo.name}`,
+          detail: tutorOptions.length > 0
+            ? `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`
+            : `You need ${missingCard} to enable ${combo.name}. ${combo.description}`,
+          steps: tutorOptions.length > 0
+            ? [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines]
+            : [`Find ${missingCard} to complete this combo.`, ...combo.lines],
+          combo: combo.id,
+          color: "#58d68d",
+        });
+      }
+    } else if (missing.length === 0 && !extras.ok) {
+      // Named pieces present but need an extra condition satisfied.
+      // Suppress redundant NEARLY THERE when infinite mana is active and the only missing
+      // extra is Endurance — the dedicated win-pile section handles that more clearly.
+      if (combo.type !== "infinite-mana" || !infiniteManaActive) {
+        const suppressEndurance = infiniteManaActive
+          && (combo.type === "win-mill" || combo.type === "win-draw" || combo.type === "win-poison" || combo.type === "win-combat")
+          && typeof extras.missing === "string"
+          && extras.missing.toLowerCase().includes("endurance");
+        if (!suppressEndurance) {
+          const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana, infiniteManaActive);
           results.push({
-            priority: combo.priority + 1,
-            category: "🎯 ONE PIECE AWAY",
-            headline: `Find ${missingCard} to enable ${combo.name}`,
-            detail: `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`,
-            steps: [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines],
+            priority: combo.priority,
+            category: "🔧 NEARLY THERE",
+            headline: `${combo.name} — still need: ${extras.missing}`,
+            detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
+            steps: tutorOptions.length > 0
+              ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
+              : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
             combo: combo.id,
-            color: "#58d68d",
+            color: "#85c1e9",
           });
         }
       }
-    } else if (missing.length === 0 && !extras.ok) {
-      // Named pieces present but need an extra condition satisfied
+    } else if (missing.length >= 2 && extras.ok && combo.priority >= 8) {
+      // Two or more named pieces missing — emit a lower-priority "building towards" hint
+      // so the player knows this combo is on the horizon. Only for high-value combos (≥8)
+      // and only when the player owns at least one required piece already.
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
-        const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana, infiniteManaActive);
-        results.push({
-          priority: combo.priority,
-          category: "🔧 NEARLY THERE",
-          headline: `${combo.name} — still need: ${extras.missing}`,
-          detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
-          steps: tutorOptions.length > 0
-            ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
-            : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
-          combo: combo.id,
-          color: "#85c1e9",
-        });
+        const ownedPieces = combo.requires.filter(r => board.has(r) || inHand.has(r));
+        if (ownedPieces.length >= 1) {
+          const missingNames = missing.slice(0, 3).join(", ");
+          const tutorOptions = getTutorOptions(missing[0], hand, battlefield, mana, infiniteManaActive);
+          results.push({
+            priority: combo.priority - 3,
+            category: "🔨 BUILDING TOWARDS",
+            headline: `${combo.name} — need: ${missingNames}${missing.length > 3 ? " …" : ""}`,
+            detail: `You have ${ownedPieces.join(", ")}. Still need: ${missing.join(", ")}. ${combo.description}`,
+            steps: tutorOptions.length > 0
+              ? [`Priority: use ${tutorOptions[0]} to find ${missing[0]}.`, ...combo.lines]
+              : [`Find ${missing.join(", ")} to assemble this combo.`, ...combo.lines],
+            combo: combo.id,
+            color: "#5d8a5d",
+          });
+        }
       }
     }
   }
@@ -3574,6 +3646,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   }
 
+  // ── Deduplicate results ──────────────────────────────────────────────────
+  // a) Among infinite-mana LOOP READY / CAST TO ENABLE results keep only the best.
+  {
+    const infiniteCategories = new Set(["⚙️ INFINITE MANA ONLINE", "⚡ CAST TO ENABLE MANA LOOP"]);
+    let bestInfinite = null;
+    const deduped = [];
+    for (const r of results) {
+      if (infiniteCategories.has(r.category)) {
+        if (!bestInfinite || r.priority > bestInfinite.priority) bestInfinite = r;
+      } else {
+        deduped.push(r);
+      }
+    }
+    if (bestInfinite) deduped.push(bestInfinite);
+    results.length = 0;
+    results.push(...deduped);
+  }
+  // b) Per combo.id: keep only the highest-priority result — avoids the same combo
+  //    appearing as both ONE PIECE AWAY and BUILDING TOWARDS simultaneously.
+  {
+    const seenCombo = new Map();
+    const deduped = [];
+    for (const r of results) {
+      if (!r.combo) { deduped.push(r); continue; }
+      const existing = seenCombo.get(r.combo);
+      if (!existing || r.priority > existing.priority) {
+        if (existing) {
+          const idx = deduped.indexOf(existing);
+          if (idx !== -1) deduped[idx] = r;
+        } else {
+          deduped.push(r);
+        }
+        seenCombo.set(r.combo, r);
+      }
+    }
+    results.length = 0;
+    results.push(...deduped);
+  }
+
   // Sort by priority descending
   results.sort((a, b) => b.priority - a.priority);
   return { results: results.slice(0, 7), infiniteManaActive, activeComboName };
@@ -4432,10 +4543,15 @@ export default function YevaAdvisor() {
   // Live analysis as state changes
   useEffect(() => {
     if (hand.length + battlefield.length > 0) {
-      const { results, infiniteManaActive, activeComboName: comboName } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: mana, isMyTurn, yisanCounters });
-      setAdvice(results);
-      setInfiniteMana(infiniteManaActive);
-      setActiveComboName(comboName);
+      try {
+        const { results, infiniteManaActive, activeComboName: comboName } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable: mana, isMyTurn, yisanCounters });
+        setAdvice(results);
+        setInfiniteMana(infiniteManaActive);
+        setActiveComboName(comboName);
+      } catch (err) {
+        console.error("analyzeGameState crash:", err);
+        setAdvice([{ priority: 0, category: "⚠️ ERROR", headline: err.message, detail: err.stack, steps: [], color: "#e74c3c" }]);
+      }
     }
   }, [hand, battlefield, graveyard, mana, isMyTurn, yisanCounters]);
 
