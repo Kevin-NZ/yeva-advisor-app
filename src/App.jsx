@@ -95,15 +95,15 @@ const CARDS = {
   "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , devotion:1},
   "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , devotion:0},
   "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","haste","draw"] , devotion:0},
-  "Nature's Rhythm":       { type:"enchantment", cmc:2, tags:["draw","engine"] , devotion:1},
+  "Nature's Rhythm":       { type:"enchantment", cmc:2, tags:["draw","engine","land-draw"] , devotion:1, role:"land-draw", note:"Draws a card whenever you play a land. With infinite mana + Elvish Reclaimer looping this draws the entire library."},
   // OTHER UTILITY
   "Yisan, the Wanderer Bard": { type:"creature", cmc:3, tags:["tutor","engine","yisan"] , devotion:1},
   "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , devotion:1},
   "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , devotion:1, role:"ramp-combo", note:"Fetchland = landfall = Treasure token. Explosive early ramp. Goes infinite with Ashaya+Quirion Ranger when Treasures supplement mana."},
-  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , devotion:1, role:"haste-combo", note:"Animates a land and gives it haste. All dorks produce 1 extra mana. Goes infinite with Ashaya+Quirion (mana-positive) or Scryb (mana-neutral). Pairs with Cradle/Nykthos."},
+  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , devotion:1, role:"haste-combo", note:"ETB 'earthbend 1': target land becomes a 0/0 creature with haste + gets a +1/+1 counter. Can retarget an already-animated land — it resets to 0/0 base but KEEPS all counters and gains one more. With a bouncer + infinite mana: bounce Badgermole, recast, ETB retargets same land → infinite +1/+1 counters → lethal attacker with haste. Static: 'Whenever you tap a creature for mana, add {G}' — doubles mana from all {T} creature mana abilities."},
   "Woodcaller Automaton":  { type:"creature", cmc:8, tags:["combo","untap-land"] , devotion:2},
   "Sowing Mycospawn":      { type:"creature", cmc:5, tags:["removal","land-tutor"] , devotion:1},
-  "Formidable Speaker":    { type:"creature", cmc:2, tags:["combo","tutor","untap","elf"] , devotion:1},
+  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , devotion:1},
   "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling"] , devotion:1},
   "Delighted Halfling":    { type:"creature", cmc:2, tags:["dork","protection"] , devotion:1, role:"protection", note:"Legendary creatures cost {1} less and can't be countered when cast. Protects Ashaya, Yeva, Yisan — key against blue interaction."},
   "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop"] , devotion:1},
@@ -482,20 +482,21 @@ const COMBOS = [
     id: "draw_loop_neutral",
     name: "Mana-Neutral Draw Loop (Ashaya + Ranger + 1-Drop Dork + Draw Engine)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
-    description: "Ashaya + Quirion Ranger + any 1-mana dork loops infinitely but nets 0 mana. Add Beast Whisperer or Glademuse to draw your entire library for free. Then find Elvish Spirit Guide + Tireless Provisioner (each Ranger cast = Forest ETB = Treasure) to convert to infinite mana, or Temur Sabertooth to pivot to another line.",
+    description: "Ashaya + Quirion Ranger + any 1-mana dork loops infinitely but nets 0 mana. Beast Whisperer draws on every creature cast (any turn). Glademuse draws only off-turn. Drawing your library converts to infinite mana via Tireless Provisioner or Elvish Spirit Guide. This is a library-draw engine -- you need a conversion piece to win.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsDrawEngine: true,
     needsOneDrop: true,
+    needsInfiniteMana: true,   // mana-neutral loop alone cannot convert to a win without inf mana
     priority: 9,
     type: "win-draw",
     lines: [
-      "Ashaya + Quirion Ranger + any 1-mana dork (e.g. Llanowar Elves) + Beast Whisperer or Glademuse on battlefield.",
-      "Tap the 1-mana dork for {G}. Cast Quirion Ranger for {G} → trigger draw engine (Beast Whisperer draws 1; Glademuse draws 1 if it's not your turn).",
+      "Ashaya + Quirion Ranger + any 1-mana dork + Beast Whisperer or Glademuse on battlefield.",
+      "TIMING: Beast Whisperer triggers on any turn (cast a creature = draw). Glademuse only triggers off-turn.",
+      "Tap the 1-mana dork for {G}. Cast Quirion Ranger for {G} -- trigger draw engine (draw 1 card).",
       "Bounce Quirion Ranger to untap the dork. Loop is mana-neutral but draws 1 card per iteration.",
       "Draw your entire library at zero net mana cost.",
-      "FIND: Elvish Spirit Guide (exile for {G} at instant speed) + Tireless Provisioner.",
-      "With Provisioner on board: each Quirion Ranger ETB = Forest ETB (Ashaya) = Treasure token = net {G} per loop.",
-      "Infinite mana achieved. Win via Duskwatch Recruiter loop, Sanitarium mill, or Infectious Bite poison.",
+      "CONVERSION: find Tireless Provisioner (each Ranger ETB = Forest ETB = Treasure = net {G}) or Elvish Spirit Guide (exile for instant {G}).",
+      "Once mana-positive: win via Duskwatch Recruiter loop, Sanitarium mill, or Infectious Bite poison.",
     ]
   },
 
@@ -581,7 +582,94 @@ const COMBOS = [
     ]
   },
 
+  // ── ENGINE: Seedborn Muse + Yeva (or Yisan) ──────────────────────────
+  {
+    id: "seedborn_yeva",
+    name: "Seedborn Muse + Yeva/Yisan (Free Activations Every Turn)",
+    onBattlefield: ["Seedborn Muse"],
+    mustPreExist: ["Seedborn Muse"],
+    description: "Seedborn Muse untaps all permanents on each opponent's turn. With Yeva's flash this means you can cast green creatures at instant speed AND activate Yisan on every opponent's upkeep — tripling Yisan's verse-chain speed and keeping mana open on every player's turn.",
+    requires: ["Seedborn Muse"],
+    priority: 7,
+    type: "engine",
+    lines: [
+      "Seedborn Muse on battlefield: ALL your permanents untap at the beginning of each other player's untap step.",
+      "With Yeva's flash active: cast green creatures at instant speed on any opponent's turn, untap, do it again on the next opponent's turn.",
+      "With Yisan on battlefield: you get a free {2}{G} verse activation on each opponent's upkeep. In a 4-player pod Yisan chains 3 verses per round instead of 1.",
+      "With Quirion/Scryb Ranger: double-activate Yisan each opponent's upkeep if you hold the mana.",
+      "SEQUENCING: Seedborn untap happens BEFORE opponent draws — your mana is replenished before any threat resolves.",
+      "TIP: With Elvish Guidance or Gaea's Cradle, Seedborn means infinite mana production across all turns (just not infinite mana in one action).",
+    ]
+  },
+
+  // ── WIN CON: Disciple of Freyalise bounce loop ────────────────────────
+  {
+    id: "disciple_freyalise_loop",
+    name: "Disciple of Freyalise + Bouncer + Infinite Mana (Board Wipe + Draw)",
+    onBattlefield: ["Disciple of Freyalise"],
+    mustPreExist: ["Disciple of Freyalise"],
+    description: "With infinite mana: Disciple of Freyalise ETB has each opponent sacrifice a creature (removal), then you draw cards equal to creatures you control (draw). Bounce with Temur Sabertooth or Kogla and recast repeatedly. Clears all opposing creatures and draws your entire library.",
+    requires: ["Disciple of Freyalise"],
+    needsAlsoBouncer: true,
+    needsInfiniteMana: true,
+    priority: 9,
+    type: "win-draw",
+    lines: [
+      "Infinite mana established. Disciple of Freyalise + Temur Sabertooth on battlefield (Disciple is an Elf, not a Human — Kogla cannot bounce it).",
+      "Disciple ETB: each opponent sacrifices a creature. Then you draw cards equal to creatures you control.",
+      "Pay {1}{G}: Temur Sabertooth bounces Disciple to hand.",
+      "Recast Disciple ({5}{G}): ETB again — each opponent sacrifices another creature, you draw again.",
+      "Loop to clear all opposing creatures. Stop drawing once you find Duskwatch Recruiter or another win outlet.",
+      "Win via Duskwatch Recruiter activation loop → Sanitarium mill.",
+    ]
+  },
+
+  // ── WIN CON: Elvish Archdruid + Eladamri + Yavimaya (Pump Combat Win) ──
+  {
+    id: "archdruid_eladamri_pump",
+    name: "Elvish Archdruid + Eladamri + Yavimaya (Infinite Pump Combat Win)",
+    onBattlefield: ["Elvish Archdruid", "Eladamri, Korvecdal", "Yavimaya, Cradle of Growth"],
+    mustPreExist: ["Elvish Archdruid"],
+    description: "With infinite mana: Elvish Archdruid's second ability ({T}: all elves get +N/+N until end of turn, where N = elves you control) can be activated infinitely via bouncing Archdruid. Combined with Eladamri's forestwalk (unblockable) and Yavimaya (all lands are Forests), your entire elf army becomes infinitely large and completely unblockable.",
+    requires: ["Elvish Archdruid", "Eladamri, Korvecdal", "Yavimaya, Cradle of Growth"],
+    needsInfiniteMana: true,
+    priority: 10,
+    type: "win-combat",
+    lines: [
+      "Infinite mana active. Elvish Archdruid + Eladamri, Korvecdal + Yavimaya, Cradle of Growth on battlefield.",
+      "Yavimaya: all lands are Forests for all players — opponents always have a Forest.",
+      "Eladamri: all your creatures have forestwalk (unblockable vs players controlling a Forest) AND shroud from opponents' spells and abilities.",
+      "Tap Elvish Archdruid: all elves you control get +N/+N until end of turn (N = elf count). With infinite mana, repeat this multiple times or use a bounce loop.",
+      "With Temur Sabertooth: bounce Archdruid, recast, activate again — stacks pump on all elves infinitely.",
+      "Attack with your infinitely large, completely unblockable, shrouded elf army. All opponents take lethal simultaneously.",
+      "TIP: You only need pump equal to your opponents' life totals — no need to loop more than necessary.",
+    ]
+  },
+
+  // ── ENGINE: Formidable Speaker + Ashaya (Infinite Tutor Loop) ─────────
+  {
+    id: "speaker_ashaya_tutor",
+    name: "Formidable Speaker + Ashaya + Quirion Ranger (Repeating Creature Tutor)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
+    description: "With infinite mana active: Formidable Speaker + Ashaya + Quirion Ranger is an instant win. Speaker ETB: discard a card → search your entire library for any creature (guaranteed every time). Each loop: Quirion returns Speaker to hand (untapping the dork), recast for {2}{G}. Free with infinite mana. Fetch Duskwatch Recruiter → activate for win pile.",
+    requires: ["Formidable Speaker", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    needsBigDork: 3,
+    needsInfiniteMana: true,
+    priority: 13,
+    type: "win-now",
+    lines: [
+      "SETUP: Infinite mana active. Formidable Speaker + Ashaya + Quirion Ranger + dork (≥3 mana) on battlefield.",
+      "Ashaya makes Formidable Speaker a Forest. Quirion Ranger can return any Forest to hand to untap a creature.",
+      "Activate Quirion Ranger: return Formidable Speaker (a Forest via Ashaya) to hand, untapping the dork.",
+      "Tap the dork for ≥3 mana. Recast Formidable Speaker ({2}{G}): ETB — you may discard a card. If you do, search your entire library for any creature card, reveal it, put it into your hand, then shuffle.",
+      "This is a GUARANTEED full library search every loop — not a look-at-top-X. Discard whatever is least relevant and fetch exactly what you need.",
+      "Repeat until you find Duskwatch Recruiter. Cast Duskwatch Recruiter. Activate ({2}{G}) repeatedly — looks at top 3 cards, reveals a creature if found. With infinite mana, keep looping to assemble the full win pile.",
+      "WIN: Ashaya + Temur Sabertooth + Endurance + Geier Reach Sanitarium → mill all opponents.",
+    ]
+  },
+
   // ── WIN CON: Poison via Infectious Bite + Eternal Witness ─────────────
+
   {
     id: "poison_win",
     name: "Infectious Bite + Eternal Witness + Temur Sabertooth / Kogla (Poison Win)",
@@ -604,21 +692,22 @@ const COMBOS = [
   // ── WIN CON: Badgermole Cub + Ashaya + Infinite Mana (Infinite Counters) ─
   {
     id: "badgermole_ashaya_counters",
-    name: "Badgermole Cub + Ashaya + Infinite Mana (Infinite +1/+1 Counters)",
-    onBattlefield: ["Badgermole Cub", "Ashaya, Soul of the Wild"],
-    description: "Win condition. With infinite mana and Ashaya in play, all your creatures are Forests (lands). Badgermole Cub's {1}{G} ability animates any land and puts a +1/+1 counter on it. Target your own creature-Forests repeatedly to stack infinite counters. All creatures become arbitrarily large — swing for lethal.",
-    requires: ["Badgermole Cub", "Ashaya, Soul of the Wild"],
+    name: "Badgermole Cub + Bouncer + Infinite Mana (Infinite +1/+1 Counters)",
+    onBattlefield: ["Badgermole Cub"],
+    description: "Win condition. Badgermole Cub ETB: earthbend 1 — target land becomes a 0/0 creature with haste, gets a +1/+1 counter. KEY RULE: you can target a land that is ALREADY animated — it just gets another +1/+1 counter each time. With a bouncer (Temur Sabertooth or Kogla) and infinite mana: bounce Badgermole Cub to hand, recast ({1}{G}), ETB targets the same already-animated land again. Repeat infinitely — the land-creature accumulates infinite counters. Attack for lethal. Bonus: Badgermole's static 'Whenever you tap a creature for mana, add {G}' sustains and amplifies mana loops throughout.",
+    requires: ["Badgermole Cub"],
     needsInfiniteMana: true,
+    needsBouncer: true,
     priority: 11,
     type: "win-combat",
     lines: [
-      "Infinite mana established. Badgermole Cub + Ashaya on battlefield.",
-      "All your nontoken creatures are Forests (lands) via Ashaya.",
-      "Pay {1}{G}: activate Badgermole Cub targeting any creature-Forest you control.",
-      "That creature gets a +1/+1 counter. It already was a creature — it just gets bigger.",
-      "Repeat infinitely. Each creature you target grows without limit.",
-      "With your entire board at +∞/+∞, attack for lethal across all opponents.",
-      "TIP: Spread counters across multiple creatures so a single removal doesn't stop the win.",
+      "Infinite mana established. Badgermole Cub on battlefield with Temur Sabertooth or Kogla (bouncer).",
+      "Badgermole ETB fires: earthbend 1 — target any land you control. It becomes a 0/0 creature with haste and gets a +1/+1 counter. It's now a 1/1 with haste.",
+      "Pay {1}{G}: bounce Badgermole Cub to hand (Temur Sabertooth) or return it (Kogla).",
+      "Recast Badgermole Cub ({1}{G}). ETB fires again — target the SAME already-animated land. Base power/toughness resets to 0/0 but it keeps existing counters and gains one more.",
+      "Repeat. After N casts the land-creature is N/N with haste.",
+      "Repeat infinitely with infinite mana — the land-creature grows arbitrarily large.",
+      "Attack with the arbitrarily large haste land-creature for lethal.",
     ]
   },
 
@@ -815,6 +904,159 @@ const COMBOS = [
       "Total cost: {1}+{1}{G}+{G}+{G} = {3}{G}+{2}. Net positive when 2N ≥ 5. Repeat for infinite mana.",
     ]
   },
+
+  // ── Seedborn Muse + Yeva / Yisan -- Free activations every opponent's turn ─
+  {
+    id: "seedborn_engine",
+    name: "Seedborn Muse -- Untap Engine (Yeva / Yisan every opponent's turn)",
+    onBattlefield: ["Seedborn Muse"],
+    mustPreExist: ["Seedborn Muse"],
+    description: "Seedborn Muse untaps all permanents on every opponent's upkeep. With Yeva in play this means you effectively have flash on every opponent's turn AND a free Yisan verse activation each round. With 3 opponents you get 3x the activations -- Yisan can chain V1-V5 in a single round.",
+    requires: ["Seedborn Muse"],
+    priority: 8,
+    type: "engine",
+    lines: [
+      "Seedborn Muse on battlefield: all your permanents untap at the beginning of each opponent's upkeep.",
+      "With Yeva on board: you have flash every opponent's turn AND Yisan untaps for a free activation.",
+      "Yisan chain: V1 (Quirion Ranger untaps Yisan) -> V2 -> V3 (Priest/Archdruid) -> V4 (Sabertooth) -> V5 (Ashaya = infinite mana).",
+      "In a 4-player game you get 3 free Yisan activations per round -- chain V1-V5 in a single round.",
+      "With Seedborn + Yeva + Yisan on board, opponents have almost no window to interact.",
+      "TIP: Use Quirion Ranger to untap Yisan after each activation to double up at the same verse.",
+    ]
+  },
+
+  // ── Regal Force draw loop (infinite mana + Sabertooth) ────────────────────
+  {
+    id: "regal_force_draw",
+    name: "Regal Force Draw Loop (Infinite Mana + Temur Sabertooth)",
+    onBattlefield: ["Regal Force", "Temur Sabertooth"],
+    description: "With infinite mana and Temur Sabertooth: cast Regal Force, draw cards equal to green creatures on board, bounce with Sabertooth, recast, draw again. With even 5 green creatures you draw 5 cards per loop -- with infinite loops you draw your entire library. Then win via standard pile.",
+    requires: ["Regal Force", "Temur Sabertooth"],
+    needsInfiniteMana: true,
+    priority: 10,
+    type: "win-draw",
+    lines: [
+      "SETUP: Infinite mana active. Regal Force + Temur Sabertooth on battlefield.",
+      "Regal Force ETB: draw cards equal to the number of green creatures you control.",
+      "Pay {1}{G}: Temur Sabertooth bounces Regal Force to hand.",
+      "Recast Regal Force ({5}{G}{G}): ETB triggers again -- draw another batch of cards.",
+      "Repeat until you have drawn your entire library.",
+      "Win via Duskwatch Recruiter activation, Sanitarium mill, or Infectious Bite from hand.",
+    ]
+  },
+
+  // ── Disciple of Freyalise loop (infinite mana + bouncer) ──────────────────
+  {
+    id: "disciple_loop",
+    name: "Disciple of Freyalise Loop (Infinite Mana -- Board Wipe + Draw)",
+    onBattlefield: ["Disciple of Freyalise"],
+    description: "With infinite mana and a bouncer: cast Disciple of Freyalise, each opponent sacrifices a creature, you draw cards equal to creatures you control. Bounce with Sabertooth/Kogla, recast. Each loop clears opponents' boards AND draws cards.",
+    requires: ["Disciple of Freyalise"],
+    needsInfiniteMana: true,
+    needsAlsoBouncer: true,
+    priority: 9,
+    type: "win-draw",
+    lines: [
+      "SETUP: Infinite mana active. Disciple of Freyalise + Temur Sabertooth or Kogla on battlefield.",
+      "Disciple ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control.",
+      "Pay {1}{G} (Sabertooth) or {2} (Kogla): bounce Disciple to hand.",
+      "Recast Disciple ({4}{G}): ETB triggers again -- opponents sacrifice again, you draw again.",
+      "Each loop clears one creature from each opponent's board AND draws you cards.",
+      "After opponents have no creatures: draw your library via repeated Disciple ETBs, then win via standard pile.",
+    ]
+  },
+
+  // ── Formidable Speaker + Ashaya + Quirion Ranger (tutoring engine) ─────────
+  {
+    id: "speaker_ashaya_ranger",
+    name: "Formidable Speaker + Ashaya + Quirion Ranger (Tutor Engine / Win Now)",
+    onBattlefield: ["Formidable Speaker", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    mustPreExist: ["Formidable Speaker"],
+    description: "With Ashaya in play, Formidable Speaker is a Forest. Quirion Ranger returns Speaker to hand, untapping a dork, then you recast for the ETB. Speaker ETB: discard a card → search your entire library for any creature. Every iteration is a guaranteed tutor — costs only a discard and {2}{G} to recast. Net mana-positive when dork produces ≥3. Find Duskwatch Recruiter → guaranteed win.",
+    requires: ["Formidable Speaker", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    needsBigDork: 4,
+    priority: 8,
+    type: "engine",
+    lines: [
+      "Formidable Speaker + Ashaya + Quirion Ranger + a dork (≥4 mana) on battlefield.",
+      "Speaker is a Forest via Ashaya. Quirion Ranger returns it to hand, untapping the dork.",
+      "Recast Formidable Speaker ({2}{G}): ETB — discard any card from your hand. Search your ENTIRE library for any creature card and put it into your hand, then shuffle.",
+      "This is a FULL library search every time — not a look-at-top-X. Every loop is a guaranteed tutor for any creature in your deck.",
+      "WITHOUT infinite mana: net-positive when dork produces ≥4 ({2}{G} recast + {G} Quirion cost = 3 net). Use to fish for infinite mana pieces.",
+      "WITH infinite mana: loop freely — fetch Duskwatch Recruiter, then activate Duskwatch repeatedly for the deterministic win pile.",
+      "Key advantage over bouncer loops: no Temur Sabertooth or Kogla required.",
+    ]
+  },
+
+  // ── Elvish Archdruid pump + Yavimaya + Eladamri combat win ────────────────
+  {
+    id: "archdruid_pump_win",
+    name: "Elvish Archdruid Pump + Yavimaya + Eladamri (Infinite Combat Win)",
+    onBattlefield: ["Elvish Archdruid", "Yavimaya, Cradle of Growth", "Eladamri, Korvecdal"],
+    description: "With infinite mana: Elvish Archdruid's activated ability gives all elves +N/+N. Activate infinitely to give your elves arbitrarily large stats. Yavimaya makes all lands Forests for all players. Eladamri gives all your creatures forestwalk (unblockable vs Forest-controlling players) and shroud from opponents.",
+    requires: ["Elvish Archdruid", "Yavimaya, Cradle of Growth", "Eladamri, Korvecdal"],
+    needsInfiniteMana: true,
+    priority: 10,
+    type: "win-combat",
+    lines: [
+      "SETUP: Infinite mana active. Elvish Archdruid + Yavimaya + Eladamri on battlefield.",
+      "Tap Elvish Archdruid: all elves you control get +N/+N until end of turn (N = elves on board).",
+      "With infinite mana, activate Archdruid infinite times -- each activation layers +N/+N on top.",
+      "Yavimaya: every land for every player is a Forest. All opponents always control a Forest.",
+      "Eladamri: all your creatures have forestwalk (unblockable vs Forest controllers) AND shroud from opponents.",
+      "Your elf army is now infinitely large, completely unblockable, and untargetable.",
+      "Attack for lethal across all opponents simultaneously.",
+    ]
+  },
+
+  // ── Shifting Woodland + Ashaya + Argothian Elder (copy Elder from graveyard) ─
+  {
+    id: "shifting_woodland_elder",
+    name: "Shifting Woodland copies Argothian Elder (Ashaya 2-Card Combo via Graveyard)",
+    onBattlefield: ["Shifting Woodland", "Ashaya, Soul of the Wild"],
+    mustPreExist: ["Shifting Woodland"],
+    description: "Shifting Woodland can become a copy of any creature card in your graveyard until end of turn. If Argothian Elder is in your graveyard: activate Shifting Woodland to become Elder, then use the Ashaya 2-card combo (tap for {G} as a Forest, untap two lands -- target yourself + another land, repeat). This extends the Ashaya+Elder combo to graveyard availability.",
+    requires: ["Shifting Woodland", "Ashaya, Soul of the Wild"],
+    needsCardInGraveyard: "Argothian Elder",
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Argothian Elder in graveyard. Shifting Woodland + Ashaya on battlefield.",
+      "Pay {G}{G}: activate Shifting Woodland -- it becomes a copy of Argothian Elder until end of turn.",
+      "Shifting Woodland is now a Forest AND a copy of Argothian Elder (lands can activate abilities).",
+      "Tap Shifting Woodland as a Forest for {G} (it's a land via Ashaya).",
+      "Activate Woodland-as-Elder's tap ability: untap two lands -- target itself AND any other land.",
+      "Woodland untaps. Tap again for {G}. Repeat for infinite green mana.",
+      "NOTE: Shifting Woodland must have been on the battlefield since the start of your turn (no haste needed -- it's a land), or use Destiny Spinner to give it haste as a creature.",
+    ]
+  },
+
+  // ── Speaker + Quirion + Battlefield Forest + Big Dork (≥2 elves) ────────
+  // No Ashaya needed. Speaker's activated ability {1},{T}: untap another permanent.
+  // Quirion Ranger can return a Forest from the BATTLEFIELD (not hand) to hand to untap a creature.
+  // Loop: Speaker {1},{T} untaps Dork → Dork taps for N mana → Quirion returns battlefield Forest
+  //       to hand → Quirion untaps Speaker → repeat. Net: N - 1 mana per loop.
+  // Requires: Speaker + Quirion on board, ≥1 Forest on battlefield, dork producing ≥2 mana (net ≥1).
+  {
+    id: "speaker_quirion_untap",
+    name: "Formidable Speaker + Quirion Ranger + Forest (Infinite Mana, No Ashaya)",
+    onBattlefield: ["Formidable Speaker", "Quirion Ranger"],
+    description: "Infinite mana without Ashaya. Formidable Speaker's activated ability {1},{T}: untap another target permanent. Quirion Ranger's ability returns a Forest from the battlefield to hand to untap a creature. Loop: Speaker untaps the dork → dork taps for mana → Quirion returns a battlefield Forest to hand (untapping Speaker) → repeat. Net mana per loop = dork output minus 1. Requires at least one Forest on the battlefield and a dork producing ≥2 mana.",
+    requires: ["Formidable Speaker", "Quirion Ranger"],
+    needsBigDork: 2,
+    needsBattlefieldForest: true,
+    priority: 11,
+    type: "infinite-mana",
+    lines: [
+      "Formidable Speaker and Quirion Ranger on battlefield. At least one Forest land in play.",
+      "Speaker {1},{T}: untap your mana dork (e.g. Priest of Titania).",
+      "Tap the dork for N mana (N = number of elves/creatures it counts).",
+      "Quirion Ranger: return a Forest from the battlefield to your hand — this untaps Speaker.",
+      "Repeat. Net mana per loop: N - 1. With ≥2 mana dork, loop is infinite.",
+      "NOTE: Each loop returns one battlefield Forest to hand. You need at least one Forest on the battlefield to continue; with multiple Forests you can loop indefinitely.",
+    ]
+  },
+
 ];
 
 // ============================================================
@@ -1043,19 +1285,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Badgermole Cub needs Temur Sabertooth specifically — Kogla only bounces Humans, not Badgers
   const badgermoleActive = (board.has("Badgermole Cub") || inHand.has("Badgermole Cub")) && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
-  const yevaFlash        = board.has("Yeva, Nature's Herald");
+  const yevaFlash = board.has("Yeva, Nature's Herald");
 
-  // Compute infiniteManaActive early so all subsequent checks can use it safely
-  const { infiniteManaActive, activeComboName } = (() => {
-    for (const combo of COMBOS) {
-      if (combo.type !== "infinite-mana") continue;
-      const allOnBoard = combo.requires.every(r => board.has(r));
-      if (!allOnBoard) continue;
-      const extras = comboExtrasSatisfied(combo, false); // bootstrap: infinite mana not yet known
-      if (extras.ok) return { infiniteManaActive: true, activeComboName: combo.name };
+  // Compute infiniteManaActive in two passes:
+  //   Pass 1: all named pieces already on the board.
+  //   Pass 2: pieces in hand castable on our turn or with Yeva flash.
+  //           mustPreExist cards (summoning-sick tappers) must be on the board even in pass 2
+  //           UNLESS a haste enabler (Ashaya + Destiny Spinner on board) is clearly present.
+  let _inf = false, _infName = null;
+  for (const combo of COMBOS) {
+    if (combo.type !== "infinite-mana") continue;
+    const allOnBoard = combo.requires.every(r => board.has(r));
+    if (!allOnBoard) continue;
+    const extras = comboExtrasSatisfied(combo, false);
+    if (extras.ok) { _inf = true; _infName = combo.name; break; }
+  }
+  if (!_inf) {
+    const _castable = isMyTurn || yevaFlash;
+    // Bootstrap haste enabler: Ashaya + Destiny Spinner must both already be on the board.
+    const _hasteOnBoard = board.has("Ashaya, Soul of the Wild") && board.has("Destiny Spinner");
+    if (_castable) {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        const mustPre = combo.mustPreExist ?? [];
+        const allReachable = combo.requires.every(r => {
+          if (board.has(r)) return true;
+          if (!inHand.has(r)) return false;
+          // mustPreExist cards (summoning sick) need to be on the board unless haste is up
+          if (mustPre.includes(r) && !_hasteOnBoard) return false;
+          if (CARDS[r]?.type === "land") return isMyTurn;
+          return _castable;
+        });
+        if (!allReachable) continue;
+        const extras = comboExtrasSatisfied(combo, false);
+        if (extras.ok) { _inf = true; _infName = combo.name; break; }
+      }
     }
-    return { infiniteManaActive: false, activeComboName: null };
-  })();
+  }
+  const infiniteManaActive = _inf;
+  const activeComboName    = _infName;
 
   // Can we cast permanents into play this turn? (our turn, Yeva flash, or infinite mana)
   const canCastNow = isMyTurn || yevaFlash || infiniteManaActive;
@@ -1072,7 +1340,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- HELPER: exact mana output of a dork given board context ----
   function estimateDorkOutput(cardName, extraElves = 0) {
     const t = CARDS[cardName]?.tapsFor;
-    // Badgermole Cub: animates a land and grants +1 mana to all creatures while on board
+    // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
     if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid
@@ -1095,6 +1363,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- HELPER: find the best big dork available and its output ----
   // extraElves: elves in hand that would enter the battlefield as part of assembling the combo,
   // boosting elf-counting dorks like Priest of Titania before the loop begins.
+  // FIX #12: when a dork is in hand (not yet cast), its first-loop output must cover its
+  // own cast cost before being net-positive. We reduce its effective threshold contribution
+  // by its CMC when mana is not infinite, preventing false "ONE PIECE AWAY" advice when
+  // the player has 0 available mana and the dork costs 2+ to cast.
   function findBigDork(threshold) {
     // Count castable elves in hand — casting them first raises elf/creature count before the loop starts.
     // NOTE: canCastNow may not be initialized yet when called from the infiniteManaActive IIFE,
@@ -1109,7 +1381,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (!CARDS[c]?.tags?.includes("dork") && !CARDS[c]?.tags?.includes("big-dork")) return false;
       // If the dork itself is in hand and is an elf, don't double-count it in the bonus
       const effectiveBonus = Math.max(0, (inHand.has(c) && CARDS[c]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      return estimateDorkOutput(c, effectiveBonus) >= threshold;
+      const rawOutput = estimateDorkOutput(c, effectiveBonus);
+      // If dork is in hand and mana is finite, first loop must also cover its cast cost
+      const castCostPenalty = (inHand.has(c) && !infiniteManaActive) ? (CARDS[c]?.cmc ?? 0) : 0;
+      return (rawOutput - castCostPenalty) >= threshold;
     });
     if (candidates.length === 0) return null;
     return candidates.sort((a, b) => {
@@ -1130,18 +1405,37 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (!dork) return { ok: false, missing: `a mana dork producing ≥${combo.needsBigDork} mana (e.g. Priest of Titania with ${combo.needsBigDork}+ elves, Circle of Dreams Druid, Karametra's Acolyte)` };
     }
 
-    // needsOneDrop: need a 1-drop elf (for Symbiote combo and draw loop)
+    // needsOneDrop: need a 1-drop elf (for Symbiote combo and draw loop).
+    // Chomping Changeling is a changeling (all creature types including elf) — valid bounce
+    // fodder for Wirewood Symbiote even though it costs {2}{G}. Symbiote only requires
+    // "return an elf to hand", and changelings satisfy that requirement at any CMC.
     if (combo.needsOneDrop) {
       const hasOneDrop = [...battlefield, ...hand].some(c =>
-        CARDS[c]?.tags?.includes("1drop") && CARDS[c]?.tags?.includes("elf")
+        (CARDS[c]?.tags?.includes("1drop") && CARDS[c]?.tags?.includes("elf"))
+        || CARDS[c]?.tags?.includes("changeling") // changeling = all types including elf
       );
-      if (!hasOneDrop) return { ok: false, missing: "a 1-drop elf (Llanowar Elves, Elvish Mystic, Fyndhorn Elves, etc.)" };
+      if (!hasOneDrop) return { ok: false, missing: "a 1-drop elf (Llanowar Elves, Elvish Mystic, Fyndhorn Elves, etc.) — or Chomping Changeling as an elf of any cost" };
     }
 
-    // needsAlsoBouncer: need Temur Sabertooth or Kogla anywhere
+    // needsAlsoBouncer: need Temur Sabertooth or Kogla.
+    // Disciple of Freyalise is an Elf, not a Human — Kogla only bounces Humans.
+    // Regal Force and Woodcaller Automaton are also not Humans.
+    // Only combos bouncing a Human (Hyrax Scout, Eternal Witness, Hope Tender) can use Kogla.
     if (combo.needsAlsoBouncer) {
-      const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
-      if (!hasBouncer) return { ok: false, missing: "Temur Sabertooth or Kogla, the Titan Ape" };
+      const nonHumanBounce = combo.id === "disciple_freyalise_loop"
+        || combo.id === "regal_force_draw"
+        || combo.id === "sabertooth_woodcaller"
+        || combo.id === "woodcaller_ashaya_loop";
+      const hasBouncer = nonHumanBounce
+        ? (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"))
+        : (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth")
+            || board.has("Kogla, the Titan Ape") || inHand.has("Kogla, the Titan Ape"));
+      if (!hasBouncer) return {
+        ok: false,
+        missing: nonHumanBounce
+          ? "Temur Sabertooth (Kogla only bounces Humans — this creature is not a Human)"
+          : "Temur Sabertooth or Kogla, the Titan Ape"
+      };
     }
 
     // needsDrawEngine: need Beast Whisperer or Glademuse
@@ -1210,7 +1504,25 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (!hasRanger) return { ok: false, missing: "Quirion Ranger or Scryb Ranger" };
     }
 
+    // needsCardInGraveyard: a specific card must be in the graveyard (e.g. for Shifting Woodland)
+    if (combo.needsCardInGraveyard) {
+      if (!inGrave.has(combo.needsCardInGraveyard)) {
+        return { ok: false, missing: `${combo.needsCardInGraveyard} in your graveyard (Shifting Woodland will copy it)` };
+      }
+    }
+
+    // needsBattlefieldForest: requires at least one Forest land on the battlefield
+    // (for Quirion Ranger to return to hand to untap a creature — no Ashaya needed)
+    if (combo.needsBattlefieldForest) {
+      const hasForestOnBoard = battlefield.some(c => c === "Forest" || CARDS[c]?.type === "land" && c.includes("Forest"))
+        || board.has("Yavimaya, Cradle of Growth"); // Yavimaya makes all lands Forests
+      if (!hasForestOnBoard) {
+        return { ok: false, missing: "at least one Forest on the battlefield (for Quirion Ranger to return and untap Speaker)" };
+      }
+    }
+
     // needsInfiniteMana: requires infinite mana to already be established
+    // Uses the explicit parameter so this is safe from the bootstrap IIFE.
     if (combo.needsInfiniteMana && !infiniteMana) {
       return { ok: false, missing: "infinite mana (establish a mana loop first)" };
     }
@@ -1599,7 +1911,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // Build ranked target list based on what's castable and what's missing
     const chordTargets = [
-      { name: "Duskwatch Recruiter",      xCost: 2, reason: "win condition — activate with infinite mana to pull library" },
+      { name: "Duskwatch Recruiter",      xCost: 3, reason: "win condition — activate ({2}{G}) with infinite mana, looks at top 3 cards each time" },
       { name: "Quirion Ranger",           xCost: 1, reason: "infinite mana loop piece with Ashaya" },
       { name: "Hope Tender",              xCost: 2, reason: "exert untaps a key land like Cradle or Nykthos for double mana" },
       { name: "Wirewood Symbiote",        xCost: 1, reason: "untap engine — bounces an elf to untap any creature" },
@@ -1838,6 +2150,51 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ],
         color: "#5dade2",
       });
+    }
+  }
+
+  // ---- FETCH + TIRELESS PROVISIONER RAMP ----
+  // Each fetch land cracking = landfall on Tireless Provisioner = free Treasure token.
+  // With Ashaya: every creature ETB is also a Forest ETB → landfall → Treasure.
+  // This pattern isn't infinite but provides powerful early acceleration toward combo.
+  {
+    const provisionerOnBoard = board.has("Tireless Provisioner");
+    const provisionerInHand  = inHand.has("Tireless Provisioner") && (isMyTurn || yevaFlash);
+    const provisionerAvail   = provisionerOnBoard || provisionerInHand;
+    const fetchesInHand      = hand.filter(c => CARDS[c]?.tags?.includes("fetch")).length;
+    const ashayaOnBoard      = board.has("Ashaya, Soul of the Wild");
+
+    if (provisionerAvail && !infiniteManaActive) {
+      const treasurePerFetch  = fetchesInHand;
+      const creaturesInHand   = ashayaOnBoard
+        ? hand.filter(c => CARDS[c]?.type === "creature").length
+        : 0;
+
+      const bonuses = [];
+      if (fetchesInHand > 0)
+        bonuses.push(`${fetchesInHand} fetch land${fetchesInHand > 1 ? "s" : ""} in hand → ${fetchesInHand} free Treasure${fetchesInHand > 1 ? "s" : ""} when cracked`);
+      if (ashayaOnBoard && creaturesInHand > 0)
+        bonuses.push(`Ashaya + ${creaturesInHand} creature${creaturesInHand > 1 ? "s" : ""} in hand → ${creaturesInHand} Treasure${creaturesInHand > 1 ? "s" : ""} on ETB`);
+
+      if (bonuses.length > 0 || provisionerOnBoard) {
+        const totalTreasures = treasurePerFetch + (ashayaOnBoard ? creaturesInHand : 0);
+        results.push({
+          priority: 5,
+          category: "💰 FETCH + PROVISIONER RAMP",
+          headline: provisionerOnBoard
+            ? `Tireless Provisioner: crack fetches or cast creatures for ${totalTreasures > 0 ? `${totalTreasures} free Treasure${totalTreasures > 1 ? "s" : ""}` : "Treasures"}`
+            : `Cast Tireless Provisioner — each land/creature ETB generates a Treasure`,
+          detail: `Tireless Provisioner creates a Treasure token whenever a land enters the battlefield. Fetch lands are a 1-for-1 Treasure source. With Ashaya, every creature cast also triggers landfall.`,
+          steps: [
+            ...(provisionerInHand ? [`Cast Tireless Provisioner ({2}{G}).`] : []),
+            ...(fetchesInHand > 0 ? [`Crack ${fetchesInHand} fetch land${fetchesInHand > 1 ? "s" : ""}: each land ETB triggers Provisioner → ${fetchesInHand} Treasure token${fetchesInHand > 1 ? "s" : ""}. Net gain: ${fetchesInHand} mana (sacrifice Treasures later).`] : []),
+            ...(ashayaOnBoard && creaturesInHand > 0 ? [`Ashaya is on board — every creature cast becomes a Forest ETB, triggering Provisioner. Cast ${creaturesInHand} creature${creaturesInHand > 1 ? "s" : ""} from hand → ${creaturesInHand} additional Treasure${creaturesInHand > 1 ? "s" : ""}.`] : []),
+            "Each Treasure taps for {1} of any color — flexible mana for your next play.",
+            "Priority: use this to bridge toward Ashaya or the first infinite mana piece rather than holding open.",
+          ],
+          color: "#f39c12",
+        });
+      }
     }
   }
 
@@ -2119,6 +2476,80 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           ...(bestTarget ? [`Best target at verse ${nextVerse}: ${bestTarget.name} — ${bestTarget.reason}.`] : []),
         ],
         color: "#27ae60",
+      });
+    }
+  }
+
+
+
+  // ---- NATURE'S RHYTHM ----
+  // Draw a card whenever a land enters the battlefield under your control.
+  // With infinite mana + Elvish Reclaimer looping, or fetch lands still in library,
+  // this becomes a draw engine. With Ashaya, every creature ETB is also a Forest ETB
+  // — but Ashaya makes creatures INTO lands (they tap as Forests), not land drops.
+  // NOTE: Ashaya does NOT trigger landfall from creature casts. Only real land plays trigger.
+  if (board.has("Nature's Rhythm")) {
+    const fetchesLeft   = hand.filter(c => CARDS[c]?.tags?.includes("fetch")).length
+      + battlefield.filter(c => CARDS[c]?.tags?.includes("fetch")).length;
+    const reclaimerUp   = (board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && infiniteManaActive;
+    const cropRotation  = inHand.has("Crop Rotation");
+    const sylvanScrying = inHand.has("Sylvan Scrying");
+
+    const draws = [];
+    if (fetchesLeft > 0)  draws.push(`${fetchesLeft} fetch land${fetchesLeft > 1 ? "s" : ""} available — each crack draws 1`);
+    if (reclaimerUp)      draws.push("Elvish Reclaimer + infinite mana: loop land tutors for continuous draws");
+    if (cropRotation)     draws.push("Crop Rotation fetches a land → draws 1");
+    if (sylvanScrying)    draws.push("Sylvan Scrying finds a land → draws 1");
+
+    if (draws.length > 0) {
+      results.push({
+        priority: infiniteManaActive ? 7 : 4,
+        category: "📖 NATURE'S RHYTHM",
+        headline: `Nature's Rhythm: draw a card for each land that enters`,
+        detail: `Nature's Rhythm draws a card whenever a land enters the battlefield under your control. With fetch lands or Elvish Reclaimer, this generates significant card advantage.`,
+        steps: [
+          "Nature's Rhythm: draw 1 card each time a land ETBs under your control.",
+          ...draws.map(d => `• ${d}.`),
+          ...(reclaimerUp ? [
+            "INFINITE DRAW with Reclaimer: Elvish Reclaimer ({1},{T}: sacrifice a land, fetch any land). Sacrifice the just-fetched land back, loop indefinitely — each land ETB draws 1.",
+            "⚠️ Stop before decking yourself. Switch to Duskwatch or another outlet when you find one.",
+          ] : []),
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- SEEDBORN MUSE ENGINE ----
+  // Seedborn Muse untaps ALL your permanents on each opponent's turn.
+  // With Yeva flash: cast creatures at instant speed on every player's turn.
+  // With Yisan: free {2}{G} verse activation on every opponent's upkeep.
+  // With Gaea's Cradle/Elvish Guidance: effectively generate mana on every turn.
+  if (board.has("Seedborn Muse")) {
+    const hasYisan    = board.has("Yisan, the Wanderer Bard");
+    const hasRanger   = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const hasCradle   = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+    const hasGuidance = board.has("Elvish Guidance");
+
+    const opponentBenefits = [];
+    if (hasYisan)    opponentBenefits.push("Yisan gets a free verse activation on each opponent's upkeep" + (hasRanger ? " — double-activate with Ranger" : ""));
+    if (hasCradle)   opponentBenefits.push("Gaea's Cradle untaps on each opponent's turn — tap it again before your own turn for double mana");
+    if (hasGuidance) opponentBenefits.push("Elvish Guidance forest untaps — produce elf-count mana on every player's turn");
+    if (yevaFlash)   opponentBenefits.push("Yeva flash: cast green creatures at instant speed on any opponent's turn, untap, repeat");
+
+    if (opponentBenefits.length > 0) {
+      results.push({
+        priority: infiniteManaActive ? 6 : 8,
+        category: "🌙 SEEDBORN MUSE ENGINE",
+        headline: `Seedborn Muse: untap all permanents on each opponent's turn`,
+        detail: `Seedborn Muse gives you the equivalent of ${opponentBenefits.length + 1} full untap steps per round in a 4-player game. This is not infinite mana per turn — but it generates enormous advantage across all turns.`,
+        steps: [
+          "Seedborn Muse: at the beginning of each other player's untap step, untap all permanents you control.",
+          ...opponentBenefits.map(b => `• ${b}.`),
+          "IMPORTANT: mana pools empty between steps — you must spend mana on each player's turn individually.",
+          "In a 4-player pod: 3 extra untap steps = 3× more Yisan activations, 3× more Cradle taps, 3× more instant-speed plays.",
+        ],
+        color: "#9b59b6",
       });
     }
   }
@@ -2681,6 +3112,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "win-poison":    { ready: "🔥 WIN NOW — POISON",      cast: "⚡ ASSEMBLE POISON WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#27ae60" },
         "win-draw":      { ready: "📚 DRAW YOUR LIBRARY",     cast: "⚡ ASSEMBLE DRAW LOOP",         readyPrefix: "EXECUTE:",     boost: 4, color: "#5dade2" },
         "win-combat":    { ready: "🔥 WIN NOW — COMBAT",      cast: "⚡ ASSEMBLE COMBAT WIN",        readyPrefix: "EXECUTE:",     boost: 5, color: "#e74c3c" },
+        "win-now":       { ready: "🔥 WIN NOW",               cast: "⚡ CAST TO WIN NOW",            readyPrefix: "EXECUTE:",     boost: 5, color: "#ff6b35" },
         "engine":        { ready: "🔄 ENGINE READY",          cast: "⚡ ACTIVATE ENGINE",            readyPrefix: "ACTIVATE:",    boost: 1, color: "#a569bd" },
       }[combo.type] || { ready: "🔄 COMBO ASSEMBLED",  cast: "⚡ ASSEMBLE COMBO", readyPrefix: "EXECUTE:", boost: 3, color: "#58d68d" };
 
@@ -2718,10 +3150,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const missingCard = missing[0];
         const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive);
+        const speakerIsTutor = tutorOptions.length > 0 && tutorOptions[0].startsWith("Formidable Speaker");
         results.push({
           priority: combo.priority + 1,
           category: "🎯 ONE PIECE AWAY",
-          headline: `Find ${missingCard} to enable ${combo.name}`,
+          headline: speakerIsTutor
+            ? `Cast Formidable Speaker → ETB finds ${missingCard} → enables ${combo.name}`
+            : tutorOptions.length > 0
+              ? `Find ${missingCard} via ${tutorOptions[0].split(" (")[0]} to enable ${combo.name}`
+              : `Find ${missingCard} to enable ${combo.name}`,
           detail: tutorOptions.length > 0
             ? `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`
             : `You need ${missingCard} to enable ${combo.name}. ${combo.description}`,
@@ -2729,7 +3166,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             ? [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines]
             : [`Find ${missingCard} to complete this combo.`, ...combo.lines],
           combo: combo.id,
-          color: "#58d68d",
+          color: speakerIsTutor ? "#e67e22" : "#58d68d",
         });
       }
     } else if (missing.length === 0 && !extras.ok) {
@@ -2839,7 +3276,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Survival of the Fittest also needs a creature to discard
   const survivalCanActivate = board.has("Survival of the Fittest")
     && (hasCreatureToDiscard || infiniteManaActive);
-  // Formidable Speaker: ETB looks at top X cards (X = creatures), puts a creature into hand.
+  // Formidable Speaker: ETB — discard a card → search library for any creature (guaranteed full tutor).
   // Repeatable with Temur Sabertooth or Kogla bounce. No discard cost.
   const speakerCanActivate = board.has("Formidable Speaker") && speakerHasBouncer;
   const activatedCreatureTutors = [
@@ -2853,7 +3290,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const bellowerInHand    = inHand.has("Woodland Bellower");
   const bellowerCastable  = bellowerInHand && (isMyTurn || yevaFlash);
   // Bellower can find: Duskwatch, Eternal Witness, Endurance, Destiny Spinner, Elvish Reclaimer,
-  // Fauna Shaman, Formidable Speaker, Hyrax Tower Scout, Quirion Ranger, Scryb Ranger,
+  // Fauna Shaman (discard to tutor), Formidable Speaker (discard → full library search), Hyrax Tower Scout, Quirion Ranger, Scryb Ranger,
   // Priest of Titania, Elvish Archdruid, Circle of Dreams Druid, Magus of the Candelabra, etc.
   // Key non-legendary CMC<=3 win-relevant targets (not already on board):
   const bellowerKeyTargets = [
@@ -3295,6 +3732,29 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+
+  // ---- SEEDBORN MUSE ENGINE ----
+  if (board.has("Seedborn Muse") && board.has("Yisan, the Wanderer Bard")) {
+    const currentVerse = yisanCounters ?? 0;
+    const withYeva2 = board.has("Yeva, Nature's Herald");
+    results.push({
+      priority: 11,
+      category: "🌱 SEEDBORN + YISAN ONLINE",
+      headline: `Seedborn Muse: free Yisan activation every opponent's turn (currently V${currentVerse})`,
+      detail: "Seedborn Muse untaps all permanents at each opponent's upkeep. Yisan gets a free verse activation every opponent's turn. With 3 opponents: 3 activations per round -- chain V1-V5 in a single round to reach Ashaya and go infinite.",
+      steps: [
+        `Yisan is at verse ${currentVerse}. Every opponent's upkeep: Seedborn untaps all permanents, Yisan can activate again.`,
+        "V1: Quirion Ranger (use Ranger to untap Yisan after activation -- activate twice at same verse).",
+        "V2: Scryb Ranger or Wirewood Symbiote.",
+        "V3: Priest of Titania or Elvish Archdruid.",
+        "V4: Temur Sabertooth.",
+        "V5: Ashaya, Soul of the Wild -- go infinite immediately with your V1-V3 pieces.",
+        withYeva2 ? "Yeva flash is active -- flash creatures in on opponents' turns too." : "Getting Yeva in play expands your instant-speed window.",
+      ],
+      color: "#a8d8a8",
+    });
+  }
+
   // ---- FAUNA SHAMAN WIN CON (in hand) ----
   // Fauna Shaman in hand + infinite mana: casting it enables finding Duskwatch or Eternal Witness.
   if (inHand.has("Fauna Shaman") && !board.has("Fauna Shaman") && (infiniteManaActive || mana >= 20)) {
@@ -3338,10 +3798,305 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   }
 
+  // ---- FORMIDABLE SPEAKER IN HAND: CAST NOW → IMMEDIATE TUTOR LOOP ----
+  // When Speaker is in hand + Quirion Ranger on board + a dork that will produce ≥3 mana
+  // after Speaker enters (as an elf, it raises elf counts), casting Speaker IS the win:
+  //   1. Cast Speaker → ETB: discard a card → search library for Ashaya
+  //   2. Ashaya enters → Speaker (elf) becomes a Forest
+  //   3. Quirion bounces Speaker → untaps dork
+  //   4. Dork (now counting Speaker+Ashaya as elves) taps for ≥3 → recast Speaker ({2}{G}) → net 0 = infinite
+  //   5. Repeat: each cast fetches any creature. Find Duskwatch → win.
+  // This is NOT just ONE PIECE AWAY — it is a CAST TO WIN NOW play.
+  {
+    const speakerInHandNow = inHand.has("Formidable Speaker") && !board.has("Formidable Speaker");
+    const quirionInLoop    = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const quirionLoopName  = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+    const ashayaNotOnBoard = !board.has("Ashaya, Soul of the Wild");
+    const canCastSpeakerNow = speakerInHandNow && (isMyTurn || yevaFlash) && mana >= 3;
+    const winLineAvailable  = speakerInHandNow && mana >= 3;
+    // Speaker ETB requires discarding another card — if Speaker is the only card in hand, ETB fizzles.
+    const hasDiscardForSpeaker = hand.filter(c => c !== "Formidable Speaker").length > 0;
+    // Yeva in hand: casting her first gives flash to all green creatures this turn.
+    // Yeva costs {2}{G}{G} = 4. Speaker costs {2}{G} = 3. Total = 7 to do both this opponent's turn.
+    const yevaInHand = inHand.has("Yeva, Nature's Herald") && !board.has("Yeva, Nature's Herald");
+    const canCastYevaThenSpeaker = !isMyTurn && !yevaFlash && yevaInHand && mana >= 7;
+
+    if (speakerInHandNow && quirionInLoop && winLineAvailable && hasDiscardForSpeaker && !infiniteManaActive) {
+      // Estimate dork output AFTER Speaker enters (+1 elf = +1 mana for elf-counting dorks)
+      const speakerElvBonus = 1; // Speaker is an elf, raises elf count by 1
+      const postCastElves = elvesOnBoard + speakerElvBonus;
+      const dorkForLoop = [...battlefield, ...hand].find(c => {
+        if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
+        const t = CARDS[c]?.tapsFor;
+        if (typeof t === "number") return t >= 3;
+        if (t === "elves")     return postCastElves >= 3;
+        if (t === "creatures") return (creaturesOnBoard + speakerElvBonus) >= 3;
+        if (t === "devotion")  return (devotionOnBoard  + speakerElvBonus) >= 3;
+        return false;
+      });
+
+      if (dorkForLoop && !results.some(r => r.combo === "speaker_hand_cast_to_win")) {
+        const dorkName = dorkForLoop;
+        const dorkOutput = (() => {
+          const t = CARDS[dorkName]?.tapsFor;
+          if (typeof t === "number") return t;
+          if (t === "elves")     return postCastElves;
+          if (t === "creatures") return creaturesOnBoard + speakerElvBonus;
+          if (t === "devotion")  return devotionOnBoard  + speakerElvBonus;
+          return 3;
+        })();
+        const netMana = dorkOutput - 3; // Speaker costs {2}{G} = 3
+        const loopDesc = netMana > 0 ? `net +${netMana}G per loop` : "mana-neutral (infinite)";
+        const discardTarget = hand.filter(c => c !== "Formidable Speaker").find(c => CARDS[c]?.type !== "creature") || "a land/spell";
+        const sharedSteps = [
+          `Cast Formidable Speaker ({2}{G}). ETB: discard ${discardTarget !== "a land/spell" ? discardTarget : "a non-creature card"} → search library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+          `Cast Ashaya, Soul of the Wild. All your nontoken creatures are now Forest lands.`,
+          `Activate ${quirionLoopName}: return Formidable Speaker (now a Forest via Ashaya) to hand — this untaps ${dorkName}.`,
+          `Tap ${dorkName} for ${dorkOutput} mana. Recast Formidable Speaker ({2}{G}): ETB — discard any card → search entire library for any creature. ${loopDesc}.`,
+          `First priority: find Duskwatch Recruiter. Cast it. Activate ({2}{G}) repeatedly — looks at top 3 cards to assemble the win pile.`,
+          `Win pile: Endurance + Geier Reach Sanitarium + untap method → mill all opponents.`,
+        ];
+
+        if (canCastSpeakerNow) {
+          // Flash available (Yeva on board, or our turn)
+          results.push({
+            priority: 15,
+            category: "⚡ CAST TO WIN",
+            headline: `Cast Formidable Speaker NOW → find Ashaya → ${quirionLoopName} loop → infinite tutor → find Duskwatch → WIN`,
+            combo: "speaker_hand_cast_to_win",
+            detail: `Casting Speaker starts an immediate winning sequence. ETB: discard a card → search library for Ashaya. Once Ashaya is in play, Speaker becomes a Forest. ${quirionLoopName} bounces Speaker to untap ${dorkName} (${dorkOutput} mana post-cast, ${loopDesc}). Each loop fetches any creature — find Duskwatch, then activate for the win pile.`,
+            steps: sharedSteps,
+            color: "#ff4500",
+          });
+        } else if (canCastYevaThenSpeaker) {
+          // Yeva in hand + enough mana to cast both this opponent's turn → instant win right now
+          results.push({
+            priority: 15,
+            category: "⚡ CAST TO WIN",
+            headline: `Cast Yeva → flash in Formidable Speaker → find Ashaya → ${quirionLoopName} loop → find Duskwatch → WIN`,
+            combo: "speaker_hand_cast_to_win",
+            detail: `You have Yeva, Nature's Herald in hand and ${mana} mana available. Cast Yeva ({2}{G}{G}) first — she gives all green creatures flash. Immediately flash in Formidable Speaker ({2}{G}) this same opponent's turn. ETB: discard a card → search for Ashaya. With Ashaya in play, Speaker becomes a Forest — ${quirionLoopName} bounces it to untap ${dorkName} (${dorkOutput} mana, ${loopDesc}). Find Duskwatch → win.`,
+            steps: [
+              `Cast Yeva, Nature's Herald ({2}{G}{G}). Green creatures now have flash until end of turn.`,
+              ...sharedSteps,
+            ],
+            color: "#ff4500",
+          });
+        } else {
+          // No flash available, not our turn — flag as next-turn priority with Yeva hint if available
+          const yevaHint = yevaInHand && mana < 7
+            ? ` (You have Yeva in hand but need ${7 - mana} more mana to cast both this turn.)`
+            : yevaInHand ? ` Alternatively, cast Yeva ({2}{G}{G}) first this turn to flash in Speaker immediately — needs 7 total mana.` : "";
+          results.push({
+            priority: 14,
+            category: "⏭️ WIN NEXT TURN",
+            headline: `NEXT TURN: Cast Formidable Speaker → find Ashaya → ${quirionLoopName} loop → find Duskwatch → WIN`,
+            combo: "speaker_hand_cast_to_win",
+            detail: `You cannot cast Speaker this turn (no flash).${yevaHint} On your next turn: ETB: discard a card → search library for Ashaya. With Ashaya in play, Speaker becomes a Forest — ${quirionLoopName} bounces it to untap ${dorkName} (${dorkOutput} mana, ${loopDesc}). Loop fetches any creature. Find Duskwatch → win. Hold your hand — do not discard the Forests.`,
+            steps: [`Wait for your turn. You have the win in hand.`, ...sharedSteps],
+            color: "#e67e22",
+          });
+        }
+      }
+    }
+  }
+  // ---- FORMIDABLE SPEAKER UNTAP LOOP (no Ashaya, no discard needed) ----
+  // Speaker {1},{T}: untap another permanent. Quirion Ranger: return a Forest from BATTLEFIELD
+  // to hand to untap a creature — no card in hand needed for the loop itself.
+  // With a dork producing ≥2 mana, this is infinite: untap dork → tap dork → return Forest → untap Speaker → repeat.
+  // If Speaker is in hand on opponent's turn: cast Yeva (commander) first for flash, then Speaker.
+  {
+    const speakerOnBrd  = board.has("Formidable Speaker");
+    const speakerInHnd  = inHand.has("Formidable Speaker") && !speakerOnBrd;
+    const quirionOnBrd  = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const quirionNm     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+    const forestOnBrd   = battlefield.some(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")))
+                       || board.has("Yavimaya, Cradle of Growth");
+    // Count elves that will be on board after casting Speaker (for dork output estimate)
+    const elvesAfterSpeaker = elvesOnBoard + (speakerInHnd ? 1 : 0);
+    // Find a dork producing ≥2 mana (net ≥1 after Speaker's {1} activation cost)
+    const dorkForUntapLoop = battlefield.find(c => {
+      if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
+      const t = CARDS[c]?.tapsFor;
+      if (typeof t === "number") return t >= 2;
+      if (t === "elves")    return elvesAfterSpeaker >= 2;
+      if (t === "creatures") return (creaturesOnBoard + (speakerInHnd ? 1 : 0)) >= 2;
+      if (t === "devotion") return (devotionOnBoard + (speakerInHnd ? 1 : 0)) >= 2;
+      return false;
+    });
+
+    if (quirionOnBrd && forestOnBrd && dorkForUntapLoop && !infiniteManaActive
+        && !results.some(r => r.combo === "speaker_quirion_untap_loop")) {
+      const dorkOutput = (() => {
+        const t = CARDS[dorkForUntapLoop]?.tapsFor;
+        if (typeof t === "number") return t;
+        if (t === "elves")    return elvesAfterSpeaker;
+        if (t === "creatures") return creaturesOnBoard + (speakerInHnd ? 1 : 0);
+        if (t === "devotion") return devotionOnBoard + (speakerInHnd ? 1 : 0);
+        return 2;
+      })();
+      const netPerLoop = dorkOutput - 1; // Speaker costs {1} to activate
+      const loopNote = netPerLoop > 0 ? `net +${netPerLoop}G per loop (infinite)` : "mana-neutral (infinite)";
+
+      if (speakerOnBrd && (isMyTurn || yevaFlash)) {
+        // Speaker already on board, can activate now
+        results.push({
+          priority: 16,
+          category: "⚙️ INFINITE MANA ONLINE",
+          headline: `Formidable Speaker + ${quirionNm}: untap loop → infinite mana (no Ashaya needed)`,
+          combo: "speaker_quirion_untap_loop",
+          detail: `Speaker's {1},{T} ability untaps ${dorkForUntapLoop}. ${quirionNm} returns a Forest from the battlefield to hand, untapping Speaker. Net: ${loopNote}. No Ashaya, no discard required — just Speaker on board with a battlefield Forest.`,
+          steps: [
+            `Activate Speaker: pay {1}, tap Speaker → untap ${dorkForUntapLoop}.`,
+            `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
+            `Activate ${quirionNm}: return a Forest from the battlefield to your hand — this untaps Speaker.`,
+            `Repeat. ${loopNote}.`,
+            `With infinite mana: cast Ashaya if available, then activate Duskwatch Recruiter ({2}{G}) to assemble the win pile.`,
+          ],
+          color: "#58d68d",
+        });
+      } else if (speakerInHnd) {
+        // Speaker in hand — need flash to cast it this opponent's turn
+        const yevaOnBoard = board.has("Yeva, Nature's Herald");
+        const yevaInHnd   = inHand.has("Yeva, Nature's Herald");
+        // Yeva is the commander — always castable from the command zone.
+        const yevaAvail   = true; // always available (command zone)
+        const yevaCmc     = CARDS["Yeva, Nature's Herald"]?.cmc ?? 4;
+        const speakerCmc  = CARDS["Formidable Speaker"]?.cmc ?? 3;
+        const totalCost   = yevaCmc + speakerCmc; // 4 + 3 = 7
+
+        if (!isMyTurn && !yevaFlash) {
+          if (mana >= totalCost && yevaAvail) {
+            // Can cast Yeva (command zone) then Speaker right now — instant win
+            const yevaSource = yevaOnBoard ? "" : yevaInHnd ? " (from hand)" : " (from command zone)";
+            results.push({
+              priority: 16,
+              category: "⚡ CAST TO WIN",
+              headline: `Cast Yeva${yevaSource} → flash Speaker → ${quirionNm} untap loop → infinite mana → WIN`,
+              combo: "speaker_quirion_untap_loop",
+              detail: `Cast Yeva, Nature's Herald ({2}{G}{G})${yevaSource} — she grants flash to all green creatures this turn. Flash in Formidable Speaker ({2}{G}). Speaker's {1},{T} untaps ${dorkForUntapLoop}. ${quirionNm} returns a battlefield Forest to hand, untapping Speaker. ${loopNote}. No discard needed — Speaker's ETB is optional; it's the activated ability that drives the loop.`,
+              steps: [
+                `Cast Yeva, Nature's Herald ({2}{G}{G})${yevaSource} — all green creatures get flash this turn.`,
+                `Flash in Formidable Speaker ({2}{G}). ETB: skip the discard — it's optional and not needed here.`,
+                `Speaker {1},{T}: untap ${dorkForUntapLoop}.`,
+                `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
+                `${quirionNm}: return a Forest from the battlefield to your hand — untaps Speaker.`,
+                `Repeat. ${loopNote}.`,
+                `With infinite mana: activate Duskwatch Recruiter ({2}{G}) to assemble the win pile and WIN.`,
+              ],
+              color: "#ff4500",
+            });
+          } else if (mana >= speakerCmc && (yevaFlash || isMyTurn)) {
+            // Already have flash somehow
+            results.push({
+              priority: 16,
+              category: "⚡ CAST TO WIN",
+              headline: `Flash in Formidable Speaker → ${quirionNm} untap loop → infinite mana → WIN`,
+              combo: "speaker_quirion_untap_loop",
+              detail: `Flash in Speaker ({2}{G}). Speaker's {1},{T} untaps ${dorkForUntapLoop}. ${quirionNm} returns a battlefield Forest to hand, untapping Speaker. ${loopNote}. No discard needed.`,
+              steps: [
+                `Flash in Formidable Speaker ({2}{G}). ETB: skip the discard — it's optional.`,
+                `Speaker {1},{T}: untap ${dorkForUntapLoop}.`,
+                `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
+                `${quirionNm}: return a Forest from the battlefield to your hand — untaps Speaker.`,
+                `Repeat. ${loopNote}.`,
+                `With infinite mana: activate Duskwatch Recruiter ({2}{G}) to assemble the win pile and WIN.`,
+              ],
+              color: "#ff4500",
+            });
+          } else {
+            // No flash, not our turn, and not enough mana for Yeva + Speaker this turn
+            const manaShort = totalCost - mana;
+            results.push({
+              priority: 14,
+              category: "⏭️ WIN NEXT TURN",
+              headline: `NEXT TURN: Cast Formidable Speaker → ${quirionNm} untap loop → infinite mana → WIN`,
+              combo: "speaker_quirion_untap_loop",
+              detail: `No discard needed for this line! Speaker's {1},{T} untaps ${dorkForUntapLoop}. ${quirionNm} returns a battlefield Forest to hand, untapping Speaker. ${loopNote}. Need ${manaShort} more mana to cast Yeva (command zone) + Speaker this turn, or wait for your turn.`,
+              steps: [
+                `On your next turn: cast Formidable Speaker ({2}{G}). ETB: skip the discard — not needed.`,
+                `Speaker {1},{T}: untap ${dorkForUntapLoop}.`,
+                `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
+                `${quirionNm}: return a Forest from the battlefield to your hand — untaps Speaker.`,
+                `Repeat. ${loopNote}.`,
+                `With infinite mana: activate Duskwatch Recruiter ({2}{G}) to assemble the win pile and WIN.`,
+              ],
+              color: "#e67e22",
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // ---- FORMIDABLE SPEAKER + ASHAYA + QUIRION RANGER TUTOR ENGINE ----
+  {
+    const speakerOnBoard  = board.has("Formidable Speaker");
+    const speakerInHand   = inHand.has("Formidable Speaker");
+    const ashayaOnBoard   = board.has("Ashaya, Soul of the Wild");
+    const quirionOnBoard  = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const quirionName     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+    const hasDuskwatch    = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+    const bigDork         = findBigDork(battlefield, hand, infiniteManaActive, 2);
+    const creatureCount   = battlefield.filter(c => CARDS[c]?.type === "creature").length;
+
+    if (infiniteManaActive && ashayaOnBoard && quirionOnBoard && bigDork && !hasDuskwatch) {
+      // When Speaker is in hand (not yet cast), verify there's another card to discard for the ETB.
+      // Once on board the loop is self-sustaining: each fetch provides a card to discard next loop.
+      const speakerFirstCastOk = speakerOnBoard || hand.filter(c => c !== "Formidable Speaker").length > 0;
+      if (speakerFirstCastOk && (speakerOnBoard || (speakerInHand && (isMyTurn || yevaFlash)))) {
+        const alreadyShown = results.some(r => r.combo === "speaker_ashaya_tutor" && r.priority >= 10);
+        if (!alreadyShown) {
+          results.push({
+            priority: 12,
+            category: "🎯 TUTOR LOOP — FIND DUSKWATCH → WIN",
+            headline: speakerOnBoard
+              ? `Formidable Speaker + Ashaya + ${quirionName}: guaranteed tutor every loop → find Duskwatch → WIN`
+              : `Cast Formidable Speaker → Ashaya + ${quirionName} tutor loop → find Duskwatch → WIN`,
+            detail: `Speaker ETB: discard any card → search entire library for any creature (guaranteed every time). With infinite mana and Ashaya+Quirion: ${quirionName} returns Speaker to hand (untapping ${bigDork}), recast for {2}{G} — loop is free. Discard irrelevant cards, fetch exactly what you need. Find Duskwatch Recruiter → activate for win pile.`,
+            combo: "speaker_ashaya_tutor",
+            steps: [
+              ...(speakerInHand && !speakerOnBoard ? [`Cast Formidable Speaker ({2}{G}): ETB — discard any card to search library for any creature.`] : []),
+              `Activate ${quirionName}: return Formidable Speaker (a Forest via Ashaya) to hand, untapping ${bigDork}.`,
+              `Tap ${bigDork} for ≥2 mana. Recast Formidable Speaker ({2}{G}): ETB — discard any card, search library for any creature. Guaranteed tutor every loop.`,
+              "Discard whatever is least relevant in hand. First priority: fetch Duskwatch Recruiter.",
+              "Cast Duskwatch Recruiter. Activate ({2}{G}) repeatedly — looks at top 3 cards, may reveal a creature and put it in hand. With infinite mana, repeat until you assemble the win pile.",
+              "Assemble: Endurance + Geier Reach Sanitarium + untap method → mill all opponents to win.",
+            ],
+            color: "#e67e22",
+          });
+        }
+      }
+    }
+
+    // Engine advice (no infinite mana yet, but pieces in place)
+    if (!infiniteManaActive && ashayaOnBoard && quirionOnBoard && speakerOnBoard && bigDork) {
+      const dorkOutput = CARDS[bigDork]?.manaOutput ?? 2;
+      if (dorkOutput >= 4) {
+        results.push({
+          priority: 9,
+          category: "⚙️ ENGINE ONLINE",
+          headline: `Formidable Speaker + Ashaya + ${quirionName}: guaranteed creature tutor every loop (net +${dorkOutput - 3}G)`,
+          detail: `Speaker ETB: discard a card → search your entire library for any creature (guaranteed full tutor, no randomness). ${quirionName} returns Speaker (a Forest via Ashaya), untapping ${bigDork} (${dorkOutput} mana). Recast Speaker ({2}{G}): net +${dorkOutput - 3} mana per loop. Find infinite mana pieces, then Duskwatch.`,
+          combo: "speaker_ashaya_ranger",
+          steps: [
+            `Activate ${quirionName}: return Formidable Speaker (a Forest via Ashaya) to hand, untapping ${bigDork}.`,
+            `Tap ${bigDork} for ${dorkOutput} mana. Recast Formidable Speaker ({2}{G}): ETB — discard a card → search your entire library for any creature (guaranteed tutor every time).`,
+            `Net mana: +${dorkOutput - 3}G per cycle. Prioritise: Argothian Elder, Scryb Ranger, Magus of the Candelabra (infinite mana pieces).`,
+            "Once infinite mana is active, this loop becomes free — fish for Duskwatch Recruiter, then activate Duskwatch for the win pile.",
+          ],
+          color: "#8e44ad",
+        });
+      }
+    }
+  }
+
   // ---- FORMIDABLE SPEAKER WIN CON (in hand) ----
   // Speaker in hand + bouncer on board + infinite mana = win con via ETB tutoring
+  // Requires at least one other card in hand to discard on first cast; bounce loop is self-sustaining after that.
   if (inHand.has("Formidable Speaker") && !board.has("Formidable Speaker")
-      && speakerHasBouncer && (infiniteManaActive || mana >= 20)) {
+      && speakerHasBouncer && (infiniteManaActive || mana >= 20)
+      && hand.filter(c => c !== "Formidable Speaker").length > 0) {
     const hasteNow     = board.has("Destiny Spinner");
     const biteAvailNow = inHand.has("Infectious Bite") || inGrave.has("Infectious Bite");
     const poisonLine   = biteAvailNow && !board.has("Eternal Witness");
@@ -3359,8 +4114,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       steps: [
         `Cast Formidable Speaker ({1}{G}).`,
         hasteNow
-          ? `Destiny Spinner gives haste — immediately pay {1}{G}: ${speakerBouncer} bounces Speaker. Recast — ETB finds ${primaryTarget}.`
-          : `Next turn: pay {1}{G}: ${speakerBouncer} bounces Speaker. Recast — ETB looks at top X cards (X = creatures), put ${primaryTarget} into hand.`,
+          ? `Destiny Spinner gives haste — immediately pay {1}{G}: ${speakerBouncer} bounces Speaker. Recast ({2}{G}) — ETB: discard a card, search library for ${primaryTarget}.`
+          : `Next turn: pay {1}{G}: ${speakerBouncer} bounces Speaker. Recast ({2}{G}) — ETB: discard a card, search library for ${primaryTarget}.`,
         ...(poisonLine ? [
           "Cast Eternal Witness: ETB retrieves Infectious Bite" + (inGrave.has("Infectious Bite") ? " from graveyard." : "."),
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter.",
@@ -3377,26 +4132,78 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   }
 
+
+  // ---- REGAL FORCE DRAW LOOP ----
+  if ((board.has("Regal Force") || (inHand.has("Regal Force") && canCastNow))
+      && board.has("Temur Sabertooth")
+      && infiniteManaActive) {
+    const gCreatures = battlefield.filter(c => CARDS[c]?.type === "creature" && (CARDS[c]?.devotion ?? 0) >= 1).length;
+    if (!results.some(r => r.combo === "regal_force_draw")) {
+      results.push({
+        priority: 12,
+        category: board.has("Regal Force") ? "📚 DRAW YOUR LIBRARY" : "⚡ CAST FOR WIN",
+        headline: `Regal Force + Temur Sabertooth: draw entire library (${gCreatures} cards per ETB)`,
+        detail: `With infinite mana: cast Regal Force, draw ${gCreatures} cards, bounce with Sabertooth, repeat until library empty.`,
+        steps: [
+          ...(inHand.has("Regal Force") && !board.has("Regal Force") ? ["Cast Regal Force ({5}{G}{G})."] : []),
+          `Regal Force ETB: draw ${gCreatures} cards (one per green creature you control).`,
+          "Pay {1}{G}: Temur Sabertooth bounces Regal Force to hand.",
+          "Recast Regal Force. ETB draws again. Repeat until library is empty.",
+          "Win via Duskwatch Recruiter, Sanitarium mill, or Infectious Bite from hand.",
+        ],
+        color: "#5dade2",
+      });
+    }
+  }
+
+
+  // ---- DISCIPLE OF FREYALISE LOOP ----
+  if ((board.has("Disciple of Freyalise") || (inHand.has("Disciple of Freyalise") && canCastNow))
+      && (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape"))
+      && infiniteManaActive) {
+    const bouncer2 = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+    const crCount = battlefield.filter(c => CARDS[c]?.type === "creature").length;
+    if (!results.some(r => r.combo === "disciple_loop")) {
+      results.push({
+        priority: 11,
+        category: "🔥 WIN NOW -- BOARD WIPE + DRAW",
+        headline: "Disciple of Freyalise loop: wipe all opponent creatures, draw entire library",
+        detail: `Each Disciple ETB forces each opponent to sacrifice a creature, then you draw ${crCount} cards. Loop with ${bouncer2} to clear boards and draw your library.`,
+        steps: [
+          ...(inHand.has("Disciple of Freyalise") && !board.has("Disciple of Freyalise") ? ["Cast Disciple of Freyalise ({4}{G})."] : []),
+          `Disciple ETB: each opponent sacrifices a creature. You draw ${crCount} cards.`,
+          bouncer2 === "Temur Sabertooth"
+            ? "Pay {1}{G}: Temur Sabertooth bounces Disciple. Recast. ETB again."
+            : "Pay {2}: Kogla returns Disciple (Human) to hand. Recast. ETB again.",
+          "Each loop removes one creature from each opponent's board.",
+          "After clearing opponents' boards: each loop draws your library.",
+          "Win via Duskwatch Recruiter, Sanitarium mill, or Infectious Bite from hand.",
+        ],
+        color: "#c0392b",
+      });
+    }
+  }
+
   // ---- BADGERMOLE CUB + ASHAYA WIN CON ----
-  // With infinite mana + Ashaya, Badgermole can put infinite +1/+1 counters
+  // With infinite mana + Ashaya, Badgermole's mana-doubler (tap creature for mana → add {G}) accelerates. No infinite counters from earthbend (one-time ETB only).
   // on your creatures — all of which are Forests (valid land targets).
   // Only fire this if the COMBOS loop hasn't already generated a win-combat card for this.
   const badgermoleAlreadyFired = results.some(r => r.combo === "badgermole_ashaya_counters");
-  if (infiniteManaActive && board.has("Badgermole Cub") && board.has("Ashaya, Soul of the Wild") && !badgermoleAlreadyFired) {
-    const creatureTargets = battlefield.filter(c => CARDS[c]?.type === "creature").length;
+  if (infiniteManaActive && board.has("Badgermole Cub") && hasBouncer && !badgermoleAlreadyFired) {
     results.push({
       priority: 11,
       category: "🔥 WIN NOW — COMBAT",
-      headline: `Badgermole Cub + Ashaya + ∞ mana: put infinite +1/+1 counters on ${creatureTargets} creature${creatureTargets !== 1 ? "s" : ""}`,
-      detail: "With Ashaya in play all your nontoken creatures are Forests (lands). Badgermole Cub's {1}{G} ability animates any land and puts a +1/+1 counter on it. With infinite mana, activate it infinite times targeting your creature-Forests — each creature grows without limit. Swing for lethal.",
+      headline: `Badgermole Cub + ${board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla"} + ∞ mana: infinite +1/+1 counters on a land-creature`,
+      detail: "Badgermole Cub ETB: target a land — it becomes a 0/0 haste creature and gets a +1/+1 counter. KEY: you can retarget an already-animated land; it just resets to 0/0 base but keeps all existing counters and gains one more. Bounce Badgermole with a bouncer each loop, recast for {1}{G}, ETB targets the same land again. After infinite casts with infinite mana, the land is arbitrarily large with haste. Swing for lethal.",
       steps: [
-        `Pay {1}{G}: activate Badgermole Cub, target any creature you control (it's a Forest via Ashaya).`,
-        "That creature gets a +1/+1 counter.",
-        "Repeat until all creatures are arbitrarily large.",
-        "Spread counters across multiple creatures — don't stack everything on one target.",
-        `Attack with your ${creatureTargets} creature${creatureTargets !== 1 ? "s" : ""} for lethal damage across all opponents.`,
+        "Badgermole ETB: target any land you control — it becomes a 0/0 haste creature + gets a +1/+1 counter.",
+        `Pay {1}{G}: bounce Badgermole Cub to hand via ${board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla"}.`,
+        "Recast Badgermole ({1}{G}). ETB fires — target the SAME already-animated land. It gets another +1/+1 counter (base resets to 0/0 but counters persist).",
+        "Repeat infinitely. The land-creature grows to N/N where N = number of casts.",
+        "Attack with the arbitrarily large haste land-creature for lethal.",
       ],
       color: "#ff6b35",
+      combo: "badgermole_ashaya_counters",
     });
   }
 
@@ -3418,7 +4225,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const speakerFindsWitness = speakerCanActivate && !witnessOnBrd && (isMyTurn || yevaFlash);
     // Formidable Speaker in hand + haste (Destiny Spinner) + bouncer → find Witness immediately
     const speakerInHandFindsWitness = inHand.has("Formidable Speaker") && !board.has("Formidable Speaker")
-      && board.has("Destiny Spinner") && speakerHasBouncer && !witnessOnBrd;
+      && board.has("Destiny Spinner") && speakerHasBouncer && !witnessOnBrd
+      && hand.filter(c => c !== "Formidable Speaker").length > 0; // needs a card to discard for ETB
 
     // Full poison win: Bite accessible + Witness on board + bouncer
     if (biteAvail && witnessOnBrd && hasBouncer && (infiniteManaActive || mana >= 20)) {
@@ -3489,7 +4297,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         detail: `Bounce and recast Formidable Speaker with ${bouncer} to repeatedly trigger its ETB. Use it to find Eternal Witness, then execute the Infectious Bite poison loop.`,
         steps: [
           `Pay {1}{G}: ${bouncer} bounces Formidable Speaker to hand. Recast it ({1}{G}).`,
-          "Formidable Speaker ETB: look at top X cards (X = creatures on board), put Eternal Witness into hand.",
+          "Formidable Speaker ETB: discard any card → search library for Eternal Witness (guaranteed).",
           "Cast Eternal Witness: ETB retrieves Infectious Bite" + (biteInGrave ? " from graveyard." : "."),
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
@@ -3540,6 +4348,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "After 10 casts all opponents have 10 poison counters and lose simultaneously.",
         ],
         color: "#27ae60",
+      });
+    }
+  }
+
+
+  // ---- NATURE'S RHYTHM DRAW ENGINE ----
+  if (board.has("Nature's Rhythm") && infiniteManaActive) {
+    const reclaimerPresent = board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer");
+    if (reclaimerPresent) {
+      results.push({
+        priority: 11,
+        category: "📚 DRAW YOUR LIBRARY",
+        headline: "Nature's Rhythm + Elvish Reclaimer + inf mana: draw entire library",
+        detail: "Nature's Rhythm draws a card whenever you play a land. With infinite mana, activate Elvish Reclaimer repeatedly -- each activation tutors a land to the battlefield, triggering Nature's Rhythm.",
+        steps: [
+          "Infinite mana active. Nature's Rhythm on battlefield. Elvish Reclaimer available.",
+          "Pay {T} + sacrifice a land: Elvish Reclaimer searches for any land and puts it onto the battlefield.",
+          "That land entering triggers Nature's Rhythm: draw a card.",
+          "Repeat with infinite mana to draw your entire library.",
+          "Win via Duskwatch Recruiter, Sanitarium mill, or Infectious Bite from hand.",
+        ],
+        color: "#5dade2",
       });
     }
   }
@@ -3696,6 +4526,13 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false) 
   const inHand = new Set(hand);
 
   if (CARDS[target]?.type === "creature" || CARDS[target]?.type === "land") {
+    // Formidable Speaker in hand: ETB — "you MAY discard a card. If you do, search library for any creature."
+    // Requires at least one OTHER card in hand to discard, otherwise ETB fizzles with no tutor.
+    const speakerDiscardAvail = hand.filter(c => c !== "Formidable Speaker").length > 0;
+    if (inHand.has("Formidable Speaker") && !board.has("Formidable Speaker")
+        && CARDS[target]?.type === "creature"
+        && speakerDiscardAvail
+        && (mana >= 3 || infiniteMana)) options.push("Formidable Speaker (cast → ETB finds any creature)");
     if (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteMana) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
     if (inHand.has("Summoner's Pact") && CARDS[target]?.type === "creature") options.push("Summoner's Pact");
     if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
