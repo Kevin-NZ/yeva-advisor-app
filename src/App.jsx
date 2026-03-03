@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
 // CARD DATABASE — every card in the deck with metadata
@@ -588,17 +588,17 @@ const COMBOS = [
     name: "Seedborn Muse + Yeva/Yisan (Free Activations Every Turn)",
     onBattlefield: ["Seedborn Muse"],
     mustPreExist: ["Seedborn Muse"],
-    description: "Seedborn Muse untaps all permanents on each opponent's turn. With Yeva's flash this means you can cast green creatures at instant speed AND activate Yisan on every opponent's upkeep — tripling Yisan's verse-chain speed and keeping mana open on every player's turn.",
+    description: "Seedborn Muse untaps all permanents on each opponent's turn. With Yeva on board you already have flash every opponent's turn — cast green creatures at instant speed and untap for free. Adding Yisan would give a free verse activation each upkeep too.",
     requires: ["Seedborn Muse"],
     priority: 7,
     type: "engine",
+    // NOTE: steps are overridden dynamically in the combo-firing block to suppress
+    // Yisan references when Yisan is not on the battlefield.
     lines: [
       "Seedborn Muse on battlefield: ALL your permanents untap at the beginning of each other player's untap step.",
       "With Yeva's flash active: cast green creatures at instant speed on any opponent's turn, untap, do it again on the next opponent's turn.",
-      "With Yisan on battlefield: you get a free {2}{G} verse activation on each opponent's upkeep. In a 4-player pod Yisan chains 3 verses per round instead of 1.",
-      "With Quirion/Scryb Ranger: double-activate Yisan each opponent's upkeep if you hold the mana.",
       "SEQUENCING: Seedborn untap happens BEFORE opponent draws — your mana is replenished before any threat resolves.",
-      "TIP: With Elvish Guidance or Gaea's Cradle, Seedborn means infinite mana production across all turns (just not infinite mana in one action).",
+      "TIP: With Elvish Guidance or Gaea's Cradle, Seedborn means effective mana production across all turns.",
     ]
   },
 
@@ -908,20 +908,18 @@ const COMBOS = [
   // ── Seedborn Muse + Yeva / Yisan -- Free activations every opponent's turn ─
   {
     id: "seedborn_engine",
-    name: "Seedborn Muse -- Untap Engine (Yeva / Yisan every opponent's turn)",
+    name: "Seedborn Muse -- Untap Engine (Free Activations Every Turn)",
     onBattlefield: ["Seedborn Muse"],
     mustPreExist: ["Seedborn Muse"],
-    description: "Seedborn Muse untaps all permanents on every opponent's upkeep. With Yeva in play this means you effectively have flash on every opponent's turn AND a free Yisan verse activation each round. With 3 opponents you get 3x the activations -- Yisan can chain V1-V5 in a single round.",
+    description: "Seedborn Muse untaps all permanents on every opponent's upkeep. With Yeva in play you already have flash on every opponent's turn — cast, untap, repeat. Yisan would additionally get a free verse activation each upkeep.",
     requires: ["Seedborn Muse"],
     priority: 8,
     type: "engine",
     lines: [
       "Seedborn Muse on battlefield: all your permanents untap at the beginning of each opponent's upkeep.",
-      "With Yeva on board: you have flash every opponent's turn AND Yisan untaps for a free activation.",
-      "Yisan chain: V1 (Quirion Ranger untaps Yisan) -> V2 -> V3 (Priest/Archdruid) -> V4 (Sabertooth) -> V5 (Ashaya = infinite mana).",
-      "In a 4-player game you get 3 free Yisan activations per round -- chain V1-V5 in a single round.",
-      "With Seedborn + Yeva + Yisan on board, opponents have almost no window to interact.",
-      "TIP: Use Quirion Ranger to untap Yisan after each activation to double up at the same verse.",
+      "With Yeva on board: you have flash every opponent's turn — cast green creatures at instant speed and they untap for the next opponent's turn.",
+      "In a 4-player game you get 3 extra untap steps per round — full mana production on every player's turn.",
+      "TIP: Use Quirion Ranger on an opponent's turn to untap a dork and generate extra mana before passing back.",
     ]
   },
 
@@ -1255,12 +1253,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const allAvailable = new Set([...hand, ...battlefield]);
 
   // accessible(cardName) — true if the card is in hand OR retrievable from graveyard this turn.
-  // Retrieval path: Eternal Witness in hand, card in graveyard, enough mana for both.
-  // witnessCmc=3 + cardCmc must be <= mana (checked at call sites where mana context matters).
-  // For simple presence checks (not mana-gated), use inHand.has() directly.
+  // Retrieval paths:
+  //   1. Eternal Witness in hand → ETB retrieves any card from grave
+  //   2. Fauna Shaman on board + Eternal Witness in grave → discard creature → find Witness → retrieve target
+  //      (Fauna Shaman must be able to activate: needs a creature to discard + {G})
+  const faunaCanFetchWitness = () =>
+    board.has("Fauna Shaman") &&
+    inGrave.has("Eternal Witness") &&
+    hand.some(c => CARDS[c]?.type === "creature") && // need a creature to discard
+    mana >= 1; // Fauna Shaman activation cost
   const witnessRetrievable = (cardName) => {
     if (!inGrave.has(cardName)) return false;
     if (inHand.has("Eternal Witness") && !board.has("Eternal Witness")) return true;
+    // Fauna Shaman on board → discard → find Witness → Witness retrieves cardName
+    if (faunaCanFetchWitness()) return true;
     return false;
   };
   const accessible = (cardName) => inHand.has(cardName) || witnessRetrievable(cardName);
@@ -1332,6 +1338,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const hasHasteEnabler      = ashayaAvailable && landAnimateOnBoard;
 
   const results = [];
+  const suppressedWins = []; // { label, reason } — shown as collapsed notes at end
 
   // ---- HELPER: exact mana output of a dork given board context ----
   function estimateDorkOutput(cardName, extraElves = 0) {
@@ -1899,11 +1906,19 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Total mana needed: 3 + 4 + 5 = 12 minimum.
   // IMPORTANT: Natural Order requires sacrificing a creature. The ranger is required for the
   // loop and must NOT be the sac target — need a separate expendable creature.
+  // Witness access paths:
+  //   A) Eternal Witness in hand (standard)
+  //   B) Fauna Shaman on board + Witness in graveyard + creature to discard (costs 1G extra → 13 mana)
+  const witnessInHandForNO = inHand.has("Eternal Witness") && !board.has("Eternal Witness");
+  const faunaFetchesWitnessForNO = faunaCanFetchWitness() && !board.has("Eternal Witness");
+  const witnessAccessibleForNO = witnessInHandForNO || faunaFetchesWitnessForNO;
+  const witnessManaCostNO = faunaFetchesWitnessForNO && !witnessInHandForNO ? 4 : 3; // Fauna(1) + Witness(3) vs Witness(3)
+  const minManaNO = witnessManaCostNO + 4 + 5; // Witness + Natural Order + Ashaya
   if (
     isMyTurn &&
-    inHand.has("Eternal Witness") && !board.has("Eternal Witness") &&
+    witnessAccessibleForNO &&
     inGrave.has("Natural Order") && !inHand.has("Natural Order") &&
-    mana >= 12 &&
+    mana >= minManaNO &&
     !board.has("Ashaya, Soul of the Wild") &&
     !results.some(r => r.combo === "natural_order_ashaya_win")
   ) {
@@ -1954,14 +1969,21 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const bounceFirstStep = !discardCard && rangerCanBounce
         ? [`Activate ${rangerName}: return a Forest from battlefield to hand — discard source for Speaker's ETB.`]
         : [];
+      const faunaFirstSteps = faunaFetchesWitnessForNO && !witnessInHandForNO
+        ? [`Activate Fauna Shaman ({G}): discard ${hand.find(c => CARDS[c]?.type === "creature") || "a creature"} → search for Eternal Witness. Put Witness into your hand.`]
+        : [];
+      const headlinePrefix = faunaFetchesWitnessForNO && !witnessInHandForNO
+        ? "Fauna Shaman → fetch Eternal Witness → retrieve Natural Order"
+        : "Cast Eternal Witness → retrieve Natural Order";
 
       results.push({
         priority: 16,
         category: "⚡ CAST TO WIN",
-        headline: `Cast Eternal Witness → retrieve Natural Order → Speaker → find Ashaya → ${rangerName} loop → WIN`,
+        headline: `${headlinePrefix} → Speaker → find Ashaya → ${rangerName} loop → WIN`,
         combo: "natural_order_ashaya_win",
-        detail: `Cast Eternal Witness (3 mana) → ETB retrieves Natural Order from graveyard. Cast Natural Order (4 mana, sacrifice ${sacTarget}) → fetch Formidable Speaker. Speaker ETB: discard ${discardDesc} → find Ashaya (5 mana to cast). Ashaya + ${rangerName} + ${bigDork} = infinite mana. Loop bounces Speaker → find Duskwatch → WIN.`,
+        detail: `${faunaFetchesWitnessForNO && !witnessInHandForNO ? "Fauna Shaman fetches Eternal Witness from graveyard. " : ""}Cast Eternal Witness (3 mana) → ETB retrieves Natural Order from graveyard. Cast Natural Order (4 mana, sacrifice ${sacTarget}) → fetch Formidable Speaker. Speaker ETB: discard ${discardDesc} → find Ashaya (5 mana to cast). Ashaya + ${rangerName} + ${bigDork} = infinite mana. Loop bounces Speaker → find Duskwatch → WIN.`,
         steps: [
+          ...faunaFirstSteps,
           `Cast Eternal Witness ({2}{G}): ETB retrieves Natural Order from graveyard.`,
           ...bounceFirstStep,
           `Cast Natural Order ({2}{G}{G}): sacrifice ${sacTarget} → search for Formidable Speaker, put it onto the battlefield.`,
@@ -2680,17 +2702,34 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       .filter(t => !board.has(t.name) && !inHand.has(t.name));
     const bestTarget  = targets[0];
 
+    // Build a look-ahead chain: how many activations until we hit win pieces?
+    const WIN_PIECES = new Set(["Ashaya, Soul of the Wild","Duskwatch Recruiter","Temur Sabertooth","Kogla, the Titan Ape","Eternal Witness"]);
+    const chainAhead = [];
+    for (let v = nextVerse; v <= 5; v++) {
+      const vtargets = (yisanTargetsByVerse[v] || []).filter(t => !board.has(t.name) && !inHand.has(t.name));
+      if (vtargets[0]) chainAhead.push({ verse: v, name: vtargets[0].name, isWin: WIN_PIECES.has(vtargets[0].name) });
+    }
+    const activationsToWin = chainAhead.findIndex(c => c.isWin);
+    const winChainEntry = activationsToWin >= 0 ? chainAhead[activationsToWin] : null;
+    const chainSummary = chainAhead.slice(0, 4).map(c => `V${c.verse}→${c.name.split(",")[0]}`).join(" · ");
+
     if (canActivate && canAfford && bestTarget) {
       const doubleActivate = hasRanger && mana >= 6 && isMyTurn;
+      const activationsNote = winChainEntry
+        ? activationsToWin === 0
+          ? ` Next activation reaches ${winChainEntry.name}.`
+          : ` ${activationsToWin + 1} activation${activationsToWin > 0 ? "s" : ""} away from ${winChainEntry.name}.`
+        : "";
       results.push({
         priority: 8,
         category: "🎯 YISAN TUTOR",
         headline: `Yisan verse ${nextVerse} → ${bestTarget.name}`,
-        detail: `Yisan currently has ${yisanCounters} verse counter${yisanCounters !== 1 ? "s" : ""}. Next activation adds 1 counter (reaching verse ${nextVerse}) and tutors a CMC ${nextVerse} creature directly onto the battlefield.${doubleActivate ? ` With ${rangerName} available, you can double-activate this turn.` : ""}`,
+        detail: `Yisan currently has ${yisanCounters} verse counter${yisanCounters !== 1 ? "s" : ""}. Next activation adds 1 counter (reaching verse ${nextVerse}) and tutors a CMC ${nextVerse} creature directly onto the battlefield.${activationsNote}${doubleActivate ? ` With ${rangerName} available, you can double-activate this turn.` : ""}`,
         steps: [
           `Pay {2}{G}, tap Yisan: add a verse counter (now at ${nextVerse}), search for a CMC ${nextVerse} creature → battlefield.`,
           `Best target: ${bestTarget.name} — ${bestTarget.reason}.`,
           ...(targets.length > 1 ? [`Alternatives: ${targets.slice(1, 3).map(t => t.name).join(", ")}.`] : []),
+          ...(chainAhead.length > 1 ? [`Chain ahead: ${chainSummary}`] : []),
           ...(doubleActivate ? [
             `${rangerName}: return itself to hand, untapping Yisan.`,
             `Pay {2}{G} again: Yisan activates at verse ${nextVerse} again — fetch a second CMC ${nextVerse} creature.`,
@@ -2770,19 +2809,32 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (hasYisan)    opponentBenefits.push("Yisan gets a free verse activation on each opponent's upkeep" + (hasRanger ? " — double-activate with Ranger" : ""));
     if (hasCradle)   opponentBenefits.push("Gaea's Cradle untaps on each opponent's turn — tap it again before your own turn for double mana");
     if (hasGuidance) opponentBenefits.push("Elvish Guidance forest untaps — produce elf-count mana on every player's turn");
-    if (yevaFlash)   opponentBenefits.push("Yeva flash: cast green creatures at instant speed on any opponent's turn, untap, repeat");
+    // Yeva flash is NOT listed — it is always active when Yeva is on board, independent of Seedborn.
+
+    // Headline only mentions what Seedborn specifically enables (not Yeva flash)
+    const headlineParts = [];
+    if (hasYisan)    headlineParts.push("free Yisan verse activation");
+    if (hasCradle)   headlineParts.push("double Cradle taps");
+    if (hasGuidance) headlineParts.push("double Guidance taps");
+    const headlineSuffix = headlineParts.length > 0 ? ` — ${headlineParts.join(", ")}` : "";
+
+    // Avoid generic "3× more Yisan" footer when Yisan is not on the battlefield
+    const podNote = hasYisan
+      ? "In a 4-player pod: 3 extra untap steps = 3× more Yisan activations, 3× more Cradle taps."
+      : "In a 4-player pod: 3 extra untap steps = full mana production on every player\'s turn.";
 
     if (opponentBenefits.length > 0) {
       results.push({
         priority: infiniteManaActive ? 6 : 8,
         category: "🌙 SEEDBORN MUSE ENGINE",
-        headline: `Seedborn Muse: untap all permanents on each opponent's turn`,
+        headline: `Seedborn Muse: untap all permanents every opponent's turn${headlineSuffix}`,
+        combo: "seedborn_bespoke",
         detail: `Seedborn Muse gives you the equivalent of ${opponentBenefits.length + 1} full untap steps per round in a 4-player game. This is not infinite mana per turn — but it generates enormous advantage across all turns.`,
         steps: [
-          "Seedborn Muse: at the beginning of each other player's untap step, untap all permanents you control.",
+          "Seedborn Muse: at the beginning of each other player\'s untap step, untap all permanents you control.",
           ...opponentBenefits.map(b => `• ${b}.`),
-          "IMPORTANT: mana pools empty between steps — you must spend mana on each player's turn individually.",
-          "In a 4-player pod: 3 extra untap steps = 3× more Yisan activations, 3× more Cradle taps, 3× more instant-speed plays.",
+          "IMPORTANT: mana pools empty between steps — you must spend mana on each player\'s turn individually.",
+          podNote,
         ],
         color: "#9b59b6",
       });
@@ -3167,45 +3219,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ---- SEEDBORN MUSE ADVICE ----
-  if (board.has("Seedborn Muse")) {
-    // Build a list of what Seedborn specifically unlocks right now
-    const activatables = [];
-    if (board.has("Yisan, the Wanderer Bard"))
-      activatables.push({ what: "Yisan, the Wanderer Bard", benefit: `activate at verse ${yisanCounters + 1} on each opponent's turn — full verse progression every round` });
-    if (board.has("Survival of the Fittest"))
-      activatables.push({ what: "Survival of the Fittest", benefit: "discard-tutor on each opponent's end step — find any creature every turn" });
-    if (board.has("Fauna Shaman"))
-      activatables.push({ what: "Fauna Shaman", benefit: "tutor a creature on each opponent's turn" });
-    if (board.has("War Room"))
-      activatables.push({ what: "War Room", benefit: "draw a card each opponent's turn for {3} life — free card advantage every round" });
-    if (board.has("Geier Reach Sanitarium"))
-      activatables.push({ what: "Geier Reach Sanitarium", benefit: "loot on each opponent's turn — accelerate toward combo pieces" });
-    if (board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx") || board.has("Itlimoc, Cradle of the Sun"))
-      activatables.push({ what: board.has("Gaea's Cradle") ? "Gaea's Cradle" : board.has("Nykthos, Shrine to Nyx") ? "Nykthos, Shrine to Nyx" : "Itlimoc, Cradle of the Sun", benefit: "tap for big mana on each opponent's turn — bank mana or activate costly abilities" });
-    if (dorksOnBoard >= 2)
-      activatables.push({ what: `${dorksOnBoard} mana dorks`, benefit: "full mana every turn — treat this as having effectively infinite mana for casting" });
-
-    const hasTutorable = activatables.some(a =>
-      ["Yisan, the Wanderer Bard","Survival of the Fittest","Fauna Shaman"].includes(a.what));
-    const priority = hasTutorable ? 9 : activatables.length >= 2 ? 8 : 6;
-
-    results.push({
-      priority,
-      category: "🌙 SEEDBORN ENGINE",
-      headline: activatables.length > 0
-        ? `Seedborn Muse: untap ${activatables[0].what} every opponent's turn`
-        : "Seedborn Muse active — full mana on every turn",
-      detail: `Seedborn Muse untaps all permanents you control on each opponent's untap step — effectively giving you full mana four times per round in a 4-player game. ${activatables.length > 0 ? `Key activations available this turn: ${activatables.map(a => a.what).join(", ")}.` : "Use your mana dorks and lands freely — they refill each turn."}`,
-      steps: [
-        ...activatables.slice(0, 4).map(a => `${a.what}: ${a.benefit}.`),
-        activatables.length === 0
-          ? "Even with no activated abilities, Seedborn means every opponent's spell you could flash in is free — hold threats in hand and respond freely."
-          : "Pass turn with mana open — flash threats in on each end step as needed.",
-        "Seedborn Muse is a high-value removal target for opponents — protect it with Allosaurus Shepherd or Destiny Spinner if available.",
-      ].filter(Boolean),
-      color: "#8e44ad",
-    });
+  // ---- SEEDBORN MUSE ADVICE (merged into bespoke block above) ----
+  // This second Seedborn block is intentionally suppressed — the bespoke block at the
+  // SEEDBORN MUSE ENGINE section already generates context-aware steps including
+  // Cradle taps, Yeva flash, and Yisan (only when Yisan is actually on board).
+  // Leaving this block as a no-op prevents three near-duplicate Seedborn entries.
+  if (false && board.has("Seedborn Muse")) { // SUPPRESSED — handled by SEEDBORN MUSE ENGINE above
   }
 
   // ---- STAX ADVICE ----
@@ -3417,6 +3436,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const missing = [...new Set([...missingPreExist, ...missingCastable, ...missingAnywhere])];
 
     const extras = comboExtrasSatisfied(combo, infiniteManaActive);
+
+    // Seedborn engine combos are fully handled by the bespoke Seedborn block above
+    // (which generates context-aware steps). Skip the generic COMBOS-array entries.
+    if ((combo.id === "seedborn_yeva" || combo.id === "seedborn_engine") &&
+        results.some(r => r.combo === "seedborn_bespoke")) continue;
 
     if (missing.length === 0 && extras.ok) {
       // Type metadata: label, headline prefix, priority boost, color
@@ -3711,6 +3735,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const pileNeeded = ["Destiny Spinner","Elvish Reclaimer","Ashaya, Soul of the Wild",
       "Temur Sabertooth","Endurance"].filter(c => !board.has(c));
 
+    // Build precise Sanitarium execution steps based on what's actually on board
+    const postPileBoard = new Set([
+      ...battlefield,
+      // Add pieces we know Duskwatch will find if they're still needed
+    ]);
+    const { steps: millSteps } = buildMillSequence(postPileBoard, inHand, pileNeeded);
+
     results.push({
       priority: enduranceEffectivelyReady ? 15 : 11,
       category: enduranceEffectivelyReady ? "🔥 WIN NOW — PILE" : "⚠️ NEED ENDURANCE FIRST",
@@ -3718,7 +3749,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? `${duskwatchAccessNote}Assemble the Win Pile → Sanitarium Mill`
         : `${duskwatchAccessNote}Assemble Win Pile — find Endurance before executing`,
       detail: enduranceEffectivelyReady
-        ? "With infinite mana, activate Duskwatch Recruiter repeatedly to pull the win pile from your library, then use Geier Reach Sanitarium to mill all opponents out."
+        ? `With infinite mana, activate Duskwatch Recruiter repeatedly to pull the win pile from your library, then execute the Sanitarium mill loop${untapMethods.length > 0 ? ` using: ${untapMethods[0]}` : ""}.`
         : "⚠️ Endurance is REQUIRED before activating Sanitarium — without it you will mill yourself out. Find Endurance via Duskwatch before starting the Sanitarium loop.",
       steps: [
         ...(castYevaFirst ? [
@@ -3728,32 +3759,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           `ACCESS: Cast ${tutorNote(tutorsThatFindDuskwatch[0].tutor)} to find Duskwatch Recruiter.`
           + (tutorsThatFindDuskwatch.length > 1 ? ` (Alternatives: ${tutorsThatFindDuskwatch.slice(1).map(x=>x.tutor).join(", ")})` : ""),
         ] : []),
-        "═══ STEP 1 — ASSEMBLE THE PILE ═══",
-        "Activate Duskwatch Recruiter ({2}{G}) repeatedly to find and cast these pieces:",
-        "  • Destiny Spinner — gives your creatures haste (lands=creatures) AND makes green spells uncounterable",
-        "  • Elvish Reclaimer — with Destiny Spinner's haste, tap Reclaimer to tutor Geier Reach Sanitarium",
-        "  • Ashaya, Soul of the Wild — makes all creatures Forests (enables land-untap methods)",
-        "  • Temur Sabertooth — bounce engine for Woodcaller Automaton loop",
-        "  • Endurance — protects your library from milling out; ETB shuffles graveyard back in",
-        "  • ONE untap method for Geier Reach Sanitarium (see Step 2)",
-        "═══ STEP 2 — UNTAP GEIER REACH SANITARIUM ═══",
-        untapMethods.length > 0
-          ? `Available now: ${untapMethods.join(" | ")}`
-          : "Find one of these untap methods via Duskwatch:",
-        "  • Woodcaller Automaton + Temur Sabertooth (bounce Automaton each loop, ETB untaps Sanitarium)",
-        "  • Hyrax Tower Scout + Destiny Spinner (Scout ETB untaps Sanitarium; Destiny gives it haste to tap again)",
-        "  • Ashaya + Magus of the Candelabra (Magus {2}: untaps itself + Sanitarium as a Forest)",
-        "  • Ashaya + Quirion/Scryb Ranger + Destiny Spinner (Ranger bounces as Forest, Destiny=haste)",
-        "  • Ashaya + Wirewood Symbiote + Destiny Spinner (Symbiote untaps Sanitarium as a Forest)",
-        "  • Ashaya + Argothian Elder + Destiny Spinner (Elder untaps Sanitarium + itself)",
-        "═══ STEP 3 — EXECUTE MILL WIN ═══",
-        "Once Geier Reach Sanitarium is in play with untap method ready:",
-        "Activate Sanitarium ({2},{T}): each player draws then discards. Hold priority.",
-        "Untap Sanitarium with your chosen method. Repeat ~99× until all opponents' libraries are empty.",
-        "Use Endurance to shuffle YOUR graveyard back in whenever your library runs low.",
-        pileNeeded.length > 0
-          ? `Still need from library: ${pileNeeded.join(", ")}`
-          : "All core pile pieces already on battlefield — execute now!",
+        ...millSteps,
       ],
       color: "#ff6b35",
     });
@@ -4746,9 +4752,298 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     results.push(...deduped);
   }
 
+  // ---- SUPPRESSED WIN CONDITIONS ----
+  // Check major win lines that didn't fire and explain why.
+  // Only emit if the corresponding win combo isn't already in results.
+  const winFired = (combo) => results.some(r => r.combo === combo);
+
+  // Natural Order win
+  if (!winFired("natural_order_ashaya_win")) {
+    const noInHand = inHand.has("Natural Order");
+    const noInGrave = inGrave.has("Natural Order");
+    const hasRangerNO = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const hasSacNO = battlefield.some(c => CARDS[c]?.type === "creature");
+    const hasAshaya = board.has("Ashaya, Soul of the Wild");
+
+    if (noInHand && hasSacNO && !hasAshaya) {
+      const needs = [];
+      if (!hasRangerNO) needs.push("Quirion/Scryb Ranger on board");
+      if (mana < 4) needs.push(`${4 - mana} more mana (need 4)`);
+      if (!isMyTurn) needs.push("your turn (sorcery)");
+      if (needs.length > 0)
+        suppressedWins.push({ label: "Natural Order win suppressed", reason: needs.join(", ") });
+    } else if (noInGrave && !noInHand) {
+      const witnessPath = witnessAccessibleForNO ?? (inHand.has("Eternal Witness") || faunaCanFetchWitness());
+      if (witnessPath && mana < (faunaCanFetchWitness() && !inHand.has("Eternal Witness") ? 13 : 12)) {
+        suppressedWins.push({ label: "Natural Order win suppressed (via Eternal Witness)", reason: `only ${mana} mana (need ${faunaCanFetchWitness() && !inHand.has("Eternal Witness") ? 13 : 12} for Witness + Natural Order + Ashaya)` });
+      } else if (!witnessPath && (noInGrave)) {
+        suppressedWins.push({ label: "Natural Order in graveyard", reason: "no way to retrieve it (need Eternal Witness in hand or Fauna Shaman on board)" });
+      }
+    }
+  }
+
+  // Formidable Speaker win
+  if (!winFired("speaker_hand_cast_to_win")) {
+    const spkrAvail = accessible("Formidable Speaker") && !board.has("Formidable Speaker");
+    const hasRangerSpkr = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const hasDiscardSpkr = hand.filter(c => c !== "Formidable Speaker").length > 0 ||
+      (battlefield.some(c => c === "Forest") && hasRangerSpkr);
+    if (spkrAvail && !infiniteManaActive) {
+      const needs = [];
+      if (!hasRangerSpkr) needs.push("Quirion/Scryb Ranger on board (for loop)");
+      if (!hasDiscardSpkr) needs.push("another card in hand to discard for Speaker ETB");
+      if (mana < 3) needs.push(`${3 - mana} more mana (need 3)`);
+      if (needs.length > 0)
+        suppressedWins.push({ label: "Formidable Speaker win suppressed", reason: needs.join(", ") });
+    }
+  }
+
+  // Woodland Bellower win
+  if (!winFired("bellower_duskwatch_win") && accessible("Woodland Bellower")) {
+    const bellowOk = isMyTurn || yevaAvailable;
+    if (!bellowOk) suppressedWins.push({ label: "Woodland Bellower win suppressed", reason: "opponent's turn and Yeva not available for flash" });
+    else if (mana < 6) suppressedWins.push({ label: "Woodland Bellower win suppressed", reason: `only ${mana} mana (need 6)` });
+  }
+
+  // Infinite mana combos that are close
+  if (!infiniteManaActive) {
+    for (const combo of COMBOS.filter(c => c.type === "infinite-mana")) {
+      const missing = combo.requires.filter(r => !board.has(r) && !accessible(r));
+      const onBoard = combo.requires.filter(r => board.has(r));
+      if (missing.length === 1 && onBoard.length >= 1) {
+        // Already covered by ONE PIECE AWAY — skip
+        continue;
+      }
+      if (missing.length === 0) {
+        const extras = comboExtrasSatisfied(combo, infiniteManaActive);
+        if (!extras.ok && extras.missing) {
+          suppressedWins.push({ label: `Infinite mana suppressed (${combo.name})`, reason: `missing ${extras.missing}` });
+        }
+      }
+    }
+  }
+
+  // Emit suppressed wins as low-priority collapsed entries
+  for (const s of suppressedWins) {
+    if (results.some(r => r.suppressedLabel === s.label)) continue; // no dups
+    results.push({
+      priority: -1,
+      category: "🔕 SUPPRESSED",
+      headline: `${s.label}: ${s.reason}`,
+      suppressedLabel: s.label,
+      combo: null,
+      detail: `This win line was evaluated but did not fire. ${s.reason}.`,
+      steps: [],
+      color: "#555555",
+      isSuppressed: true,
+    });
+  }
+
   // Sort by priority descending
   results.sort((a, b) => b.priority - a.priority);
-  return { results: results.slice(0, 7), infiniteManaActive, activeComboName };
+  const normal = results.filter(r => !r.isSuppressed).slice(0, 7);
+  const suppressed = results.filter(r => r.isSuppressed);
+  return { results: [...normal, ...suppressed], infiniteManaActive, activeComboName };
+}
+
+// ── buildMillSequence ─────────────────────────────────────────────────────────
+// Given the post-Duskwatch board state, returns precise ordered steps for the
+// Sanitarium mill kill. Picks the best available untap variant and generates
+// concrete tap/activate instructions using actual card names on the board.
+//
+// Parameters: board, hand sets; pileNeeded = cards still to fetch from library.
+// Returns: { variant, steps[] } where variant names the kill line chosen.
+function buildMillSequence(board, hand, pileNeeded = []) {
+  const has = (c) => board.has(c);
+  const hasHand = (c) => hand.has(c);
+  const hasAshaya  = has("Ashaya, Soul of the Wild");
+  const hasTemur   = has("Temur Sabertooth");
+  const hasKogla   = has("Kogla, the Titan Ape");
+  const hasBouncer = hasTemur || hasKogla;
+  const bouncerName = hasTemur ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+  const hasEndurance = has("Endurance");
+  const hasSanitarium = has("Geier Reach Sanitarium");
+  const hasDestiny = has("Destiny Spinner");
+  const hasMagus = has("Magus of the Candelabra");
+  const hasWoodcaller = has("Woodcaller Automaton");
+  const hasHyrax = has("Hyrax Tower Scout");
+  const hasQuirion = has("Quirion Ranger") || has("Scryb Ranger");
+  const rangerName = has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+  const hasElder = has("Argothian Elder");
+  const hasWirewood = has("Wirewood Symbiote");
+  const hasWitwoodLodge = has("Wirewood Lodge");
+  const hasElvishReclaimer = has("Elvish Reclaimer");
+  const hasLQR = has("Legolas's Quick Reflexes") || hasHand("Legolas's Quick Reflexes");
+  const hasBeastWithin = hasHand("Beast Within");
+  const hasWitness = has("Eternal Witness");
+
+  // Pile assembly prefix — list pieces still needed
+  const pileSteps = pileNeeded.length > 0
+    ? [
+        "═══ DUSKWATCH ASSEMBLY ═══",
+        `Still need from library (activate Duskwatch {2}{G} repeatedly):`,
+        ...pileNeeded.map(c => {
+          if (c === "Destiny Spinner")     return `  • Destiny Spinner — gives all creatures haste + makes green spells uncounterable`;
+          if (c === "Elvish Reclaimer")    return `  • Elvish Reclaimer — with haste from Destiny Spinner, tap to tutor Geier Reach Sanitarium`;
+          if (c === "Ashaya, Soul of the Wild") return `  • Ashaya, Soul of the Wild — turns all creatures into Forests for untap loops`;
+          if (c === "Temur Sabertooth")    return `  • Temur Sabertooth — bounce engine ({1}{G}: return any creature to hand)`;
+          if (c === "Endurance")           return `  • Endurance — REQUIRED first: prevents self-mill; ETB shuffles your graveyard back in`;
+          if (c === "Geier Reach Sanitarium") return `  • Geier Reach Sanitarium — win-con land ({2},{T}: each player draws then discards)`;
+          return `  • ${c}`;
+        }),
+        `IMPORTANT: Find and cast Endurance BEFORE activating Geier Reach Sanitarium.`,
+      ]
+    : ["═══ ALL PILE PIECES ON BATTLEFIELD ═══"];
+
+  // Sanitarium fetch step (if not yet on board)
+  const sanitariumFetch = hasSanitarium ? [] : hasElvishReclaimer && hasDestiny
+    ? [`Elvish Reclaimer has haste (Destiny Spinner). Tap Elvish Reclaimer ({T}): sacrifice a land → tutor Geier Reach Sanitarium from library, put it on battlefield tapped.`]
+    : [`Activate Duskwatch to find Elvish Reclaimer. Cast it — Destiny Spinner gives haste. Tap Reclaimer: sacrifice a land → tutor Geier Reach Sanitarium.`];
+
+  // Endurance safety check
+  const enduranceCheck = hasEndurance ? [] : [
+    "⚠️ FIND ENDURANCE FIRST: Activate Duskwatch until you find Endurance. Cast it immediately. Let its ETB resolve — your graveyard shuffles back into library. Only then proceed to Sanitarium.",
+  ];
+
+  // ── PICK THE BEST UNTAP VARIANT ──────────────────────────────────────────
+
+  // VARIANT A: Temur Sabertooth + Woodcaller Automaton
+  if (hasSanitarium && hasWoodcaller && hasTemur && hasEndurance) {
+    const loop = [
+      "═══ EXECUTE MILL — WOODCALLER + TEMUR VARIANT ═══",
+      "This loop runs entirely at instant speed with infinite mana:",
+      "LOOP ITERATION (repeat until all opponents' libraries are empty):",
+      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws a card, then discards a card. Hold priority (do NOT pass until step 4 completes).`,
+      `  2. Pay {1}{G} — activate Temur Sabertooth: return Woodcaller Automaton to hand. Pass priority.`,
+      `  3. Recast Woodcaller Automaton ({5}). ETB: untap target land — target Geier Reach Sanitarium. Sanitarium is now untapped.`,
+      `  4. Repeat from step 1.`,
+      "LIBRARY PROTECTION:",
+      `  • When YOUR library runs low (e.g. < 5 cards): let the Endurance ETB resolve (target yourself) — graveyard shuffles back into library.`,
+      `  • Then recast Endurance. Hold its new ETB on the stack and continue looping.`,
+      "FINISH: Opponents draw from empty library on their next draw step — state-based loss.",
+    ];
+    return { variant: "Woodcaller Automaton + Temur Sabertooth", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // VARIANT B: Hyrax Tower Scout + Destiny Spinner (haste)
+  if (hasSanitarium && hasHyrax && hasDestiny && hasBouncer && hasEndurance) {
+    const loop = [
+      "═══ EXECUTE MILL — HYRAX TOWER SCOUT + BOUNCER VARIANT ═══",
+      `Hyrax Tower Scout has haste via Destiny Spinner. ${bouncerName} bounces it each loop.`,
+      "LOOP ITERATION:",
+      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  2. Pay ${hasTemur ? "{1}{G}" : "{2}"} — activate ${bouncerName}: return Hyrax Tower Scout to hand.`,
+      `  3. Recast Hyrax Tower Scout ({2}{G}). ETB: untap target permanent — target Geier Reach Sanitarium. Destiny Spinner gives it haste immediately.`,
+      `  4. Repeat from step 1.`,
+      "LIBRARY PROTECTION: When your library runs low, let Endurance ETB resolve → graveyard back in → recast Endurance, hold new ETB on stack.",
+    ];
+    return { variant: "Hyrax Tower Scout + Destiny Spinner", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // VARIANT C: Ashaya + Magus of the Candelabra
+  if (hasSanitarium && hasAshaya && hasMagus && hasEndurance) {
+    const loop = [
+      "═══ EXECUTE MILL — ASHAYA + MAGUS OF THE CANDELABRA VARIANT ═══",
+      "With Ashaya, Geier Reach Sanitarium is a Forest. Magus untaps it.",
+      "LOOP ITERATION:",
+      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  2. Pay {X} — activate Magus of the Candelabra (tap, pay X): untap X lands. Set X=1, target Geier Reach Sanitarium (a Forest via Ashaya). Sanitarium untapped.`,
+      `  3. Repeat from step 1.`,
+      "NET COST PER LOOP: {2} (Sanitarium activation) + {1} (Magus activation) = 3 mana, which infinite mana covers trivially.",
+      "LIBRARY PROTECTION: Let Endurance ETB resolve when library is low → graveyard shuffles back in → recast Endurance, hold new ETB.",
+    ];
+    return { variant: "Ashaya + Magus of the Candelabra", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // VARIANT D: Ashaya + Quirion/Scryb Ranger + Destiny Spinner
+  if (hasSanitarium && hasAshaya && hasQuirion && hasDestiny && hasEndurance) {
+    const loop = [
+      `═══ EXECUTE MILL — ASHAYA + ${rangerName.toUpperCase()} + DESTINY SPINNER VARIANT ═══`,
+      `With Ashaya, all creatures (including ${rangerName}) are Forests. Destiny Spinner gives them haste.`,
+      "LOOP ITERATION:",
+      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  2. Tap ${rangerName} ({T}): return a Forest from battlefield to hand. Choose Geier Reach Sanitarium — it returns to your hand. (${rangerName} untaps a basic Forest you control as the payment, or returns itself.)`,
+      `     ALTERNATIVE: activate ${rangerName}'s ability — pay the activation cost to return it, untapping a basic Forest, which untaps your mana engine.`,
+      `  3. Replay Geier Reach Sanitarium from hand (no mana cost — lands are free). It enters untapped (Destiny Spinner gives haste to the land-creature).`,
+      `  4. Repeat from step 1.`,
+      "LIBRARY PROTECTION: When library is low, resolve Endurance ETB → recast Endurance, hold new ETB, continue.",
+    ];
+    return { variant: `Ashaya + ${rangerName} + Destiny Spinner`, steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // VARIANT E: Ashaya + Argothian Elder
+  if (hasSanitarium && hasAshaya && hasElder && hasEndurance) {
+    const loop = [
+      "═══ EXECUTE MILL — ASHAYA + ARGOTHIAN ELDER VARIANT ═══",
+      "Argothian Elder can tap to untap two lands. With Ashaya, all creatures are Forests.",
+      "LOOP ITERATION:",
+      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  2. Tap Argothian Elder ({T}): untap two target lands. Target Geier Reach Sanitarium + your biggest mana land. Both untap.`,
+      `  3. Repeat from step 1.`,
+      "NET COST: {2} per loop, covered by infinite mana. Elder taps for free (its cost is just tapping).",
+      "LIBRARY PROTECTION: When library is low, resolve Endurance ETB → graveyard back in → recast Endurance.",
+    ];
+    return { variant: "Ashaya + Argothian Elder", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // VARIANT F: Ashaya + Wirewood Symbiote + Destiny Spinner
+  if (hasSanitarium && hasAshaya && hasWirewood && hasDestiny && hasEndurance) {
+    const loop = [
+      "═══ EXECUTE MILL — ASHAYA + WIREWOOD SYMBIOTE + DESTINY SPINNER VARIANT ═══",
+      "Wirewood Symbiote can return an elf to untap a creature. With Ashaya, Sanitarium is a creature-Forest.",
+      "LOOP ITERATION:",
+      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  2. Activate Wirewood Symbiote ({T}): return an elf creature to hand, untap target creature — target Geier Reach Sanitarium (a creature via Ashaya + Destiny Spinner). Sanitarium untaps.`,
+      `  3. Recast the returned elf (free with infinite mana). Destiny Spinner gives it haste.`,
+      `  4. Repeat from step 1.`,
+      "LIBRARY PROTECTION: When library runs low, let Endurance ETB resolve → recast Endurance.",
+    ];
+    return { variant: "Ashaya + Wirewood Symbiote + Destiny Spinner", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // VARIANT G: LQR kill with Endurance + Temur (more complex — hold ETB on stack)
+  if (hasSanitarium && hasBouncer && hasEndurance && (hasLQR || hasBeastWithin)) {
+    const killMethod = hasLQR ? "Legolas's Quick Reflexes" : "Beast Within";
+    const loop = [
+      `═══ EXECUTE MILL — ENDURANCE ETB SHIELD + ${killMethod.toUpperCase()} VARIANT ═══`,
+      "This variant keeps Endurance's ETB perpetually on the stack as a 'library shield':",
+      "INITIAL SETUP:",
+      `  1. Cast Endurance. Pass priority.`,
+      `  2. Endurance resolves and enters. Its ETB trigger goes on the stack. HOLD PRIORITY — do not let it resolve.`,
+      hasLQR
+        ? `  3. ${has("Legolas's Quick Reflexes") ? "LQR is already cast." : "Cast Legolas's Quick Reflexes targeting your infinite tap/untap creature."} Its tap triggers deal lethal to Endurance. Endurance dies. ETB stays on stack.`
+        : `  3. Cast Beast Within targeting Endurance. Endurance is destroyed — opponent gets a 3/3 Beast token. ETB stays on stack.`,
+      ...(hasWitness ? [
+        `  4. Cast Eternal Witness (already on board — ${hasTemur ? "Sabertooth" : "Kogla"} bounces it first): ETB retrieves ${hasBeastWithin ? "Beast Within" : "Endurance"} from graveyard.`,
+      ] : []),
+      "MILL LOOP:",
+      `  A. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  B. Untap Sanitarium using your available method.`,
+      `  C. Repeat A–B until all opponents have empty libraries.`,
+      "LIBRARY PROTECTION:",
+      `  • The Endurance ETB sitting on the stack shuffles YOUR graveyard back in whenever you let it resolve.`,
+      `  • Let it resolve when your library is low → graveyard back in → recast Endurance, hold new ETB, continue.`,
+    ];
+    return { variant: `Endurance shield + ${killMethod}`, steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
+  }
+
+  // FALLBACK: generic guide
+  const untapGuide = [
+    "═══ EXECUTE MILL — SANITARIUM LOOP ═══",
+    "⚠️ No specific untap method detected on board. Verify you have one of:",
+    "  • Woodcaller Automaton + Temur Sabertooth",
+    "  • Hyrax Tower Scout + Destiny Spinner + bouncer",
+    "  • Ashaya + Magus of the Candelabra",
+    `  • Ashaya + ${rangerName || "Quirion/Scryb Ranger"} + Destiny Spinner`,
+    "  • Ashaya + Argothian Elder",
+    "  • Ashaya + Wirewood Symbiote + Destiny Spinner",
+    "GENERIC LOOP:",
+    "  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards.",
+    "  2. Untap Sanitarium using your method.",
+    "  3. Repeat ~99× until opponents' libraries empty.",
+    "  4. Protect yourself with Endurance ETB when your library runs low.",
+  ];
+  return { variant: "generic", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...untapGuide] };
 }
 
 function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = []) {
@@ -4927,9 +5222,10 @@ function CardPill({ name, onRemove, zone }) {
   );
 }
 
-function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards }) {
+function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards, onRef }) {
   const [input, setInput] = useState("");
   const [suggs, setSuggs] = useState([]);
+  const [selectedIdx, setSelectedIdx] = useState(-1);
 
   const [secret, setSecret] = useState(null);
 
@@ -5006,11 +5302,17 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
 
       <div style={{ position: "relative" }}>
         <input
+          ref={el => { if (onRef && el) onRef(el); }}
           value={input}
-          onChange={e => handleChange(e.target.value)}
+          onChange={e => { handleChange(e.target.value); setSelectedIdx(-1); }}
           onKeyDown={e => {
-            if (e.key === "Enter" && suggs.length > 0) add(suggs[0]);
-            if (e.key === "Escape") setSuggs([]);
+            if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx(i => Math.min(i + 1, suggs.length - 1)); }
+            if (e.key === "ArrowUp")   { e.preventDefault(); setSelectedIdx(i => Math.max(i - 1, -1)); }
+            if (e.key === "Enter") {
+              const pick = selectedIdx >= 0 ? suggs[selectedIdx] : suggs[0];
+              if (pick) { add(pick); setSelectedIdx(-1); }
+            }
+            if (e.key === "Escape") { setSuggs([]); setSelectedIdx(-1); }
           }}
           placeholder="Type card name…"
           style={{
@@ -5031,16 +5333,17 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
             borderRadius: "6px", overflow: "hidden",
             boxShadow: "0 12px 40px rgba(0,0,0,0.8)",
           }}>
-            {suggs.map(s => (
-              <div key={s} onMouseDown={() => add(s)} style={{
+            {suggs.map((s, si) => (
+              <div key={s} onMouseDown={() => { add(s); setSelectedIdx(-1); }} style={{
                 padding: "9px 14px", cursor: "pointer",
                 color: COLORS.textMid, fontSize: "13px",
                 fontFamily: "'Crimson Text', serif",
                 borderBottom: `1px solid ${COLORS.border}`,
+                background: si === selectedIdx ? COLORS.bgHover : "transparent",
                 transition: "background 0.1s",
               }}
-                onMouseEnter={e => e.target.style.background = COLORS.bgHover}
-                onMouseLeave={e => e.target.style.background = "transparent"}
+                onMouseEnter={() => setSelectedIdx(si)}
+                onMouseLeave={() => {}}
               >
                 {s}
                 {CARDS[s] && (
@@ -5418,6 +5721,33 @@ function AdviceCard({ advice, index, activeCards, collapseKey }) {
     setOpen(collapseKey > 0);
   }, [collapseKey]);
 
+  // Suppressed win — compact, greyed, collapsed by default
+  if (advice.isSuppressed) {
+    return (
+      <div style={{
+        background: "#0d0d0d", border: "1px solid #2a2a2a",
+        borderLeft: "3px solid #3a3a3a", borderRadius: "8px", marginBottom: "6px",
+        overflow: "hidden",
+      }}>
+        <div onClick={() => setOpen(!open)} style={{
+          padding: "8px 14px", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: "10px",
+        }}>
+          <span style={{ fontSize: "11px", color: "#555", fontFamily: "'Cinzel', serif", letterSpacing: "1px", whiteSpace: "nowrap", flexShrink: 0 }}>🔕 SUPPRESSED</span>
+          <span style={{ flex: 1, color: "#555", fontFamily: "'Crimson Text', serif", fontSize: "13px" }}>{advice.headline}</span>
+          <span style={{ color: "#444", fontSize: "14px", flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
+        </div>
+        {open && (
+          <div style={{ padding: "6px 14px 10px", borderTop: "1px solid #1e1e1e" }}>
+            <p style={{ color: "#4a4a4a", fontFamily: "'Crimson Text', serif", fontSize: "13px", lineHeight: 1.5, margin: "6px 0 0" }}>
+              {advice.detail}
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{
       background: COLORS.bgCard,
@@ -5666,45 +5996,149 @@ function parseDecklist(text) {
   return [...new Set(cards)]; // deduplicate (deck lists each card once)
 }
 
-function DeckDetailModal({ deck, onClose }) {
-  const [filter, setFilter] = useState("");
+function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, editMode }) {
+  const [hovered, setHovered]     = useState(false);
+  const [rect, setRect]           = useState(null);
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteVal, setNoteVal]     = useState(note || "");
+  const ref = useRef(null);
+
+  const commitNote = () => {
+    setEditingNote(false);
+    if (onNoteChange) onNoteChange(name, noteVal.trim());
+  };
+
+  return (
+    <div style={{ display: "inline-flex", flexDirection: "column", gap: "2px", verticalAlign: "top", margin: "2px" }}>
+      <span
+        ref={ref}
+        onMouseEnter={() => { if (!editMode) { setRect(ref.current?.getBoundingClientRect()); setHovered(true); } }}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: "4px",
+          background: isUnknown ? "#2a0a0a" : "#0a1a0a",
+          border: `1px solid ${isUnknown ? "#5a1a1a" : COLORS.border}`,
+          borderRadius: "4px", padding: "3px 6px 3px 8px",
+          color: isUnknown ? "#e74c3c" : COLORS.textMid,
+          fontSize: "12px", fontFamily: "'Crimson Text', serif",
+          cursor: "default", position: "relative",
+        }}
+      >
+        {name}{count > 1 ? <span style={{ color: COLORS.green1, marginLeft: "4px" }}>×{count}</span> : ""}
+        {editMode && onNoteChange && (
+          <button
+            onClick={() => { setEditingNote(true); setNoteVal(note || ""); }}
+            title="Add/edit note"
+            style={{ background: "none", border: "none", color: note ? COLORS.green1 : "#444", cursor: "pointer", fontSize: "11px", padding: "0 0 0 2px", lineHeight: 1 }}
+          >📝</button>
+        )}
+        {editMode && onRemove && (
+          <button
+            onClick={() => onRemove(name)}
+            style={{ background: "none", border: "none", color: "#e74c3c88", cursor: "pointer", fontSize: "13px", padding: "0 0 1px 2px", lineHeight: 1, fontWeight: "bold" }}
+          >×</button>
+        )}
+        {hovered && !editMode && <CardTooltip name={name} anchorRect={rect} />}
+      </span>
+      {note && !editingNote && (
+        <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontStyle: "italic", paddingLeft: "6px", maxWidth: "160px", wordBreak: "break-word" }}>
+          {note}
+        </span>
+      )}
+      {editingNote && (
+        <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+          <input
+            autoFocus
+            value={noteVal}
+            onChange={e => setNoteVal(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") commitNote(); if (e.key === "Escape") setEditingNote(false); }}
+            placeholder="Why is this card here?"
+            style={{
+              fontSize: "11px", fontFamily: "'Crimson Text', serif", fontStyle: "italic",
+              background: "#0a150a", border: `1px solid ${COLORS.green1}44`,
+              borderRadius: "3px", padding: "2px 6px", color: COLORS.text,
+              outline: "none", width: "180px",
+            }}
+          />
+          <button onClick={commitNote} style={{ background: "none", border: "none", color: COLORS.green1, cursor: "pointer", fontSize: "12px" }}>✓</button>
+          <button onClick={() => setEditingNote(false)} style={{ background: "none", border: "none", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>✕</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeckDetailModal({ deck, onClose, onSave }) {
+  const [filter, setFilter]     = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [cards, setCards]       = useState([...(deck?.cards || [])]);
+  const [notes, setNotes]       = useState({ ...(deck?.notes || {}) });
+  const [addInput, setAddInput] = useState("");
+  const [addSuggs, setAddSuggs] = useState([]);
+  const [dirty, setDirty]       = useState(false);
+  const addRef = useRef(null);
+
   if (!deck) return null;
 
-  // Group cards by category using CARDS tag data
-  const groups = {
-    "⚡ Combo Pieces":  [],
-    "🌿 Mana Dorks":    [],
-    "📚 Tutors":        [],
-    "🔄 Engines":       [],
-    "🌍 Lands":         [],
-    "🃏 Other":         [],
-  };
-  const dedupedCards = [...new Set(deck.cards)];
+  const dedupedCards = [...new Set(cards)];
   const counts = {};
-  deck.cards.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+  cards.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
 
+  // Group cards by category
+  const groups = {
+    "⚡ Combo Pieces": [], "🌿 Mana Dorks": [], "📚 Tutors": [],
+    "🔄 Engines": [], "🌍 Lands": [], "🃏 Other": [],
+  };
   dedupedCards.forEach(c => {
-    const info = CARDS[c];
-    const tags = info?.tags || [];
-    if (!info) {
-      groups["🃏 Other"].push(c);
-    } else if (info.type === "land") {
-      groups["🌍 Lands"].push(c);
-    } else if (tags.includes("combo") || tags.includes("finisher") || tags.includes("recursion") || tags.includes("etb")) {
-      groups["⚡ Combo Pieces"].push(c);
-    } else if (tags.includes("dork") || tags.includes("big-dork")) {
-      groups["🌿 Mana Dorks"].push(c);
-    } else if (tags.includes("tutor")) {
-      groups["📚 Tutors"].push(c);
-    } else if (tags.includes("engine") || tags.includes("draw") || tags.includes("enchantment")) {
-      groups["🔄 Engines"].push(c);
-    } else {
-      groups["🃏 Other"].push(c);
-    }
+    const info = CARDS[c]; const tags = info?.tags || [];
+    if (!info)                        groups["🃏 Other"].push(c);
+    else if (info.type === "land")    groups["🌍 Lands"].push(c);
+    else if (tags.includes("combo") || tags.includes("finisher") || tags.includes("recursion") || tags.includes("etb")) groups["⚡ Combo Pieces"].push(c);
+    else if (tags.includes("dork") || tags.includes("big-dork")) groups["🌿 Mana Dorks"].push(c);
+    else if (tags.includes("tutor"))  groups["📚 Tutors"].push(c);
+    else if (tags.includes("engine") || tags.includes("draw") || tags.includes("enchantment")) groups["🔄 Engines"].push(c);
+    else                              groups["🃏 Other"].push(c);
   });
 
   const q = filter.toLowerCase();
-  const unknown = deck.cards.filter(c => c !== "Forest" && !CARDS[c]);
+  const unknown = cards.filter(c => c !== "Forest" && !CARDS[c]);
+
+  const handleRemove = (name) => {
+    const idx = cards.lastIndexOf(name);
+    if (idx === -1) return;
+    const next = [...cards]; next.splice(idx, 1);
+    setCards(next); setDirty(true);
+  };
+
+  const handleNoteChange = (name, val) => {
+    const next = { ...notes };
+    if (val) next[name] = val; else delete next[name];
+    setNotes(next); setDirty(true);
+  };
+
+  const handleAddChange = (v) => {
+    setAddInput(v);
+    if (v.length < 2) { setAddSuggs([]); return; }
+    setAddSuggs(ALL_CARD_NAMES.filter(n => n.toLowerCase().includes(v.toLowerCase())).slice(0, 6));
+  };
+
+  const handleAddCard = (name) => {
+    setCards(prev => [...prev, name]);
+    setAddInput(""); setAddSuggs([]); setDirty(true);
+    addRef.current?.focus();
+  };
+
+  const handleSave = () => {
+    if (onSave) onSave({ ...deck, cards, notes });
+    setDirty(false);
+    setEditMode(false);
+  };
+
+  const handleDiscard = () => {
+    setCards([...(deck.cards || [])]);
+    setNotes({ ...(deck.notes || {}) });
+    setDirty(false); setEditMode(false);
+  };
 
   return (
     <div style={{
@@ -5713,70 +6147,88 @@ function DeckDetailModal({ deck, onClose }) {
     }} onClick={onClose}>
       <div style={{
         background: "#0d1f0d", border: `1px solid ${COLORS.green1}`,
-        borderRadius: "10px", width: "min(680px, 95vw)", maxHeight: "85vh",
+        borderRadius: "10px", width: "min(720px, 96vw)", maxHeight: "88vh",
         display: "flex", flexDirection: "column", overflow: "hidden",
       }} onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div style={{ padding: "16px 20px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ padding: "14px 18px 10px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "15px", color: COLORS.text }}>{deck.name}</div>
-            <div style={{ fontSize: "11px", color: COLORS.textDim, marginTop: "2px" }}>
-              {deck.cards.length} cards
+            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "14px", color: COLORS.text }}>{deck.name}</div>
+            <div style={{ fontSize: "11px", color: COLORS.textDim, marginTop: "1px" }}>
+              {cards.length} cards
               {unknown.length > 0 && <span style={{ color: "#e74c3c", marginLeft: "8px" }}>· {unknown.length} unknown</span>}
+              {dirty && <span style={{ color: COLORS.green1, marginLeft: "8px" }}>· unsaved changes</span>}
             </div>
           </div>
           <input
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
+            value={filter} onChange={e => setFilter(e.target.value)}
             placeholder="Filter cards…"
-            style={{
-              background: "#0a150a", border: `1px solid ${COLORS.border}`, borderRadius: "4px",
-              color: COLORS.text, fontFamily: "'Crimson Text', serif", fontSize: "13px",
-              padding: "5px 10px", width: "160px", outline: "none",
-            }}
+            style={{ background: "#0a150a", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.text, fontFamily: "'Crimson Text', serif", fontSize: "13px", padding: "4px 9px", width: "140px", outline: "none" }}
           />
-          <button onClick={onClose} style={{
-            background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px",
-            color: COLORS.textDim, cursor: "pointer", fontSize: "13px", padding: "4px 10px",
-          }}>✕</button>
+          {onSave && !editMode && (
+            <button onClick={() => setEditMode(true)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px", padding: "4px 10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✏ EDIT</button>
+          )}
+          {editMode && dirty && (
+            <button onClick={handleSave} style={{ background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "4px", color: COLORS.text, cursor: "pointer", fontSize: "11px", padding: "4px 10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✓ SAVE</button>
+          )}
+          {editMode && (
+            <button onClick={handleDiscard} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px", padding: "4px 10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>DONE</button>
+          )}
+          <button onClick={onClose} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textDim, cursor: "pointer", fontSize: "13px", padding: "4px 10px" }}>✕</button>
         </div>
 
+        {/* Add card row (edit mode only) */}
+        {editMode && (
+          <div style={{ padding: "8px 18px", borderBottom: `1px solid ${COLORS.border}`, position: "relative" }}>
+            <input
+              ref={addRef}
+              value={addInput}
+              onChange={e => handleAddChange(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && addSuggs[0]) handleAddCard(addSuggs[0]); if (e.key === "Escape") { setAddInput(""); setAddSuggs([]); } }}
+              placeholder="Add a card by name…"
+              style={{ width: "100%", background: "#0a150a", border: `1px solid ${COLORS.green1}55`, borderRadius: "5px", color: COLORS.text, fontFamily: "'Crimson Text', serif", fontSize: "13px", padding: "7px 12px", outline: "none", boxSizing: "border-box" }}
+            />
+            {addSuggs.length > 0 && (
+              <div style={{ position: "absolute", left: "18px", right: "18px", top: "100%", background: "#0d1f0d", border: `1px solid ${COLORS.border}`, borderRadius: "5px", zIndex: 200, marginTop: "2px" }}>
+                {addSuggs.map(s => (
+                  <div key={s} onMouseDown={() => handleAddCard(s)} style={{ padding: "7px 12px", cursor: "pointer", color: COLORS.textMid, fontSize: "13px", fontFamily: "'Crimson Text', serif", borderBottom: `1px solid ${COLORS.border}` }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#1a3a1a"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >{s}{CARDS[s] && <span style={{ marginLeft: "8px", fontSize: "11px", color: COLORS.textDim }}>{CARDS[s].type} · CMC {CARDS[s].cmc}</span>}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Card groups */}
-        <div style={{ overflowY: "auto", padding: "16px 20px", flex: 1 }}>
-          {Object.entries(groups).map(([groupName, cards]) => {
-            const filtered = cards.filter(c => !q || c.toLowerCase().includes(q));
+        <div style={{ overflowY: "auto", padding: "14px 18px", flex: 1 }}>
+          {Object.entries(groups).map(([groupName, groupCards]) => {
+            const filtered = groupCards.filter(c => !q || c.toLowerCase().includes(q) || (notes[c] && notes[c].toLowerCase().includes(q)));
             if (filtered.length === 0) return null;
             return (
-              <div key={groupName} style={{ marginBottom: "16px" }}>
-                <div style={{
-                  fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px",
-                  color: COLORS.green1, marginBottom: "8px", textTransform: "uppercase",
-                }}>{groupName} <span style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", letterSpacing: 0, textTransform: "none", fontSize: "11px" }}>({filtered.length})</span></div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {filtered.sort().map(c => {
-                    const isUnknown = c !== "Forest" && !CARDS[c];
-                    const count = counts[c];
-                    return (
-                      <span key={c} style={{
-                        background: isUnknown ? "#2a0a0a" : "#0a1a0a",
-                        border: `1px solid ${isUnknown ? "#5a1a1a" : COLORS.border}`,
-                        borderRadius: "4px", padding: "3px 8px",
-                        color: isUnknown ? "#e74c3c" : COLORS.textMid,
-                        fontSize: "12px", fontFamily: "'Crimson Text', serif",
-                      }}>
-                        {c}{count > 1 ? <span style={{ color: COLORS.green1, marginLeft: "4px" }}>×{count}</span> : ""}
-                      </span>
-                    );
-                  })}
+              <div key={groupName} style={{ marginBottom: "14px" }}>
+                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px", color: COLORS.green1, marginBottom: "8px", textTransform: "uppercase" }}>
+                  {groupName} <span style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", letterSpacing: 0, textTransform: "none", fontSize: "11px" }}>({filtered.length})</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                  {filtered.sort().map(c => (
+                    <DeckCardChip
+                      key={c} name={c} count={counts[c]}
+                      isUnknown={c !== "Forest" && !CARDS[c]}
+                      note={notes[c]}
+                      editMode={editMode}
+                      onRemove={editMode ? handleRemove : null}
+                      onNoteChange={editMode ? handleNoteChange : null}
+                    />
+                  ))}
                 </div>
               </div>
             );
           })}
-          {filter && Object.values(groups).every(g => g.filter(c => c.toLowerCase().includes(q)).length === 0) && (
-            <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "13px", textAlign: "center", marginTop: "20px" }}>
-              No cards match "{filter}"
-            </div>
+          {filter && Object.values(groups).every(g => g.filter(c => c.toLowerCase().includes(q) || (notes[c]||"").toLowerCase().includes(q)).length === 0) && (
+            <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "13px", textAlign: "center", marginTop: "20px" }}>No cards match "{filter}"</div>
           )}
         </div>
       </div>
@@ -5784,17 +6236,168 @@ function DeckDetailModal({ deck, onClose }) {
   );
 }
 
+function DeckCompareModal({ decks, onClose }) {
+  const [deckAId, setDeckAId] = useState(decks[0]?.id || null);
+  const [deckBId, setDeckBId] = useState(decks[1]?.id || null);
+  const [groupBy, setGroupBy] = useState("diff"); // "diff" | "category"
+
+  const deckA = decks.find(d => d.id === deckAId);
+  const deckB = decks.find(d => d.id === deckBId);
+
+  const setA = new Set(deckA?.cards || []);
+  const setB = new Set(deckB?.cards || []);
+  const allCards = [...new Set([...(deckA?.cards || []), ...(deckB?.cards || [])])].sort();
+
+  const onlyA  = allCards.filter(c => setA.has(c) && !setB.has(c));
+  const onlyB  = allCards.filter(c => setB.has(c) && !setA.has(c));
+  const shared = allCards.filter(c => setA.has(c) && setB.has(c));
+
+  const selStyle = { background: "#0a150a", border: `1px solid ${COLORS.border}`, borderRadius: "5px", color: COLORS.text, fontFamily: "'Cinzel', serif", fontSize: "11px", padding: "5px 10px", outline: "none", cursor: "pointer" };
+
+  const CompareChip = ({ name, color, borderColor, label }) => {
+    const [hovered, setHovered] = useState(false);
+    const [rect, setRect] = useState(null);
+    const ref = useRef(null);
+    const note = deckA?.notes?.[name] || deckB?.notes?.[name];
+    return (
+      <div style={{ display: "inline-flex", flexDirection: "column", gap: "1px", margin: "2px", verticalAlign: "top" }}>
+        <span ref={ref}
+          onMouseEnter={() => { setRect(ref.current?.getBoundingClientRect()); setHovered(true); }}
+          onMouseLeave={() => setHovered(false)}
+          style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: color, border: `1px solid ${borderColor}`, borderRadius: "4px", padding: "3px 8px", color: COLORS.textMid, fontSize: "12px", fontFamily: "'Crimson Text', serif", cursor: "default", position: "relative" }}
+        >
+          {name}
+          {label && <span style={{ fontSize: "9px", color: borderColor, marginLeft: "4px", letterSpacing: "0.5px" }}>{label}</span>}
+          {hovered && <CardTooltip name={name} anchorRect={rect} />}
+        </span>
+        {note && <span style={{ fontSize: "10px", color: COLORS.textDim, fontStyle: "italic", paddingLeft: "6px", maxWidth: "160px" }}>{note}</span>}
+      </div>
+    );
+  };
+
+  const Section = ({ title, cards, color, borderColor, label, emptyMsg }) => {
+    if (!cards.length) return <div style={{ color: COLORS.textDim, fontSize: "12px", fontStyle: "italic", marginBottom: "12px" }}>{emptyMsg}</div>;
+    return (
+      <div style={{ marginBottom: "16px" }}>
+        <div style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px", color, marginBottom: "8px" }}>
+          {title} <span style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", letterSpacing: 0, textTransform: "none", fontSize: "11px" }}>({cards.length})</span>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap" }}>
+          {cards.map(c => <CompareChip key={c} name={c} color={color + "15"} borderColor={borderColor} label={label} />)}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000000dd", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.green1}`, borderRadius: "10px", width: "min(820px, 96vw)", maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ padding: "14px 18px 10px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          <div style={{ fontFamily: "'Cinzel', serif", fontSize: "13px", color: COLORS.text, letterSpacing: "1px", marginRight: "4px" }}>⚖ COMPARE</div>
+          <select value={deckAId || ""} onChange={e => setDeckAId(e.target.value)} style={{ ...selStyle, borderColor: "#5dade266" }}>
+            {decks.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <span style={{ color: COLORS.textDim, fontSize: "13px" }}>vs</span>
+          <select value={deckBId || ""} onChange={e => setDeckBId(e.target.value)} style={{ ...selStyle, borderColor: "#e74c3c66" }}>
+            {decks.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <div style={{ flex: 1 }} />
+          <div style={{ display: "flex", gap: "4px" }}>
+            {["diff", "category"].map(m => (
+              <button key={m} onClick={() => setGroupBy(m)} style={{ background: groupBy === m ? "#1a3a1a" : "none", border: `1px solid ${groupBy === m ? COLORS.green1 : COLORS.border}`, borderRadius: "4px", color: groupBy === m ? COLORS.text : COLORS.textDim, cursor: "pointer", fontSize: "10px", padding: "3px 9px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
+                {m === "diff" ? "BY DIFF" : "BY TYPE"}
+              </button>
+            ))}
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textDim, cursor: "pointer", fontSize: "13px", padding: "4px 10px" }}>✕</button>
+        </div>
+
+        {/* Stats bar */}
+        {deckA && deckB && (
+          <div style={{ padding: "8px 18px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "20px", fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>
+            <span style={{ color: "#5dade2" }}>Only in {deckA.name}: <strong>{onlyA.length}</strong></span>
+            <span style={{ color: "#58d68d" }}>Shared: <strong>{shared.length}</strong></span>
+            <span style={{ color: "#e74c3c" }}>Only in {deckB.name}: <strong>{onlyB.length}</strong></span>
+            <span>Total unique: <strong>{allCards.length}</strong></span>
+          </div>
+        )}
+
+        <div style={{ overflowY: "auto", padding: "14px 18px", flex: 1 }}>
+          {!deckA || !deckB ? (
+            <div style={{ color: COLORS.textDim, textAlign: "center", padding: "30px" }}>Select two decks to compare.</div>
+          ) : groupBy === "diff" ? (
+            <>
+              <Section title={`ONLY IN ${(deckA.name).toUpperCase()}`} cards={onlyA} color="#5dade2" borderColor="#5dade288" label="A only" emptyMsg={`${deckA.name} has no unique cards vs ${deckB.name}.`} />
+              <Section title="SHARED BY BOTH" cards={shared} color="#58d68d" borderColor="#58d68844" emptyMsg="No cards in common." />
+              <Section title={`ONLY IN ${(deckB.name).toUpperCase()}`} cards={onlyB} color="#e74c3c" borderColor="#e74c3c88" label="B only" emptyMsg={`${deckB.name} has no unique cards vs ${deckA.name}.`} />
+            </>
+          ) : (
+            // By category, showing each card with color indicating which deck it belongs to
+            (() => {
+              const catGroups = { "⚡ Combo Pieces": [], "🌿 Mana Dorks": [], "📚 Tutors": [], "🔄 Engines": [], "🌍 Lands": [], "🃏 Other": [] };
+              allCards.forEach(c => {
+                const info = CARDS[c]; const tags = info?.tags || [];
+                const membership = setA.has(c) && setB.has(c) ? "shared" : setA.has(c) ? "a" : "b";
+                const entry = { name: c, membership };
+                if (!info)                        catGroups["🃏 Other"].push(entry);
+                else if (info.type === "land")    catGroups["🌍 Lands"].push(entry);
+                else if (tags.includes("combo") || tags.includes("finisher") || tags.includes("recursion") || tags.includes("etb")) catGroups["⚡ Combo Pieces"].push(entry);
+                else if (tags.includes("dork") || tags.includes("big-dork")) catGroups["🌿 Mana Dorks"].push(entry);
+                else if (tags.includes("tutor"))  catGroups["📚 Tutors"].push(entry);
+                else if (tags.includes("engine") || tags.includes("draw") || tags.includes("enchantment")) catGroups["🔄 Engines"].push(entry);
+                else catGroups["🃏 Other"].push(entry);
+              });
+              return Object.entries(catGroups).map(([gName, entries]) => {
+                if (!entries.length) return null;
+                return (
+                  <div key={gName} style={{ marginBottom: "16px" }}>
+                    <div style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px", color: COLORS.green1, marginBottom: "8px" }}>{gName} ({entries.length})</div>
+                    <div style={{ display: "flex", flexWrap: "wrap" }}>
+                      {entries.map(({ name: c, membership }) => {
+                        const color = membership === "shared" ? "#58d68d" : membership === "a" ? "#5dade2" : "#e74c3c";
+                        const border = color + "77";
+                        const note = deckA?.notes?.[c] || deckB?.notes?.[c];
+                        return <CompareChip key={c} name={c} color={color + "15"} borderColor={border} label={membership === "a" ? "A" : membership === "b" ? "B" : null} />;
+                      })}
+                    </div>
+                  </div>
+                );
+              });
+            })()
+          )}
+        </div>
+
+        {/* Legend */}
+        <div style={{ padding: "8px 18px", borderTop: `1px solid ${COLORS.border}`, display: "flex", gap: "16px", fontSize: "11px" }}>
+          <span style={{ color: "#5dade2" }}>■ Only in A ({deckA?.name})</span>
+          <span style={{ color: "#58d68d" }}>■ In both decks</span>
+          <span style={{ color: "#e74c3c" }}>■ Only in B ({deckB?.name})</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose }) {
-  const [showImport, setShowImport]   = useState(false);
-  const [importText, setImportText]   = useState("");
-  const [viewingDeck, setViewingDeck] = useState(null);
-  const [importName, setImportName]   = useState("");
-  const [importError, setImportError] = useState("");
-  const [saveStatus, setSaveStatus]   = useState(""); // "" | "saving" | "saved" | "error"
+  const [showImport, setShowImport]     = useState(false);
+  const [importText, setImportText]     = useState("");
+  const [viewingDeck, setViewingDeck]   = useState(null);
+  const [showCompare, setShowCompare]   = useState(false);
+  const [importName, setImportName]     = useState("");
+  const [importError, setImportError]   = useState("");
+  const [saveStatus, setSaveStatus]     = useState(""); // "" | "saving" | "saved" | "error"
 
   const deleteDeck = (id) => {
     onSaveDecks((decks || []).filter(d => d.id !== id));
     if (activeDeckId === id) onSetActive(null);
+  };
+
+  const handleDeckSave = async (updatedDeck) => {
+    const newDecks = (decks || []).map(d => d.id === updatedDeck.id ? updatedDeck : d);
+    await onSaveDecks(newDecks);
+    setViewingDeck(updatedDeck); // keep modal open with fresh data
   };
 
   const handleImport = async () => {
@@ -5842,6 +6445,9 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
           <div style={{ fontFamily: "'Cinzel', serif", fontSize: "15px", color: COLORS.gold, flex: 1, letterSpacing: "2px" }}>
             📚 DECK MANAGER
           </div>
+          {!showImport && (decks||[]).length >= 2 && (
+            <button onClick={() => setShowCompare(true)} style={{ ...btnStyle(false), marginRight: "6px" }}>⚖ COMPARE</button>
+          )}
           {!showImport && (
             <button onClick={() => setShowImport(true)} style={{ ...btnStyle(false), marginRight: "10px" }}>+ IMPORT</button>
           )}
@@ -5926,14 +6532,726 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
           </div>
         )}
       </div>
-      {viewingDeck && <DeckDetailModal deck={viewingDeck} onClose={() => setViewingDeck(null)} />}
+      {viewingDeck && <DeckDetailModal deck={viewingDeck} onSave={handleDeckSave} onClose={() => setViewingDeck(null)} />}
+      {showCompare && (decks||[]).length >= 2 && <DeckCompareModal decks={decks} onClose={() => setShowCompare(false)} />}
     </div>
   );
 }
 
-export default function YevaAdvisor() {
+
+// ── Saved Board States ────────────────────────────────────────────────────────
+function useSavedStates() {
+  const [states, setStates] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await storage.get("yeva-saved-states");
+        setStates(saved ? JSON.parse(saved.value) : []);
+      } catch { setStates([]); }
+    })();
+  }, []);
+  const save = async (newStates) => {
+    setStates(newStates);
+    await storage.set("yeva-saved-states", JSON.stringify(newStates));
+  };
+  return { states, save };
+}
+
+// ── SynergyMapModal ───────────────────────────────────────────────────────────
+// Force-directed graph showing card ↔ combo relationships.
+// Cards = circular nodes (sized by centrality). Combos = pill nodes (colored by type).
+// Click any node to highlight its connections. Filter by combo type. Matrix toggle.
+
+const TYPE_COLORS = {
+  "infinite-mana": "#58d68d",
+  "win-mill":      "#ff6b35",
+  "win-combat":    "#e74c3c",
+  "win-poison":    "#27ae60",
+  "win-draw":      "#5dade2",
+  "win-now":       "#f1c40f",
+  "engine":        "#a569bd",
+};
+const TYPE_LABELS = {
+  "infinite-mana": "∞ Mana",
+  "win-mill":      "Mill Win",
+  "win-combat":    "Combat Win",
+  "win-poison":    "Poison Win",
+  "win-draw":      "Draw Win",
+  "win-now":       "Win Now",
+  "engine":        "Engine",
+};
+
+// ── SynergyMapModal — pure React/SVG force graph, no external dependencies ───
+
+function useForceGraph(nodeList, linkList, width, height, enabled) {
+  const [positions, setPositions] = useState(() => {
+    const pos = {};
+    nodeList.forEach((n, i) => {
+      const angle = (i / nodeList.length) * 2 * Math.PI;
+      const r = Math.min(width, height) * 0.28;
+      pos[n.id] = { x: width/2 + r * Math.cos(angle), y: height/2 + r * Math.sin(angle) };
+    });
+    return pos;
+  });
+  const velRef   = useRef({});
+  const posRef   = useRef({});
+  const frameRef = useRef(null);
+  const runRef   = useRef(true);
+
+  useEffect(() => {
+    if (!enabled || !nodeList.length) return;
+    // Initialise velocities and sync posRef
+    nodeList.forEach(n => {
+      if (!velRef.current[n.id]) velRef.current[n.id] = { vx: 0, vy: 0 };
+    });
+    setPositions(prev => {
+      const p = { ...prev };
+      nodeList.forEach((n, i) => {
+        if (!p[n.id]) {
+          const angle = (i / nodeList.length) * 2 * Math.PI;
+          const r = Math.min(width, height) * 0.28;
+          p[n.id] = { x: width/2 + r * Math.cos(angle), y: height/2 + r * Math.sin(angle) };
+        }
+      });
+      posRef.current = { ...p };
+      return p;
+    });
+
+    let alpha = 1;
+    runRef.current = true;
+
+    const cardR = n => Math.max(8, Math.min(22, 6 + (n.centrality||1) * 2.2));
+    const nodeMap = Object.fromEntries(nodeList.map(n => [n.id, n]));
+
+    const simulate = () => {
+      if (!runRef.current || alpha < 0.003) return;
+      alpha *= 0.977;
+      const pos = posRef.current;
+      const vel = velRef.current;
+
+      // Centre gravity
+      nodeList.forEach(n => {
+        const p = pos[n.id]; if (!p) return;
+        vel[n.id].vx += (width/2  - p.x) * 0.025 * alpha;
+        vel[n.id].vy += (height/2 - p.y) * 0.025 * alpha;
+      });
+
+      // Charge repulsion (O(n²) — fine for ~70 nodes)
+      for (let i = 0; i < nodeList.length; i++) {
+        const ni = nodeList[i], pi = pos[ni.id]; if (!pi) continue;
+        for (let j = i+1; j < nodeList.length; j++) {
+          const nj = nodeList[j], pj = pos[nj.id]; if (!pj) continue;
+          const dx = pi.x - pj.x, dy = pi.y - pj.y;
+          const d2 = dx*dx + dy*dy || 1;
+          const d  = Math.sqrt(d2);
+          const str = ni.kind === "card" ? 200 : 140;
+          const f = str * alpha / d2;
+          const fx = dx/d * f, fy = dy/d * f;
+          vel[ni.id].vx += fx; vel[ni.id].vy += fy;
+          vel[nj.id].vx -= fx; vel[nj.id].vy -= fy;
+        }
+      }
+
+      // Link attraction
+      linkList.forEach(l => {
+        const pi = pos[l.source], pj = pos[l.target];
+        if (!pi || !pj) return;
+        const dx = pj.x - pi.x, dy = pj.y - pi.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 1;
+        const ni = nodeMap[l.source], nj = nodeMap[l.target];
+        const ideal = (ni?.centrality >= 5 || nj?.centrality >= 5) ? 90 : 130;
+        const f = (d - ideal) * 0.25 * alpha;
+        const fx = dx/d * f, fy = dy/d * f;
+        vel[l.source].vx += fx; vel[l.source].vy += fy;
+        vel[l.target].vx -= fx; vel[l.target].vy -= fy;
+      });
+
+      // Collision avoidance
+      for (let i = 0; i < nodeList.length; i++) {
+        const ni = nodeList[i], pi = pos[ni.id]; if (!pi) continue;
+        const ri = ni.kind === "card" ? cardR(ni) + 4 : 60;
+        for (let j = i+1; j < nodeList.length; j++) {
+          const nj = nodeList[j], pj = pos[nj.id]; if (!pj) continue;
+          const rj = nj.kind === "card" ? cardR(nj) + 4 : 60;
+          const minD = ri + rj;
+          const dx = pi.x - pj.x, dy = pi.y - pj.y;
+          const d = Math.sqrt(dx*dx + dy*dy) || 1;
+          if (d < minD) {
+            const f = (minD - d) / d * 0.5;
+            vel[ni.id].vx += dx * f; vel[ni.id].vy += dy * f;
+            vel[nj.id].vx -= dx * f; vel[nj.id].vy -= dy * f;
+          }
+        }
+      }
+
+      // Integrate
+      const newPos = {};
+      nodeList.forEach(n => {
+        const p = pos[n.id], v = vel[n.id]; if (!p) return;
+        v.vx *= 0.55; v.vy *= 0.55;
+        newPos[n.id] = {
+          x: Math.max(20, Math.min(width-20,  p.x + v.vx)),
+          y: Math.max(20, Math.min(height-20, p.y + v.vy)),
+        };
+      });
+      posRef.current = newPos;
+      setPositions({ ...newPos });
+      frameRef.current = requestAnimationFrame(simulate);
+    };
+
+    frameRef.current = requestAnimationFrame(simulate);
+    return () => { runRef.current = false; cancelAnimationFrame(frameRef.current); };
+  }, [enabled, nodeList.length, linkList.length, width, height]);
+
+  return [positions, posRef];
+}
+
+function SynergyMapModal({ onClose }) {
+  const containerRef = useRef(null);
+  const [view, setView]               = useState("graph");
+  const [activeTypes, setActiveTypes] = useState(new Set(Object.keys(TYPE_COLORS)));
+  const [selected, setSelected]       = useState(null);
+  const [hovered, setHovered]         = useState(null);
+  const [tooltipPos, setTooltipPos]   = useState({ x: 0, y: 0 });
+  const [dims, setDims]               = useState({ w: 860, h: 560 });
+  const [pan, setPan]                 = useState({ x: 0, y: 0 });
+  const [zoom, setZoom]               = useState(1);
+  const [draggingNode, setDraggingNode] = useState(null);
+  const dragOffRef  = useRef({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const panStartRef  = useRef({ x: 0, y: 0, px: 0, py: 0 });
+  const [, forceUpdate] = useState(0);
+
+  // Measure container
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(([e]) => {
+      const { width, height } = e.contentRect;
+      setDims({ w: Math.max(400, width), h: Math.max(300, height) });
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  // Build graph data
+  const { nodes, links, cardCentrality } = React.useMemo(() => {
+    const centrality = {};
+    COMBOS.forEach(c => (c.requires||[]).forEach(r => { centrality[r] = (centrality[r]||0)+1; }));
+    const cardNodes = [...new Set(COMBOS.flatMap(c => c.requires||[]))].map(name => ({
+      id: "card:"+name, label: name, kind: "card", centrality: centrality[name]||1,
+    }));
+    const comboNodes = COMBOS.map(c => ({
+      id: "combo:"+c.id, label: c.name, kind: "combo",
+      comboType: c.type, comboId: c.id, requires: c.requires||[],
+      shortLabel: c.name.replace(/\s*\(.*?\)/g,"").slice(0,26),
+    }));
+    const links = COMBOS.flatMap(c => (c.requires||[]).map(r => ({
+      source: "card:"+r, target: "combo:"+c.id, comboType: c.type,
+    })));
+    return { nodes: [...cardNodes, ...comboNodes], links, cardCentrality: centrality };
+  }, []);
+
+  const visibleComboIds = React.useMemo(
+    () => new Set(COMBOS.filter(c => activeTypes.has(c.type)).map(c => "combo:"+c.id)),
+    [activeTypes]
+  );
+  const visibleLinks = links.filter(l => visibleComboIds.has(l.target));
+  const visibleCardIds = new Set(visibleLinks.map(l => l.source));
+  const visibleNodes = nodes.filter(n =>
+    (n.kind === "combo" && visibleComboIds.has(n.id)) ||
+    (n.kind === "card"  && visibleCardIds.has(n.id))
+  );
+  const flatLinks = visibleLinks.map(l => ({ source: l.source, target: l.target, comboType: l.comboType }));
+
+  const [positions, posRef] = useForceGraph(visibleNodes, flatLinks, dims.w, dims.h, view === "graph");
+
+  // Nodes connected to selected
+  const linkedToSelected = React.useMemo(() => {
+    if (!selected) return null;
+    const ids = new Set([selected]);
+    flatLinks.forEach(l => {
+      if (l.source === selected) ids.add(l.target);
+      if (l.target === selected) ids.add(l.source);
+    });
+    return ids;
+  }, [selected, flatLinks.length]);
+
+  const cardR = n => Math.max(8, Math.min(22, 6 + (n.centrality||1) * 2.2));
+  const COMBO_W = 112, COMBO_H = 22;
+
+  // Wheel zoom
+  const handleWheel = (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 0.91;
+    setZoom(z => Math.max(0.25, Math.min(4, z * factor)));
+  };
+
+  // Pan via background drag
+  const handleSvgMouseDown = (e) => {
+    if (e.target.closest(".graph-node")) return;
+    isPanningRef.current = true;
+    panStartRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+  };
+  const handleSvgMouseMove = (e) => {
+    if (isPanningRef.current) {
+      setPan({
+        x: panStartRef.current.px + (e.clientX - panStartRef.current.x),
+        y: panStartRef.current.py + (e.clientY - panStartRef.current.y),
+      });
+    }
+    if (draggingNode) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const wx = (e.clientX - rect.left - pan.x) / zoom;
+      const wy = (e.clientY - rect.top  - pan.y) / zoom;
+      posRef.current[draggingNode] = { x: wx, y: wy };
+      forceUpdate(n => n+1);
+    }
+  };
+  const handleSvgMouseUp = () => {
+    isPanningRef.current = false;
+    setDraggingNode(null);
+  };
+
+  const handleNodeMouseDown = (e, id) => {
+    e.stopPropagation();
+    setDraggingNode(id);
+    const rect = containerRef.current.getBoundingClientRect();
+    const wx = (e.clientX - rect.left - pan.x) / zoom;
+    const wy = (e.clientY - rect.top  - pan.y) / zoom;
+    dragOffRef.current = { x: wx - (posRef.current[id]?.x||0), y: wy - (posRef.current[id]?.y||0) };
+  };
+
+  const handleNodeClick = (e, id) => {
+    e.stopPropagation();
+    setSelected(s => s === id ? null : id);
+  };
+
+  // Tooltip node info
+  const tooltipNode = hovered ? visibleNodes.find(n => n.id === hovered) : null;
+  const tooltipLines = React.useMemo(() => {
+    if (!tooltipNode) return [];
+    if (tooltipNode.kind === "card") {
+      const combosUsing = COMBOS.filter(c => (c.requires||[]).includes(tooltipNode.label) && activeTypes.has(c.type));
+      return [`Used in ${combosUsing.length} combo${combosUsing.length!==1?"s":""}`,
+        ...combosUsing.map(c => "• "+c.name.replace(/\s*\(.*?\)/g,"").slice(0,40))];
+    }
+    return [TYPE_LABELS[tooltipNode.comboType]||tooltipNode.comboType,
+      ...(tooltipNode.requires||[]).map(r => "• "+r)];
+  }, [hovered, activeTypes]);
+
+  // ── Matrix data ──
+  const matrixCards  = React.useMemo(() => {
+    const cards = [...new Set(COMBOS.filter(c => activeTypes.has(c.type)).flatMap(c => c.requires||[]))];
+    return cards.sort((a,b) => (cardCentrality[b]||0)-(cardCentrality[a]||0));
+  }, [activeTypes]);
+  const matrixCombos = COMBOS.filter(c => activeTypes.has(c.type));
+
+  const toggleType = t => {
+    setActiveTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(t)) { if (next.size > 1) next.delete(t); } else next.add(t);
+      return next;
+    });
+    setSelected(null);
+  };
+
+  const shorten = name => name
+    .replace(", Soul of the Wild","").replace(", Nature's Herald","")
+    .replace(", the Wanderer Bard","").replace(", Cradle of Growth","")
+    .replace(", Shrine to Nyx","").replace(", Cradle of the Sun","")
+    .replace("Quirion Ranger","Q.Ranger").replace("Argothian Elder","Arg.Elder")
+    .replace("Wirewood Lodge","W.Lodge").replace("Wirewood Symbiote","W.Symbiote")
+    .replace("Geier Reach Sanitarium","Sanitarium").replace("Temur Sabertooth","T.Sabertooth")
+    .replace("Eternal Witness","E.Witness").replace("Infectious Bite","Inf.Bite")
+    .replace("Legolas's Quick Reflexes","LQR").replace("Deserted Temple","D.Temple")
+    .replace("Magus of the Candelabra","Magus").replace("Eladamri, Korvecdal","Eladamri")
+    .replace("Woodcaller Automaton","Woodcaller").replace("Hyrax Tower Scout","Hyrax")
+    .replace("Elvish Archdruid","E.Archdruid").replace("Elvish Guidance","E.Guidance")
+    .replace("Survival of the Fittest","Survival").replace("Badgermole Cub","Badgermole")
+    .replace("Tireless Provisioner","T.Provisioner").replace("Shifting Woodland","Shift.Woodland");
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#000000ee", zIndex:1050, display:"flex", flexDirection:"column" }}
+      onClick={onClose}>
+      <div style={{ flex:1, display:"flex", flexDirection:"column", margin:"16px",
+        background:"#0a160a", border:`1px solid ${COLORS.green1}44`, borderRadius:"12px", overflow:"hidden" }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"10px 16px",
+          borderBottom:`1px solid ${COLORS.border}`, flexShrink:0, flexWrap:"wrap" }}>
+          <div style={{ fontFamily:"'Cinzel', serif", fontSize:"13px", color:COLORS.text, letterSpacing:"2px" }}>⬡ SYNERGY MAP</div>
+          <div style={{ fontSize:"11px", color:COLORS.textDim, fontFamily:"'Crimson Text', serif" }}>
+            {visibleNodes.filter(n=>n.kind==="card").length} cards · {visibleNodes.filter(n=>n.kind==="combo").length} combos
+          </div>
+          <div style={{ flex:1 }} />
+          <div style={{ display:"flex", gap:"4px", flexWrap:"wrap" }}>
+            {Object.entries(TYPE_LABELS).map(([t, label]) => (
+              <button key={t} onClick={() => toggleType(t)} style={{
+                background: activeTypes.has(t) ? TYPE_COLORS[t]+"22" : "transparent",
+                border:`1px solid ${activeTypes.has(t) ? TYPE_COLORS[t] : COLORS.border}`,
+                borderRadius:"4px", padding:"2px 7px",
+                color: activeTypes.has(t) ? TYPE_COLORS[t] : COLORS.textDim,
+                cursor:"pointer", fontSize:"10px", fontFamily:"'Cinzel', serif", letterSpacing:"0.5px",
+              }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:"3px", borderLeft:`1px solid ${COLORS.border}`, paddingLeft:"10px" }}>
+            {[["graph","⬡ Graph"],["matrix","⊞ Matrix"]].map(([v,lbl]) => (
+              <button key={v} onClick={() => setView(v)} style={{
+                background: view===v ? "#1a3a1a" : "none",
+                border:`1px solid ${view===v ? COLORS.green1 : COLORS.border}`,
+                borderRadius:"4px", padding:"3px 9px",
+                color: view===v ? COLORS.text : COLORS.textDim,
+                cursor:"pointer", fontSize:"10px", fontFamily:"'Cinzel', serif", letterSpacing:"1px",
+              }}>{lbl}</button>
+            ))}
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:`1px solid ${COLORS.border}`,
+            borderRadius:"4px", color:COLORS.textDim, cursor:"pointer", fontSize:"13px", padding:"4px 10px" }}>✕</button>
+        </div>
+
+        {/* Graph view */}
+        {view === "graph" && (
+          <div ref={containerRef} style={{ flex:1, position:"relative", overflow:"hidden", cursor: draggingNode ? "grabbing" : "grab" }}
+            onWheel={handleWheel}
+            onMouseDown={handleSvgMouseDown}
+            onMouseMove={handleSvgMouseMove}
+            onMouseUp={handleSvgMouseUp}
+            onMouseLeave={handleSvgMouseUp}>
+            <svg width="100%" height="100%" style={{ display:"block" }}
+              onClick={() => setSelected(null)}>
+              <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
+                {/* Links */}
+                {flatLinks.map((l, i) => {
+                  const sp = positions[l.source], tp = positions[l.target];
+                  if (!sp || !tp) return null;
+                  const isActive = !linkedToSelected || (linkedToSelected.has(l.source) && linkedToSelected.has(l.target));
+                  return (
+                    <line key={i}
+                      x1={sp.x} y1={sp.y} x2={tp.x} y2={tp.y}
+                      stroke={(TYPE_COLORS[l.comboType]||"#444")+(isActive?"55":"18")}
+                      strokeWidth={linkedToSelected && isActive ? 2 : 1}
+                    />
+                  );
+                })}
+                {/* Combo nodes */}
+                {visibleNodes.filter(n=>n.kind==="combo").map(n => {
+                  const p = positions[n.id]; if (!p) return null;
+                  const isSelected = selected === n.id;
+                  const dimmed = linkedToSelected && !linkedToSelected.has(n.id);
+                  const col = TYPE_COLORS[n.comboType]||"#555";
+                  return (
+                    <g key={n.id} className="graph-node"
+                      transform={`translate(${p.x},${p.y})`}
+                      style={{ cursor:"pointer", opacity: dimmed ? 0.2 : 1 }}
+                      onMouseDown={e => handleNodeMouseDown(e, n.id)}
+                      onClick={e => handleNodeClick(e, n.id)}
+                      onMouseEnter={e => { setHovered(n.id); setTooltipPos({x:e.clientX,y:e.clientY}); }}
+                      onMouseLeave={() => setHovered(null)}>
+                      <rect x={-COMBO_W/2} y={-COMBO_H/2} width={COMBO_W} height={COMBO_H}
+                        rx={11} fill={col+"22"}
+                        stroke={col} strokeWidth={isSelected ? 2.5 : 1.2} />
+                      <text textAnchor="middle" dy="0.35em"
+                        fill={col} fontSize="8.5" fontFamily="'Crimson Text', serif"
+                        style={{ pointerEvents:"none", userSelect:"none" }}>
+                        {n.shortLabel}
+                      </text>
+                    </g>
+                  );
+                })}
+                {/* Card nodes */}
+                {visibleNodes.filter(n=>n.kind==="card").map(n => {
+                  const p = positions[n.id]; if (!p) return null;
+                  const r = cardR(n);
+                  const isSelected = selected === n.id;
+                  const dimmed = linkedToSelected && !linkedToSelected.has(n.id);
+                  const isHub = n.centrality >= 8;
+                  const isMid = n.centrality >= 4;
+                  return (
+                    <g key={n.id} className="graph-node"
+                      transform={`translate(${p.x},${p.y})`}
+                      style={{ cursor:"pointer", opacity: dimmed ? 0.15 : 1 }}
+                      onMouseDown={e => handleNodeMouseDown(e, n.id)}
+                      onClick={e => handleNodeClick(e, n.id)}
+                      onMouseEnter={e => { setHovered(n.id); setTooltipPos({x:e.clientX,y:e.clientY}); }}
+                      onMouseLeave={() => setHovered(null)}>
+                      <circle r={r}
+                        fill={isHub ? "#1a3a1a" : isMid ? "#162a16" : "#0f1f0f"}
+                        stroke={isHub ? COLORS.green1 : isMid ? "#2d6a2d" : "#1e3e1e"}
+                        strokeWidth={isSelected ? 3 : isHub ? 2 : 1.2} />
+                      <text textAnchor="middle" dy="0.35em"
+                        fill={isHub ? COLORS.green1 : COLORS.textMid}
+                        fontSize={isHub ? "8" : "7"}
+                        fontFamily="'Cinzel', serif"
+                        style={{ pointerEvents:"none", userSelect:"none" }}>
+                        {shorten(n.label)}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+
+            {/* Tooltip */}
+            {hovered && tooltipNode && (
+              <div style={{
+                position:"fixed", left: Math.min(tooltipPos.x+14, window.innerWidth-220),
+                top: tooltipPos.y - 10, background:"#0d1f0d",
+                border:`1px solid ${COLORS.border}`, borderRadius:"7px",
+                padding:"8px 12px", pointerEvents:"none", zIndex:10, maxWidth:"210px",
+              }}>
+                <div style={{ fontFamily:"'Cinzel', serif", fontSize:"10px", color:COLORS.text, marginBottom:"4px" }}>
+                  {tooltipNode.label}
+                </div>
+                {tooltipLines.map((l,i) => (
+                  <div key={i} style={{ fontSize:"10px", color:COLORS.textDim, fontFamily:"'Crimson Text', serif", lineHeight:1.5 }}>{l}</div>
+                ))}
+              </div>
+            )}
+
+            {/* Legend */}
+            <div style={{ position:"absolute", bottom:"10px", left:"12px", pointerEvents:"none" }}>
+              <div style={{ fontSize:"9px", color:COLORS.textDim, fontFamily:"'Cinzel', serif", letterSpacing:"1px", marginBottom:"4px" }}>LEGEND</div>
+              <div style={{ display:"flex", alignItems:"center", gap:"6px", marginBottom:"3px" }}>
+                <svg width="14" height="14"><circle cx="7" cy="7" r="6" fill="#162a16" stroke={COLORS.green1} strokeWidth="1.5"/></svg>
+                <span style={{ fontSize:"10px", color:COLORS.textDim, fontFamily:"'Crimson Text', serif" }}>Card — size = combo count</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:"6px", marginBottom:"3px" }}>
+                <svg width="30" height="14"><rect x="1" y="2" width="28" height="10" rx="5" fill={TYPE_COLORS["infinite-mana"]+"22"} stroke={TYPE_COLORS["infinite-mana"]} strokeWidth="1"/></svg>
+                <span style={{ fontSize:"10px", color:COLORS.textDim, fontFamily:"'Crimson Text', serif" }}>Combo — color = type</span>
+              </div>
+              <div style={{ fontSize:"10px", color:COLORS.textDim, fontFamily:"'Crimson Text', serif" }}>Click to highlight · Drag to move · Scroll to zoom</div>
+            </div>
+          </div>
+        )}
+
+        {/* Matrix view */}
+        {view === "matrix" && (
+          <div style={{ flex:1, overflowY:"auto", overflowX:"auto", padding:"10px 14px" }}>
+            <table style={{ borderCollapse:"collapse", fontSize:"10px", fontFamily:"'Crimson Text', serif" }}>
+              <thead>
+                <tr>
+                  <th style={{ padding:"4px 8px", color:COLORS.textDim, textAlign:"left",
+                    fontFamily:"'Cinzel', serif", fontSize:"9px", letterSpacing:"1px",
+                    position:"sticky", left:0, background:"#0a160a", zIndex:2, minWidth:"140px" }}>
+                    CARD / COMBO →
+                  </th>
+                  {matrixCombos.map(c => (
+                    <th key={c.id} style={{ padding:"2px 4px", writingMode:"vertical-rl",
+                      transform:"rotate(180deg)", color:TYPE_COLORS[c.type]||COLORS.textDim,
+                      fontSize:"9px", fontFamily:"'Cinzel', serif", letterSpacing:"0.5px",
+                      maxHeight:"110px", whiteSpace:"nowrap",
+                      position:"sticky", top:0, background:"#0a160a", zIndex:1 }}>
+                      {c.name.replace(/\s*\(.*?\)/g,"").slice(0,22)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {matrixCards.map((card, ri) => (
+                  <tr key={card} style={{ background: ri%2===0 ? "#0d1a0d" : "#0a160a" }}>
+                    <td style={{ padding:"3px 8px", whiteSpace:"nowrap",
+                      color:(cardCentrality[card]||0)>=5 ? COLORS.green1 : COLORS.textMid,
+                      fontWeight:(cardCentrality[card]||0)>=8 ? "bold" : "normal",
+                      position:"sticky", left:0, background:ri%2===0?"#0d1a0d":"#0a160a", zIndex:1 }}>
+                      {card.replace(", Soul of the Wild","").replace(", Nature's Herald","")
+                        .replace(", the Wanderer Bard","").replace(", Cradle of Growth","")}
+                      <span style={{ color:COLORS.textDim, marginLeft:"5px" }}>({cardCentrality[card]||0})</span>
+                    </td>
+                    {matrixCombos.map(c => (
+                      <td key={c.id} style={{ textAlign:"center", padding:"2px 3px" }}>
+                        {(c.requires||[]).includes(card) &&
+                          <span style={{ color:TYPE_COLORS[c.type], fontSize:"11px" }}>■</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SavedStatesPanel({ currentState, onLoad, onClose }) {
+  const { states, save } = useSavedStates();
+  const [name, setName] = useState("");
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const handleSave = async () => {
+    const label = name.trim() || `State ${new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`;
+    const entry = { id: Date.now(), name: label, savedAt: Date.now(), state: currentState };
+    await save([entry, ...states].slice(0, 20)); // cap at 20
+    setName("");
+  };
+
+  const handleLoad = (entry) => { onLoad(entry.state); onClose(); };
+
+  const handleDelete = async (id) => {
+    await save(states.filter(s => s.id !== id));
+    setConfirmDel(null);
+  };
+
+  const formatTime = (ts) => {
+    const d = new Date(ts);
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    return isToday
+      ? d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})
+      : d.toLocaleDateString([], {month:"short",day:"numeric"}) + " " + d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+  };
+
+  const statePreview = (s) => {
+    const parts = [];
+    if (s.hand?.length)        parts.push(`Hand: ${s.hand.slice(0,3).join(", ")}${s.hand.length > 3 ? "…" : ""}`);
+    if (s.battlefield?.length) parts.push(`Board: ${s.battlefield.filter(c=>CARDS[c]?.type==="creature").slice(0,2).join(", ")}…`);
+    return parts.join(" · ") || "Empty board";
+  };
+
+  return (
+    <div style={{
+      position:"fixed", inset:0, background:"#000000cc", zIndex:1200,
+      display:"flex", alignItems:"center", justifyContent:"center",
+    }} onClick={onClose}>
+      <div style={{
+        background:"#0d1f0d", border:`1px solid ${COLORS.green1}`,
+        borderRadius:"10px", width:"min(540px,95vw)", maxHeight:"80vh",
+        display:"flex", flexDirection:"column", overflow:"hidden",
+      }} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{padding:"16px 20px 12px", borderBottom:`1px solid ${COLORS.border}`, display:"flex", alignItems:"center", gap:"12px"}}>
+          <div style={{flex:1, fontFamily:"'Cinzel', serif", fontSize:"14px", color:COLORS.text}}>📌 Saved Board States</div>
+          <button onClick={onClose} style={{background:"none", border:`1px solid ${COLORS.border}`, borderRadius:"4px", color:COLORS.textDim, cursor:"pointer", fontSize:"13px", padding:"3px 9px"}}>✕</button>
+        </div>
+
+        {/* Save current */}
+        <div style={{padding:"12px 20px", borderBottom:`1px solid ${COLORS.border}`, display:"flex", gap:"8px"}}>
+          <input
+            value={name}
+            onChange={e=>setName(e.target.value)}
+            onKeyDown={e=>e.key==="Enter" && handleSave()}
+            placeholder="Snapshot name (optional)…"
+            style={{flex:1, background:"#0a150a", border:`1px solid ${COLORS.border}`, borderRadius:"4px",
+              color:COLORS.text, fontFamily:"'Crimson Text', serif", fontSize:"13px", padding:"6px 10px", outline:"none"}}
+          />
+          <button onClick={handleSave} style={{
+            background:"#1a3a1a", border:`1px solid ${COLORS.green1}`, borderRadius:"4px",
+            color:COLORS.text, fontFamily:"'Cinzel', serif", fontSize:"11px", letterSpacing:"1px",
+            padding:"6px 14px", cursor:"pointer",
+          }}>SAVE NOW</button>
+        </div>
+
+        {/* List */}
+        <div style={{overflowY:"auto", flex:1, padding:"10px 16px"}}>
+          {states.length === 0 && (
+            <div style={{color:COLORS.textDim, fontFamily:"'Crimson Text', serif", fontSize:"13px", textAlign:"center", padding:"24px 0"}}>
+              No saved states yet. Hit SAVE NOW to bookmark the current board.
+            </div>
+          )}
+          {states.map(entry => (
+            <div key={entry.id} style={{
+              display:"flex", alignItems:"center", gap:"10px",
+              padding:"10px 12px", borderRadius:"6px", marginBottom:"6px",
+              background:"#0a150a", border:`1px solid ${COLORS.border}`,
+            }}>
+              <div style={{flex:1, minWidth:0}} >
+                <div style={{fontFamily:"'Cinzel', serif", fontSize:"12px", color:COLORS.textMid, marginBottom:"2px"}}>{entry.name}</div>
+                <div style={{fontSize:"11px", color:COLORS.textDim, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{statePreview(entry.state)}</div>
+                <div style={{fontSize:"10px", color:COLORS.textDim, marginTop:"2px"}}>{formatTime(entry.savedAt)}</div>
+              </div>
+              <button onClick={()=>handleLoad(entry)} style={{
+                background:"#1a3a1a", border:`1px solid ${COLORS.green1}44`, borderRadius:"4px",
+                color:COLORS.textMid, cursor:"pointer", fontSize:"11px", padding:"4px 10px", flexShrink:0,
+              }}>Load</button>
+              {confirmDel === entry.id ? (
+                <div style={{display:"flex", gap:"4px", flexShrink:0}}>
+                  <button onClick={()=>handleDelete(entry.id)} style={{background:"#3a0a0a", border:"1px solid #e74c3c44", borderRadius:"4px", color:"#e74c3c", cursor:"pointer", fontSize:"11px", padding:"4px 8px"}}>Delete</button>
+                  <button onClick={()=>setConfirmDel(null)} style={{background:"none", border:`1px solid ${COLORS.border}`, borderRadius:"4px", color:COLORS.textDim, cursor:"pointer", fontSize:"11px", padding:"4px 8px"}}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={()=>setConfirmDel(entry.id)} style={{background:"none", border:"1px solid #5a1a1a", borderRadius:"4px", color:"#e74c3c66", cursor:"pointer", fontSize:"11px", padding:"4px 8px", flexShrink:0}}>✕</button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Application-wide Error Boundary ──────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+  }
+  render() {
+    if (this.state.error) {
+      const err = this.state.error;
+      const stack = this.state.info?.componentStack || "";
+      return (
+        <div style={{
+          minHeight: "100vh", background: "#0a0f0a", display: "flex",
+          alignItems: "center", justifyContent: "center", padding: "24px",
+        }}>
+          <div style={{
+            background: "#1a0a0a", border: "1px solid #e74c3c66",
+            borderLeft: "4px solid #e74c3c", borderRadius: "10px",
+            padding: "28px 32px", maxWidth: "720px", width: "100%",
+            fontFamily: "'Crimson Text', serif",
+          }}>
+            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "16px", color: "#e74c3c", marginBottom: "8px", letterSpacing: "1px" }}>
+              ⚠ APPLICATION ERROR
+            </div>
+            <div style={{ fontSize: "15px", color: "#f5e6d3", marginBottom: "16px", lineHeight: 1.5 }}>
+              {err.message || String(err)}
+            </div>
+            <details style={{ marginBottom: "16px" }}>
+              <summary style={{ color: "#c0392b", cursor: "pointer", fontSize: "12px", letterSpacing: "1px", fontFamily: "'Cinzel', serif" }}>
+                STACK TRACE
+              </summary>
+              <pre style={{
+                marginTop: "8px", padding: "12px", background: "#0a0505",
+                border: "1px solid #3a1a1a", borderRadius: "6px",
+                fontSize: "11px", color: "#e08080", overflowX: "auto",
+                lineHeight: 1.5, whiteSpace: "pre-wrap",
+              }}>
+                {err.stack}{stack}
+              </pre>
+            </details>
+            <button
+              onClick={() => this.setState({ error: null, info: null })}
+              style={{
+                background: "#1a3a1a", border: "1px solid #4ade8066",
+                borderRadius: "6px", padding: "8px 20px",
+                color: "#f5e6d3", cursor: "pointer",
+                fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+              }}
+            >
+              ↺ TRY TO RECOVER
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function YevaAdvisor() {
   const { decks, activeDeckId, saveDecks, saveActiveDeck } = useDeckStorage();
   const [showDeckManager, setShowDeckManager] = useState(false);
+  const [showSynergyMap, setShowSynergyMap]   = useState(false);
 
   // Compute the active deck's card set for filtering
   const activeDeck = decks?.find(d => d.id === activeDeckId) ?? null;
@@ -5949,6 +7267,7 @@ export default function YevaAdvisor() {
   const [activeComboName, setActiveComboName] = useState(null);
   const [collapseKey, setCollapseKey] = useState(0);
   const advicePanelRef = useRef(null);
+  const zoneInputRefs = useRef({}); // populated by CardInput via onRef prop
 
   // Preserve scroll position when advice updates
   const scrollPosRef = useRef(0);
@@ -5961,6 +7280,44 @@ export default function YevaAdvisor() {
     scrollPosRef.current = advicePanelRef.current?.scrollTop ?? 0;
   }, []);
   const [showDebug, setShowDebug] = useState(false);
+  const [showSavedStates, setShowSavedStates] = useState(false);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const ZONES = ["hand", "battlefield", "graveyard"];
+    const handler = (e) => {
+      // Don't fire when typing in an input/textarea
+      const tag = document.activeElement?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+
+      // Shift+S = quick-save current state
+      if (e.key === "S" && e.shiftKey && !e.ctrlKey && !e.metaKey && !inInput) {
+        e.preventDefault();
+        setShowSavedStates(true);
+      }
+      // Escape = close any open modal
+      if (e.key === "Escape") {
+        setShowSavedStates(false);
+        setShowDebug(false);
+        setShowDeckManager(false);
+      }
+      // Tab = cycle focus between zone inputs (only when not in an input, or at end of suggestions)
+      if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        const inputs = ZONES.map(z => zoneInputRefs.current[z]).filter(Boolean);
+        const focused = document.activeElement;
+        const idx = inputs.indexOf(focused);
+        if (idx >= 0) {
+          e.preventDefault();
+          inputs[(idx + 1) % inputs.length]?.focus();
+        } else if (!inInput) {
+          e.preventDefault();
+          inputs[0]?.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
   const [linkCopied, setLinkCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
 
@@ -6150,6 +7507,26 @@ export default function YevaAdvisor() {
                 )}
               </div>
             )}
+            <button onClick={() => setShowSavedStates(true)} style={{
+              background: "none", border: `1px solid ${COLORS.border}`,
+              borderRadius: "6px", padding: "5px 14px",
+              color: COLORS.textDim, cursor: "pointer",
+              fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+              transition: "all 0.2s",
+            }}
+              onMouseEnter={e => { e.target.style.borderColor = COLORS.green1; e.target.style.color = COLORS.green1; }}
+              onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
+            >📌 STATES</button>
+            <button onClick={() => setShowSynergyMap(true)} style={{
+              background: "none", border: `1px solid ${COLORS.border}`,
+              borderRadius: "6px", padding: "5px 14px",
+              color: COLORS.textDim, cursor: "pointer",
+              fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+              transition: "all 0.2s",
+            }}
+              onMouseEnter={e => { e.target.style.borderColor = "#a569bd"; e.target.style.color = "#a569bd"; }}
+              onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
+            >⬡ SYNERGY</button>
             <button onClick={() => setShowDebug(true)} style={{
               background: "none", border: `1px solid ${COLORS.border}`,
               borderRadius: "6px", padding: "5px 14px",
@@ -6184,6 +7561,23 @@ export default function YevaAdvisor() {
             >↺ RESET</button>
           </div>
 
+          {/* SYNERGY MAP MODAL */}
+          {showSynergyMap && <SynergyMapModal onClose={() => setShowSynergyMap(false)} />}
+          {/* SAVED STATES MODAL */}
+          {showSavedStates && (
+            <SavedStatesPanel
+              currentState={{ hand, battlefield, graveyard, mana: Number(mana), isMyTurn, yisanCounters }}
+              onLoad={(s) => {
+                if (s.hand)        setHand(s.hand);
+                if (s.battlefield) setBattlefield(s.battlefield);
+                if (s.graveyard)   setGraveyard(s.graveyard);
+                if (s.mana != null) setMana(String(s.mana));
+                if (s.isMyTurn != null) setIsMyTurn(s.isMyTurn);
+                if (s.yisanCounters != null) setYisanCounters(s.yisanCounters);
+              }}
+              onClose={() => setShowSavedStates(false)}
+            />
+          )}
           {/* DEBUG MODAL */}
           {showDeckManager && decks !== null && (
             <DeckManager
@@ -6402,6 +7796,7 @@ export default function YevaAdvisor() {
             {/* Hand */}
             <QuickAdd zone="hand" onAdd={addTo("hand")} deckCards={activeDeck?.cards} />
             <CardInput label="Hand" zone="hand" cards={hand}
+              onRef={el => { zoneInputRefs.current["hand"] = el; }}
               onAdd={addTo("hand")} onRemove={removeFrom(setHand)}
               placeholder="Cards in your hand…"
               deckCards={activeDeck?.cards} />
@@ -6409,6 +7804,7 @@ export default function YevaAdvisor() {
             {/* Battlefield */}
             <QuickAdd zone="battlefield" onAdd={addTo("battlefield")} deckCards={activeDeck?.cards} />
             <CardInput label="Battlefield" zone="battlefield" cards={battlefield}
+              onRef={el => { zoneInputRefs.current["battlefield"] = el; }}
               onAdd={addTo("battlefield")} onRemove={removeFrom(setBattlefield)}
               placeholder="Permanents you control…"
               deckCards={activeDeck?.cards} />
@@ -6416,6 +7812,7 @@ export default function YevaAdvisor() {
             {/* Graveyard */}
             <QuickAdd zone="graveyard" onAdd={addTo("graveyard")} deckCards={activeDeck?.cards} />
             <CardInput label="Graveyard" zone="graveyard" cards={graveyard}
+              onRef={el => { zoneInputRefs.current["graveyard"] = el; }}
               onAdd={addTo("graveyard")} onRemove={removeFrom(setGraveyard)}
               placeholder="Cards in your graveyard…"
               deckCards={activeDeck?.cards} />
@@ -6630,4 +8027,10 @@ export default function YevaAdvisor() {
   );
 }
 
-
+// Wrap with error boundary for the default export
+const YevaAdvisorWithBoundary = () => (
+  <ErrorBoundary>
+    <YevaAdvisor />
+  </ErrorBoundary>
+);
+export { YevaAdvisorWithBoundary as default };
