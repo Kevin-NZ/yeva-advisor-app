@@ -5666,9 +5666,128 @@ function parseDecklist(text) {
   return [...new Set(cards)]; // deduplicate (deck lists each card once)
 }
 
+function DeckDetailModal({ deck, onClose }) {
+  const [filter, setFilter] = useState("");
+  if (!deck) return null;
+
+  // Group cards by category using CARDS tag data
+  const groups = {
+    "⚡ Combo Pieces":  [],
+    "🌿 Mana Dorks":    [],
+    "📚 Tutors":        [],
+    "🔄 Engines":       [],
+    "🌍 Lands":         [],
+    "🃏 Other":         [],
+  };
+  const dedupedCards = [...new Set(deck.cards)];
+  const counts = {};
+  deck.cards.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+
+  dedupedCards.forEach(c => {
+    const info = CARDS[c];
+    const tags = info?.tags || [];
+    if (!info) {
+      groups["🃏 Other"].push(c);
+    } else if (info.type === "land") {
+      groups["🌍 Lands"].push(c);
+    } else if (tags.includes("combo") || tags.includes("finisher") || tags.includes("recursion") || tags.includes("etb")) {
+      groups["⚡ Combo Pieces"].push(c);
+    } else if (tags.includes("dork") || tags.includes("big-dork")) {
+      groups["🌿 Mana Dorks"].push(c);
+    } else if (tags.includes("tutor")) {
+      groups["📚 Tutors"].push(c);
+    } else if (tags.includes("engine") || tags.includes("draw") || tags.includes("enchantment")) {
+      groups["🔄 Engines"].push(c);
+    } else {
+      groups["🃏 Other"].push(c);
+    }
+  });
+
+  const q = filter.toLowerCase();
+  const unknown = deck.cards.filter(c => c !== "Forest" && !CARDS[c]);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: 1100,
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }} onClick={onClose}>
+      <div style={{
+        background: "#0d1f0d", border: `1px solid ${COLORS.green1}`,
+        borderRadius: "10px", width: "min(680px, 95vw)", maxHeight: "85vh",
+        display: "flex", flexDirection: "column", overflow: "hidden",
+      }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ padding: "16px 20px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "15px", color: COLORS.text }}>{deck.name}</div>
+            <div style={{ fontSize: "11px", color: COLORS.textDim, marginTop: "2px" }}>
+              {deck.cards.length} cards
+              {unknown.length > 0 && <span style={{ color: "#e74c3c", marginLeft: "8px" }}>· {unknown.length} unknown</span>}
+            </div>
+          </div>
+          <input
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder="Filter cards…"
+            style={{
+              background: "#0a150a", border: `1px solid ${COLORS.border}`, borderRadius: "4px",
+              color: COLORS.text, fontFamily: "'Crimson Text', serif", fontSize: "13px",
+              padding: "5px 10px", width: "160px", outline: "none",
+            }}
+          />
+          <button onClick={onClose} style={{
+            background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px",
+            color: COLORS.textDim, cursor: "pointer", fontSize: "13px", padding: "4px 10px",
+          }}>✕</button>
+        </div>
+
+        {/* Card groups */}
+        <div style={{ overflowY: "auto", padding: "16px 20px", flex: 1 }}>
+          {Object.entries(groups).map(([groupName, cards]) => {
+            const filtered = cards.filter(c => !q || c.toLowerCase().includes(q));
+            if (filtered.length === 0) return null;
+            return (
+              <div key={groupName} style={{ marginBottom: "16px" }}>
+                <div style={{
+                  fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "2px",
+                  color: COLORS.green1, marginBottom: "8px", textTransform: "uppercase",
+                }}>{groupName} <span style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", letterSpacing: 0, textTransform: "none", fontSize: "11px" }}>({filtered.length})</span></div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {filtered.sort().map(c => {
+                    const isUnknown = c !== "Forest" && !CARDS[c];
+                    const count = counts[c];
+                    return (
+                      <span key={c} style={{
+                        background: isUnknown ? "#2a0a0a" : "#0a1a0a",
+                        border: `1px solid ${isUnknown ? "#5a1a1a" : COLORS.border}`,
+                        borderRadius: "4px", padding: "3px 8px",
+                        color: isUnknown ? "#e74c3c" : COLORS.textMid,
+                        fontSize: "12px", fontFamily: "'Crimson Text', serif",
+                      }}>
+                        {c}{count > 1 ? <span style={{ color: COLORS.green1, marginLeft: "4px" }}>×{count}</span> : ""}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {filter && Object.values(groups).every(g => g.filter(c => c.toLowerCase().includes(q)).length === 0) && (
+            <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "13px", textAlign: "center", marginTop: "20px" }}>
+              No cards match "{filter}"
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose }) {
   const [showImport, setShowImport]   = useState(false);
   const [importText, setImportText]   = useState("");
+  const [viewingDeck, setViewingDeck] = useState(null);
   const [importName, setImportName]   = useState("");
   const [importError, setImportError] = useState("");
   const [saveStatus, setSaveStatus]   = useState(""); // "" | "saving" | "saved" | "error"
@@ -5800,12 +5919,14 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
                   </div>
                   {activeDeckId === deck.id && <span style={{ color: COLORS.green1 }}>✓</span>}
                 </div>
+                <button onClick={(e) => { e.stopPropagation(); setViewingDeck(deck); }} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", padding: "3px 8px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px" }}>👁</button>
                 <button onClick={() => deleteDeck(deck.id)} style={{ background: "none", border: `1px solid #5a1a1a`, borderRadius: "4px", padding: "3px 8px", color: "#e74c3c88", cursor: "pointer", fontSize: "11px" }}>✕</button>
               </div>
             )})}
           </div>
         )}
       </div>
+      {viewingDeck && <DeckDetailModal deck={viewingDeck} onClose={() => setViewingDeck(null)} />}
     </div>
   );
 }
