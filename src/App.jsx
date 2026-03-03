@@ -5305,25 +5305,30 @@ export default function YevaAdvisor() {
       if (type === "instant" || type === "sorcery") return;
     }
     const isBasic = CARDS[card]?.tags?.includes("basic");
-    // Always remove the card from other zones (move semantics),
-    // but for basics only remove ONE instance (the first), not all.
-    if (zone !== "hand")        setHand(prev => {
-      const idx = prev.indexOf(card);
-      return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-    });
-    if (zone !== "battlefield") setBattlefield(prev => {
-      const idx = prev.indexOf(card);
-      return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-    });
-    if (zone !== "graveyard")   setGraveyard(prev => {
-      const idx = prev.indexOf(card);
-      return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-    });
-    // Add to destination — basics can have duplicates, others deduplicate
+    // For non-basics: move semantics (remove from other zones, add to destination)
+    // For basics: add semantics (can exist in multiple zones simultaneously — don't remove from others)
+    if (!isBasic) {
+      if (zone !== "hand")        setHand(prev => {
+        const idx = prev.indexOf(card);
+        return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      });
+      if (zone !== "battlefield") setBattlefield(prev => {
+        const idx = prev.indexOf(card);
+        return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      });
+      if (zone !== "graveyard")   setGraveyard(prev => {
+        const idx = prev.indexOf(card);
+        return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      });
+    }
+    // Add to destination — basics always allow duplicates, non-basics deduplicate
     const setter = zone === "hand" ? setHand : zone === "battlefield" ? setBattlefield : setGraveyard;
     setter(prev => (!isBasic && prev.includes(card)) ? prev : [...prev, card]);
   };
-  const removeFrom = (setter) => (card) => setter(prev => prev.filter(c => c !== card));
+  const removeFrom = (setter) => (card) => setter(prev => {
+    const idx = prev.indexOf(card);
+    return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+  });
 
   const reset = () => {
     setHand([]); setBattlefield([]); setGraveyard([]);
