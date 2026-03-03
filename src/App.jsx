@@ -5595,6 +5595,25 @@ const PRESET_DECKS = [
 ];
 
 // Hook: load/save deck lists from artifact storage
+// Storage abstraction — prefers window.storage (Claude artifact API), falls back to localStorage
+const storage = {
+  async get(key) {
+    if (typeof window !== "undefined" && window.storage?.get) {
+      try { return await window.storage.get(key); } catch { /* fall through */ }
+    }
+    try {
+      const v = localStorage.getItem(key);
+      return v != null ? { key, value: v } : null;
+    } catch { return null; }
+  },
+  async set(key, value) {
+    if (typeof window !== "undefined" && window.storage?.set) {
+      try { return await window.storage.set(key, value); } catch { /* fall through */ }
+    }
+    try { localStorage.setItem(key, value); return { key, value }; } catch { return null; }
+  },
+};
+
 function useDeckStorage() {
   const [decks, setDecks] = useState(null); // null = loading
   const [activeDeckId, setActiveDeckId] = useState(null);
@@ -5603,11 +5622,10 @@ function useDeckStorage() {
   useEffect(() => {
     (async () => {
       try {
-        const saved = await window.storage.get("yeva-decks");
-        const savedActive = await window.storage.get("yeva-active-deck").catch(() => null);
+        const saved = await storage.get("yeva-decks");
+        const savedActive = await storage.get("yeva-active-deck");
         const loadedDecks = saved ? JSON.parse(saved.value) : PRESET_DECKS.map(d => ({ ...d }));
-        // Persist presets on first load so they survive future sessions
-        if (!saved) await window.storage.set("yeva-decks", JSON.stringify(loadedDecks)).catch(() => {});
+        if (!saved) await storage.set("yeva-decks", JSON.stringify(loadedDecks));
         setDecks(loadedDecks);
         setActiveDeckId(savedActive?.value || null);
       } catch {
@@ -5619,12 +5637,12 @@ function useDeckStorage() {
 
   const saveDecks = async (newDecks) => {
     setDecks(newDecks);
-    try { await window.storage.set("yeva-decks", JSON.stringify(newDecks)); } catch {}
+    await storage.set("yeva-decks", JSON.stringify(newDecks));
   };
 
   const saveActiveDeck = async (id) => {
     setActiveDeckId(id);
-    try { await window.storage.set("yeva-active-deck", id ?? ""); } catch {}
+    await storage.set("yeva-active-deck", id ?? "");
   };
 
   return { decks, activeDeckId, saveDecks, saveActiveDeck };
@@ -5668,16 +5686,15 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
     const id = "deck-" + Date.now();
     const newDecks = [...(decks || []), { id, name, cards }];
     setSaveStatus("saving");
-    try {
-      await window.storage.set("yeva-decks", JSON.stringify(newDecks));
-      onSaveDecks(newDecks);
+    const result = await storage.set("yeva-decks", JSON.stringify(newDecks));
+    onSaveDecks(newDecks);
+    if (result) {
       setSaveStatus("saved");
       setImportText(""); setImportName("");
       setTimeout(() => { setSaveStatus(""); setShowImport(false); }, 800);
-    } catch (e) {
+    } else {
       setSaveStatus("error");
-      setImportError("Storage error — deck saved in memory only: " + (e?.message || e));
-      onSaveDecks(newDecks); // still add in-memory
+      setImportError("Storage unavailable — deck saved for this session only.");
     }
   };
 
