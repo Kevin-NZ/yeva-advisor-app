@@ -1305,6 +1305,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
   const infiniteManaActive = _inf;
+  // Yeva is the commander — always castable from command zone for {2}{G}{G} (or more with tax).
+  // yevaAvailable = flash already active, OR infinite mana (tax irrelevant), OR ≥4 mana to cast her.
+  const yevaAvailable = yevaFlash || infiniteManaActive || mana >= 4;
   const activeComboName    = _infName;
 
   // Can we cast permanents into play this turn? (our turn, Yeva flash, or infinite mana)
@@ -1556,18 +1559,21 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
 
   // ---- YEVA FLASH TIMING ADVICE ----
-  if (!isMyTurn && board.has("Yeva, Nature's Herald")) {
+  // Fires when: Yeva on board (free flash), OR infinite mana active (cast from command zone free),
+  // OR ≥4 mana available (cast Yeva from command zone for {2}{G}{G}).
+  if (!isMyTurn && yevaAvailable) {
+    const yevaNote = yevaFlash ? "via Yeva (on board)" : "via Yeva (cast from command zone)";
     // Check for flash-in combos
     if (inHand.has("Ashaya, Soul of the Wild") && (inHand.has("Quirion Ranger") || board.has("Quirion Ranger"))
         && (board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter"))) {
       results.push({
         priority: 15,
         category: "⚡ INSTANT SPEED WIN",
-        headline: "FLASH IN: Ashaya + Quirion Ranger NOW",
-        detail: "On opponent's end step, flash in Ashaya. Quirion Ranger (in hand or board) creates an infinite mana loop immediately. Opponents are tapped out and cannot respond.",
+        headline: `FLASH IN: Ashaya + Quirion Ranger NOW (${yevaNote})`,
+        detail: `On opponent's end step, flash in Ashaya ${yevaNote}. Quirion Ranger (in hand or board) creates an infinite mana loop immediately. Opponents are tapped out and cannot respond.`,
         steps: [
           "Wait for last opponent's end step (or when they commit to the stack).",
-          "Flash Ashaya via Yeva.",
+          yevaFlash ? "Flash Ashaya via Yeva." : "Cast Yeva from command zone, then flash in Ashaya.",
           "Quirion Ranger now loops infinitely with any dork on board → infinite mana.",
           "With infinite mana: activate Duskwatch Recruiter to pull every creature → attack for lethal."
         ],
@@ -1579,10 +1585,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       results.push({
         priority: 14,
         category: "⚡ INSTANT SPEED WIN",
-        headline: "FLASH IN: Glademuse now → Draw entire library",
+        headline: `FLASH IN: Glademuse now → Draw entire library (${yevaNote})`,
         detail: "Glademuse on opponent's turn with Ashaya + Quirion Ranger = draw your entire deck at instant speed.",
         steps: [
-          "Flash Glademuse via Yeva on opponent's turn.",
+          `Flash Glademuse ${yevaNote} on opponent's turn.`,
           "Cast Quirion Ranger → Glademuse triggers → draw a card.",
           "Ranger bounces itself (it's a Forest via Ashaya), untaps any dork.",
           "Recast Ranger → draw again. Infinite draws = entire library in hand.",
@@ -1602,7 +1608,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         headline: `Flash in ${dork} at end of opponent's turn`,
         detail: `${dork} bypasses summoning sickness when flashed in at EOT. Untap on your turn and it's ready to tap for mana immediately — enabling an infinite mana combo next turn.`,
         steps: [
-          `On last opponent's EOT, flash ${dork} via Yeva.`,
+          `On last opponent's EOT, flash ${dork} ${yevaNote}.`,
           "It untaps at the start of your turn — no summoning sickness.",
           "Next turn: pair with Temur Sabertooth + Hyrax Scout or Quirion Ranger loop for infinite mana."
         ],
@@ -1796,11 +1802,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
         // Determine which path is valid
         const duskwatchReady = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
-        // Path A: Speaker in library (always true if not on board), need a Forest in hand to discard
+        // Path A: Speaker in library (always true if not on board), need something to discard for ETB.
+        // The discard can come from: any card in hand (other than Natural Order itself),
+        // OR a Forest bounced from battlefield via Scryb/Quirion Ranger.
         const hasForestInHand = hand.some(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")));
+        const hasOtherCardInHand = hand.some(c => c !== "Natural Order");
+        const hasBattlefieldForest = battlefield.some(c => c === "Forest" || CARDS[c]?.tags?.includes("basic"));
+        const scrybCanBounceForest = board.has("Scryb Ranger") && hasBattlefieldForest;
+        const quirionCanBounceForest = board.has("Quirion Ranger") && hasBattlefieldForest;
+        const hasDiscardForSpeaker = hasOtherCardInHand || scrybCanBounceForest || quirionCanBounceForest;
         const speakerNotOnBoard = !board.has("Formidable Speaker");
-        const pathA = speakerNotOnBoard && hasForestInHand; // NO → Speaker → ETB discard Forest → Ashaya → loop → bounce Speaker → ETB → Duskwatch
-        const pathB = duskwatchReady; // NO → Ashaya → loop → cast Duskwatch directly
+        const pathA = speakerNotOnBoard && hasDiscardForSpeaker;
+        const pathB = duskwatchReady;
 
         if (!pathA && !pathB) {
           // No clean win line — fall through to generic advice
@@ -1809,11 +1822,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           if (pathA) {
             // Preferred: Natural Order → Speaker → ETB → Ashaya → infinite → bounce Speaker → Duskwatch
             const forestInHand = hand.find(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")));
+            const otherCardInHand = hand.find(c => c !== "Natural Order");
+            const bounceRangerForForest = !hasOtherCardInHand && (scrybCanBounceForest || quirionCanBounceForest);
+            const bounceRanger = scrybCanBounceForest ? "Scryb Ranger" : "Quirion Ranger";
+            const discardSource = otherCardInHand || "Forest (bounced from battlefield)";
             headline = `Natural Order → Formidable Speaker → ETB finds Ashaya → ${rangerName} loop → bounce Speaker → find Duskwatch → WIN`;
-            detail = `Natural Order puts Formidable Speaker onto the battlefield. Speaker ETB: discard ${forestInHand} → search library for Ashaya, Soul of the Wild. Ashaya makes all creatures Forests — ${rangerName} bounces itself to untap ${bigDorkNO} (${loopDesc}). With infinite mana: ${rangerName} bounces Speaker back to hand, recast Speaker ({2}{G}), ETB again: discard any card → find Duskwatch Recruiter. Activate → WIN.`;
+            detail = `Natural Order puts Formidable Speaker onto the battlefield. Speaker ETB: discard ${discardSource} → search library for Ashaya, Soul of the Wild. Ashaya makes all creatures Forests — ${rangerName} bounces itself to untap ${bigDorkNO} (${loopDesc}). With infinite mana: ${rangerName} bounces Speaker back to hand, recast Speaker ({2}{G}), ETB again: discard any card → find Duskwatch Recruiter. Activate → WIN.`;
             steps = [
+              ...(bounceRangerForForest ? [
+                `Activate ${bounceRanger}: return a Forest from battlefield to hand — this gives you a card to discard for Speaker's ETB.`,
+              ] : []),
               `Cast Natural Order ({2}{G}{G}): sacrifice ${sacTarget !== bigDorkNO ? sacTarget : "any green creature"} → search library for Formidable Speaker, put it onto the battlefield.`,
-              `Formidable Speaker ETB: discard ${forestInHand} from hand → search library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+              `Formidable Speaker ETB: discard ${discardSource} from hand → search library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
               `Cast Ashaya, Soul of the Wild. All your nontoken creatures are now Forest lands.`,
               `${rangerName} is now a Forest. Activate: return ${rangerName} to hand — untaps ${bigDorkNO}.`,
               `Tap ${bigDorkNO} for ${dorkOutput} mana. Recast ${rangerName} ({${rangerRecastCost === 1 ? "G" : "1}{G"}}). ${loopDesc}.`,
@@ -2891,6 +2911,85 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- YAVIMAYA + GAEA'S CRADLE / BOSEIJU LAND BOUNCE ----
+  // Yavimaya makes all lands Forests. This unlocks two tactical plays:
+  // 1. Crop Rotation can fetch ANY Forest — including utility lands like Wirewood Lodge,
+  //    Geier Reach Sanitarium, or Deserted Temple (which can untap Cradle for a second tap).
+  //    NOTE: Crop Rotation cannot fetch Gaea's Cradle back after sacrificing it (it goes to
+  //    graveyard, not library). The correct line is to tap Cradle first, then Crop Rotation
+  //    a basic Forest to fetch a utility land.
+  // 2. Activate Boseiju to destroy any noncreature permanent (land/artifact/enchantment).
+  if (board.has("Yavimaya, Cradle of Growth") && isMyTurn) {
+    const hasCradle        = board.has("Gaea's Cradle");
+    const hasBoseiju       = board.has("Boseiju, Who Endures");
+    const hasDesTem        = board.has("Deserted Temple");
+    const hasCropRot       = inHand.has("Crop Rotation");
+    const hasReclaimer     = board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer");
+    const hasWirewoodLodge = board.has("Wirewood Lodge");
+    const hasSanitarium    = board.has("Geier Reach Sanitarium");
+    const cradleTap        = creaturesOnBoard;
+
+    // Play 1a: Deserted Temple untaps Gaea's Cradle for a second tap (the real double-tap line)
+    if (hasCradle && hasDesTem && !board.has("Argothian Elder")) {
+      results.push({
+        priority: cradleTap >= 4 ? 10 : 7,
+        category: "🌿 MANA BOOST",
+        headline: `Deserted Temple: untap Gaea's Cradle for a second ${cradleTap}-mana tap`,
+        detail: `Tap Gaea's Cradle for ${cradleTap} mana, then activate Deserted Temple ({T}: untap target nonbasic land) to untap it for a second tap. Net: ${cradleTap * 2} mana from ${cradleTap * 2} gross (Temple taps itself so no mana cost). With ${creaturesOnBoard} creatures this generates ${cradleTap * 2} total green mana.`,
+        steps: [
+          `Tap Gaea's Cradle for ${cradleTap} mana.`,
+          `Activate Deserted Temple: tap Temple → untap Gaea's Cradle.`,
+          `Tap Gaea's Cradle again for ${cradleTap} more mana.`,
+          `Total: ${cradleTap * 2} mana this turn from Cradle alone.`,
+        ],
+        color: "#27ae60",
+      });
+    }
+
+    // Play 1b: Crop Rotation — sacrifice a basic Forest to fetch a utility land
+    // (NOT Cradle → Cradle; the sacrificed land goes to graveyard, not library)
+    if (hasCropRot) {
+      const hasBasicForest = battlefield.some(c => c === "Forest");
+      const fetchTargets = [
+        !hasDesTem && hasCradle ? "Deserted Temple (untap Cradle for second tap)" : null,
+        !hasSanitarium ? "Geier Reach Sanitarium (win condition)" : null,
+        !hasWirewoodLodge && elvesOnBoard >= 2 ? "Wirewood Lodge (untap a dork)" : null,
+        !board.has("Nykthos, Shrine to Nyx") ? "Nykthos, Shrine to Nyx (devotion mana)" : null,
+      ].filter(Boolean);
+
+      if (hasBasicForest && fetchTargets.length > 0) {
+        results.push({
+          priority: 7,
+          category: "🌿 MANA BOOST",
+          headline: `Yavimaya + Crop Rotation: sacrifice a Forest → fetch ${fetchTargets[0].split(" (")[0]}`,
+          detail: `Yavimaya makes all lands Forests, so Crop Rotation can fetch any land in your deck. Sacrifice a basic Forest (not Gaea's Cradle — it would go to the graveyard, not the library) to find a utility land. Best targets right now: ${fetchTargets.join("; ")}.`,
+          steps: [
+            hasCradle ? `Tap Gaea's Cradle for ${cradleTap} mana first.` : null,
+            `Cast Crop Rotation ({G}, instant): sacrifice a basic Forest → search library for ${fetchTargets[0].split(" (")[0]}, put it onto the battlefield.`,
+            fetchTargets[0].includes("Deserted Temple") ? `Activate Deserted Temple: untap Gaea's Cradle → tap Cradle again for ${cradleTap} mana.` : null,
+          ].filter(Boolean),
+          color: "#27ae60",
+        });
+      }
+    }
+
+    // Play 2: Boseiju — destroy any noncreature permanent (land/artifact/enchantment)
+    if (hasBoseiju && mana >= 1) {
+      results.push({
+        priority: 6,
+        category: "🌿 REMOVAL AVAILABLE",
+        headline: `Yavimaya + Boseiju: destroy any land, artifact, or enchantment (uncounterable)`,
+        detail: `Boseiju, Who Endures is a Forest via Yavimaya. Its channel ability ({G}, discard Boseiju): destroy target artifact, enchantment, or nonbasic land. Uncounterable. With Yavimaya in play, Boseiju can also be fetched by any Forest-search effect (Crop Rotation, Elvish Reclaimer, fetchlands).`,
+        steps: [
+          `Identify the threat: an artifact (Collector Ouphe, Torpor Orb), enchantment (Rest in Peace, Rhystic Study), or nonbasic land.`,
+          `Activate Boseiju's channel: pay {G}, discard Boseiju → destroy target artifact, enchantment, or nonbasic land. This ability can't be countered.`,
+          `Note: Boseiju can be fetched via Crop Rotation, Elvish Reclaimer, or fetchlands since Yavimaya makes it a Forest.`,
+        ],
+        color: "#e74c3c",
+      });
+    }
+  }
+
   // ---- HOPE TENDER ----
   if (board.has("Hope Tender")) {
     const hasYavimaya  = board.has("Yavimaya, Cradle of Growth");
@@ -3369,12 +3468,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- DUSKWATCH RECRUITER (infinite mana → full win pile) ----
   // Can we access Duskwatch Recruiter right now?
-  // Direct: on board, in hand on our turn, or in hand with Yeva (flash)
+  // Direct: on board, in hand on our turn, or in hand with Yeva flash/available (commander zone)
   const duskwatchOnBoard  = board.has("Duskwatch Recruiter");
   const duskwatchInHand   = inHand.has("Duskwatch Recruiter");
   const duskwatchDirect   = duskwatchOnBoard
     || (duskwatchInHand && isMyTurn)
-    || (duskwatchInHand && yevaFlash);
+    || (duskwatchInHand && yevaAvailable);
 
   // Via tutor: a tutor that can find Duskwatch (a CMC-2 green creature) is castable now
   // Instant-speed tutors: castable any time (or with Yeva on board for flash window)
@@ -3418,7 +3517,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Woodland Bellower: ETB puts any non-legendary green creature CMC <= 3 directly onto battlefield.
   // Castable on our turn (sorcery speed) or with Yeva flash. Already-on-board means ETB already fired.
   const bellowerInHand    = inHand.has("Woodland Bellower");
-  const bellowerCastable  = bellowerInHand && (isMyTurn || yevaFlash);
+  const bellowerCastable  = bellowerInHand && (isMyTurn || yevaAvailable);
   // Bellower can find: Duskwatch, Eternal Witness, Endurance, Destiny Spinner, Elvish Reclaimer,
   // Fauna Shaman (discard to tutor), Formidable Speaker (discard → full library search), Hyrax Tower Scout, Quirion Ranger, Scryb Ranger,
   // Priest of Titania, Elvish Archdruid, Circle of Dreams Druid, Magus of the Candelabra, etc.
@@ -3449,7 +3548,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (speed === "instant")   return true;
     if (speed === "sorcery")   return isMyTurn;
     if (speed === "activated") return isMyTurn || yevaFlash;
-    if (speed === "bellower")  return isMyTurn || yevaFlash;
+    if (speed === "bellower")  return isMyTurn || yevaAvailable;
     return false;
   });
 
@@ -3479,8 +3578,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const duskwatchAccessNote = duskwatchOnBoard                    ? ""
     : (duskwatchInHand && isMyTurn)                              ? "Cast Duskwatch → "
     : (duskwatchInHand && yevaFlash)                             ? "Flash Duskwatch (Yeva) → "
+    : (duskwatchInHand && yevaAvailable)                         ? "Cast Yeva → Flash Duskwatch → "
     : duskwatchViaTutor                                          ? `${tutorsThatFindDuskwatch[0].tutor} → Duskwatch → `
     : "";
+
+  // If Yeva needs to be cast from command zone first, prepend that as a step
+  const castYevaFirst = !isMyTurn && !yevaFlash && yevaAvailable;
 
   if (duskwatchCastable && (infiniteManaActive || mana >= 20)) {
     // Determine which Sanitarium untap method is available
@@ -3512,6 +3615,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? "With infinite mana, activate Duskwatch Recruiter repeatedly to pull the win pile from your library, then use Geier Reach Sanitarium to mill all opponents out."
         : "⚠️ Endurance is REQUIRED before activating Sanitarium — without it you will mill yourself out. Find Endurance via Duskwatch before starting the Sanitarium loop.",
       steps: [
+        ...(castYevaFirst ? [
+          `FIRST: Cast Yeva, Nature's Herald from command zone ({2}{G}{G}) — gives all green creatures flash for the rest of this turn.`,
+        ] : []),
         ...(duskwatchViaTutor && !duskwatchOnBoard ? [
           `ACCESS: Cast ${tutorNote(tutorsThatFindDuskwatch[0].tutor)} to find Duskwatch Recruiter.`
           + (tutorsThatFindDuskwatch.length > 1 ? ` (Alternatives: ${tutorsThatFindDuskwatch.slice(1).map(x=>x.tutor).join(", ")})` : ""),
@@ -3838,13 +3944,26 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "Magus of the Candelabra":"enters play — {X}: untap X lands; key Ashaya/Nykthos combo piece",
       }[primaryTarget] || "enters play directly — no casting cost";
 
+      // Suppress the standalone WIN NOW if the WIN NOW — PILE entry already covers this exact
+      // line (Bellower is the tutor feeding duskwatchViaTutor → the PILE block fires at p15).
+      const pileAlreadyCoversThis = isWinNow
+        && primaryTarget === "Duskwatch Recruiter"
+        && results.some(r => r.priority >= 15 && r.category.includes("WIN NOW"));
+      if (pileAlreadyCoversThis) {
+        // Already represented at higher priority — skip to avoid duplicate
+      } else {
       results.push({
         priority: isWinNow ? 14 : (winTarget ? 10 : 8),
         category: isWinNow ? "🔥 WIN NOW" : "🌲 BELLOWER TUTOR",
-        headline: `Cast Woodland Bellower → put ${primaryTarget} onto battlefield`,
+        headline: castYevaFirst
+          ? `Cast Yeva → Flash Woodland Bellower → put ${primaryTarget} onto battlefield`
+          : `Cast Woodland Bellower → put ${primaryTarget} onto battlefield`,
         detail: `Woodland Bellower ETB: search for any non-legendary green creature with CMC ≤ 3 and put it directly onto the battlefield. ${targetReason}`,
         steps: [
-          `Cast Woodland Bellower ({4}{G}{G}).`,
+          ...(castYevaFirst ? [
+            `FIRST: Cast Yeva, Nature's Herald from command zone ({2}{G}{G}) — gives all green creatures flash for this turn.`,
+          ] : []),
+          `Cast Woodland Bellower ({4}{G}{G})${castYevaFirst ? " at instant speed via Yeva's flash" : ""}.`,
           `ETB: search library for ${primaryTarget} and put it onto the battlefield.`,
           targetReason,
           ...(bellowerKeyTargets.length > 1
@@ -3859,6 +3978,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ],
         color: isWinNow ? "#ff6b35" : "#27ae60",
       });
+      } // end pileAlreadyCoversThis check
     }
   }
 
@@ -4429,6 +4549,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? `You have infinite mana. ${available[0].name} ${available[0].why}.`
         : `You have infinite mana but no win condition is currently reachable. Use your tutor chain to find one.`,
       steps: [
+        ...(castYevaFirst ? [
+          `FIRST: Cast Yeva, Nature's Herald from command zone ({2}{G}{G}) — gives all green creatures flash for this turn.`,
+        ] : []),
         ...(available.length > 0 ? available.map(w => `✅ ${w.name}: ${w.why}.`) : []),
         ...(missing.length > 0 && available.length === 0 ? [
           `Missing win conditions: ${missing.map(w => w.name).join(", ")}.`,
@@ -4694,11 +4817,14 @@ function CardPill({ name, onRemove, zone }) {
   );
 }
 
-function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
+function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards }) {
   const [input, setInput] = useState("");
   const [suggs, setSuggs] = useState([]);
 
   const [secret, setSecret] = useState(null);
+
+  // Search pool: active deck cards when a deck is selected, otherwise all known cards
+  const searchPool = deckCards ?? ALL_CARD_NAMES;
 
   const handleChange = (v) => {
     setInput(v);
@@ -4713,7 +4839,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder }) {
         setSuggs([]);
       } else {
         setSecret(null);
-        setSuggs(ALL_CARD_NAMES.filter(n => {
+        setSuggs(searchPool.filter(n => {
           if (!n.toLowerCase().includes(v.toLowerCase())) return false;
           const isBasic = CARDS[n]?.tags?.includes("basic");
           if (!isBasic && cards.includes(n)) return false;
@@ -6022,19 +6148,22 @@ export default function YevaAdvisor() {
             <QuickAdd zone="hand" onAdd={addTo("hand")} />
             <CardInput label="Hand" zone="hand" cards={hand}
               onAdd={addTo("hand")} onRemove={removeFrom(setHand)}
-              placeholder="Cards in your hand…" />
+              placeholder="Cards in your hand…"
+              deckCards={activeDeck?.cards} />
 
             {/* Battlefield */}
             <QuickAdd zone="battlefield" onAdd={addTo("battlefield")} />
             <CardInput label="Battlefield" zone="battlefield" cards={battlefield}
               onAdd={addTo("battlefield")} onRemove={removeFrom(setBattlefield)}
-              placeholder="Permanents you control…" />
+              placeholder="Permanents you control…"
+              deckCards={activeDeck?.cards} />
 
             {/* Graveyard */}
             <QuickAdd zone="graveyard" onAdd={addTo("graveyard")} />
             <CardInput label="Graveyard" zone="graveyard" cards={graveyard}
               onAdd={addTo("graveyard")} onRemove={removeFrom(setGraveyard)}
-              placeholder="Cards in your graveyard…" />
+              placeholder="Cards in your graveyard…"
+              deckCards={activeDeck?.cards} />
 
             {/* Playfield visualiser */}
             <Playfield
