@@ -1758,7 +1758,27 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
 
       if (hasRanger && bigDorkNO && !results.some(r => r.combo === "natural_order_ashaya_win")) {
-        const sacTarget = battlefield.find(c => CARDS[c]?.type === "creature" && c !== bigDorkNO) || bigDorkNO;
+        // Rank sacrifice targets: prefer expendable dorks over combo pieces.
+        // Combo pieces to avoid sacrificing: Quirion Ranger, Scryb Ranger, Priest of Titania,
+        // Seedborn Muse, Yeva, Yisan, Temur Sabertooth, Kogla, Ashaya, Duskwatch, etc.
+        const COMBO_PIECES = new Set([
+          "Quirion Ranger","Scryb Ranger","Priest of Titania","Seedborn Muse",
+          "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Temur Sabertooth",
+          "Kogla, the Titan Ape","Ashaya, Soul of the Wild","Duskwatch Recruiter",
+          "Argothian Elder","Wirewood Symbiote","Devoted Druid","Selvala, Heart of the Wilds",
+          "Woodland Bellower","Eternal Witness","Destiny Spinner","Hyrax Tower Scout",
+          "Earthcraft","Tireless Provisioner","Circle of Dreams Druid","Elvish Archdruid",
+          "Fanatic of Rhonas","Magus of the Candelabra","Formidable Speaker",
+        ]);
+        const sacCandidates = battlefield
+          .filter(c => CARDS[c]?.type === "creature" && c !== bigDorkNO)
+          .sort((a, b) => {
+            const aCombo = COMBO_PIECES.has(a) ? 1 : 0;
+            const bCombo = COMBO_PIECES.has(b) ? 1 : 0;
+            if (aCombo !== bCombo) return aCombo - bCombo; // non-combo first
+            return (CARDS[a]?.cmc ?? 0) - (CARDS[b]?.cmc ?? 0); // then lowest CMC
+          });
+        const sacTarget = sacCandidates[0] || bigDorkNO;
         const dorkOutput = (() => {
           const t = CARDS[bigDorkNO]?.tapsFor;
           if (typeof t === "number") return t;
