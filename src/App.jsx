@@ -5754,6 +5754,99 @@ export default function YevaAdvisor() {
             style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}
           >
             {advice.length === 0 ? (
+              hand.length === 0 && battlefield.length === 0 && graveyard.length === 0 ? (
+              /* ── MULLIGAN ADVICE ── shown when no cards have been entered yet */
+              <div style={{ color: COLORS.textMid, lineHeight: 1.7 }}>
+                <div style={{
+                  fontFamily: "'Cinzel', serif", fontSize: "13px",
+                  letterSpacing: "2px", color: "#27ae60", marginBottom: "16px",
+                }}>🃏 MULLIGAN GUIDE</div>
+
+                <div style={{
+                  background: "#0a150a", border: `1px solid #27ae60`,
+                  borderRadius: "8px", padding: "14px 18px", marginBottom: "14px",
+                }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: "#27ae60", marginBottom: "8px", letterSpacing: "1px" }}>
+                    ✅ KEEP — ideal opener
+                  </div>
+                  <div style={{ fontSize: "13px", color: COLORS.textMid }}>
+                    A hand with <strong style={{color:COLORS.textLight}}>at least one mana dork</strong> + <strong style={{color:COLORS.textLight}}>at least one tutor</strong> is almost always a keep. The deck wins through tutoring, so the ability to cast a turn-1 or turn-2 dork and follow up with a tutor is the core game plan.
+                  </div>
+                </div>
+
+                <div style={{
+                  background: "#0a100a", border: `1px solid ${COLORS.border}`,
+                  borderRadius: "8px", padding: "14px 18px", marginBottom: "14px",
+                }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, marginBottom: "10px", letterSpacing: "1px" }}>
+                    🌿 MANA DORKS (keep any 1+)
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "6px" }}>
+                    {["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Arbor Elf","Elves of Deep Shadow","Priest of Titania","Elvish Archdruid","Circle of Dreams Druid","Selvala, Heart of the Wilds","Devoted Druid","Fanatic of Rhonas"].map(c => (
+                      <span key={c} style={{
+                        background: "#0d1f0d", border: `1px solid #27ae6044`,
+                        borderRadius: "4px", padding: "2px 8px",
+                        fontSize: "12px", color: "#7ecb7e",
+                        fontFamily: "'Crimson Text', serif",
+                      }}>{c}</span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: "12px", color: COLORS.textDim, marginTop: "4px" }}>
+                    A turn-1 dork means turn-3 Yeva (commander) or turn-2 Quirion Ranger + turn-3 win setup.
+                  </div>
+                </div>
+
+                <div style={{
+                  background: "#0a100a", border: `1px solid ${COLORS.border}`,
+                  borderRadius: "8px", padding: "14px 18px", marginBottom: "14px",
+                }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, marginBottom: "10px", letterSpacing: "1px" }}>
+                    🔍 TUTORS (keep any 1+)
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "6px" }}>
+                    {["Worldly Tutor","Chord of Calling","Summoner's Pact","Green Sun's Zenith","Natural Order","Eldritch Evolution","Shared Summons","Fauna Shaman","Survival of the Fittest"].map(c => (
+                      <span key={c} style={{
+                        background: "#0d1f0d", border: `1px solid #27ae6044`,
+                        borderRadius: "4px", padding: "2px 8px",
+                        fontSize: "12px", color: "#7ecb7e",
+                        fontFamily: "'Crimson Text', serif",
+                      }}>{c}</span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: "12px", color: COLORS.textDim, marginTop: "4px" }}>
+                    Priority targets: Quirion Ranger, Ashaya, Formidable Speaker, Duskwatch Recruiter.
+                  </div>
+                </div>
+
+                <div style={{
+                  background: "#0a100a", border: `1px solid ${COLORS.border}`,
+                  borderRadius: "8px", padding: "14px 18px", marginBottom: "14px",
+                }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: "#e74c3c", marginBottom: "8px", letterSpacing: "1px" }}>
+                    ❌ MULLIGAN — missing both pieces
+                  </div>
+                  <div style={{ fontSize: "13px", color: COLORS.textMid }}>
+                    Hands with <strong style={{color:COLORS.textLight}}>no dork AND no tutor</strong> can't execute the game plan. Hands with only lands and non-interactive cards (e.g. just Ashaya + Seedborn Muse) should usually be mulliganed — you need acceleration and a way to find combo pieces.
+                  </div>
+                </div>
+
+                <div style={{
+                  background: "#0a100a", border: `1px solid ${COLORS.border}`,
+                  borderRadius: "8px", padding: "14px 18px",
+                }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.textDim, marginBottom: "8px", letterSpacing: "1px" }}>
+                    💡 BONUS — nice to have
+                  </div>
+                  <div style={{ fontSize: "13px", color: COLORS.textMid }}>
+                    <strong style={{color:COLORS.textLight}}>Quirion Ranger</strong> in opening hand is premium — it's a combo piece, a dork untapper, and a free loop enabler once Ashaya lands. <strong style={{color:COLORS.textLight}}>2 lands</strong> is the sweet spot; 1 is risky, 4+ is slow. Flash enablers (Yeva is commander) make any tutor a threat on opponent's turns.
+                  </div>
+                </div>
+
+                <div style={{ marginTop: "16px", fontSize: "12px", color: COLORS.textDim, textAlign: "center", fontStyle: "italic" }}>
+                  Add cards above to see real-time advice for your current game state.
+                </div>
+              </div>
+              ) : (
               <div style={{
                 display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center",
@@ -5762,12 +5855,13 @@ export default function YevaAdvisor() {
               }}>
                 <div style={{ fontSize: "48px", opacity: 0.3 }}>🌿</div>
                 <div style={{ fontFamily: "'Cinzel', serif", fontSize: "16px", color: COLORS.textDim }}>
-                  Add cards to your hand or battlefield
+                  No advice for this board state
                 </div>
                 <div style={{ fontSize: "14px", maxWidth: "400px", lineHeight: 1.6 }}>
-                  The advisor will automatically detect active combos, optimal plays, and winning lines based on your current game state.
+                  The current combination of cards doesn't match any known patterns. Try adding more pieces.
                 </div>
               </div>
+              )
             ) : (
               <div>
                 <div style={{
