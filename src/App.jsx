@@ -1035,28 +1035,6 @@ const COMBOS = [
   // No Ashaya needed. Speaker's activated ability {1},{T}: untap another permanent.
   // Quirion Ranger can return a Forest from the BATTLEFIELD (not hand) to hand to untap a creature.
   // Loop: Speaker {1},{T} untaps Dork → Dork taps for N mana → Quirion returns battlefield Forest
-  //       to hand → Quirion untaps Speaker → repeat. Net: N - 1 mana per loop.
-  // Requires: Speaker + Quirion on board, ≥1 Forest on battlefield, dork producing ≥2 mana (net ≥1).
-  {
-    id: "speaker_quirion_untap",
-    name: "Formidable Speaker + Quirion Ranger + Forest (Infinite Mana, No Ashaya)",
-    onBattlefield: ["Formidable Speaker", "Quirion Ranger"],
-    description: "Infinite mana without Ashaya. Formidable Speaker's activated ability {1},{T}: untap another target permanent. Quirion Ranger's ability returns a Forest from the battlefield to hand to untap a creature. Loop: Speaker untaps the dork → dork taps for mana → Quirion returns a battlefield Forest to hand (untapping Speaker) → repeat. Net mana per loop = dork output minus 1. Requires at least one Forest on the battlefield and a dork producing ≥2 mana.",
-    requires: ["Formidable Speaker", "Quirion Ranger"],
-    needsBigDork: 2,
-    needsBattlefieldForest: true,
-    priority: 11,
-    type: "infinite-mana",
-    lines: [
-      "Formidable Speaker and Quirion Ranger on battlefield. At least one Forest land in play.",
-      "Speaker {1},{T}: untap your mana dork (e.g. Priest of Titania).",
-      "Tap the dork for N mana (N = number of elves/creatures it counts).",
-      "Quirion Ranger: return a Forest from the battlefield to your hand — this untaps Speaker.",
-      "Repeat. Net mana per loop: N - 1. With ≥2 mana dork, loop is infinite.",
-      "NOTE: Each loop returns one battlefield Forest to hand. You need at least one Forest on the battlefield to continue; with multiple Forests you can loop indefinitely.",
-    ]
-  },
-
 ];
 
 // ============================================================
@@ -1747,9 +1725,126 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
   // ---- NATURAL ORDER ----
+  if (inHand.has("Natural Order")) {
+    // ---- Check if Natural Order is an immediate WIN LINE ----
+    // Two paths depending on what's available:
+    //
+    // PATH A — Natural Order → Formidable Speaker (when Speaker is in library & hand has a Forest to discard):
+    //   Speaker ETB: discard a Forest → search for Ashaya.
+    //   Ashaya in play → Quirion/Scryb + Dork = infinite mana.
+    //   With infinite mana: Quirion bounces Speaker (now a Forest via Ashaya) → recast Speaker
+    //   → ETB: discard any card → search for Duskwatch Recruiter → activate → WIN.
+    //   Requires: Ranger on board, big dork on board, Forest in hand (to discard for ETB).
+    //
+    // PATH B — Natural Order → Ashaya directly (when Duskwatch is already in hand or on board):
+    //   Ashaya in play → Quirion/Scryb + Dork = infinite mana → cast Duskwatch → WIN.
+    //   Requires: Ranger on board, big dork on board, Duskwatch accessible.
+    //
+    // Natural Order is a sorcery — flag as WIN NEXT TURN on opponent's turn.
+    const hasSacTarget = battlefield.some(c => CARDS[c]?.type === "creature");
+    if (hasSacTarget && mana >= 4 && !board.has("Ashaya, Soul of the Wild")) {
+      const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+      const rangerName = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      const rangerRecastCost = board.has("Quirion Ranger") ? 1 : 2;
+      const dorkThreshold = 1 + rangerRecastCost;
+      const bigDorkNO = battlefield.find(c => {
+        if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
+        const t = CARDS[c]?.tapsFor;
+        if (typeof t === "number") return t >= dorkThreshold;
+        if (t === "elves")    return elvesOnBoard >= dorkThreshold;
+        if (t === "creatures") return creaturesOnBoard >= dorkThreshold;
+        if (t === "devotion") return devotionOnBoard >= dorkThreshold;
+        return false;
+      });
+
+      if (hasRanger && bigDorkNO && !results.some(r => r.combo === "natural_order_ashaya_win")) {
+        const sacTarget = battlefield.find(c => CARDS[c]?.type === "creature" && c !== bigDorkNO) || bigDorkNO;
+        const dorkOutput = (() => {
+          const t = CARDS[bigDorkNO]?.tapsFor;
+          if (typeof t === "number") return t;
+          if (t === "elves")    return elvesOnBoard;
+          if (t === "creatures") return creaturesOnBoard;
+          if (t === "devotion") return devotionOnBoard;
+          return dorkThreshold;
+        })();
+        const netMana = dorkOutput - rangerRecastCost;
+        const loopDesc = `net +${netMana}G per loop (infinite)`;
+
+        // Determine which path is valid
+        const duskwatchReady = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+        // Path A: Speaker in library (always true if not on board), need a Forest in hand to discard
+        const hasForestInHand = hand.some(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")));
+        const speakerNotOnBoard = !board.has("Formidable Speaker");
+        const pathA = speakerNotOnBoard && hasForestInHand; // NO → Speaker → ETB discard Forest → Ashaya → loop → bounce Speaker → ETB → Duskwatch
+        const pathB = duskwatchReady; // NO → Ashaya → loop → cast Duskwatch directly
+
+        if (!pathA && !pathB) {
+          // No clean win line — fall through to generic advice
+        } else {
+          let headline, detail, steps;
+          if (pathA) {
+            // Preferred: Natural Order → Speaker → ETB → Ashaya → infinite → bounce Speaker → Duskwatch
+            const forestInHand = hand.find(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")));
+            headline = `Natural Order → Formidable Speaker → ETB finds Ashaya → ${rangerName} loop → bounce Speaker → find Duskwatch → WIN`;
+            detail = `Natural Order puts Formidable Speaker onto the battlefield. Speaker ETB: discard ${forestInHand} → search library for Ashaya, Soul of the Wild. Ashaya makes all creatures Forests — ${rangerName} bounces itself to untap ${bigDorkNO} (${loopDesc}). With infinite mana: ${rangerName} bounces Speaker back to hand, recast Speaker ({2}{G}), ETB again: discard any card → find Duskwatch Recruiter. Activate → WIN.`;
+            steps = [
+              `Cast Natural Order ({2}{G}{G}): sacrifice ${sacTarget !== bigDorkNO ? sacTarget : "any green creature"} → search library for Formidable Speaker, put it onto the battlefield.`,
+              `Formidable Speaker ETB: discard ${forestInHand} from hand → search library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+              `Cast Ashaya, Soul of the Wild. All your nontoken creatures are now Forest lands.`,
+              `${rangerName} is now a Forest. Activate: return ${rangerName} to hand — untaps ${bigDorkNO}.`,
+              `Tap ${bigDorkNO} for ${dorkOutput} mana. Recast ${rangerName} ({${rangerRecastCost === 1 ? "G" : "1}{G"}}). ${loopDesc}.`,
+              `Repeat for infinite green mana.`,
+              `Activate ${rangerName}: return Formidable Speaker (now a Forest via Ashaya) to your hand — untaps ${bigDorkNO}.`,
+              `Recast Formidable Speaker ({2}{G}). ETB: discard any card → search library for Duskwatch Recruiter.`,
+              `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly — assemble Endurance + Geier Reach Sanitarium win pile.`,
+            ];
+          } else {
+            // Path B: Duskwatch already available — simpler
+            headline = `Natural Order → Ashaya → ${rangerName} + ${bigDorkNO} = infinite mana → Duskwatch → WIN`;
+            detail = `Natural Order fetches Ashaya, Soul of the Wild. Ashaya makes all nontoken creatures Forests — ${rangerName} bounces itself to untap ${bigDorkNO} (${dorkOutput} mana, ${loopDesc}). True infinite mana. Cast Duskwatch Recruiter (already in ${board.has("Duskwatch Recruiter") ? "play" : "hand"}) → activate → WIN.`;
+            steps = [
+              `Cast Natural Order ({2}{G}{G}): sacrifice ${sacTarget !== bigDorkNO ? sacTarget : "any green creature"} → search library for Ashaya, Soul of the Wild, put it onto the battlefield.`,
+              `Ashaya enters — all your nontoken creatures are now Forest lands.`,
+              `${rangerName} is now a Forest. Activate: return ${rangerName} to your hand — this untaps ${bigDorkNO}.`,
+              `Tap ${bigDorkNO} for ${dorkOutput} mana. Recast ${rangerName}. ${loopDesc}.`,
+              `Repeat for infinite green mana.`,
+              `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly — assemble Endurance + Geier Reach Sanitarium win pile.`,
+            ];
+          }
+
+          if (isMyTurn) {
+            results.push({
+              priority: 16,
+              category: "⚡ CAST TO WIN",
+              headline,
+              combo: "natural_order_ashaya_win",
+              detail,
+              steps,
+              color: "#ff4500",
+            });
+          } else {
+            results.push({
+              priority: 15,
+              category: "⏭️ WIN NEXT TURN",
+              headline: `NEXT TURN: ${headline}`,
+              combo: "natural_order_ashaya_win",
+              detail: `Natural Order is a sorcery — cast it on your next turn. ${detail} Hold your hand — do not sacrifice any creatures or discard Forests.`,
+              steps: [`Wait for your turn. You have the win in hand.`, ...steps],
+              color: "#e67e22",
+            });
+          }
+        }
+      }
+    }
+  }
+
   if (inHand.has("Natural Order") && isMyTurn) {
     const hasSacTarget = battlefield.some(c => CARDS[c]?.type === "creature");
     if (hasSacTarget && (mana >= 4 || infiniteManaActive)) {
+      // Ashaya win line already handled above — only show generic advice if no win line
+      if (results.some(r => r.combo === "natural_order_ashaya_win")) {
+        // Win line already emitted — skip generic advice
+      } else {
       // Prioritise targets based on current board state
       const has3drop = battlefield.some(c => CARDS[c]?.cmc === 3 && CARDS[c]?.type === "creature");
       const has1drop = battlefield.some(c => CARDS[c]?.cmc === 1 && CARDS[c]?.type === "creature");
@@ -1820,6 +1915,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ].filter(Boolean),
         color: "#5dade2",
       });
+      } // end else (generic Natural Order advice — no instant win line available)
     }
   }
 
@@ -3900,135 +3996,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     }
   }
-  // ---- FORMIDABLE SPEAKER UNTAP LOOP (no Ashaya, no discard needed) ----
-  // Speaker {1},{T}: untap another permanent. Quirion Ranger: return a Forest from BATTLEFIELD
-  // to hand to untap a creature — no card in hand needed for the loop itself.
-  // With a dork producing ≥2 mana, this is infinite: untap dork → tap dork → return Forest → untap Speaker → repeat.
-  // If Speaker is in hand on opponent's turn: cast Yeva (commander) first for flash, then Speaker.
-  {
-    const speakerOnBrd  = board.has("Formidable Speaker");
-    const speakerInHnd  = inHand.has("Formidable Speaker") && !speakerOnBrd;
-    const quirionOnBrd  = board.has("Quirion Ranger") || board.has("Scryb Ranger");
-    const quirionNm     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
-    const forestOnBrd   = battlefield.some(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")))
-                       || board.has("Yavimaya, Cradle of Growth");
-    // Count elves that will be on board after casting Speaker (for dork output estimate)
-    const elvesAfterSpeaker = elvesOnBoard + (speakerInHnd ? 1 : 0);
-    // Find a dork producing ≥2 mana (net ≥1 after Speaker's {1} activation cost)
-    const dorkForUntapLoop = battlefield.find(c => {
-      if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
-      const t = CARDS[c]?.tapsFor;
-      if (typeof t === "number") return t >= 2;
-      if (t === "elves")    return elvesAfterSpeaker >= 2;
-      if (t === "creatures") return (creaturesOnBoard + (speakerInHnd ? 1 : 0)) >= 2;
-      if (t === "devotion") return (devotionOnBoard + (speakerInHnd ? 1 : 0)) >= 2;
-      return false;
-    });
-
-    if (quirionOnBrd && forestOnBrd && dorkForUntapLoop && !infiniteManaActive
-        && !results.some(r => r.combo === "speaker_quirion_untap_loop")) {
-      const dorkOutput = (() => {
-        const t = CARDS[dorkForUntapLoop]?.tapsFor;
-        if (typeof t === "number") return t;
-        if (t === "elves")    return elvesAfterSpeaker;
-        if (t === "creatures") return creaturesOnBoard + (speakerInHnd ? 1 : 0);
-        if (t === "devotion") return devotionOnBoard + (speakerInHnd ? 1 : 0);
-        return 2;
-      })();
-      const netPerLoop = dorkOutput - 1; // Speaker costs {1} to activate
-      const loopNote = netPerLoop > 0 ? `net +${netPerLoop}G per loop (infinite)` : "mana-neutral (infinite)";
-
-      if (speakerOnBrd && (isMyTurn || yevaFlash)) {
-        // Speaker already on board, can activate now
-        results.push({
-          priority: 16,
-          category: "⚙️ INFINITE MANA ONLINE",
-          headline: `Formidable Speaker + ${quirionNm}: untap loop → infinite mana (no Ashaya needed)`,
-          combo: "speaker_quirion_untap_loop",
-          detail: `Speaker's {1},{T} ability untaps ${dorkForUntapLoop}. ${quirionNm} returns a Forest from the battlefield to hand, untapping Speaker. Net: ${loopNote}. No Ashaya, no discard required — just Speaker on board with a battlefield Forest.`,
-          steps: [
-            `Activate Speaker: pay {1}, tap Speaker → untap ${dorkForUntapLoop}.`,
-            `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
-            `Activate ${quirionNm}: return a Forest from the battlefield to your hand — this untaps Speaker.`,
-            `Repeat. ${loopNote}.`,
-            `With infinite mana: cast Ashaya if available, then activate Duskwatch Recruiter ({2}{G}) to assemble the win pile.`,
-          ],
-          color: "#58d68d",
-        });
-      } else if (speakerInHnd) {
-        // Speaker in hand — need flash to cast it this opponent's turn
-        const yevaOnBoard = board.has("Yeva, Nature's Herald");
-        const yevaInHnd   = inHand.has("Yeva, Nature's Herald");
-        // Yeva is the commander — always castable from the command zone.
-        const yevaAvail   = true; // always available (command zone)
-        const yevaCmc     = CARDS["Yeva, Nature's Herald"]?.cmc ?? 4;
-        const speakerCmc  = CARDS["Formidable Speaker"]?.cmc ?? 3;
-        const totalCost   = yevaCmc + speakerCmc; // 4 + 3 = 7
-
-        if (!isMyTurn && !yevaFlash) {
-          if (mana >= totalCost && yevaAvail) {
-            // Can cast Yeva (command zone) then Speaker right now — instant win
-            const yevaSource = yevaOnBoard ? "" : yevaInHnd ? " (from hand)" : " (from command zone)";
-            results.push({
-              priority: 16,
-              category: "⚡ CAST TO WIN",
-              headline: `Cast Yeva${yevaSource} → flash Speaker → ${quirionNm} untap loop → infinite mana → WIN`,
-              combo: "speaker_quirion_untap_loop",
-              detail: `Cast Yeva, Nature's Herald ({2}{G}{G})${yevaSource} — she grants flash to all green creatures this turn. Flash in Formidable Speaker ({2}{G}). Speaker's {1},{T} untaps ${dorkForUntapLoop}. ${quirionNm} returns a battlefield Forest to hand, untapping Speaker. ${loopNote}. No discard needed — Speaker's ETB is optional; it's the activated ability that drives the loop.`,
-              steps: [
-                `Cast Yeva, Nature's Herald ({2}{G}{G})${yevaSource} — all green creatures get flash this turn.`,
-                `Flash in Formidable Speaker ({2}{G}). ETB: skip the discard — it's optional and not needed here.`,
-                `Speaker {1},{T}: untap ${dorkForUntapLoop}.`,
-                `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
-                `${quirionNm}: return a Forest from the battlefield to your hand — untaps Speaker.`,
-                `Repeat. ${loopNote}.`,
-                `With infinite mana: activate Duskwatch Recruiter ({2}{G}) to assemble the win pile and WIN.`,
-              ],
-              color: "#ff4500",
-            });
-          } else if (mana >= speakerCmc && (yevaFlash || isMyTurn)) {
-            // Already have flash somehow
-            results.push({
-              priority: 16,
-              category: "⚡ CAST TO WIN",
-              headline: `Flash in Formidable Speaker → ${quirionNm} untap loop → infinite mana → WIN`,
-              combo: "speaker_quirion_untap_loop",
-              detail: `Flash in Speaker ({2}{G}). Speaker's {1},{T} untaps ${dorkForUntapLoop}. ${quirionNm} returns a battlefield Forest to hand, untapping Speaker. ${loopNote}. No discard needed.`,
-              steps: [
-                `Flash in Formidable Speaker ({2}{G}). ETB: skip the discard — it's optional.`,
-                `Speaker {1},{T}: untap ${dorkForUntapLoop}.`,
-                `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
-                `${quirionNm}: return a Forest from the battlefield to your hand — untaps Speaker.`,
-                `Repeat. ${loopNote}.`,
-                `With infinite mana: activate Duskwatch Recruiter ({2}{G}) to assemble the win pile and WIN.`,
-              ],
-              color: "#ff4500",
-            });
-          } else {
-            // No flash, not our turn, and not enough mana for Yeva + Speaker this turn
-            const manaShort = totalCost - mana;
-            results.push({
-              priority: 14,
-              category: "⏭️ WIN NEXT TURN",
-              headline: `NEXT TURN: Cast Formidable Speaker → ${quirionNm} untap loop → infinite mana → WIN`,
-              combo: "speaker_quirion_untap_loop",
-              detail: `No discard needed for this line! Speaker's {1},{T} untaps ${dorkForUntapLoop}. ${quirionNm} returns a battlefield Forest to hand, untapping Speaker. ${loopNote}. Need ${manaShort} more mana to cast Yeva (command zone) + Speaker this turn, or wait for your turn.`,
-              steps: [
-                `On your next turn: cast Formidable Speaker ({2}{G}). ETB: skip the discard — not needed.`,
-                `Speaker {1},{T}: untap ${dorkForUntapLoop}.`,
-                `Tap ${dorkForUntapLoop} for ${dorkOutput} mana.`,
-                `${quirionNm}: return a Forest from the battlefield to your hand — untaps Speaker.`,
-                `Repeat. ${loopNote}.`,
-                `With infinite mana: activate Duskwatch Recruiter ({2}{G}) to assemble the win pile and WIN.`,
-              ],
-              color: "#e67e22",
-            });
-          }
-        }
-      }
-    }
-  }
-
   // ---- FORMIDABLE SPEAKER + ASHAYA + QUIRION RANGER TUTOR ENGINE ----
   {
     const speakerOnBoard  = board.has("Formidable Speaker");
