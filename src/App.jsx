@@ -1254,6 +1254,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const inGrave = new Set(graveyard);
   const allAvailable = new Set([...hand, ...battlefield]);
 
+  // accessible(cardName) — true if the card is in hand OR retrievable from graveyard this turn.
+  // Retrieval path: Eternal Witness in hand, card in graveyard, enough mana for both.
+  // witnessCmc=3 + cardCmc must be <= mana (checked at call sites where mana context matters).
+  // For simple presence checks (not mana-gated), use inHand.has() directly.
+  const witnessRetrievable = (cardName) => {
+    if (!inGrave.has(cardName)) return false;
+    if (inHand.has("Eternal Witness") && !board.has("Eternal Witness")) return true;
+    return false;
+  };
+  const accessible = (cardName) => inHand.has(cardName) || witnessRetrievable(cardName);
+
   const mana = parseInt(manaAvailable) || 0;
   const elvesOnBoard    = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => CARDS[c]?.type === "creature").length;
@@ -1262,10 +1273,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const devotionOnBoard = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
 
   // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
-  const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+  const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || accessible("Temur Sabertooth") || accessible("Kogla, the Titan Ape");
   const speakerHasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
   // Badgermole Cub needs Temur Sabertooth specifically — Kogla only bounces Humans, not Badgers
-  const badgermoleActive = (board.has("Badgermole Cub") || inHand.has("Badgermole Cub")) && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
+  const badgermoleActive = (board.has("Badgermole Cub") || accessible("Badgermole Cub")) && (board.has("Temur Sabertooth") || accessible("Temur Sabertooth"));
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
   const yevaFlash = board.has("Yeva, Nature's Herald");
 
@@ -1316,8 +1327,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // The land-animate piece must already be on the battlefield — if it is also only in hand we
   // would need to cast two cards sequentially before the mustPreExist tapper could fire, which
   // is too optimistic. Ashaya itself may still be in hand as long as the animator is in play.
-  const ashayaAvailable      = board.has("Ashaya, Soul of the Wild") || (inHand.has("Ashaya, Soul of the Wild") && canCastNow);
-  const landAnimateOnBoard   = board.has("Destiny Spinner") || (board.has("Badgermole Cub") && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth")));
+  const ashayaAvailable      = board.has("Ashaya, Soul of the Wild") || (accessible("Ashaya, Soul of the Wild") && canCastNow);
+  const landAnimateOnBoard   = board.has("Destiny Spinner") || (board.has("Badgermole Cub") && (board.has("Temur Sabertooth") || accessible("Temur Sabertooth")));
   const hasHasteEnabler      = ashayaAvailable && landAnimateOnBoard;
 
   const results = [];
@@ -1801,7 +1812,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const loopDesc = `net +${netMana}G per loop (infinite)`;
 
         // Determine which path is valid
-        const duskwatchReady = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+        const duskwatchReady = board.has("Duskwatch Recruiter") || accessible("Duskwatch Recruiter");
         // Path A: Speaker in library (always true if not on board), need something to discard for ETB.
         // The discard can come from: any card in hand (other than Natural Order itself),
         // OR a Forest bounced from battlefield via Scryb/Quirion Ranger.
@@ -1879,6 +1890,90 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           }
         }
       }
+    }
+  }
+
+  // ---- Eternal Witness retrieves Natural Order from graveyard → WIN ----
+  // Cast Witness (3) → ETB retrieves Natural Order → cast Natural Order (4) → fetch Speaker
+  // → Speaker ETB → find Ashaya (hand) → cast Ashaya (5) → loop → WIN.
+  // Total mana needed: 3 + 4 + 5 = 12 minimum.
+  // IMPORTANT: Natural Order requires sacrificing a creature. The ranger is required for the
+  // loop and must NOT be the sac target — need a separate expendable creature.
+  if (
+    isMyTurn &&
+    inHand.has("Eternal Witness") && !board.has("Eternal Witness") &&
+    inGrave.has("Natural Order") && !inHand.has("Natural Order") &&
+    mana >= 12 &&
+    !board.has("Ashaya, Soul of the Wild") &&
+    !results.some(r => r.combo === "natural_order_ashaya_win")
+  ) {
+    const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const rangerName = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+    const rangerRecastCost = board.has("Quirion Ranger") ? 1 : 2;
+    const dorkThreshold = 1 + rangerRecastCost;
+    // Ranger is essential for the loop — must NOT be sacrificed to Natural Order
+    const LOOP_PIECES = new Set(["Quirion Ranger","Scryb Ranger","Priest of Titania","Seedborn Muse","Yeva, Nature's Herald","Elvish Archdruid","Circle of Dreams Druid"]);
+    // Need a creature to sac that is NOT the ranger and NOT the dork powering the loop
+    const bigDork = battlefield.find(c => {
+      if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
+      const t = CARDS[c]?.tapsFor;
+      if (typeof t === "number") return t >= dorkThreshold;
+      if (t === "elves")    return (elvesOnBoard + 1) >= dorkThreshold; // +1 for Witness
+      if (t === "creatures") return (creaturesOnBoard + 1) >= dorkThreshold;
+      if (t === "devotion") return (devotionOnBoard + 1) >= dorkThreshold;
+      return false;
+    });
+    const sacCandidates = battlefield.filter(c =>
+      CARDS[c]?.type === "creature" &&
+      c !== bigDork &&
+      c !== rangerName &&        // ranger must survive for the loop
+      !LOOP_PIECES.has(c)        // prefer not to sac other loop pieces either
+    );
+    // Fall back to any non-ranger, non-dork creature if no clean target
+    const sacFallback = battlefield.filter(c =>
+      CARDS[c]?.type === "creature" && c !== bigDork && c !== rangerName
+    );
+    const sacTarget = sacCandidates[0] || sacFallback[0] || null;
+    // Discard source for Speaker ETB
+    const discardCard = hand.find(c => c !== "Eternal Witness") || null;
+    const hasBattlefieldForest = battlefield.some(c => c === "Forest" || CARDS[c]?.tags?.includes("basic"));
+    const rangerCanBounce = hasBattlefieldForest && hasRanger;
+    const hasDiscardForSpeaker = !!discardCard || rangerCanBounce;
+
+    if (hasRanger && bigDork && sacTarget && hasDiscardForSpeaker) {
+      const dorkOutput = (() => {
+        const t = CARDS[bigDork]?.tapsFor;
+        if (typeof t === "number") return t;
+        if (t === "elves")    return elvesOnBoard + 1;
+        if (t === "creatures") return creaturesOnBoard + 1;
+        if (t === "devotion") return devotionOnBoard + 1;
+        return dorkThreshold;
+      })();
+      const netMana = dorkOutput - rangerRecastCost;
+      const discardDesc = discardCard || `a Forest (bounce from battlefield via ${rangerName})`;
+      const bounceFirstStep = !discardCard && rangerCanBounce
+        ? [`Activate ${rangerName}: return a Forest from battlefield to hand — discard source for Speaker's ETB.`]
+        : [];
+
+      results.push({
+        priority: 16,
+        category: "⚡ CAST TO WIN",
+        headline: `Cast Eternal Witness → retrieve Natural Order → Speaker → find Ashaya → ${rangerName} loop → WIN`,
+        combo: "natural_order_ashaya_win",
+        detail: `Cast Eternal Witness (3 mana) → ETB retrieves Natural Order from graveyard. Cast Natural Order (4 mana, sacrifice ${sacTarget}) → fetch Formidable Speaker. Speaker ETB: discard ${discardDesc} → find Ashaya (5 mana to cast). Ashaya + ${rangerName} + ${bigDork} = infinite mana. Loop bounces Speaker → find Duskwatch → WIN.`,
+        steps: [
+          `Cast Eternal Witness ({2}{G}): ETB retrieves Natural Order from graveyard.`,
+          ...bounceFirstStep,
+          `Cast Natural Order ({2}{G}{G}): sacrifice ${sacTarget} → search for Formidable Speaker, put it onto the battlefield.`,
+          `Formidable Speaker ETB: discard ${discardDesc} → search library for Ashaya, Soul of the Wild.`,
+          `Cast Ashaya, Soul of the Wild ({3}{G}{G}). All your nontoken creatures are now Forest lands.`,
+          `${rangerName} is now a Forest. Activate: return ${rangerName} to hand — untaps ${bigDork}.`,
+          `Tap ${bigDork} for ${dorkOutput} mana. Recast ${rangerName}. Net +${netMana}G per loop (infinite).`,
+          `Activate ${rangerName}: return Formidable Speaker to hand — untaps ${bigDork}. Recast Speaker ({2}{G}): ETB — discard any card → find Duskwatch Recruiter.`,
+          `Cast Duskwatch Recruiter. Activate repeatedly → assemble win pile → Sanitarium mill win.`,
+        ],
+        color: "#ff4500",
+      });
     }
   }
 
@@ -2044,7 +2139,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- CHORD OF CALLING ----
   // Instant-speed creature tutor. Convoke reduces cost by tapping creatures.
   // Key: can be cast on opponent's end step at instant speed — huge with Yeva flash.
-  if (inHand.has("Chord of Calling")) {
+  if (accessible("Chord of Calling")) {
     const convokeTap   = Math.min(creaturesOnBoard, 7); // tap up to 7 creatures for convoke
     const remainder    = Math.max(0, 7 - convokeTap);   // remaining mana needed for X=5 (Ashaya)
     const effectiveMana = mana + convokeTap;             // mana + convoke = effective casting power
@@ -2299,7 +2394,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // This pattern isn't infinite but provides powerful early acceleration toward combo.
   {
     const provisionerOnBoard = board.has("Tireless Provisioner");
-    const provisionerInHand  = inHand.has("Tireless Provisioner") && (isMyTurn || yevaFlash);
+    const provisionerInHand  = inHand.has("Tireless Provisioner") && (isMyTurn || yevaAvailable);
     const provisionerAvail   = provisionerOnBoard || provisionerInHand;
     const fetchesInHand      = hand.filter(c => CARDS[c]?.tags?.includes("fetch")).length;
     const ashayaOnBoard      = board.has("Ashaya, Soul of the Wild");
@@ -2359,7 +2454,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "Fauna Shaman / Formidable Speaker (find Duskwatch or Eternal Witness)",
       ].filter(s => {
         // Only list conditions for pieces not already accessible
-        if (s.includes("Duskwatch") && (board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter"))) return false;
+        if (s.includes("Duskwatch") && (board.has("Duskwatch Recruiter") || accessible("Duskwatch Recruiter"))) return false;
         if (s.includes("Infectious Bite") && !inHand.has("Infectious Bite") && !inGrave.has("Infectious Bite")) return false;
         return true;
       });
@@ -2407,7 +2502,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
       // Stop conditions
       const stopConditions = [
-        ...(!board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")
+        ...(!board.has("Duskwatch Recruiter") && !accessible("Duskwatch Recruiter")
           ? ["Duskwatch Recruiter — switch to win pile loop (no life cost)"] : []),
         ...(!inHand.has("Infectious Bite") && !inGrave.has("Infectious Bite")
           ? ["Infectious Bite — switch to poison loop (no life cost)"] : []),
@@ -3365,14 +3460,25 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         }
       }
     } else if (missing.length === 1 && extras.ok) {
-      // One named piece missing — always emit advice even without a tutor in hand.
-      // If a deckList is active, only show this if the missing card is actually in the deck.
+      // One named piece missing — emit advice only when at least one required piece is
+      // already accessible (on board, or in hand AND currently castable).
+      // A card in hand that can't be cast right now (0 mana, opponent's turn, no flash)
+      // doesn't count as "owning" a piece — avoids noise on empty/locked boards.
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const missingCard = missing[0];
-        if (!inDeck(missingCard) || combo.requires.some(c => c !== missingCard && !inDeck(c))) {
+        const ownedAccessible = combo.requires.filter(r => r !== missingCard && (
+          board.has(r) || (inHand.has(r) && canCastNow)
+        ));
+        // For single-required-card combos (the card IS the combo), always show when
+        // extras are satisfied (e.g. infinite mana active). For multi-piece combos,
+        // require at least one other piece to be accessible to avoid empty-board noise.
+        const hasEnoughContext = combo.requires.length === 1 || ownedAccessible.length > 0;
+        if (!hasEnoughContext) {
+          // No owned pieces accessible right now — suppress to avoid noise on empty boards
+        } else if (!inDeck(missingCard) || combo.requires.some(c => c !== missingCard && !inDeck(c))) {
           // Missing card or another required card not in deck — skip
         } else {
-        const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive);
+        const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive, graveyard);
         const speakerIsTutor = tutorOptions.length > 0 && tutorOptions[0].startsWith("Formidable Speaker");
         results.push({
           priority: combo.priority + 1,
@@ -3403,7 +3509,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           && typeof extras.missing === "string"
           && extras.missing.toLowerCase().includes("endurance");
         if (!suppressEndurance && inDeck(extras.missing)) {
-          const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana, infiniteManaActive);
+          const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana, infiniteManaActive, graveyard);
           results.push({
             priority: combo.priority,
             category: "🔧 NEARLY THERE",
@@ -3422,14 +3528,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // so the player knows this combo is on the horizon. Only for high-value combos (≥8)
       // and only when the player owns at least one required piece already.
       if (combo.type !== "infinite-mana" || !infiniteManaActive) {
-        const ownedPieces = combo.requires.filter(r => board.has(r) || inHand.has(r));
+        const ownedPieces = combo.requires.filter(r => board.has(r) || (inHand.has(r) && canCastNow));
         if (ownedPieces.length >= 1) {
           // When a deckList is active, skip this combo entirely if ANY required card is not in the deck
           if (combo.requires.some(c => !inDeck(c))) {
             // At least one required card isn't in this deck — don't suggest this combo
           } else {
           const missingNames = missing.slice(0, 3).join(", ");
-          const tutorOptions = getTutorOptions(missing[0], hand, battlefield, mana, infiniteManaActive);
+          const tutorOptions = getTutorOptions(missing[0], hand, battlefield, mana, infiniteManaActive, graveyard);
           results.push({
             priority: combo.priority - 3,
             category: "🔨 BUILDING TOWARDS",
@@ -3470,7 +3576,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Can we access Duskwatch Recruiter right now?
   // Direct: on board, in hand on our turn, or in hand with Yeva flash/available (commander zone)
   const duskwatchOnBoard  = board.has("Duskwatch Recruiter");
-  const duskwatchInHand   = inHand.has("Duskwatch Recruiter");
+  const duskwatchInHand   = accessible("Duskwatch Recruiter");
   const duskwatchDirect   = duskwatchOnBoard
     || (duskwatchInHand && isMyTurn)
     || (duskwatchInHand && yevaAvailable);
@@ -3516,7 +3622,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // Woodland Bellower: ETB puts any non-legendary green creature CMC <= 3 directly onto battlefield.
   // Castable on our turn (sorcery speed) or with Yeva flash. Already-on-board means ETB already fired.
-  const bellowerInHand    = inHand.has("Woodland Bellower");
+  const bellowerInHand    = accessible("Woodland Bellower");
   const bellowerCastable  = bellowerInHand && (isMyTurn || yevaAvailable);
   // Bellower can find: Duskwatch, Eternal Witness, Endurance, Destiny Spinner, Elvish Reclaimer,
   // Fauna Shaman (discard to tutor), Formidable Speaker (discard → full library search), Hyrax Tower Scout, Quirion Ranger, Scryb Ranger,
@@ -3547,7 +3653,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   ].filter(({ tutor, speed }) => {
     if (speed === "instant")   return true;
     if (speed === "sorcery")   return isMyTurn;
-    if (speed === "activated") return isMyTurn || yevaFlash;
+    if (speed === "activated") return isMyTurn || yevaAvailable;
     if (speed === "bellower")  return isMyTurn || yevaAvailable;
     return false;
   });
@@ -3659,7 +3765,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const reclaimerInHand    = inHand.has("Elvish Reclaimer");
   const reclaimerCastable  = reclaimerOnBoard
     || (reclaimerInHand && isMyTurn)
-    || (reclaimerInHand && yevaFlash);
+    || (reclaimerInHand && yevaAvailable);
 
   // Reclaimer's ability can activate if it's on the board AND:
   //   a) it has haste — Destiny Spinner animates LANDS as creatures with haste, so Reclaimer
@@ -3768,7 +3874,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const witnessInHand    = inHand.has("Eternal Witness");
     const witnessCastable  = witnessOnBoard
       || (witnessInHand && isMyTurn)
-      || (witnessInHand && yevaFlash);
+      || (witnessInHand && yevaAvailable);
 
     // Also reachable via the same tutor logic as Duskwatch
     const witnessTutors = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons",
@@ -3783,9 +3889,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const isBellower  = t === "Woodland Bellower";
         const isSpeaker   = t === "Formidable Speaker";
         if (isInstant)   return t === "Archdruid's Charm" ? (mana >= 3 || infiniteManaActive) : true;
-        if (isActivated) return board.has(t) && (isMyTurn || yevaFlash);
-        if (isBellower)  return inHand.has(t) && (isMyTurn || yevaFlash);
-        if (isSpeaker)   return board.has(t) && speakerHasBouncer && (isMyTurn || yevaFlash);
+        if (isActivated) return board.has(t) && (isMyTurn || yevaAvailable);
+        if (isBellower)  return inHand.has(t) && (isMyTurn || yevaAvailable);
+        if (isSpeaker)   return board.has(t) && speakerHasBouncer && (isMyTurn || yevaAvailable);
         return isMyTurn; // sorcery speed
       });
     const witnessAccessible = witnessCastable || witnessTutors.length > 0;
@@ -3923,7 +4029,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Is this an immediate win con?
       const isWinNow = (infiniteManaActive || mana >= 20)
         && (primaryTarget === "Duskwatch Recruiter"
-          || (primaryTarget === "Eternal Witness" && (inHand.has("Infectious Bite") || inGrave.has("Infectious Bite")) && hasBouncer)
+          || (primaryTarget === "Eternal Witness" && (accessible("Infectious Bite") || inGrave.has("Infectious Bite")) && hasBouncer)
           || (primaryTarget === "Endurance" && board.has("Geier Reach Sanitarium") && infiniteManaActive));
 
       // Reason for each target
@@ -4010,7 +4116,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (inHand.has("Fauna Shaman") && !board.has("Fauna Shaman") && (infiniteManaActive || mana >= 20)) {
     const hasteNow    = board.has("Destiny Spinner");
     const hasBouncer  = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
-    const biteAvail   = inHand.has("Infectious Bite") || inGrave.has("Infectious Bite");
+    const biteAvail   = accessible("Infectious Bite") || inGrave.has("Infectious Bite");
     // Determine the best target: Duskwatch (pile win) vs Eternal Witness (poison win)
     // Prefer Duskwatch unless Bite is available and a bouncer is on board (poison is cleaner)
     const poisonLineAvail = biteAvail && hasBouncer && !board.has("Eternal Witness");
@@ -4058,18 +4164,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   //   5. Repeat: each cast fetches any creature. Find Duskwatch → win.
   // This is NOT just ONE PIECE AWAY — it is a CAST TO WIN NOW play.
   {
-    const speakerInHandNow = inHand.has("Formidable Speaker") && !board.has("Formidable Speaker");
+    const speakerInHandNow = accessible("Formidable Speaker") && !board.has("Formidable Speaker");
     const quirionInLoop    = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const quirionLoopName  = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
     const ashayaNotOnBoard = !board.has("Ashaya, Soul of the Wild");
-    const canCastSpeakerNow = speakerInHandNow && (isMyTurn || yevaFlash) && mana >= 3;
+    const canCastSpeakerNow = speakerInHandNow && (isMyTurn || yevaFlash) && mana >= 3; // free flash only; command-zone handled by canCastYevaThenSpeaker
     const winLineAvailable  = speakerInHandNow && mana >= 3;
     // Speaker ETB requires discarding another card — if Speaker is the only card in hand, ETB fizzles.
     const hasDiscardForSpeaker = hand.filter(c => c !== "Formidable Speaker").length > 0;
     // Yeva in hand: casting her first gives flash to all green creatures this turn.
     // Yeva costs {2}{G}{G} = 4. Speaker costs {2}{G} = 3. Total = 7 to do both this opponent's turn.
     const yevaInHand = inHand.has("Yeva, Nature's Herald") && !board.has("Yeva, Nature's Herald");
-    const canCastYevaThenSpeaker = !isMyTurn && !yevaFlash && yevaInHand && mana >= 7;
+    const canCastYevaThenSpeaker = !isMyTurn && !yevaFlash && yevaAvailable && mana >= 7;
 
     if (speakerInHandNow && quirionInLoop && winLineAvailable && hasDiscardForSpeaker && !infiniteManaActive) {
       // Estimate dork output AFTER Speaker enters (+1 elf = +1 mana for elf-counting dorks)
@@ -4119,24 +4225,25 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             color: "#ff4500",
           });
         } else if (canCastYevaThenSpeaker) {
-          // Yeva in hand + enough mana to cast both this opponent's turn → instant win right now
+          // Yeva available (hand or command zone) + enough mana → instant win this opponent's turn
+          const yevaSource = yevaInHand ? "in hand" : "from command zone";
           results.push({
             priority: 15,
             category: "⚡ CAST TO WIN",
             headline: `Cast Yeva → flash in Formidable Speaker → find Ashaya → ${quirionLoopName} loop → find Duskwatch → WIN`,
             combo: "speaker_hand_cast_to_win",
-            detail: `You have Yeva, Nature's Herald in hand and ${mana} mana available. Cast Yeva ({2}{G}{G}) first — she gives all green creatures flash. Immediately flash in Formidable Speaker ({2}{G}) this same opponent's turn. ETB: discard a card → search for Ashaya. With Ashaya in play, Speaker becomes a Forest — ${quirionLoopName} bounces it to untap ${dorkName} (${dorkOutput} mana, ${loopDesc}). Find Duskwatch → win.`,
+            detail: `You have ${mana} mana available. Cast Yeva, Nature's Herald (${yevaSource}, {2}{G}{G}) — she gives all green creatures flash. Immediately flash in Formidable Speaker ({2}{G}) this same opponent's turn. ETB: discard a card → search for Ashaya. With Ashaya in play, Speaker becomes a Forest — ${quirionLoopName} bounces it to untap ${dorkName} (${dorkOutput} mana, ${loopDesc}). Find Duskwatch → win.`,
             steps: [
-              `Cast Yeva, Nature's Herald ({2}{G}{G}). Green creatures now have flash until end of turn.`,
+              `Cast Yeva, Nature's Herald (${yevaSource}, {2}{G}{G}). Green creatures now have flash until end of turn.`,
               ...sharedSteps,
             ],
             color: "#ff4500",
           });
         } else {
-          // No flash available, not our turn — flag as next-turn priority with Yeva hint if available
-          const yevaHint = yevaInHand && mana < 7
-            ? ` (You have Yeva in hand but need ${7 - mana} more mana to cast both this turn.)`
-            : yevaInHand ? ` Alternatively, cast Yeva ({2}{G}{G}) first this turn to flash in Speaker immediately — needs 7 total mana.` : "";
+          // No flash available, not our turn — flag as next-turn priority with Yeva hint
+          const yevaHint = mana < 7
+            ? ` (Need ${7 - mana} more mana to cast Yeva from command zone + Speaker this turn.)`
+            : "";
           results.push({
             priority: 14,
             category: "⏭️ WIN NEXT TURN",
@@ -4153,11 +4260,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- FORMIDABLE SPEAKER + ASHAYA + QUIRION RANGER TUTOR ENGINE ----
   {
     const speakerOnBoard  = board.has("Formidable Speaker");
-    const speakerInHand   = inHand.has("Formidable Speaker");
+    const speakerInHand   = accessible("Formidable Speaker");
     const ashayaOnBoard   = board.has("Ashaya, Soul of the Wild");
     const quirionOnBoard  = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const quirionName     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
-    const hasDuskwatch    = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+    const hasDuskwatch    = board.has("Duskwatch Recruiter") || accessible("Duskwatch Recruiter");
     const bigDork         = findBigDork(battlefield, hand, infiniteManaActive, 2);
     const creatureCount   = battlefield.filter(c => CARDS[c]?.type === "creature").length;
 
@@ -4165,7 +4272,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // When Speaker is in hand (not yet cast), verify there's another card to discard for the ETB.
       // Once on board the loop is self-sustaining: each fetch provides a card to discard next loop.
       const speakerFirstCastOk = speakerOnBoard || hand.filter(c => c !== "Formidable Speaker").length > 0;
-      if (speakerFirstCastOk && (speakerOnBoard || (speakerInHand && (isMyTurn || yevaFlash)))) {
+      if (speakerFirstCastOk && (speakerOnBoard || (speakerInHand && (isMyTurn || yevaAvailable)))) {
         const alreadyShown = results.some(r => r.combo === "speaker_ashaya_tutor" && r.priority >= 10);
         if (!alreadyShown) {
           results.push({
@@ -4215,7 +4322,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- FORMIDABLE SPEAKER WIN CON (in hand) ----
   // Speaker in hand + bouncer on board + infinite mana = win con via ETB tutoring
   // Requires at least one other card in hand to discard on first cast; bounce loop is self-sustaining after that.
-  if (inHand.has("Formidable Speaker") && !board.has("Formidable Speaker")
+  if (accessible("Formidable Speaker") && !board.has("Formidable Speaker")
       && speakerHasBouncer && (infiniteManaActive || mana >= 20)
       && hand.filter(c => c !== "Formidable Speaker").length > 0) {
     const hasteNow     = board.has("Destiny Spinner");
@@ -4338,14 +4445,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const bouncer      = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
 
     // Fauna Shaman can find Eternal Witness if Witness isn't already on board
-    const faunaFindsWitness = faunaCanActivate && !witnessOnBrd && (isMyTurn || yevaFlash);
+    const faunaFindsWitness = faunaCanActivate && !witnessOnBrd && (isMyTurn || yevaAvailable);
     // Fauna Shaman in hand + haste can also find Witness immediately
     const faunaInHandFindsWitness = inHand.has("Fauna Shaman") && !board.has("Fauna Shaman")
       && board.has("Destiny Spinner") && !witnessOnBrd;
     // Formidable Speaker on board + bouncer can find Eternal Witness via repeated ETB
-    const speakerFindsWitness = speakerCanActivate && !witnessOnBrd && (isMyTurn || yevaFlash);
+    const speakerFindsWitness = speakerCanActivate && !witnessOnBrd && (isMyTurn || yevaAvailable);
     // Formidable Speaker in hand + haste (Destiny Spinner) + bouncer → find Witness immediately
-    const speakerInHandFindsWitness = inHand.has("Formidable Speaker") && !board.has("Formidable Speaker")
+    const speakerInHandFindsWitness = accessible("Formidable Speaker") && !board.has("Formidable Speaker")
       && board.has("Destiny Spinner") && speakerHasBouncer && !witnessOnBrd
       && hand.filter(c => c !== "Formidable Speaker").length > 0; // needs a card to discard for ETB
 
@@ -4532,7 +4639,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // Build tutor chain — what can we fetch with infinite mana?
     const tutorChain = [];
-    if (!board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")) {
+    if (!board.has("Duskwatch Recruiter") && !accessible("Duskwatch Recruiter")) {
       const tutors = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Fauna Shaman",
         "Survival of the Fittest","Green Sun's Zenith","Elvish Harbinger","Formidable Speaker"]
         .filter(t => board.has(t) || inHand.has(t));
@@ -4644,34 +4751,37 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   return { results: results.slice(0, 7), infiniteManaActive, activeComboName };
 }
 
-function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false) {
+function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = []) {
   const options = [];
   const board = new Set(battlefield);
   const inHand = new Set(hand);
+  const inGrave = new Set(graveyard);
+  const witnessRetrievableLocal = (c) => inGrave.has(c) && inHand.has("Eternal Witness") && !board.has("Eternal Witness");
+  const accessible = (c) => inHand.has(c) || witnessRetrievableLocal(c);
 
   if (CARDS[target]?.type === "creature" || CARDS[target]?.type === "land") {
     // Formidable Speaker in hand: ETB — "you MAY discard a card. If you do, search library for any creature."
     // Requires at least one OTHER card in hand to discard, otherwise ETB fizzles with no tutor.
     const speakerDiscardAvail = hand.filter(c => c !== "Formidable Speaker").length > 0;
-    if (inHand.has("Formidable Speaker") && !board.has("Formidable Speaker")
+    if (accessible("Formidable Speaker") && !board.has("Formidable Speaker")
         && CARDS[target]?.type === "creature"
         && speakerDiscardAvail
         && (mana >= 3 || infiniteMana)) options.push("Formidable Speaker (cast → ETB finds any creature)");
-    if (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteMana) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
-    if (inHand.has("Summoner's Pact") && CARDS[target]?.type === "creature") options.push("Summoner's Pact");
+    if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
+    if (accessible("Summoner's Pact") && CARDS[target]?.type === "creature") options.push("Summoner's Pact");
     if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
     if (inHand.has("Chord of Calling")) {
       const targetCmc = CARDS[target]?.cmc ?? 2;
       const chordCost = Math.max(0, targetCmc + 3 - (battlefield?.length ?? 0));
       if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, battlefield?.length ?? 0)} creatures)`);
     }
-    if (inHand.has("Green Sun's Zenith") && (mana >= 1 || infiniteMana)) options.push("Green Sun's Zenith");
+    if (accessible("Green Sun's Zenith") && (mana >= 1 + (inGrave.has("Green Sun's Zenith") ? 3 : 0) || infiniteMana)) options.push("Green Sun's Zenith");
     if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteMana) && hand.some(c => CARDS[c]?.type === "creature")) options.push("Survival of the Fittest");
     if (inHand.has("Crop Rotation") && CARDS[target]?.type === "land" && (mana >= 1 || infiniteMana)) options.push("Crop Rotation");
     if ((board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && CARDS[target]?.type === "land") options.push("Elvish Reclaimer");
     if (inHand.has("Sylvan Scrying") && CARDS[target]?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
     if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
-    if (inHand.has("Natural Order") && (mana >= 4 || infiniteMana)) options.push("Natural Order");
+    if (accessible("Natural Order") && (mana >= 4 + (inGrave.has("Natural Order") ? 3 : 0) || infiniteMana)) options.push("Natural Order");
   }
   return options;
 }
@@ -5384,13 +5494,15 @@ function AdviceCard({ advice, index, activeCards, collapseKey }) {
   );
 }
 
-function QuickAdd({ zone, onAdd }) {
+function QuickAdd({ zone, onAdd, deckCards }) {
   const quickCards = {
     battlefield: ["Ashaya, Soul of the Wild","Temur Sabertooth","Priest of Titania","Quirion Ranger","Earthcraft","Gaea's Cradle","Yeva, Nature's Herald","Wirewood Lodge"],
     hand: ["Ashaya, Soul of the Wild","Quirion Ranger","Chord of Calling","Worldly Tutor","Infectious Bite","Eternal Witness","Natural Order","Summoner's Pact"],
     graveyard: ["Eternal Witness","Infectious Bite","Beast Within"],
   };
-  const cards = quickCards[zone] || [];
+  const pool = deckCards ? new Set(deckCards) : null;
+  const cards = (quickCards[zone] || []).filter(c => !pool || pool.has(c));
+  if (cards.length === 0) return null;
   return (
     <div style={{ marginBottom: "6px" }}>
       <div style={{ fontSize: "10px", letterSpacing: "1.5px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "4px" }}>QUICK ADD</div>
@@ -5650,7 +5762,9 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
               {activeDeckId === null && <span style={{ color: COLORS.green1 }}>✓</span>}
             </div>
 
-            {(decks || []).map(deck => (
+            {(decks || []).map(deck => {
+              const unknown = deck.cards.filter(c => c !== "Forest" && !CARDS[c]).length;
+              return (
               <div key={deck.id} style={{
                 padding: "10px 14px", borderRadius: "6px",
                 marginBottom: "8px",
@@ -5662,13 +5776,16 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
                   <span style={{ fontSize: "16px" }}>🃏</span>
                   <div>
                     <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: activeDeckId === deck.id ? COLORS.text : COLORS.textMid }}>{deck.name}</div>
-                    <div style={{ fontSize: "11px", color: COLORS.textDim }}>{deck.cards.length} cards</div>
+                    <div style={{ fontSize: "11px", color: COLORS.textDim }}>
+                      {deck.cards.length} cards
+                      {unknown > 0 && <span style={{ color: "#e74c3c", marginLeft: "6px" }}>· {unknown} unknown</span>}
+                    </div>
                   </div>
                   {activeDeckId === deck.id && <span style={{ color: COLORS.green1 }}>✓</span>}
                 </div>
                 <button onClick={() => deleteDeck(deck.id)} style={{ background: "none", border: `1px solid #5a1a1a`, borderRadius: "4px", padding: "3px 8px", color: "#e74c3c88", cursor: "pointer", fontSize: "11px" }}>✕</button>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>
@@ -6145,21 +6262,21 @@ export default function YevaAdvisor() {
             <div style={{ height: "1px", background: COLORS.border, marginBottom: "16px" }} />
 
             {/* Hand */}
-            <QuickAdd zone="hand" onAdd={addTo("hand")} />
+            <QuickAdd zone="hand" onAdd={addTo("hand")} deckCards={activeDeck?.cards} />
             <CardInput label="Hand" zone="hand" cards={hand}
               onAdd={addTo("hand")} onRemove={removeFrom(setHand)}
               placeholder="Cards in your hand…"
               deckCards={activeDeck?.cards} />
 
             {/* Battlefield */}
-            <QuickAdd zone="battlefield" onAdd={addTo("battlefield")} />
+            <QuickAdd zone="battlefield" onAdd={addTo("battlefield")} deckCards={activeDeck?.cards} />
             <CardInput label="Battlefield" zone="battlefield" cards={battlefield}
               onAdd={addTo("battlefield")} onRemove={removeFrom(setBattlefield)}
               placeholder="Permanents you control…"
               deckCards={activeDeck?.cards} />
 
             {/* Graveyard */}
-            <QuickAdd zone="graveyard" onAdd={addTo("graveyard")} />
+            <QuickAdd zone="graveyard" onAdd={addTo("graveyard")} deckCards={activeDeck?.cards} />
             <CardInput label="Graveyard" zone="graveyard" cards={graveyard}
               onAdd={addTo("graveyard")} onRemove={removeFrom(setGraveyard)}
               placeholder="Cards in your graveyard…"
