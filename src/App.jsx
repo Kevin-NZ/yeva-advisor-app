@@ -7382,8 +7382,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [showScry, setShowScry] = useState(false);
   const [scryOrder, setScryOrder] = useState([]);
   const [scryBottom, setScryBottom] = useState(new Set());
-  // ── Statistics ──────────────────────────────────────────────
-  const [gameHistory, setGameHistory] = useState([]); // [{gameNum, mulligans, firstDork, infiniteMana, winCondition, turns, openingHand}]
+  // ── Statistics (persisted via window.storage) ────────────────
+  const [gameHistory, setGameHistory] = useState([]);
+  const [statsLoaded, setStatsLoaded] = useState(false);
   const milestoneRef = useRef({ firstDork: null, infiniteMana: null, winCondition: null });
   const openingHandRef = useRef([]);
   const gameNumRef = useRef(0);
@@ -7393,6 +7394,36 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
   const deckCards = activeDeck?.cards ?? [];
   const hasDeck = deckCards.length > 0;
+
+  // Storage key scoped to deck so each deck gets its own stats
+  const statsKey = `goldfish-stats:${(activeDeck?.name ?? "default").replace(/[^a-zA-Z0-9-_]/g, "_")}`;
+
+  // Load persisted stats on mount (or when deck changes)
+  useEffect(() => {
+    (async () => {
+      try {
+        const result = await storage.get(statsKey);
+        if (result?.value) {
+          const saved = JSON.parse(result.value);
+          setGameHistory(saved.history ?? []);
+          gameNumRef.current = saved.gameNum ?? 0;
+        }
+      } catch {
+        // key not found or parse error — start fresh
+      } finally {
+        setStatsLoaded(true);
+      }
+    })();
+  }, [statsKey]);
+
+  // Persist whenever gameHistory changes (after initial load)
+  useEffect(() => {
+    if (!statsLoaded) return;
+    storage.set(statsKey, JSON.stringify({
+      history: gameHistory,
+      gameNum: gameNumRef.current,
+    })).catch(() => {});
+  }, [gameHistory, statsLoaded]);
 
   // ── derived analysis ────────────────────────────────────────
   const untappedBattlefield = battlefield.filter((_, i) => !tapped.has(`${battlefield[i]}:${i}`));
@@ -7466,7 +7497,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       winCondition: milestoneRef.current.winCondition,
       turns: turnRef.current,
     };
-    setGameHistory(prev => [...prev, entry]);
+    setGameHistory(prev => {
+      const next = [...prev, entry];
+      // Save immediately so data persists even if modal closes before effect fires
+      storage.set(statsKey, JSON.stringify({
+        history: next,
+        gameNum: gameNumRef.current,
+      })).catch(() => {});
+      return next;
+    });
     setPhase("stats");
   }
 
@@ -8552,6 +8591,18 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   padding: "10px 20px", color: COLORS.green2, cursor: "pointer",
                   fontFamily: "'Cinzel', serif", fontSize: "12px", letterSpacing: "1px", marginLeft: "auto",
                 }}>▶ NEW GAME</button>
+                {games.length > 0 && (
+                  <button onClick={() => {
+                    if (!window.confirm("Clear all goldfish stats for this deck? This cannot be undone.")) return;
+                    setGameHistory([]);
+                    gameNumRef.current = 0;
+                    storage.set(statsKey, JSON.stringify({ history: [], gameNum: 0 })).catch(() => {});
+                  }} style={{
+                    background: "none", border: `1px solid ${COLORS.red}`, borderRadius: "8px",
+                    padding: "10px 16px", color: COLORS.red, cursor: "pointer",
+                    fontFamily: "'Cinzel', serif", fontSize: "12px", letterSpacing: "1px",
+                  }}>✕ CLEAR</button>
+                )}
               </div>
               <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
