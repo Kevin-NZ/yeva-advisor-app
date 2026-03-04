@@ -2583,8 +2583,93 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- TUTOR → FORMIDABLE SPEAKER WIN PATH --------------------------------
+  // If Quirion/Scryb Ranger + a big dork are on board and Speaker isn't accessible,
+  // any tutor that can find Speaker (green creature, CMC 3) is effectively a win.
+  // Cast tutor → get Speaker → bounce loop via Quirion → find Ashaya → loop freely.
+  {
+    const hasRangerForSpeaker   = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const speakerAlreadyAccess  = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+    const hasBigDorkForSpeaker  = board.has("Priest of Titania") || board.has("Circle of Dreams Druid")
+      || board.has("Elvish Archdruid") || board.has("Karametra's Acolyte");
+
+    if (hasRangerForSpeaker && !speakerAlreadyAccess && hasBigDorkForSpeaker) {
+      const dorkName = board.has("Priest of Titania") ? "Priest of Titania"
+        : board.has("Circle of Dreams Druid") ? "Circle of Dreams Druid"
+        : board.has("Elvish Archdruid") ? "Elvish Archdruid"
+        : "Karametra's Acolyte";
+
+      // Determine the best available tutor for Speaker (green creature, CMC 3)
+      const speakerCmc = 3;
+      let tutorName = null, tutorCost = null, tutorNote = null, tutorNow = false;
+
+      const gszCost = speakerCmc + 1; // X=3 + {G}
+      if (inHand.has("Green Sun's Zenith") && isMyTurn && (mana >= gszCost || infiniteManaActive)) {
+        tutorName = "Green Sun's Zenith"; tutorCost = `{${speakerCmc}}{G}`;
+        tutorNote = `Green Sun's Zenith (X=${speakerCmc}): search library for Formidable Speaker, put it directly onto the battlefield.`;
+        tutorNow = true;
+      } else if (inHand.has("Green Sun's Zenith") && !isMyTurn && (mana >= gszCost || infiniteManaActive)) {
+        // GSZ is a sorcery — can't cast on opponent's turn, but will be able to next turn
+        tutorName = "Green Sun's Zenith (next turn)"; tutorCost = `{${speakerCmc}}{G}`;
+        tutorNote = `On your next turn: cast Green Sun's Zenith (X=${speakerCmc}) → Formidable Speaker enters the battlefield directly.`;
+        tutorNow = false;
+      } else if ((inHand.has("Elvish Harbinger") || board.has("Elvish Harbinger"))
+          && (mana >= 3 || infiniteManaActive) && (isMyTurn || yevaFlash)) {
+        const etb = board.has("Elvish Harbinger");
+        tutorName = "Elvish Harbinger"; tutorCost = "{2}{G}";
+        tutorNote = etb
+          ? "Elvish Harbinger ETB: search for Formidable Speaker, put it on top of library. Draw it next turn."
+          : `Cast Elvish Harbinger ({2}{G})${!isMyTurn && yevaFlash ? " at instant speed via Yeva" : ""}: ETB puts Formidable Speaker on top of library.`;
+        tutorNow = isMyTurn || yevaFlash;
+      } else if ((inHand.has("Worldly Tutor") || inHand.has("Summoner's Pact"))
+          && (mana >= 1 || infiniteManaActive)) {
+        tutorName = inHand.has("Worldly Tutor") ? "Worldly Tutor" : "Summoner's Pact";
+        tutorCost = tutorName === "Worldly Tutor" ? "{G}" : "{0}";
+        tutorNote = `${tutorName}: search library for Formidable Speaker, put it on top.`;
+        tutorNow = true;
+      }
+
+      if (tutorName) {
+        const gszDirect = tutorName === "Green Sun's Zenith"; // puts directly onto battlefield
+        const gszNextTurn = tutorName === "Green Sun's Zenith (next turn)";
+        results.push({
+          priority: 14,
+          category: gszDirect ? "🔥 WIN NOW" : "🔥 WIN NEXT TURN",
+          headline: gszDirect
+            ? `Green Sun's Zenith (X=3) → Formidable Speaker → inevitable win this turn`
+            : gszNextTurn
+              ? `Green Sun's Zenith next turn (X=3) → Formidable Speaker → inevitable win`
+              : `${tutorName} → Formidable Speaker → inevitable win`,
+          detail: `With Quirion Ranger + ${dorkName} on board, fetching Formidable Speaker starts the full tutor loop: Speaker ETB finds any creature (discard to search entire library), Quirion bounces Speaker back to hand, ${dorkName} pays the recast. Find Ashaya → Speaker becomes a Forest → loop freely. Fetch Duskwatch Recruiter → win.`,
+          steps: [
+            tutorNote,
+            (gszDirect || gszNextTurn)
+              ? `Formidable Speaker enters the battlefield. ETB: discard a card → search your ENTIRE library for any creature → find Ashaya, Soul of the Wild.`
+              : `Cast Formidable Speaker ({2}{G}): ETB — discard any card. Search your ENTIRE library for any creature → find Ashaya, Soul of the Wild.`,
+            `Ashaya makes Formidable Speaker a Forest. Quirion Ranger returns Speaker to hand, untapping ${dorkName}.`,
+            `${dorkName} taps for mana. Recast Speaker → ETB again → search for next piece. Repeat until you find Duskwatch Recruiter.`,
+            "Activate Duskwatch Recruiter to assemble the full win pile → Sanitarium mill.",
+          ],
+          color: "#ff6b35",
+          combo: "speaker_win_via_tutor",
+        });
+      }
+    }
+  }
+
   // ---- ELVISH HARBINGER ----
-  if ((inHand.has("Elvish Harbinger") || board.has("Elvish Harbinger")) && isMyTurn) {
+  if (inHand.has("Elvish Harbinger") || board.has("Elvish Harbinger")) {
+    const castable = inHand.has("Elvish Harbinger") && (mana >= 3 || infiniteManaActive);
+    const etbReady = board.has("Elvish Harbinger");
+    const canActNow = castable || etbReady;
+    // Can cast now at instant speed, or will be able to cast on our next turn
+    const canFlashNow = canActNow && (isMyTurn || yevaFlash);
+    const canCastNextTurn = inHand.has("Elvish Harbinger"); // always true if in hand
+
+    // HIGH PRIORITY: handled by the generic TUTOR → SPEAKER WIN PATH block above.
+    // Only emit the general Harbinger tutor advice if the Speaker win wasn't already shown.
+
+    // General Harbinger targets (lower priority)
     const harbingerTargets = [
       { name: "Elvish Archdruid",       reason: "big dork — taps for elves on board; also pumps all elves" },
       { name: "Priest of Titania",      reason: "big dork — taps for elves on board" },
@@ -2596,30 +2681,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Wirewood Symbiote",      reason: "untap engine — bounces elf to untap any creature" },
       { name: "Elvish Reclaimer",       reason: "land tutor for Cradle, Sanitarium, Nykthos" },
       { name: "Chomping Changeling",    reason: "elf body that counts for all elf synergies" },
-    ].filter(t => !board.has(t.name));
-    if (harbingerTargets.length > 0) {
-      const castable = inHand.has("Elvish Harbinger") && (mana >= 3 || infiniteManaActive);
-      const etbReady = board.has("Elvish Harbinger");
-      if (castable || etbReady) {
-        const best = harbingerTargets[0];
-        results.push({
-          priority: 7,
-          category: "🎯 TUTOR",
-          headline: `Elvish Harbinger${etbReady ? " ETB" : ""} → ${best.name}`,
-          detail: `Elvish Harbinger finds any elf. ${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}. Harbinger also adds a mana dork body ({T}: add {G}) and an elf to the count.`,
-          steps: [
-            etbReady
-              ? `Elvish Harbinger ETB: search for ${best.name} → top of library. Draw it next turn.`
-              : `Cast Elvish Harbinger ({2}{G}): ETB puts ${best.name} on top of library.`,
-            best.reason.charAt(0).toUpperCase() + best.reason.slice(1) + ".",
-            "Note: Harbinger puts the card on TOP of library, not into hand — draw it on your next draw step.",
-            ...(harbingerTargets.length > 1 ? [`Other strong elf targets: ${harbingerTargets.slice(1,3).map(t => t.name).join(", ")}.`] : []),
-          ],
-          color: "#5dade2",
-        });
-      }
+    ].filter(t => !board.has(t.name) && !inHand.has(t.name));
+    const alreadyShowedSpeakerWin = results.some(r => r.combo === "speaker_win_via_tutor");
+    if (harbingerTargets.length > 0 && (castable || etbReady) && (isMyTurn || yevaFlash) && !alreadyShowedSpeakerWin) {
+      const best = harbingerTargets[0];
+      results.push({
+        priority: 7,
+        category: "🎯 TUTOR",
+        headline: `Elvish Harbinger${etbReady ? " ETB" : ""} → ${best.name}`,
+        detail: `Elvish Harbinger finds any elf. ${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}. Harbinger also adds a mana dork body ({T}: add {G}) and an elf to the count.`,
+        steps: [
+          etbReady
+            ? `Elvish Harbinger ETB: search for ${best.name} → top of library. Draw it next turn.`
+            : `Cast Elvish Harbinger ({2}{G}): ETB puts ${best.name} on top of library.`,
+          best.reason.charAt(0).toUpperCase() + best.reason.slice(1) + ".",
+          "Note: Harbinger puts the card on TOP of library, not into hand — draw it on your next draw step.",
+          ...(harbingerTargets.length > 1 ? [`Other strong elf targets: ${harbingerTargets.slice(1,3).map(t => t.name).join(", ")}.`] : []),
+        ],
+        color: "#5dade2",
+      });
     }
   }
+
 
   // ---- FORMIDABLE SPEAKER (general utility) ----
   // Speaker's untap clause = second mode: untap Cradle, Nykthos, a dork, or War Room
@@ -3227,6 +3310,74 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (false && board.has("Seedborn Muse")) { // SUPPRESSED — handled by SEEDBORN MUSE ENGINE above
   }
 
+  // ---- HEARTWOOD STORYTELLER ----
+  // Suggest casting Heartwood Storyteller when it's in hand and we can reach 3 mana,
+  // potentially via fast mana (Mox Diamond discarding a land, Chrome Mox, Lotus Petal).
+  if (inHand.has("Heartwood Storyteller") && isMyTurn && !board.has("Heartwood Storyteller")) {
+    // Calculate extra mana available from fast mana in hand
+    const hasMoxDiamond  = inHand.has("Mox Diamond");
+    const hasChromeMox   = inHand.has("Chrome Mox");
+    const hasLotusPetal  = inHand.has("Lotus Petal");
+    const landsInHand    = hand.filter(c => CARDS[c]?.type === "land").length;
+    const nonLandsInHand = hand.filter(c => CARDS[c]?.type !== "land" && c !== "Heartwood Storyteller" && c !== "Chrome Mox").length;
+
+    // Each fast mana that can realistically fire this turn.
+    // Mox Diamond discards a land on entry — but if we have 2+ lands, we can
+    // play one as our land drop AND discard a second one to Mox Diamond.
+    const otherFastMana   = (hasChromeMox && nonLandsInHand >= 1 ? 1 : 0) + (hasLotusPetal ? 1 : 0);
+    // Path A: play land drop only (no Mox)
+    const pathA_mana = mana + (landsInHand >= 1 ? 1 : 0) + otherFastMana;
+    // Path B: Mox Diamond without land drop (discard the only land)
+    const pathB_mana = mana + (hasMoxDiamond && landsInHand >= 1 ? 1 : 0) + otherFastMana;
+    // Path C: land drop + Mox Diamond (requires 2 separate lands)
+    const pathC_mana = mana + (landsInHand >= 1 ? 1 : 0) + (hasMoxDiamond && landsInHand >= 2 ? 1 : 0) + otherFastMana;
+    const effectiveMana = Math.max(pathA_mana, pathB_mana, pathC_mana);
+    const bestPath = effectiveMana === pathC_mana && pathC_mana > pathA_mana && pathC_mana > pathB_mana ? "C"
+                   : effectiveMana === pathB_mana && pathB_mana >= pathA_mana ? "B" : "A";
+    const useMoxPath = bestPath === "B" || bestPath === "C";
+
+    if (effectiveMana >= 3 || effectiveMana >= 2) {
+      const castableNow = effectiveMana >= 3;
+      // Build a clear description of how we get to 3 mana
+      const manaSources = [];
+      if (bestPath === "C") {
+        const landToDrop    = hand.find(c => CARDS[c]?.type === "land") || "a land";
+        const landToDiscard = hand.filter(c => CARDS[c]?.type === "land")[1] || "a second land";
+        manaSources.push(`Play ${landToDrop} (land drop)`);
+        manaSources.push(`Mox Diamond (discard ${landToDiscard} → tap for {G})`);
+      } else if (bestPath === "B" && hasMoxDiamond && landsInHand >= 1) {
+        const discardTarget = hand.find(c => CARDS[c]?.type === "land") || "a land";
+        manaSources.push(`Mox Diamond (discard ${discardTarget} → tap for {G})`);
+      } else if (landsInHand >= 1) {
+        const landToDrop = hand.find(c => CARDS[c]?.type === "land") || "a land";
+        manaSources.push(`Play ${landToDrop} (land drop)`);
+      }
+      if (hasChromeMox && nonLandsInHand >= 1) manaSources.push("Chrome Mox (imprint a non-land card)");
+      if (hasLotusPetal) manaSources.push("Lotus Petal (sacrifice for {G})");
+      const manaLine = manaSources.length > 0
+        ? `${manaSources.join(", then ")} → tap for mana → total {G}{G}{G}.`
+        : `Tap ${mana} mana.`;
+
+      results.push({
+        priority: castableNow ? 6 : 4,
+        category: "📖 CARD ADVANTAGE",
+        headline: castableNow
+          ? "Cast Heartwood Storyteller — punishes non-creature spells, draws you cards"
+          : "Heartwood Storyteller in hand — cast next turn for draw + stax pressure",
+        detail: "Heartwood Storyteller: whenever any player casts a non-creature spell, each OTHER player draws a card. In cEDH this is a strong stax piece and draw engine — opponents casting tutors, interaction, or combos fill your hand. Especially powerful against blue decks relying on counterspells and artifact-based strategies.",
+        steps: [
+          castableNow
+            ? (manaSources.length > 0 ? `${manaSources.join(", then ")} → tap for mana → cast Heartwood Storyteller ({1}{G}{G}).` : `Tap ${mana} mana → cast Heartwood Storyteller ({1}{G}{G}).`)
+            : `Need one more mana source. Play a land next turn or find a mana dork to reach {1}{G}{G}.`,
+          "Effect: whenever a player casts a non-creature spell, each other player draws a card.",
+          "Strong against: counterspell-heavy decks, tutor chains, artifact combos.",
+          "Note: opponents draw when YOU cast non-creature spells too. Lean into creature-based play while Storyteller is live.",
+        ],
+        color: "#5dade2",
+      });
+    }
+  }
+
   // ---- STAX ADVICE ----
   if (inHand.has("Collector Ouphe") && (mana >= 2 || infiniteManaActive)) {
     results.push({
@@ -3493,16 +3644,21 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const ownedAccessible = combo.requires.filter(r => r !== missingCard && (
           board.has(r) || (inHand.has(r) && canCastNow)
         ));
-        // For single-required-card combos (the card IS the combo), always show when
-        // extras are satisfied (e.g. infinite mana active). For multi-piece combos,
-        // require at least one other piece to be accessible to avoid empty-board noise.
-        const hasEnoughContext = combo.requires.length === 1 || ownedAccessible.length > 0;
+        // For single-required-card combos (the card IS the combo), only show if there is
+        // a tutor available to fetch it or if extras are already satisfied (e.g. infinite mana).
+        // Previously these always showed, creating noise on bare boards with nothing actionable.
+        // For multi-piece combos, require at least one other piece to be accessible.
+        const tutorOptionsEarly = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive, graveyard);
+        const hasTutorForMissing = tutorOptionsEarly.length > 0;
+        const hasEnoughContext = combo.requires.length === 1
+          ? (hasTutorForMissing || ownedAccessible.length > 0)
+          : ownedAccessible.length > 0;
         if (!hasEnoughContext) {
           // No owned pieces accessible right now — suppress to avoid noise on empty boards
         } else if (!inDeck(missingCard) || combo.requires.some(c => c !== missingCard && !inDeck(c))) {
           // Missing card or another required card not in deck — skip
         } else {
-        const tutorOptions = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive, graveyard);
+        const tutorOptions = tutorOptionsEarly;
         const speakerIsTutor = tutorOptions.length > 0 && tutorOptions[0].startsWith("Formidable Speaker");
         results.push({
           priority: combo.priority + 1,
@@ -5062,6 +5218,10 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
         && CARDS[target]?.type === "creature"
         && speakerDiscardAvail
         && (mana >= 3 || infiniteMana)) options.push("Formidable Speaker (cast → ETB finds any creature)");
+    // Elvish Harbinger: ETB puts any elf on top of library. Cost {2}{G}, elf itself.
+    if ((inHand.has("Elvish Harbinger") || board.has("Elvish Harbinger"))
+        && CARDS[target]?.tags?.includes("elf")
+        && (mana >= 3 || infiniteMana)) options.push("Elvish Harbinger (ETB → top of library next draw)");
     if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
     if (accessible("Summoner's Pact") && CARDS[target]?.type === "creature") options.push("Summoner's Pact");
     if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
