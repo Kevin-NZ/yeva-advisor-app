@@ -7357,14 +7357,14 @@ function HoverCard({ card, children }) {
 
 function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
-  const [phase, setPhase] = useState("setup"); // setup | mulligan | playing
+  const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
   const [library, setLibrary] = useState([]);
   const [hand, setHand] = useState([]);
   const [battlefield, setBattlefield] = useState([]);
   const [graveyard, setGraveyard] = useState([]);
   const [exile, setExile] = useState([]);
   const [turnNumber, setTurnNumber] = useState(1);
-  const turnRef = useRef(1); // mirrors turnNumber, always current value
+  const turnRef = useRef(1);
   const [isMyTurn, setIsMyTurn] = useState(true);
   const [landPlayed, setLandPlayed] = useState(false);
   const [log, setLog] = useState([]);
@@ -7376,30 +7376,43 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [showTutor, setShowTutor] = useState(false);
   const [tutorQuery, setTutorQuery] = useState("");
   const tutorInputRef = useRef(null);
-  // Tap state: Set of "card:index" keys for tapped permanents
   const [tapped, setTapped] = useState(new Set());
-  // Counter map: "card:index" → number
   const [counters, setCounters] = useState({});
-  // Scry state
   const [scryN, setScryN] = useState(3);
   const [showScry, setShowScry] = useState(false);
-  const [scryOrder, setScryOrder] = useState([]); // current top-N reorder
-  const [scryBottom, setScryBottom] = useState(new Set()); // indices to bottom
+  const [scryOrder, setScryOrder] = useState([]);
+  const [scryBottom, setScryBottom] = useState(new Set());
+  // ── Statistics ──────────────────────────────────────────────
+  const [gameHistory, setGameHistory] = useState([]); // [{gameNum, mulligans, firstDork, infiniteMana, winCondition, turns, openingHand}]
+  const milestoneRef = useRef({ firstDork: null, infiniteMana: null, winCondition: null });
+  const openingHandRef = useRef([]);
+  const gameNumRef = useRef(0);
+  // ── Drag state ──────────────────────────────────────────────
+  const [dragCard, setDragCard] = useState(null); // {card, fromZone, fromIndex}
+  const [dragOver, setDragOver] = useState(null); // zone name being hovered
 
   const deckCards = activeDeck?.cards ?? [];
   const hasDeck = deckCards.length > 0;
 
   // ── derived analysis ────────────────────────────────────────
-  // Pass untapped battlefield cards only for mana — tapped cards can't tap for mana
   const untappedBattlefield = battlefield.filter((_, i) => !tapped.has(`${battlefield[i]}:${i}`));
   const analysis = React.useMemo(() => {
     if (hand.length + battlefield.length === 0) return null;
     try {
-      return analyzeGameState({
+      const result = analyzeGameState({
         hand, battlefield, graveyard,
         manaAvailable: calculateBattlefieldMana(untappedBattlefield),
         isMyTurn, deckList: activeDeck ? new Set(deckCards) : null,
       });
+      // Auto-detect milestones
+      if (phase === "playing") {
+        const hasDork = battlefield.some(c => CARDS[c]?.tags?.includes("dork"));
+        if (hasDork) recordMilestone("firstDork");
+        if (result?.infiniteManaActive) recordMilestone("infiniteMana");
+        const topCat = result?.results?.[0]?.category || "";
+        if (topCat.includes("WIN NOW") || topCat.includes("WIN NEXT")) recordMilestone("winCondition");
+      }
+      return result;
     } catch { return null; }
   }, [hand, battlefield, graveyard, isMyTurn, tapped]);
 
@@ -7419,8 +7432,42 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setMulliganCount(0); setLog([]); setPendingBottoms([]);
     setPhase2(null); setYevaTax(0);
     setTapped(new Set()); setCounters({});
+    setDragCard(null); setDragOver(null);
+    milestoneRef.current = { firstDork: null, infiniteMana: null, winCondition: null };
+    openingHandRef.current = lib.slice(0, 7);
     setPhase("mulligan");
     addLog("Game started — 7-card opening hand drawn.", COLORS.green2);
+  }
+
+  function keepHand() {
+    openingHandRef.current = [...hand]; // snapshot kept hand
+    setPhase("playing");
+    addLog(`Kept ${hand.length}-card hand. Turn 1 begins.`, COLORS.green1);
+  }
+
+  // Record a game milestone (first dork, infinite mana, win condition)
+  function recordMilestone(type) {
+    const t = turnRef.current;
+    if (milestoneRef.current[type] !== null) return; // already recorded
+    milestoneRef.current[type] = t;
+    const labels = { firstDork: "First mana dork on battlefield", infiniteMana: "Infinite mana assembled", winCondition: "Win condition available" };
+    addLog(`★ ${labels[type]} — Turn ${t}`, type === "winCondition" ? COLORS.red : type === "infiniteMana" ? "#c084fc" : COLORS.green2);
+  }
+
+  // Save completed game to history and show stats
+  function endGame() {
+    gameNumRef.current += 1;
+    const entry = {
+      gameNum: gameNumRef.current,
+      mulligans: mulliganCount,
+      openingHand: openingHandRef.current,
+      firstDork: milestoneRef.current.firstDork,
+      infiniteMana: milestoneRef.current.infiniteMana,
+      winCondition: milestoneRef.current.winCondition,
+      turns: turnRef.current,
+    };
+    setGameHistory(prev => [...prev, entry]);
+    setPhase("stats");
   }
 
   function doMulligan() {
@@ -7454,11 +7501,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setLibrary(prev => [...prev, ...shuffleArray(bottomed)]);
     setPendingBottoms([]); setPhase2(null);
     addLog(`Bottomed ${bottomCount} card${bottomCount > 1 ? "s" : ""}. Keeping ${newHand.length} cards.`, COLORS.textMid);
-  }
-
-  function keepHand() {
-    setPhase("playing");
-    addLog(`Kept ${hand.length}-card hand. Turn 1 begins.`, COLORS.green1);
   }
 
   function drawCard(n = 1) {
@@ -7672,6 +7714,140 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     onClose();
   }
 
+  // ── DRAG AND DROP ───────────────────────────────────────────
+  function onDragStart(card, fromZone, fromIndex, e) {
+    setDragCard({ card, fromZone, fromIndex });
+    e.dataTransfer.effectAllowed = "move";
+  }
+
+  function onDragEnd() {
+    setDragCard(null);
+    setDragOver(null);
+  }
+
+  function onDropZone(toZone, e) {
+    e.preventDefault();
+    setDragOver(null);
+    if (!dragCard || dragCard.fromZone === toZone) { setDragCard(null); return; }
+    moveCard(dragCard.card, dragCard.fromZone, toZone, dragCard.fromIndex);
+    setDragCard(null);
+  }
+
+  function dropZoneProps(zoneName) {
+    return {
+      onDragOver: (e) => { e.preventDefault(); setDragOver(zoneName); },
+      onDragLeave: () => setDragOver(z => z === zoneName ? null : z),
+      onDrop: (e) => onDropZone(zoneName, e),
+    };
+  }
+
+  // ── HAND GRADER ─────────────────────────────────────────────
+  function gradeHand(cards, advisorAnalysis) {
+    const dorks  = cards.filter(c => CARDS[c]?.tags?.includes("dork")).length;
+    const lands  = cards.filter(c => CARDS[c]?.type === "land").length;
+    const tutors = cards.filter(c => CARDS[c]?.tags?.includes("tutor")).length;
+    const combo  = cards.filter(c => CARDS[c]?.tags?.some(t =>
+      ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t))).length;
+    const canMakeT1Mana = lands >= 1 || dorks >= 2;
+    let notes = [];
+
+    // Rule 1: dork + tutor = keep (core game plan)
+    if (dorks >= 1 && tutors >= 1) {
+      if (canMakeT1Mana) {
+        notes.push(`${dorks} dork${dorks > 1 ? "s" : ""} + ${tutors} tutor${tutors > 1 ? "s" : ""} ✓✓ — core game plan`);
+        if (lands === 0) notes.push("0 lands — dork must stick T1");
+        if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} in hand`);
+        return enrichWithAnalysis({ grade: { label: "KEEP", color: COLORS.green2 }, notes }, advisorAnalysis);
+      } else {
+        notes.push("dork + tutor but no mana to cast them ✗");
+        return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
+      }
+    }
+
+    // Rule 2: no dork = can't execute game plan
+    if (dorks === 0) {
+      if (tutors >= 1) {
+        notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no dork ✗ — can find one but can't cast it T1`);
+      } else {
+        notes.push("no dorks, no tutors ✗ — can't execute game plan");
+        if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} with no way to find the rest`);
+      }
+      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
+    }
+
+    // Remaining: dork(s) but no tutor
+    let score = 0;
+    if (lands >= 2 && lands <= 4)      { score += 2; notes.push(`${lands} lands ✓`); }
+    else if (lands === 1 && dorks >= 2) { score += 2; notes.push("1 land + 2+ dorks ✓"); }
+    else if (lands === 1)               { score += 0; notes.push("1 land, 1 dork — tight"); }
+    else if (lands === 0)               { score -= 2; notes.push("no lands ✗"); }
+    else                                { score += 1; notes.push(`${lands} lands (mana-heavy)`); }
+
+    if (dorks >= 2) { score += 3; notes.push(`${dorks} dorks ✓✓`); }
+    else            { score += 1; notes.push("1 dork, no tutor — slow"); }
+
+    if (combo >= 1 && (dorks >= 1 || lands >= 2)) {
+      score += 1; notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} in hand`);
+    }
+    notes.push("no tutor — relying on draw steps");
+
+    const grade = score >= 5 ? { label: "KEEP",       color: COLORS.green2 }
+                : score >= 2 ? { label: "BORDERLINE", color: COLORS.gold   }
+                :              { label: "MULLIGAN",    color: COLORS.red    };
+    return enrichWithAnalysis({ grade, notes }, advisorAnalysis);
+  }
+
+  // Layer advisor analysis signals on top of the structural hand grade
+  function enrichWithAnalysis({ grade, notes }, analysis) {
+    if (!analysis) return { grade, notes };
+    const results = analysis.results ?? [];
+    const live = results.filter(r => !r.isSuppressed);
+    const suppressed = results.filter(r => r.isSuppressed);
+    const topCat = live[0]?.category ?? "";
+    const advisorNotes = [];
+
+    // Infinite mana somehow in hand — override to KEEP
+    if (analysis.infiniteManaActive) {
+      advisorNotes.push("∞ Infinite mana line available in hand");
+      grade = { label: "KEEP", color: COLORS.green2 };
+    }
+    // WIN NOW
+    else if (topCat.includes("WIN NOW") || topCat.includes("INSTANT SPEED WIN")) {
+      advisorNotes.push("🔥 WIN NOW line in opening hand");
+      grade = { label: "KEEP", color: COLORS.green2 };
+    }
+    // WIN NEXT TURN
+    else if (topCat.includes("WIN NEXT")) {
+      advisorNotes.push("⚡ WIN NEXT TURN line available");
+      if (grade.label === "MULLIGAN") grade = { label: "BORDERLINE", color: COLORS.gold };
+    }
+    // Suppressed wins = one piece away — surface the missing piece
+    else if (suppressed.length > 0) {
+      const s = suppressed[0];
+      // Reason is after the colon in the headline
+      const reasonRaw = (s.headline ?? "").replace(/^[^:]+:\s*/, "");
+      const reason = reasonRaw.length > 60 ? reasonRaw.slice(0, 57) + "…" : reasonRaw;
+      if (reason) {
+        advisorNotes.push(`1 piece away — need: ${reason}`);
+        if (grade.label === "MULLIGAN") grade = { label: "BORDERLINE", color: COLORS.gold };
+      }
+      if (suppressed.length > 1) {
+        advisorNotes.push(`(+${suppressed.length - 1} other suppressed line${suppressed.length > 2 ? "s" : ""})`);
+      }
+    }
+
+    // High-confidence lines (engine/loop/tutor plays)
+    const highConf = live.filter(r => r.confidence === "certain" || r.confidence === "high");
+    if (highConf.length >= 2) {
+      advisorNotes.push(`${highConf.length} high-value advisor lines`);
+    } else if (highConf.length === 1 && advisorNotes.length === 0) {
+      advisorNotes.push(`Advisor: ${(live[0].category ?? live[0].headline ?? "").slice(0, 55)}`);
+    }
+
+    return { grade, notes: [...notes, ...advisorNotes] };
+  }
+
+
   // Close context menu on any mousedown outside it
   useEffect(() => {
     if (!contextMenu) return;
@@ -7691,6 +7867,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       <HoverCard key={`${zone}:${card}:${i}`} card={card}>
         {(rect, hovered) => (
           <span
+            draggable
+            onDragStart={e => onDragStart(card, zone, i, e)}
+            onDragEnd={onDragEnd}
             onClick={onClick}
             onContextMenu={e => openContextMenu(card, i, zone, e)}
             style={{ ...cardPillStyle(isTap, false), ...extraStyle }}>
@@ -7934,14 +8113,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 <div style={{ padding: "4px 12px", background: "#0f1e0f", border: `1px solid ${COLORS.border}`, borderRadius: "6px", fontSize: "11px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>
                   {library.length} in library
                 </div>
-                <button onClick={nextTurn} style={{
-                  background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "6px",
-                  padding: "5px 14px", color: COLORS.green2, cursor: "pointer",
-                  fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
-                }}
-                  onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
-                  onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
-                >▶ NEXT TURN + DRAW</button>
                 <button onClick={exportToAdvisor} style={{
                   background: "none", border: `1px solid ${COLORS.blue}`, borderRadius: "6px",
                   padding: "5px 12px", color: COLORS.blue, cursor: "pointer",
@@ -7950,8 +8121,25 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   onMouseEnter={e => { e.target.style.background = "#0a1a2e"; }}
                   onMouseLeave={e => { e.target.style.background = "transparent"; }}
                   title="Send this board state to the main advisor"
-                >↗ EXPORT TO ADVISOR</button>
+                >↗ EXPORT</button>
+                <button onClick={endGame} style={{
+                  background: "none", border: `1px solid ${COLORS.gold}`, borderRadius: "6px",
+                  padding: "5px 12px", color: COLORS.gold, cursor: "pointer",
+                  fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                }}
+                  onMouseEnter={e => { e.target.style.background = "#1a1a0a"; }}
+                  onMouseLeave={e => { e.target.style.background = "transparent"; }}
+                  title="End this game and record stats"
+                >★ END GAME</button>
               </>
+            )}
+            {gameHistory.length > 0 && (
+              <button onClick={() => setPhase("stats")} style={{
+                background: phase === "stats" ? "#1a1a0a" : "none",
+                border: `1px solid ${COLORS.gold}`, borderRadius: "6px",
+                padding: "5px 10px", color: COLORS.gold, cursor: "pointer",
+                fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+              }}>★ STATS ({gameHistory.length})</button>
             )}
             {phase === "playing" && (
               <button onClick={() => setPhase("setup")} style={{
@@ -8056,33 +8244,59 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               </div>
             )}
 
-            {phase2 !== "bottoming" && (
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                <button onClick={keepHand} style={{
-                  background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
-                  padding: "10px 28px", color: COLORS.green2, cursor: "pointer",
-                  fontFamily: "'Cinzel', serif", fontSize: "13px", letterSpacing: "1px",
-                }}
-                  onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
-                  onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
-                >✓ KEEP</button>
-                {hand.length > 0 && (
-                  <button onClick={doMulligan} style={{
-                    background: "none", border: `1px solid ${COLORS.gold}`, borderRadius: "8px",
-                    padding: "10px 24px", color: COLORS.gold, cursor: "pointer",
-                    fontFamily: "'Cinzel', serif", fontSize: "13px", letterSpacing: "1px",
-                  }}
-                    onMouseEnter={e => { e.target.style.background = "#1a1a0a"; }}
-                    onMouseLeave={e => { e.target.style.background = "transparent"; }}
-                  >↺ MULLIGAN TO {Math.max(0, 7 - mulliganCount)}</button>
-                )}
-                <button onClick={() => setPhase("setup")} style={{
-                  background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "8px",
-                  padding: "10px 20px", color: COLORS.textDim, cursor: "pointer",
-                  fontFamily: "'Cinzel', serif", fontSize: "13px",
-                }}>✕ ABANDON</button>
-              </div>
-            )}
+            {phase2 !== "bottoming" && (() => {
+              // Run advisor on opening hand (empty battlefield, 0 mana) to enrich grade
+              let mulliganAnalysis = null;
+              try {
+                mulliganAnalysis = analyzeGameState({
+                  hand, battlefield: [], graveyard: [],
+                  manaAvailable: 0, isMyTurn: true,
+                  deckList: activeDeck ? new Set(deckCards) : null,
+                });
+              } catch (e) {}
+              const { grade, notes } = gradeHand(hand, mulliganAnalysis);
+              return (
+                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                    <button onClick={keepHand} style={{
+                      background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
+                      padding: "10px 28px", color: COLORS.green2, cursor: "pointer",
+                      fontFamily: "'Cinzel', serif", fontSize: "13px", letterSpacing: "1px",
+                    }}
+                      onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
+                      onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
+                    >✓ KEEP</button>
+                    {hand.length > 0 && (
+                      <button onClick={doMulligan} style={{
+                        background: "none", border: `1px solid ${COLORS.gold}`, borderRadius: "8px",
+                        padding: "10px 24px", color: COLORS.gold, cursor: "pointer",
+                        fontFamily: "'Cinzel', serif", fontSize: "13px", letterSpacing: "1px",
+                      }}
+                        onMouseEnter={e => { e.target.style.background = "#1a1a0a"; }}
+                        onMouseLeave={e => { e.target.style.background = "transparent"; }}
+                      >↺ MULLIGAN TO {Math.max(0, 7 - mulliganCount)}</button>
+                    )}
+                    <button onClick={() => setPhase("setup")} style={{
+                      background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "8px",
+                      padding: "10px 20px", color: COLORS.textDim, cursor: "pointer",
+                      fontFamily: "'Cinzel', serif", fontSize: "13px",
+                    }}>✕ ABANDON</button>
+                  </div>
+                  <div style={{
+                    background: "#0d1a0d", border: `1px solid ${grade.color}44`,
+                    borderLeft: `3px solid ${grade.color}`, borderRadius: "8px",
+                    padding: "10px 16px", minWidth: "200px",
+                  }}>
+                    <div style={{ fontSize: "11px", color: grade.color, fontFamily: "'Cinzel', serif", letterSpacing: "1.5px", marginBottom: "6px" }}>
+                      ★ {grade.label}
+                    </div>
+                    {notes.map((n, i) => (
+                      <div key={i} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.4 }}>{n}</div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -8097,9 +8311,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             }}>
               {/* Controls strip */}
               <div style={{ padding: "8px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "5px", flexWrap: "wrap", alignItems: "center" }}>
+                <button onClick={nextTurn} style={{ ...btnStyle(COLORS.green2), background: "#1a3a1a" }}
+                  onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
+                  onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
+                  title="Untap all, draw a card, advance turn">▶ NEXT TURN</button>
                 <button onClick={() => drawCard(1)} style={btnStyle(COLORS.green1)}>+ DRAW 1</button>
                 <button onClick={() => drawCard(3)} style={btnStyle(COLORS.border)}>+ DRAW 3</button>
-                <button onClick={untapAll} style={btnStyle(COLORS.green2)} title="Untap all permanents">↺ UNTAP ALL</button>
+                <button onClick={untapAll} style={btnStyle(COLORS.border)} title="Untap all permanents without advancing turn">↺ UNTAP</button>
                 <button onClick={openTutor} style={btnStyle(COLORS.purple)} title="Search library">🔍 TUTOR</button>
                 <button onClick={() => openScry(3)} style={btnStyle(COLORS.blue)} title="Look at top 3">👁 SCRY 3</button>
                 <button onClick={() => openScry(1)} style={btnStyle(COLORS.border)} title="Scry 1">👁 1</button>
@@ -8128,10 +8346,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               {ScryModal()}
 
               <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
-                {/* HAND — click to cast */}
+                {/* HAND — click to cast, drag to move */}
                 <div style={{ marginBottom: "16px" }}>
                   {zoneLabel("HAND — click to cast", hand.length, COLORS.green2)}
-                  <div style={{ minHeight: "32px" }}>
+                  <div {...dropZoneProps("hand")} style={{ minHeight: "32px", borderRadius: "4px", border: dragOver === "hand" ? `1px dashed ${COLORS.green2}` : "1px solid transparent", padding: "2px", transition: "border 0.1s" }}>
                     {hand.length === 0
                       ? <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
                       : hand.map((card, i) => {
@@ -8151,29 +8369,47 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   </div>
                 </div>
 
-                {/* BATTLEFIELD — click to tap/untap */}
+                {/* BATTLEFIELD — grouped by type */}
                 <div style={{ marginBottom: "16px" }}>
                   {zoneLabel("BATTLEFIELD — click to tap", battlefield.length, COLORS.green3)}
-                  <div style={{ minHeight: "32px" }}>
-                    {battlefield.length === 0
-                      ? <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
-                      : battlefield.map((card, i) => {
-                          const key = cardKey(card, i);
-                          return renderCard(card, i, "battlefield", {
-                            isTap: tapped.has(key),
-                            curCount: counters[key] ?? 0,
-                            onClick: () => toggleTap(card, i),
-                            style: { cursor: "pointer" },
-                          });
-                        })
-                    }
-                  </div>
+                  {battlefield.length === 0
+                    ? <div {...dropZoneProps("battlefield")} style={{ minHeight: "32px", borderRadius: "4px", border: dragOver === "battlefield" ? `1px dashed ${COLORS.green3}` : "1px solid transparent", padding: "2px" }}>
+                        <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
+                      </div>
+                    : (() => {
+                        const groups = [
+                          { label: "LANDS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => CARDS[c]?.type === "land"), color: "#3a7a2a" },
+                          { label: "CREATURES", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => CARDS[c]?.type === "creature"), color: COLORS.green3 },
+                          { label: "OTHER", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => !["land","creature"].includes(CARDS[c]?.type)), color: COLORS.textDim },
+                        ].filter(g => g.cards.length > 0);
+                        return (
+                          <div {...dropZoneProps("battlefield")} style={{ borderRadius: "4px", border: dragOver === "battlefield" ? `1px dashed ${COLORS.green3}` : "1px solid transparent", padding: "2px" }}>
+                            {groups.map(g => (
+                              <div key={g.label} style={{ marginBottom: "6px" }}>
+                                <div style={{ fontSize: "9px", color: g.color, letterSpacing: "1.5px", fontFamily: "'Cinzel', serif", marginBottom: "3px", opacity: 0.7 }}>{g.label}</div>
+                                <div>
+                                  {g.cards.map(({c, i}) => {
+                                    const key = cardKey(c, i);
+                                    return renderCard(c, i, "battlefield", {
+                                      isTap: tapped.has(key),
+                                      curCount: counters[key] ?? 0,
+                                      onClick: () => toggleTap(c, i),
+                                      style: { cursor: "pointer" },
+                                    });
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()
+                  }
                 </div>
 
                 {/* GRAVEYARD */}
                 <div style={{ marginBottom: "14px" }}>
                   {zoneLabel("GRAVEYARD", graveyard.length, COLORS.textDim)}
-                  <div style={{ minHeight: "24px" }}>
+                  <div {...dropZoneProps("graveyard")} style={{ minHeight: "24px", borderRadius: "4px", border: dragOver === "graveyard" ? `1px dashed ${COLORS.textDim}` : "1px solid transparent", padding: "2px" }}>
                     {graveyard.length === 0
                       ? <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
                       : graveyard.map((card, i) => renderCard(card, i, "graveyard", {
@@ -8184,16 +8420,17 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 </div>
 
                 {/* EXILE */}
-                {exile.length > 0 && (
-                  <div style={{ marginBottom: "14px" }}>
-                    {zoneLabel("EXILE", exile.length, COLORS.textDim)}
-                    <div>
-                      {exile.map((card, i) => renderCard(card, i, "exile", {
-                        style: { opacity: 0.4, cursor: "context-menu" },
-                      }))}
-                    </div>
+                <div style={{ marginBottom: "14px" }}>
+                  {zoneLabel("EXILE", exile.length, COLORS.textDim)}
+                  <div {...dropZoneProps("exile")} style={{ minHeight: "20px", borderRadius: "4px", border: dragOver === "exile" ? `1px dashed ${COLORS.textDim}` : "1px solid transparent", padding: "2px" }}>
+                    {exile.length === 0
+                      ? <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic", opacity: 0.5 }}>Empty</span>
+                      : exile.map((card, i) => renderCard(card, i, "exile", {
+                          style: { opacity: 0.4, cursor: "context-menu" },
+                        }))
+                    }
                   </div>
-                )}
+                </div>
 
                 {/* LIBRARY TOP */}
                 <div>
@@ -8280,6 +8517,84 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             </div>
           </div>
         )}
+
+        {/* STATS phase */}
+        {phase === "stats" && (() => {
+          const games = gameHistory;
+          const avg = (fn) => {
+            const vals = games.map(fn).filter(v => v !== null);
+            return vals.length ? (vals.reduce((a,b) => a+b, 0) / vals.length).toFixed(1) : "—";
+          };
+          const pct = (fn) => {
+            const n = games.filter(fn).length;
+            return games.length ? `${Math.round(n / games.length * 100)}%` : "—";
+          };
+          const statBox = (label, value, color) => (
+            <div style={{ background: "#0d1a0d", border: `1px solid ${color}44`, borderRadius: "8px", padding: "14px 18px", textAlign: "center", minWidth: "100px" }}>
+              <div style={{ fontSize: "22px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
+              <div style={{ fontSize: "10px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "4px", fontFamily: "'Cinzel', serif" }}>{label}</div>
+            </div>
+          );
+          return (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              <div style={{ padding: "20px 28px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "13px", color: COLORS.gold, letterSpacing: "2px", marginRight: "8px" }}>
+                  ★ GAME STATISTICS — {games.length} GAME{games.length !== 1 ? "S" : ""}
+                </div>
+                {statBox("AVG WIN TURN", avg(g => g.winCondition), COLORS.red)}
+                {statBox("AVG ∞ MANA", avg(g => g.infiniteMana), "#c084fc")}
+                {statBox("AVG 1ST DORK", avg(g => g.firstDork), COLORS.green2)}
+                {statBox("AVG MULLIGANS", avg(g => g.mulligans), COLORS.gold)}
+                {statBox("WIN BY T4", pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
+                {statBox("WIN BY T5", pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
+                <button onClick={startGame} style={{
+                  background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
+                  padding: "10px 20px", color: COLORS.green2, cursor: "pointer",
+                  fontFamily: "'Cinzel', serif", fontSize: "12px", letterSpacing: "1px", marginLeft: "auto",
+                }}>▶ NEW GAME</button>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                      {["#","Mulligans","Opening Hand","1st Dork","∞ Mana","Win Cond.","Final Turn"].map(h => (
+                        <th key={h} style={{ padding: "6px 10px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px", textAlign: "left", fontWeight: "normal" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...games].reverse().map((g, idx) => (
+                      <tr key={g.gameNum} style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
+                        <td style={{ padding: "7px 10px", color: COLORS.textDim }}>{g.gameNum}</td>
+                        <td style={{ padding: "7px 10px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "None" : `${g.mulligans}×`}</td>
+                        <td style={{ padding: "7px 10px", color: COLORS.textDim, fontSize: "11px", maxWidth: "220px" }}>
+                          <span title={g.openingHand.join(", ")} style={{ cursor: "default" }}>
+                            {g.openingHand.slice(0, 3).join(", ")}{g.openingHand.length > 3 ? ` +${g.openingHand.length - 3}` : ""}
+                          </span>
+                        </td>
+                        <td style={{ padding: "7px 10px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>
+                          {g.firstDork ? `T${g.firstDork}` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 10px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>
+                          {g.infiniteMana ? `T${g.infiniteMana}` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 10px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>
+                          {g.winCondition ? `T${g.winCondition}` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 10px", color: COLORS.textDim }}>{g.turns}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {games.length === 0 && (
+                  <div style={{ color: COLORS.textDim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "40px", textAlign: "center" }}>
+                    No games recorded yet. Play a game and click ★ END GAME to record it.
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {ContextMenuPopup()}
       </div>
