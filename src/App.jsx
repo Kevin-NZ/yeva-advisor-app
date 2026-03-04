@@ -5299,6 +5299,291 @@ function getPriorityTargets(battlefield, hand) {
 }
 
 // ============================================================
+// ============================================================
+// TOUR / ONBOARDING
+// ============================================================
+
+const TOUR_STEPS = [
+  {
+    target: "tour-header",
+    title: "Welcome to Yeva Advisor",
+    body: "This tool analyses your current Magic game state and tells you exactly what to do — combo lines, win paths, tutors, and engines. Let's walk through how to use it.",
+    placement: "bottom",
+    icon: "🌿",
+  },
+  {
+    target: "tour-turn",
+    title: "Set Whose Turn It Is",
+    body: "Toggle between My Turn and Opponent's Turn. This matters — some advice (flash-in plays via Yeva, instant-speed combos) only fires on your opponent's turn, while sorcery-speed plays like Green Sun's Zenith only show on yours.",
+    placement: "right",
+    icon: "⏱",
+  },
+  {
+    target: "tour-mana",
+    title: "Available Mana",
+    body: "Enter how much mana you currently have available. The advisor auto-estimates this from your battlefield, but you can override it. Mana thresholds determine whether combo lines are executable this turn.",
+    placement: "right",
+    icon: "💎",
+  },
+  {
+    target: "tour-hand",
+    title: "Add Cards in Your Hand",
+    body: "Type any card name — autocomplete shows matches instantly. Cards in your hand unlock new combo paths and tutors. The advisor knows which cards are flash-castable and accounts for Yeva's ability.",
+    placement: "right",
+    icon: "🃏",
+  },
+  {
+    target: "tour-battlefield",
+    title: "Add Your Battlefield",
+    body: "Everything you control goes here — creatures, lands, enchantments. The advisor counts elves, devotion, and creatures to calculate mana dork output, checks for infinite mana loops, and identifies which engines are already assembled.",
+    placement: "right",
+    icon: "⚔️",
+  },
+  {
+    target: "tour-advice",
+    title: "Read the Advice",
+    body: "Advice cards appear ranked by priority. 🔥 WIN NOW means an immediate win is available. 🎯 ONE PIECE AWAY means one tutor away. Click any card to expand step-by-step instructions. The ◆ pips show how certain the line is.",
+    placement: "left",
+    icon: "📋",
+  },
+  {
+    target: "tour-deck",
+    title: "Optional: Load a Deck",
+    body: "Click the 📦 DECKS button to load your decklist. When active, autocomplete only shows cards in your deck, and advice is filtered to cards you actually run. Use the preset 'Yeva Competitive' deck to get started immediately.",
+    placement: "bottom",
+    icon: "📦",
+  },
+];
+
+function useTour() {
+  const [active, setActive] = useState(false);
+  const [step, setStep]     = useState(0);
+
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem("yeva-tour-seen");
+      if (!seen) { setActive(true); setStep(0); }
+    } catch {}
+  }, []);
+
+  const finish = () => {
+    setActive(false);
+    try { localStorage.setItem("yeva-tour-seen", "1"); } catch {}
+  };
+
+  const next = () => {
+    if (step >= TOUR_STEPS.length - 1) { finish(); return; }
+    setStep(s => s + 1);
+  };
+
+  const prev  = () => setStep(s => Math.max(0, s - 1));
+  const start = () => { setStep(0); setActive(true); };
+  const skip  = () => finish();
+
+  return { active, step, next, prev, start, skip, total: TOUR_STEPS.length };
+}
+
+function TourOverlay({ active, step, next, prev, skip, total }) {
+  const [targetRect, setTargetRect] = useState(null);
+  const [visible, setVisible] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
+
+  useEffect(() => {
+    if (!active) { setVisible(false); setTargetRect(null); return; }
+    // Small delay so DOM is ready
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-tour="${TOUR_STEPS[step].target}"]`);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        setTargetRect(rect);
+      } else {
+        setTargetRect(null);
+      }
+      setVisible(true);
+      setTransitioning(false);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [active, step]);
+
+  const handleNext = () => {
+    setTransitioning(true);
+    setVisible(false);
+    setTimeout(next, 180);
+  };
+  const handlePrev = () => {
+    setTransitioning(true);
+    setVisible(false);
+    setTimeout(prev, 180);
+  };
+
+  if (!active) return null;
+
+  const tourStep = TOUR_STEPS[step];
+  const PAD = 8; // spotlight padding
+
+  // Compute spotlight rect
+  const spot = targetRect ? {
+    x: targetRect.left - PAD,
+    y: targetRect.top - PAD,
+    w: targetRect.width + PAD * 2,
+    h: targetRect.height + PAD * 2,
+  } : null;
+
+  // Compute tooltip position
+  const tooltipW = 320;
+  const tooltipH = 200;
+  let tipX = 0, tipY = 0;
+  if (spot) {
+    const placement = tourStep.placement;
+    if (placement === "right") {
+      tipX = spot.x + spot.w + 16;
+      tipY = spot.y + spot.h / 2 - tooltipH / 2;
+    } else if (placement === "left") {
+      tipX = spot.x - tooltipW - 16;
+      tipY = spot.y + spot.h / 2 - tooltipH / 2;
+    } else if (placement === "bottom") {
+      tipX = spot.x + spot.w / 2 - tooltipW / 2;
+      tipY = spot.y + spot.h + 16;
+    } else {
+      tipX = spot.x + spot.w / 2 - tooltipW / 2;
+      tipY = spot.y - tooltipH - 16;
+    }
+    // Clamp to viewport
+    tipX = Math.max(12, Math.min(window.innerWidth - tooltipW - 12, tipX));
+    tipY = Math.max(12, Math.min(window.innerHeight - tooltipH - 12, tipY));
+  } else {
+    // Fallback: center
+    tipX = window.innerWidth / 2 - tooltipW / 2;
+    tipY = window.innerHeight / 2 - tooltipH / 2;
+  }
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "all" }}>
+      {/* Dimming overlay using SVG clip path for spotlight */}
+      <svg
+        width={vw} height={vh}
+        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      >
+        <defs>
+          <mask id="tour-mask">
+            <rect width={vw} height={vh} fill="white" />
+            {spot && (
+              <rect
+                x={spot.x} y={spot.y} width={spot.w} height={spot.h}
+                rx={8} fill="black"
+              />
+            )}
+          </mask>
+        </defs>
+        <rect
+          width={vw} height={vh}
+          fill="rgba(0,0,0,0.72)"
+          mask="url(#tour-mask)"
+        />
+        {/* Spotlight border glow */}
+        {spot && (
+          <rect
+            x={spot.x} y={spot.y} width={spot.w} height={spot.h}
+            rx={8} fill="none"
+            stroke="#4a9e4a" strokeWidth={2}
+            style={{ opacity: visible ? 1 : 0, transition: "opacity 0.2s" }}
+          />
+        )}
+      </svg>
+
+      {/* Click-through area over spotlight so user can interact if needed */}
+      {spot && (
+        <div style={{
+          position: "absolute",
+          left: spot.x, top: spot.y, width: spot.w, height: spot.h,
+          borderRadius: 8,
+          pointerEvents: "none",
+        }} />
+      )}
+
+      {/* Backdrop click to advance */}
+      <div style={{ position: "absolute", inset: 0 }} onClick={handleNext} />
+
+      {/* Tooltip card */}
+      <div style={{
+        position: "absolute",
+        left: tipX, top: tipY,
+        width: tooltipW,
+        background: "linear-gradient(135deg, #0f1e0f 0%, #0a160a 100%)",
+        border: "1px solid #4a9e4a",
+        borderRadius: 12,
+        boxShadow: "0 0 0 1px #4a9e4a22, 0 24px 60px rgba(0,0,0,0.9), 0 0 40px #4a9e4a18",
+        padding: "20px 22px",
+        pointerEvents: "all",
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0) scale(1)" : "translateY(6px) scale(0.97)",
+        transition: "opacity 0.2s ease, transform 0.2s ease",
+      }}>
+        {/* Step indicator */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 14, alignItems: "center" }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <div key={i} style={{
+              height: 3, flex: 1,
+              borderRadius: 2,
+              background: i <= step ? "#4a9e4a" : "#1e3a1e",
+              transition: "background 0.3s",
+            }} />
+          ))}
+        </div>
+
+        {/* Icon + title */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 22, lineHeight: 1 }}>{tourStep.icon}</span>
+          <div style={{
+            fontFamily: "'Cinzel', serif", fontSize: 13, fontWeight: 600,
+            color: "#c8e6c8", letterSpacing: "0.5px",
+          }}>{tourStep.title}</div>
+        </div>
+
+        {/* Body */}
+        <p style={{
+          fontFamily: "'Crimson Text', serif", fontSize: 14, lineHeight: 1.6,
+          color: "#a0cda0", margin: "0 0 18px",
+        }}>{tourStep.body}</p>
+
+        {/* Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {step > 0 && (
+            <button onClick={e => { e.stopPropagation(); handlePrev(); }} style={{
+              background: "none", border: "1px solid #1e3a1e",
+              borderRadius: 6, padding: "6px 14px",
+              color: "#7aad7a", cursor: "pointer",
+              fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px",
+            }}>← BACK</button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={e => { e.stopPropagation(); skip(); }} style={{
+            background: "none", border: "none",
+            color: "#4a6a4a", cursor: "pointer",
+            fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px",
+            padding: "6px 8px",
+          }}>SKIP</button>
+          <button onClick={e => { e.stopPropagation(); handleNext(); }} style={{
+            background: "linear-gradient(135deg, #2d5a2d, #1e3a1e)",
+            border: "1px solid #4a9e4a",
+            borderRadius: 6, padding: "7px 18px",
+            color: "#c8e6c8", cursor: "pointer",
+            fontFamily: "'Cinzel', serif", fontSize: 11, letterSpacing: "1px",
+            fontWeight: 600,
+            boxShadow: "0 0 12px #4a9e4a22",
+          }}>
+            {step === total - 1 ? "DONE ✓" : "NEXT →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // UI COMPONENTS
 // ============================================================
 const COLORS = {
@@ -7507,6 +7792,7 @@ function YevaAdvisor() {
   const { decks, activeDeckId, saveDecks, saveActiveDeck } = useDeckStorage();
   const [showDeckManager, setShowDeckManager] = useState(false);
   const [showSynergyMap, setShowSynergyMap]   = useState(false);
+  const tour = useTour();
 
   // Compute the active deck's card set for filtering
   const activeDeck = decks?.find(d => d.id === activeDeckId) ?? null;
@@ -7706,7 +7992,7 @@ function YevaAdvisor() {
           background: "#0a150a",
           display: "flex", alignItems: "center", justifyContent: "space-between",
           flexWrap: "wrap", gap: "12px",
-        }}>
+        }} data-tour="tour-header">
           <div>
             <div style={{
               fontFamily: "'Cinzel', serif", fontSize: "22px",
@@ -7793,7 +8079,7 @@ function YevaAdvisor() {
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
             >⌗ DEBUG</button>
             {/* Deck selector */}
-            <button onClick={() => setShowDeckManager(true)} style={{
+            <button onClick={() => setShowDeckManager(true)} data-tour="tour-deck" style={{
               background: activeDeck ? "#1a3a1a" : "none",
               border: `1px solid ${activeDeck ? COLORS.green1 : COLORS.border}`,
               borderRadius: "6px", padding: "5px 14px",
@@ -7814,10 +8100,22 @@ function YevaAdvisor() {
               onMouseEnter={e => { e.target.style.borderColor = COLORS.red; e.target.style.color = COLORS.red; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
             >↺ RESET</button>
+            <button onClick={tour.start} title="Show tutorial" style={{
+              background: "none", border: `1px solid ${COLORS.border}`,
+              borderRadius: "6px", padding: "5px 10px",
+              color: COLORS.textDim, cursor: "pointer",
+              fontFamily: "'Cinzel', serif", fontSize: "13px", letterSpacing: "0",
+              transition: "all 0.2s", lineHeight: 1,
+            }}
+              onMouseEnter={e => { e.target.style.borderColor = COLORS.green2; e.target.style.color = COLORS.green2; }}
+              onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
+            >?</button>
           </div>
 
           {/* SYNERGY MAP MODAL */}
           {showSynergyMap && <SynergyMapModal onClose={() => setShowSynergyMap(false)} />}
+          {/* TOUR OVERLAY */}
+          <TourOverlay active={tour.active} step={tour.step} next={tour.next} prev={tour.prev} skip={tour.skip} total={tour.total} />
           {/* SAVED STATES MODAL */}
           {showSavedStates && (
             <SavedStatesPanel
@@ -7985,7 +8283,7 @@ function YevaAdvisor() {
                 letterSpacing: "2px", color: COLORS.textDim,
                 marginBottom: "10px",
               }}>GAME STATE</div>
-              <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "12px" }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "12px" }} data-tour="tour-turn">
                 {["My Turn", "Opponent's Turn"].map(label => {
                   const isMine = label === "My Turn";
                   const active = isMyTurn === isMine;
@@ -8001,7 +8299,7 @@ function YevaAdvisor() {
                   );
                 })}
               </div>
-              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }} data-tour="tour-mana">
                 <div>
                   <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.textDim, letterSpacing: "1px", whiteSpace: "nowrap", display: "block" }}>MANA AVAILABLE</label>
                   <span style={{ fontSize: "9px", color: COLORS.textDim, opacity: 0.6, fontFamily: "'Crimson Text', serif", fontStyle: "italic" }}>auto · override manually</span>
@@ -8049,20 +8347,24 @@ function YevaAdvisor() {
             <div style={{ height: "1px", background: COLORS.border, marginBottom: "16px" }} />
 
             {/* Hand */}
+            <div data-tour="tour-hand">
             <QuickAdd zone="hand" onAdd={addTo("hand")} deckCards={activeDeck?.cards} />
             <CardInput label="Hand" zone="hand" cards={hand}
               onRef={el => { zoneInputRefs.current["hand"] = el; }}
               onAdd={addTo("hand")} onRemove={removeFrom(setHand)}
               placeholder="Cards in your hand…"
               deckCards={activeDeck?.cards} />
+            </div>
 
             {/* Battlefield */}
+            <div data-tour="tour-battlefield">
             <QuickAdd zone="battlefield" onAdd={addTo("battlefield")} deckCards={activeDeck?.cards} />
             <CardInput label="Battlefield" zone="battlefield" cards={battlefield}
               onRef={el => { zoneInputRefs.current["battlefield"] = el; }}
               onAdd={addTo("battlefield")} onRemove={removeFrom(setBattlefield)}
               placeholder="Permanents you control…"
               deckCards={activeDeck?.cards} />
+            </div>
 
             {/* Graveyard */}
             <QuickAdd zone="graveyard" onAdd={addTo("graveyard")} deckCards={activeDeck?.cards} />
@@ -8089,6 +8391,7 @@ function YevaAdvisor() {
             ref={advicePanelRef}
             onScroll={handleAdviceScroll}
             className="panel-advice"
+            data-tour="tour-advice"
             style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}
           >
             {advice.length === 0 ? (
