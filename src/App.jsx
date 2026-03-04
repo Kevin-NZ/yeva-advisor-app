@@ -1913,7 +1913,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const faunaFetchesWitnessForNO = faunaCanFetchWitness() && !board.has("Eternal Witness");
   const witnessAccessibleForNO = witnessInHandForNO || faunaFetchesWitnessForNO;
   const witnessManaCostNO = faunaFetchesWitnessForNO && !witnessInHandForNO ? 4 : 3; // Fauna(1) + Witness(3) vs Witness(3)
-  const minManaNO = witnessManaCostNO + 4 + 5; // Witness + Natural Order + Ashaya
+  // After Witness enters, tap any big dork for mana before casting Natural Order.
+  // Witness itself adds 1 to elf/creature count — so Priest taps for elvesOnBoard+1, etc.
+  // Calculate how much mana a dork can produce *after* Witness is on the battlefield.
+  const dorkManaAfterWitness = (() => {
+    for (const c of battlefield) {
+      if (!CARDS[c]) continue;
+      const t = CARDS[c].tapsFor;
+      if (typeof t === "number" && t >= 2) return t;
+      if (t === "elves")     return elvesOnBoard;          // Witness is NOT an elf
+      if (t === "creatures") return creaturesOnBoard + 1;  // +1 for Witness (any creature)
+      if (t === "devotion")  return devotionOnBoard + (CARDS[c]?.devotion ?? 0); // Witness devotion 1
+    }
+    return 0;
+  })();
+  // Net cost = Witness + Natural Order + Ashaya, minus any dork mana tapped after Witness resolves
+  const minManaNO = witnessManaCostNO + 4 + 5 - dorkManaAfterWitness;
   if (
     isMyTurn &&
     witnessAccessibleForNO &&
@@ -4931,7 +4946,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     } else if (noInGrave && !noInHand) {
       const witnessPath = witnessAccessibleForNO ?? (inHand.has("Eternal Witness") || faunaCanFetchWitness());
       if (witnessPath && mana < (faunaCanFetchWitness() && !inHand.has("Eternal Witness") ? 13 : 12)) {
-        suppressedWins.push({ label: "Natural Order win suppressed (via Eternal Witness)", reason: `only ${mana} mana (need ${faunaCanFetchWitness() && !inHand.has("Eternal Witness") ? 13 : 12} for Witness + Natural Order + Ashaya)` });
+        const baseNeed = faunaCanFetchWitness() && !inHand.has("Eternal Witness") ? 13 : 12;
+        suppressedWins.push({ label: "Natural Order win suppressed (via Eternal Witness)", reason: `only ${mana} mana (need ${baseNeed} without dork tap, or less if a big dork is on board)` });
       } else if (!witnessPath && (noInGrave)) {
         suppressedWins.push({ label: "Natural Order in graveyard", reason: "no way to retrieve it (need Eternal Witness in hand or Fauna Shaman on board)" });
       }
@@ -4994,6 +5010,25 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       isSuppressed: true,
     });
   }
+
+  // Derive confidence tier for each result based on category
+  results.forEach(r => {
+    if (r.confidence) return; // already set explicitly at emit site
+    const cat = r.category || "";
+    if (cat.includes("WIN NOW") || cat.includes("WIN PILE"))              r.confidence = "certain";
+    else if (cat.includes("WIN NEXT") || cat.includes("WIN TURN"))        r.confidence = "certain";
+    else if (cat.includes("INFINITE MANA") || cat.includes("LOOP READY") || cat.includes("MANA ONLINE")) r.confidence = "certain";
+    else if (cat.includes("DRAW YOUR LIBRARY") || cat.includes("DRAW ENGINE")) r.confidence = "certain";
+    else if (cat.includes("ENGINE READY") || cat.includes("ENGINE ACTIVE") || cat.includes("ACTIVATE")) r.confidence = "high";
+    else if (cat.includes("CAST TO ENABLE") || cat.includes("ASSEMBLE"))  r.confidence = "high";
+    else if (cat.includes("INSTANT SPEED WIN") || cat.includes("ONE PIECE AWAY")) r.confidence = "high";
+    else if (cat.includes("TUTOR") || cat.includes("YISAN") || cat.includes("ZENITH")) r.confidence = "high";
+    else if (cat.includes("NEARLY THERE") || cat.includes("RAMP"))        r.confidence = "good";
+    else if (cat.includes("BUILDING TOWARDS") || cat.includes("CARD ADVANTAGE")) r.confidence = "good";
+    else if (cat.includes("STAX") || cat.includes("OUPHE") || cat.includes("LAND")) r.confidence = "good";
+    else if (cat.includes("DRAW-GO") || cat.includes("PASS"))             r.confidence = "info";
+    else r.confidence = "speculative";
+  });
 
   // Sort by priority descending
   results.sort((a, b) => b.priority - a.priority);
@@ -5386,6 +5421,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
   const [input, setInput] = useState("");
   const [suggs, setSuggs] = useState([]);
   const [selectedIdx, setSelectedIdx] = useState(-1);
+  const inputRef = useRef(""); // tracks latest value to detect stale async closures
 
   const [secret, setSecret] = useState(null);
 
@@ -5394,27 +5430,42 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
 
   const handleChange = (v) => {
     setInput(v);
+    inputRef.current = v;
     if (v.length < 2) { setSuggs([]); return; }
-    // Check for secret card names via SHA-256 hash (async)
+    // Synchronously compute suggestions so the list updates immediately on every keystroke,
+    // with no stale results lingering while the async secret-card hash is in flight.
+    const q = v.toLowerCase();
+    const seen = new Set();
+    const matches = searchPool.filter(n => {
+      if (seen.has(n)) return false; // deduplicate (deck pools have multiple Forest etc.)
+      if (!n.toLowerCase().includes(q)) return false;
+      const isBasic = CARDS[n]?.tags?.includes("basic");
+      if (!isBasic && cards.includes(n)) return false;
+      if (zone === "battlefield") {
+        const type = CARDS[n]?.type;
+        if (type === "instant" || type === "sorcery") return false;
+      }
+      seen.add(n);
+      return true;
+    });
+    matches.sort((a, b) => {
+      const aPrefix = a.toLowerCase().startsWith(q);
+      const bPrefix = b.toLowerCase().startsWith(q);
+      if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+      return a.length - b.length;
+    });
+    setSuggs(matches.slice(0, 7));
+    // Also check for secret card names via SHA-256 hash (async) — overrides suggestions if matched
     crypto.subtle.digest("SHA-256",
       new TextEncoder().encode(v.toLowerCase())
     ).then(buf => {
+      if (inputRef.current !== v) return; // input changed — discard stale result
       const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
       if (SECRET_CARDS[hex]) {
         setSecret(SECRET_CARDS[hex]);
         setSuggs([]);
       } else {
         setSecret(null);
-        setSuggs(searchPool.filter(n => {
-          if (!n.toLowerCase().includes(v.toLowerCase())) return false;
-          const isBasic = CARDS[n]?.tags?.includes("basic");
-          if (!isBasic && cards.includes(n)) return false;
-          if (zone === "battlefield") {
-            const type = CARDS[n]?.type;
-            if (type === "instant" || type === "sorcery") return false;
-          }
-          return true;
-        }).slice(0, 7));
       }
     });
   };
@@ -5494,7 +5545,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
             boxShadow: "0 12px 40px rgba(0,0,0,0.8)",
           }}>
             {suggs.map((s, si) => (
-              <div key={s} onMouseDown={() => { add(s); setSelectedIdx(-1); }} style={{
+              <div key={`${s}-${si}`} onMouseDown={() => { add(s); setSelectedIdx(-1); }} style={{
                 padding: "9px 14px", cursor: "pointer",
                 color: COLORS.textMid, fontSize: "13px",
                 fontFamily: "'Crimson Text', serif",
@@ -5872,6 +5923,34 @@ function HighlightedText({ text, activeCards, color }) {
   );
 }
 
+// Confidence indicator — diamond pips showing certainty tier
+const CONFIDENCE_CONFIG = {
+  certain:     { filled: 3, label: "Certain",     title: "Deterministic — this line wins or resolves with no decisions remaining" },
+  high:        { filled: 2, label: "Strong",      title: "Very likely correct — a concrete plan with known pieces" },
+  good:        { filled: 1, label: "Reasonable",  title: "Solid play — good direction but outcome depends on future draws" },
+  speculative: { filled: 0, label: "Speculative", title: "Directional — worth considering but many unknowns remain" },
+  info:        { filled: 0, label: "Info",        title: "Situational information" },
+};
+
+function ConfidencePips({ confidence, color }) {
+  const cfg = CONFIDENCE_CONFIG[confidence] || CONFIDENCE_CONFIG.speculative;
+  const dimColor = color + "33";
+  const fullColor = color;
+  return (
+    <span title={`${cfg.label}: ${cfg.title}`} style={{ display: "inline-flex", alignItems: "center", gap: "2px", flexShrink: 0 }}>
+      {[0, 1, 2].map(i => (
+        <span key={i} style={{
+          fontSize: "9px",
+          color: i < cfg.filled ? fullColor : dimColor,
+          lineHeight: 1,
+          filter: i < cfg.filled ? `drop-shadow(0 0 3px ${color}88)` : "none",
+          transition: "color 0.2s",
+        }}>◆</span>
+      ))}
+    </span>
+  );
+}
+
 function AdviceCard({ advice, index, activeCards, collapseKey }) {
   const [open, setOpen] = useState(index === 0);
 
@@ -5926,6 +6005,9 @@ function AdviceCard({ advice, index, activeCards, collapseKey }) {
         }}
       >
         <Tag label={advice.category} color={advice.color} />
+        {advice.confidence && advice.confidence !== "info" && (
+          <ConfidencePips confidence={advice.confidence} color={advice.color} />
+        )}
         <span style={{
           flex: 1, color: index === 0 ? COLORS.text : COLORS.textMid,
           fontFamily: "'Cinzel', serif",
@@ -6279,7 +6361,17 @@ function DeckDetailModal({ deck, onClose, onSave }) {
   const handleAddChange = (v) => {
     setAddInput(v);
     if (v.length < 2) { setAddSuggs([]); return; }
-    setAddSuggs(ALL_CARD_NAMES.filter(n => n.toLowerCase().includes(v.toLowerCase())).slice(0, 6));
+    const q = v.toLowerCase();
+    const matches = ALL_CARD_NAMES.filter(n => n.toLowerCase().includes(q));
+    // Rank: exact prefix first, then word-boundary prefix, then substring
+    matches.sort((a, b) => {
+      const al = a.toLowerCase(), bl = b.toLowerCase();
+      const aPrefix = al.startsWith(q), bPrefix = bl.startsWith(q);
+      if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+      // Within prefix matches, shorter names first
+      return a.length - b.length;
+    });
+    setAddSuggs(matches.slice(0, 6));
   };
 
   const handleAddCard = (name) => {
@@ -6868,6 +6960,7 @@ function useForceGraph(nodeList, linkList, width, height, enabled) {
 
 function SynergyMapModal({ onClose }) {
   const containerRef = useRef(null);
+  const outerRef     = useRef(null);  // stable ref always in DOM for ResizeObserver
   const [view, setView]               = useState("graph");
   const [activeTypes, setActiveTypes] = useState(new Set(Object.keys(TYPE_COLORS)));
   const [selected, setSelected]       = useState(null);
@@ -6882,16 +6975,18 @@ function SynergyMapModal({ onClose }) {
   const panStartRef  = useRef({ x: 0, y: 0, px: 0, py: 0 });
   const [, forceUpdate] = useState(0);
 
-  // Measure container
+  // Measure the stable outer wrapper — always mounted regardless of view
   useEffect(() => {
-    if (!containerRef.current) return;
-    const ro = new ResizeObserver(([e]) => {
-      const { width, height } = e.contentRect;
+    if (!outerRef.current) return;
+    const measure = () => {
+      const { width, height } = outerRef.current.getBoundingClientRect();
       setDims({ w: Math.max(400, width), h: Math.max(300, height) });
-    });
-    ro.observe(containerRef.current);
+    };
+    measure(); // immediate measurement on mount or view change
+    const ro = new ResizeObserver(measure);
+    ro.observe(outerRef.current);
     return () => ro.disconnect();
-  }, []);
+  }, [view]); // re-measure when switching views so graph gets correct size
 
   // Build graph data
   const { nodes, links, cardCentrality } = React.useMemo(() => {
@@ -7033,7 +7128,7 @@ function SynergyMapModal({ onClose }) {
   return (
     <div style={{ position:"fixed", inset:0, background:"#000000ee", zIndex:1050, display:"flex", flexDirection:"column" }}
       onClick={onClose}>
-      <div style={{ flex:1, display:"flex", flexDirection:"column", margin:"16px",
+      <div ref={outerRef} style={{ flex:1, display:"flex", flexDirection:"column", margin:"16px",
         background:"#0a160a", border:`1px solid ${COLORS.green1}44`, borderRadius:"12px", overflow:"hidden" }}
         onClick={e => e.stopPropagation()}>
 
