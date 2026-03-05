@@ -6860,11 +6860,12 @@ function parseDecklist(text) {
 // ── Custom card editor — shown for unknown cards so users can manually define
 // type, CMC, and key tags without needing Scryfall connectivity.
 function CustomCardEditor({ name, onSave, onCancel }) {
-  const [type, setType]       = useState("creature");
-  const [cmc, setCmc]         = useState(2);
-  const [tapsFor, setTapsFor] = useState(1);
-  const [tags, setTags]       = useState([]);
-  const [role, setRole]       = useState("");
+  const existing = EXTRA_CARDS.get(name) || {};
+  const [type, setType]       = useState(existing.type || "creature");
+  const [cmc, setCmc]         = useState(existing.cmc ?? 2);
+  const [tapsFor, setTapsFor] = useState(existing.tapsFor ?? 1);
+  const [tags, setTags]       = useState(existing.tags ? existing.tags.filter(t => t !== "unknown") : []);
+  const [role, setRole]       = useState(existing.role || "");
 
   const TAG_OPTIONS = [
     { id: "dork",        label: "Mana dork" },
@@ -6979,7 +6980,7 @@ function CustomCardEditor({ name, onSave, onCancel }) {
   );
 }
 
-function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, onCardDefined, editMode }) {
+function DeckCardChip({ name, count, isUnknown, isExternal, note, onRemove, onNoteChange, onCardDefined, editMode }) {
   const [hovered, setHovered]         = useState(false);
   const [rect, setRect]               = useState(null);
   const [editingNote, setEditingNote] = useState(false);
@@ -7009,11 +7010,11 @@ function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, on
         }}
       >
         {name}{count > 1 ? <span style={{ color: COLORS.green1, marginLeft: "4px" }}>×{count}</span> : ""}
-        {isUnknown && editMode && (
+        {isExternal && editMode && (
           <button
             onClick={() => setShowDefine(v => !v)}
-            title="Manually define this card's type and tags"
-            style={{ background: "none", border: "none", color: showDefine ? COLORS.gold : "#e74c3c88", cursor: "pointer", fontSize: "11px", padding: "0 0 0 2px", lineHeight: 1 }}
+            title={EXTRA_CARDS.has(name) ? "Edit this card's type and tags" : "Manually define this card's type and tags"}
+            style={{ background: "none", border: "none", color: showDefine ? COLORS.gold : (isUnknown ? "#e74c3c88" : COLORS.textDim + "88"), cursor: "pointer", fontSize: "11px", padding: "0 0 0 2px", lineHeight: 1 }}
           >✎</button>
         )}
         {editMode && onNoteChange && (
@@ -7031,7 +7032,7 @@ function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, on
         )}
         {hovered && !editMode && <CardTooltip name={name} anchorRect={rect} />}
       </span>
-      {showDefine && isUnknown && editMode && (
+      {showDefine && isExternal && editMode && (
         <CustomCardEditor
           name={name}
           onSave={(entry) => { setShowDefine(false); if (onCardDefined) onCardDefined(name, entry); }}
@@ -7232,6 +7233,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
                     <DeckCardChip
                       key={c} name={c} count={counts[c]}
                       isUnknown={c !== "Forest" && !CARDS[c] && !EXTRA_CARDS.has(c)}
+                      isExternal={c !== "Forest" && !CARDS[c]}
                       note={notes[c]}
                       editMode={editMode}
                       onRemove={editMode ? handleRemove : null}
