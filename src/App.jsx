@@ -2133,7 +2133,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Quirion Ranger",        xCost: 1, reason: "infinite mana loop piece with Ashaya" },
       { name: "Elvish Reclaimer",      xCost: 1, reason: "land tutor for Cradle / Sanitarium / Nykthos" },
       { name: "Ashaya, Soul of the Wild", xCost: 5, reason: "combo engine — all creatures become Forests" },
-      { name: "Eternal Witness",       xCost: 3, reason: "retrieve key piece from graveyard" },
+      { name: "Seedborn Muse",           xCost: 4, reason: "untap all permanents on each opponent's untap — enables free activations every turn" },
+      { name: "Eternal Witness",         xCost: 3, reason: "retrieve key piece from graveyard" },
     ].filter(t => !board.has(t.name) && (mana >= t.xCost + 1 || infiniteManaActive));
     if (gsTargets.length > 0) {
       const best = gsTargets[0];
@@ -5252,7 +5253,14 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
       const chordCost = Math.max(0, targetCmc + 3 - (battlefield?.length ?? 0));
       if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, battlefield?.length ?? 0)} creatures)`);
     }
-    if (accessible("Green Sun's Zenith") && (mana >= 1 + (inGrave.has("Green Sun's Zenith") ? 3 : 0) || infiniteMana)) options.push("Green Sun's Zenith");
+    if (accessible("Green Sun's Zenith") && !inGrave.has("Green Sun's Zenith")) {
+      const targetCmc = CARDS[target]?.cmc ?? getCard(target)?.cmc ?? 0;
+      const gszCost = targetCmc + 1; // X=CMC plus {G}
+      if (mana >= gszCost || infiniteMana) options.push("Green Sun's Zenith");
+    }
+    if (accessible("Green Sun's Zenith") && inGrave.has("Green Sun's Zenith")) {
+      // Needs Eternal Witness to retrieve first — don't suggest as immediate tutor
+    }
     if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteMana) && hand.some(c => CARDS[c]?.type === "creature")) options.push("Survival of the Fittest");
     if (inHand.has("Crop Rotation") && CARDS[target]?.type === "land" && (mana >= 1 || infiniteMana)) options.push("Crop Rotation");
     if ((board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && CARDS[target]?.type === "land") options.push("Elvish Reclaimer");
@@ -5618,11 +5626,16 @@ const EXTRA_CARDS = new Map(); // cardName → {type, cmc, tags, tapsFor, devoti
 // Persistent cache in localStorage so we don't re-fetch every session
 const SCRYFALL_DATA_CACHE_KEY = "yeva_scryfall_data_v1";
 function loadScryfallDataCache() {
-  try { return JSON.parse(localStorage.getItem(SCRYFALL_DATA_CACHE_KEY) || "{}"); }
-  catch { return {}; }
+  try {
+    if (typeof window === "undefined") return {};
+    return JSON.parse(localStorage.getItem(SCRYFALL_DATA_CACHE_KEY) || "{}");
+  } catch { return {}; }
 }
 function saveScryfallDataCache(cache) {
-  try { localStorage.setItem(SCRYFALL_DATA_CACHE_KEY, JSON.stringify(cache)); } catch {}
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(SCRYFALL_DATA_CACHE_KEY, JSON.stringify(cache));
+  } catch {}
 }
 
 // Seed EXTRA_CARDS from localStorage on module load
@@ -7672,7 +7685,13 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         if (idx >= 0 && cmc <= mana && cardType !== "land") {
           hand.splice(idx, 1);
           if (cardType === "instant" || cardType === "sorcery") {
-            graveyard.push(cardToPlay);
+            if (cardToPlay === "Green Sun's Zenith") {
+              // GSZ shuffles back into library
+              library.push(cardToPlay);
+              for (let i = library.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [library[i], library[j]] = [library[j], library[i]]; }
+            } else {
+              graveyard.push(cardToPlay);
+            }
           } else {
             battlefield.push(cardToPlay);
           }
@@ -7766,16 +7785,19 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
   // ── responsive layout ──────────────────────────────────────
-  const [containerWidth, setContainerWidth] = useState(window.innerWidth);
+  const [containerWidth, setContainerWidth] = useState(1024); // safe SSR default, updated after mount
+  const [mounted, setMounted] = useState(false);
   const containerRef2 = useRef(null);
   useEffect(() => {
+    setMounted(true);
     const el = containerRef2.current;
-    if (!el) return;
+    if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(([e]) => setContainerWidth(e.contentRect.width));
     ro.observe(el);
+    setContainerWidth(el.getBoundingClientRect().width || window.innerWidth);
     return () => ro.disconnect();
   }, []);
-  const isMobile = containerWidth < 700;
+  const isMobile = mounted && containerWidth < 700;
   const [mobileTab, setMobileTab] = useState("advisor"); // "zones" | "advisor" | "log"
   const [library, setLibrary] = useState([]);
   const [hand, setHand] = useState([]);
@@ -8047,8 +8069,25 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       setLandPlayed(true);
       addLog(`Played ${card}.`, COLORS.green1);
     } else if (type === "instant" || type === "sorcery") {
-      setGraveyard(prev => [...prev, card]);
-      addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
+      // GSZ shuffles back into library; Nature's Rhythm exiles itself
+      if (card === "Green Sun's Zenith") {
+        setLibrary(prev => {
+          const lib = [...prev, card];
+          // Shuffle in place
+          for (let i = lib.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [lib[i], lib[j]] = [lib[j], lib[i]];
+          }
+          return lib;
+        });
+        addLog(`Cast ${card} → shuffled back into library.`, COLORS.textMid);
+      } else if (card === "Nature's Rhythm") {
+        setExile(prev => [...prev, card]);
+        addLog(`Cast ${card} → exile (can be cast again once).`, COLORS.textMid);
+      } else {
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
+      }
     } else {
       setBattlefield(prev => [...prev, card]);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
@@ -8163,7 +8202,20 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     if (toZone === "hand") setHand(prev => [...prev, card]);
     else if (toZone === "battlefield") {
       const type = getCard(card)?.type;
-      if (type === "instant" || type === "sorcery") { setGraveyard(prev => [...prev, card]); addLog(`${card} → graveyard (instant/sorcery).`, COLORS.textDim); closeContextMenu(); return; }
+      if (type === "instant" || type === "sorcery") {
+        if (card === "Green Sun's Zenith") {
+          setLibrary(prev => {
+            const lib = [...prev, card];
+            for (let i = lib.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [lib[i], lib[j]] = [lib[j], lib[i]]; }
+            return lib;
+          });
+          addLog(`${card} → shuffled into library.`, COLORS.textDim);
+        } else {
+          setGraveyard(prev => [...prev, card]);
+          addLog(`${card} → graveyard (instant/sorcery).`, COLORS.textDim);
+        }
+        closeContextMenu(); return;
+      }
       setBattlefield(prev => [...prev, card]);
     }
     else if (toZone === "graveyard") setGraveyard(prev => [...prev, card]);
