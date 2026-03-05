@@ -5783,7 +5783,7 @@ function CardTooltip({ name, anchorRect }) {
   );
 }
 
-function CardPill({ name, onRemove, zone }) {
+function CardPill({ name, onRemove, zone, onDragStart }) {
   const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim };
   const c = zoneColors[zone] || COLORS.green1;
   const [hovered, setHovered] = useState(false);
@@ -5797,14 +5797,25 @@ function CardPill({ name, onRemove, zone }) {
   const onLeave = () => setHovered(false);
 
   return (
-    <span ref={ref} onMouseEnter={onEnter} onMouseLeave={onLeave} style={{
-      display: "inline-flex", alignItems: "center", gap: "5px",
-      background: c + "18", border: `1px solid ${c}44`,
-      borderRadius: "5px", padding: "3px 8px 3px 10px",
-      margin: "2px", color: COLORS.text,
-      fontSize: "12px", fontFamily: "'Crimson Text', serif",
-      cursor: "default", position: "relative",
-    }}>
+    <span
+      ref={ref}
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.setData("text/plain", JSON.stringify({ name, fromZone: zone }));
+        e.dataTransfer.effectAllowed = "move";
+        if (onDragStart) onDragStart(name, zone);
+      }}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: "5px",
+        background: c + "18", border: `1px solid ${c}44`,
+        borderRadius: "5px", padding: "3px 8px 3px 10px",
+        margin: "2px", color: COLORS.text,
+        fontSize: "12px", fontFamily: "'Crimson Text', serif",
+        cursor: "grab", position: "relative",
+        userSelect: "none",
+      }}>
       {name}
       {onRemove && (
         <button onClick={() => onRemove(name)} style={{
@@ -5818,11 +5829,12 @@ function CardPill({ name, onRemove, zone }) {
   );
 }
 
-function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards, onRef }) {
+function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards, onRef, onDropCard }) {
   const [input, setInput] = useState("");
   const [suggs, setSuggs] = useState([]);
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const inputRef = useRef(""); // tracks latest value to detect stale async closures
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const [secret, setSecret] = useState(null);
 
@@ -5898,12 +5910,26 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
         </span>
       </div>
 
-      <div style={{
-        minHeight: "44px", background: "#07100788",
-        border: `1px solid ${c}33`, borderRadius: "8px",
-        padding: "6px", marginBottom: "6px",
-        display: "flex", flexWrap: "wrap", alignItems: "flex-start",
-      }}>
+      <div
+        style={{
+          minHeight: "44px", background: isDragOver ? c + "22" : "#07100788",
+          border: `1px solid ${isDragOver ? c : c + "33"}`, borderRadius: "8px",
+          padding: "6px", marginBottom: "6px",
+          display: "flex", flexWrap: "wrap", alignItems: "flex-start",
+          transition: "background 0.15s, border-color 0.15s",
+        }}
+        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setIsDragOver(true); }}
+        onDragEnter={e => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={e => { setIsDragOver(false); }}
+        onDrop={e => {
+          e.preventDefault();
+          setIsDragOver(false);
+          try {
+            const { name, fromZone } = JSON.parse(e.dataTransfer.getData("text/plain"));
+            if (fromZone !== zone && onDropCard) onDropCard(name, fromZone, zone);
+          } catch {}
+        }}
+      >
         {cards.length === 0 && (
           <span style={{ color: COLORS.textDim, fontSize: "12px", padding: "4px 6px", fontStyle: "italic", fontFamily: "'Crimson Text', serif" }}>
             {placeholder}
@@ -6471,7 +6497,7 @@ function QuickAdd({ zone, onAdd, deckCards }) {
   const quickCards = {
     battlefield: ["Ashaya, Soul of the Wild","Temur Sabertooth","Priest of Titania","Quirion Ranger","Earthcraft","Gaea's Cradle","Yeva, Nature's Herald","Wirewood Lodge"],
     hand: ["Ashaya, Soul of the Wild","Quirion Ranger","Chord of Calling","Worldly Tutor","Infectious Bite","Eternal Witness","Natural Order","Summoner's Pact"],
-    graveyard: ["Eternal Witness","Infectious Bite","Beast Within"],
+    graveyard: ["Infectious Bite", "Beast Within"],
   };
   const pool = deckCards ? new Set(deckCards) : null;
   const cards = (quickCards[zone] || []).filter(c => !pool || pool.has(c));
@@ -10539,7 +10565,8 @@ function YevaAdvisor() {
               onRef={el => { zoneInputRefs.current["hand"] = el; }}
               onAdd={addTo("hand")} onRemove={removeFrom(setHand)}
               placeholder="Cards in your hand…"
-              deckCards={activeDeck?.cards} />
+              deckCards={activeDeck?.cards}
+              onDropCard={(name, _from, to) => addTo(to)(name)} />
             </div>
 
             {/* Battlefield */}
@@ -10549,7 +10576,8 @@ function YevaAdvisor() {
               onRef={el => { zoneInputRefs.current["battlefield"] = el; }}
               onAdd={addTo("battlefield")} onRemove={removeFrom(setBattlefield)}
               placeholder="Permanents you control…"
-              deckCards={activeDeck?.cards} />
+              deckCards={activeDeck?.cards}
+              onDropCard={(name, _from, to) => addTo(to)(name)} />
             </div>
 
             {/* Graveyard */}
@@ -10558,7 +10586,8 @@ function YevaAdvisor() {
               onRef={el => { zoneInputRefs.current["graveyard"] = el; }}
               onAdd={addTo("graveyard")} onRemove={removeFrom(setGraveyard)}
               placeholder="Cards in your graveyard…"
-              deckCards={activeDeck?.cards} />
+              deckCards={activeDeck?.cards}
+              onDropCard={(name, _from, to) => addTo(to)(name)} />
 
             {/* Playfield visualiser */}
             <Playfield
