@@ -7623,7 +7623,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [dragOver, setDragOver] = useState(null); // zone name being hovered
   // ── Run N state ─────────────────────────────────────────────
   const [runNCount, setRunNCount] = useState(100);
-  const [runNMaxTurns, setRunNMaxTurns] = useState(10);
+  const [runNMaxTurns, setRunNMaxTurns] = useState(8);
   const [runNResults, setRunNResults] = useState(null);
   const [runNRunning, setRunNRunning] = useState(false);
   const [simTooltip, setSimTooltip] = useState(null); // {id, text, x, y} | null
@@ -9100,7 +9100,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   );
 }
 
-function SynergyMapModal({ onClose }) {
+function SynergyMapModal({ onClose, activeDeck }) {
   const containerRef = useRef(null);
   const outerRef     = useRef(null);  // stable ref always in DOM for ResizeObserver
   const [view, setView]               = useState("graph");
@@ -9112,10 +9112,16 @@ function SynergyMapModal({ onClose }) {
   const [pan, setPan]                 = useState({ x: 0, y: 0 });
   const [zoom, setZoom]               = useState(1);
   const [draggingNode, setDraggingNode] = useState(null);
+  const [deckOnly, setDeckOnly]       = useState(!!activeDeck);
   const dragOffRef  = useRef({ x: 0, y: 0 });
   const isPanningRef = useRef(false);
   const panStartRef  = useRef({ x: 0, y: 0, px: 0, py: 0 });
   const [, forceUpdate] = useState(0);
+
+  const deckCardSet = React.useMemo(
+    () => activeDeck ? new Set(activeDeck.cards) : null,
+    [activeDeck]
+  );
 
   // Measure the stable outer wrapper — always mounted regardless of view
   useEffect(() => {
@@ -9149,8 +9155,15 @@ function SynergyMapModal({ onClose }) {
   }, []);
 
   const visibleComboIds = React.useMemo(
-    () => new Set(COMBOS.filter(c => activeTypes.has(c.type)).map(c => "combo:"+c.id)),
-    [activeTypes]
+    () => new Set(COMBOS.filter(c => {
+      if (!activeTypes.has(c.type)) return false;
+      if (deckOnly && deckCardSet) {
+        // Only show combos where every required card is in the deck
+        return (c.requires || []).every(r => deckCardSet.has(r));
+      }
+      return true;
+    }).map(c => "combo:"+c.id)),
+    [activeTypes, deckOnly, deckCardSet]
   );
   const visibleLinks = links.filter(l => visibleComboIds.has(l.target));
   const visibleCardIds = new Set(visibleLinks.map(l => l.source));
@@ -9281,6 +9294,17 @@ function SynergyMapModal({ onClose }) {
           <div style={{ fontSize:"11px", color:COLORS.textDim, fontFamily:"'Crimson Text', serif" }}>
             {visibleNodes.filter(n=>n.kind==="card").length} cards · {visibleNodes.filter(n=>n.kind==="combo").length} combos
           </div>
+          {activeDeck && (
+            <button onClick={() => setDeckOnly(v => !v)} style={{
+              background: deckOnly ? "#1a3a1a" : "none",
+              border: `1px solid ${deckOnly ? COLORS.green1 : COLORS.border}`,
+              borderRadius: "4px", padding: "2px 9px",
+              color: deckOnly ? COLORS.green2 : COLORS.textDim,
+              cursor: "pointer", fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "0.5px",
+            }}>
+              {deckOnly ? `📚 ${activeDeck.name}` : "📚 ALL CARDS"}
+            </button>
+          )}
           <div style={{ flex:1 }} />
           <div style={{ display:"flex", gap:"4px", flexWrap:"wrap" }}>
             {Object.entries(TYPE_LABELS).map(([t, label]) => (
@@ -9985,7 +10009,7 @@ function YevaAdvisor() {
           </div>
 
           {/* SYNERGY MAP MODAL */}
-          {showSynergyMap && <SynergyMapModal onClose={() => setShowSynergyMap(false)} />}
+          {showSynergyMap && <SynergyMapModal activeDeck={activeDeck} onClose={() => setShowSynergyMap(false)} />}
           {/* GOLDFISH MODAL */}
           {showGoldfish && (
             <GoldfishModal
