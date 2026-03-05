@@ -8677,8 +8677,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         )}
 
         {phase === "mulligan" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "24px 28px", overflow: "auto" }}>
-            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px", marginBottom: "20px" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "16px", overflow: "hidden" }}>
+            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px", marginBottom: "12px", flexShrink: 0 }}>
               OPENING HAND {mulliganCount > 0 ? `(Mulligan #${mulliganCount})` : ""} · {hand.length} CARDS
               {phase2 === "bottoming" && (
                 <span style={{ marginLeft: "16px", color: COLORS.textDim, fontSize: "11px" }}>
@@ -8687,11 +8687,14 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               )}
             </div>
 
-            {/* Card image row */}
+            {/* Card image row — scrolls horizontally on mobile */}
             <div style={{
-              display: "flex", gap: "12px", flexWrap: "wrap",
-              marginBottom: "32px", alignItems: "flex-end", minHeight: "220px",
-              padding: "12px 4px",
+              display: "flex", gap: "10px", flexWrap: isMobile ? "nowrap" : "wrap",
+              overflowX: isMobile ? "auto" : "visible",
+              marginBottom: "16px", alignItems: "flex-end",
+              minHeight: isMobile ? undefined : "220px",
+              padding: "8px 4px",
+              flexShrink: isMobile ? 0 : undefined,
             }}>
               {hand.map((card, i) => {
                 const key = `${card}:${i}`;
