@@ -10,8 +10,8 @@ const CARDS = {
   "Fyndhorn Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1},
   "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1},
   "Birds of Paradise":     { type:"creature", cmc:1, tags:["dork","1drop"], tapsFor:1 , devotion:1},
-  "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , devotion:1, role:"dork-combo", note:"Taps enchanted Forests (Utopia Sprawl/Wild Growth) for 2+ mana. With Yavimaya+Cradle/Nykthos goes infinite via Ashaya+Ranger loop."},
-  "Elvish Spirit Guide":   { type:"creature", cmc:2, tags:["dork","elf","free-mana"], tapsFor:1 , devotion:1, role:"fast-mana", note:"Exile from hand: add {G} immediately. Accelerates T1-T2 plays or provides instant-speed mana for flash plays. Also a 2/2 elf body if cast."},
+  "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , devotion:1, role:"dork-combo"},
+  "Elvish Spirit Guide":   { type:"creature", cmc:2, tags:["dork","elf","free-mana"], tapsFor:1 , devotion:1, role:"fast-mana"},
   "Dryad Arbor":           { type:"land",    cmc:0, tags:["dork","land","forest"], tapsFor:1 , devotion:0},
   // MANA DORKS (2-drop)
   "Quirion Ranger":        { type:"creature", cmc:1, tags:["combo","elf","untap","ranger"], tapsFor:0 , devotion:1},
@@ -22,8 +22,8 @@ const CARDS = {
   "Elvish Archdruid":      { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","pump"], tapsFor:"elves" , devotion:2},
   "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , devotion:2},
   "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork"], tapsFor:"devotion" , devotion:1},
-  "Fanatic of Rhonas":     { type:"creature", cmc:4, tags:["dork","elf","big-dork"], tapsFor:4 , devotion:1, role:"big-dork-combo", note:"Tap for 4 mana as a creature. Goes infinite with Ashaya+Quirion Ranger (needs ≥2 mana net) or Ashaya+Scryb Ranger (needs ≥3)."},
-  "Hope Tender":           { type:"creature", cmc:2, tags:["dork","elf","human","untap-lands","exert"], tapsFor:1 , devotion:1, role:"untap-combo", note:"Taps for {G}. Exert ({T}, exert): untap target land. Human subtype — Kogla returns it to hand on attack, resetting the exert for a fresh activation each loop. With Yavimaya, can untap Cradle/Nykthos for massive mana."},
+  "Fanatic of Rhonas":     { type:"creature", cmc:4, tags:["dork","elf","big-dork"], tapsFor:4 , devotion:1, role:"big-dork-combo"},
+  "Hope Tender":           { type:"creature", cmc:2, tags:["dork","elf","human","untap-lands","exert"], tapsFor:1 , devotion:1, role:"untap-combo"},
   // COMBO PIECES
   "Ashaya, Soul of the Wild": { type:"creature", cmc:5, tags:["combo","key","ashaya"], tapsFor:0 , devotion:2},
   "Temur Sabertooth":      { type:"creature", cmc:4, tags:["combo","sabertooth","bounce","protection"] , devotion:2},
@@ -66,10 +66,10 @@ const CARDS = {
   "Lotus Petal":           { type:"artifact", cmc:0, tags:["rock","fast-mana"] , devotion:0},
   "Utopia Sprawl":         { type:"enchantment", cmc:1, tags:["enchant-land","ramp","aura"] , devotion:1},
   "Wild Growth":           { type:"enchantment", cmc:1, tags:["enchant-land","ramp","aura"] , devotion:1},
-  "Elvish Guidance":       { type:"enchantment", cmc:3, tags:["enchant-land","ramp","aura","elf-synergy"], devotion:1, role:"elf-mana", note:"Enchant Forest. Enchanted Forest taps for {G} per elf you control — a Priest of Titania on a land. Pairs devastatingly with Arbor Elf (untap it) and Wirewood Lodge. With 5+ elves taps for more than Gaea's Cradle in most mid-game boards."},
+  "Elvish Guidance":       { type:"enchantment", cmc:3, tags:["enchant-land","ramp","aura","elf-synergy"], devotion:1, role:"elf-mana"},
   // STAX / INTERACTION
   "Collector Ouphe":       { type:"creature", cmc:2, tags:["stax","hate"] , devotion:1},
-  "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax"] , devotion:1, role:"haste-protection", note:"Animates lands as creatures with haste. Protects creatures AND enchantments from counters. Key pile piece — gives Reclaimer/Elder haste to tap immediately."},
+  "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax"] , devotion:1, role:"haste-protection"},
   "Allosaurus Shepherd":   { type:"creature", cmc:1, tags:["protection","elf"] , devotion:1},
   "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , devotion:2},
   "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all"] , devotion:2},
@@ -95,17 +95,17 @@ const CARDS = {
   "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , devotion:1},
   "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , devotion:0},
   "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","haste","draw"] , devotion:0},
-  "Nature's Rhythm":       { type:"enchantment", cmc:2, tags:["draw","engine","land-draw"] , devotion:1, role:"land-draw", note:"Draws a card whenever you play a land. With infinite mana + Elvish Reclaimer looping this draws the entire library."},
+  "Nature's Rhythm":       { type:"enchantment", cmc:2, tags:["draw","engine","land-draw"] , devotion:1, role:"land-draw"},
   // OTHER UTILITY
   "Yisan, the Wanderer Bard": { type:"creature", cmc:3, tags:["tutor","engine","yisan"] , devotion:1},
   "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , devotion:1},
-  "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , devotion:1, role:"ramp-combo", note:"Fetchland = landfall = Treasure token. Explosive early ramp. Goes infinite with Ashaya+Quirion Ranger when Treasures supplement mana."},
-  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , devotion:1, role:"haste-combo", note:"ETB 'earthbend 1': target land becomes a 0/0 creature with haste + gets a +1/+1 counter. Can retarget an already-animated land — it resets to 0/0 base but KEEPS all counters and gains one more. With a bouncer + infinite mana: bounce Badgermole, recast, ETB retargets same land → infinite +1/+1 counters → lethal attacker with haste. Static: 'Whenever you tap a creature for mana, add {G}' — doubles mana from all {T} creature mana abilities."},
+  "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , devotion:1, role:"ramp-combo"},
+  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , devotion:1, role:"haste-combo"},
   "Woodcaller Automaton":  { type:"creature", cmc:8, tags:["combo","untap-land"] , devotion:2},
   "Sowing Mycospawn":      { type:"creature", cmc:5, tags:["removal","land-tutor"] , devotion:1},
   "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , devotion:1},
   "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling"] , devotion:1},
-  "Delighted Halfling":    { type:"creature", cmc:2, tags:["dork","protection"] , devotion:1, role:"protection", note:"Legendary creatures cost {1} less and can't be countered when cast. Protects Ashaya, Yeva, Yisan — key against blue interaction."},
+  "Delighted Halfling":    { type:"creature", cmc:2, tags:["dork","protection"] , devotion:1, role:"protection"},
   "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop"] , devotion:1},
   "Yeva, Nature's Herald": { type:"creature", cmc:4, tags:["commander","flash-enabler"] , devotion:2},
 };
@@ -1322,8 +1322,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
   if (!_inf) {
     const _castable = isMyTurn || yevaFlash;
-    // Bootstrap haste enabler: Ashaya + Destiny Spinner must both already be on the board.
-    const _hasteOnBoard = board.has("Ashaya, Soul of the Wild") && board.has("Destiny Spinner");
+    // Bootstrap haste enabler: Ashaya + (Destiny Spinner OR Badgermole Cub+bouncer) must be on board.
+    // Badgermole Cub animates lands just like Destiny Spinner when Temur Sabertooth is present.
+    const _badgermoleHaste = board.has("Badgermole Cub") && board.has("Temur Sabertooth");
+    const _hasteOnBoard = board.has("Ashaya, Soul of the Wild") && (board.has("Destiny Spinner") || _badgermoleHaste);
     if (_castable) {
       for (const combo of COMBOS) {
         if (combo.type !== "infinite-mana") continue;
@@ -1384,6 +1386,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     return 0;
   }
 
+  // Memoization cache for findBigDork — pure per threshold within a single analyzeGameState call.
+  const _findBigDorkCache = new Map();
+  function findBigDork(threshold) {
+    if (_findBigDorkCache.has(threshold)) return _findBigDorkCache.get(threshold);
+    const result = _findBigDorkUncached(threshold);
+    _findBigDorkCache.set(threshold, result);
+    return result;
+  }
   // ---- HELPER: find the best big dork available and its output ----
   // extraElves: elves in hand that would enter the battlefield as part of assembling the combo,
   // boosting elf-counting dorks like Priest of Titania before the loop begins.
@@ -1391,7 +1401,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // own cast cost before being net-positive. We reduce its effective threshold contribution
   // by its CMC when mana is not infinite, preventing false "ONE PIECE AWAY" advice when
   // the player has 0 available mana and the dork costs 2+ to cast.
-  function findBigDork(threshold) {
+  function _findBigDorkUncached(threshold) {
     // Count castable elves in hand — casting them first raises elf/creature count before the loop starts.
     // NOTE: canCastNow may not be initialized yet when called from the infiniteManaActive IIFE,
     // so we use a try/catch to safely fall back to false in that case.
@@ -1493,6 +1503,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         return estimateDorkOutput(c, elvesInHand2) >= threshold;
       });
       if (!dork) return { ok: false, missing: `a big elf dork on battlefield producing ≥${threshold} mana (Priest of Titania, Elvish Archdruid, or Circle of Dreams Druid with ${threshold}+ elves/creatures)` };
+    }
+
+    // needsAnyOf: combo requires at least one of a list of named cards (OR semantics).
+    // More explicit than needsAlso — generates clean one-piece-away advice when all
+    // options are missing. Returns the full list as the missing string so the player
+    // knows all the alternatives.
+    if (combo.needsAnyOf) {
+      const hasOne = combo.needsAnyOf.some(c => board.has(c) || inHand.has(c));
+      if (!hasOne) return { ok: false, missing: combo.needsAnyOf.join(" or ") };
     }
 
     // needsAlso / needsAuraLand: combo needs one of the named lands OR an enchanted Forest.
@@ -3591,6 +3610,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
 
   // ---- CHECK ACTIVE COMBOS ----
+  // Tutor option cache: getTutorOptions is pure for a given target within this analyzeGameState
+  // call. Cache results to avoid O(combos × board) duplicate calls across the loop.
+  const _tutorCache = new Map();
+  const cachedTutorOptions = (target) => {
+    if (!_tutorCache.has(target)) {
+      _tutorCache.set(target, getTutorOptions(target, hand, battlefield, mana, infiniteManaActive, graveyard));
+    }
+    return _tutorCache.get(target);
+  };
   for (const combo of COMBOS) {
     // mustPreExist: cards with summoning sickness that must tap to function
     //   Argothian Elder, Magus of the Candelabra, Arbor Elf, Fanatic of Rhonas, Yisan
@@ -3689,7 +3717,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // a tutor available to fetch it or if extras are already satisfied (e.g. infinite mana).
         // Previously these always showed, creating noise on bare boards with nothing actionable.
         // For multi-piece combos, require at least one other piece to be accessible.
-        const tutorOptionsEarly = getTutorOptions(missingCard, hand, battlefield, mana, infiniteManaActive, graveyard);
+        const tutorOptionsEarly = cachedTutorOptions(missingCard);
         const hasTutorForMissing = tutorOptionsEarly.length > 0;
         const hasEnoughContext = combo.requires.length === 1
           ? (hasTutorForMissing || ownedAccessible.length > 0)
@@ -3730,7 +3758,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           && typeof extras.missing === "string"
           && extras.missing.toLowerCase().includes("endurance");
         if (!suppressEndurance && inDeck(extras.missing)) {
-          const tutorOptions = getTutorOptions(extras.missing, hand, battlefield, mana, infiniteManaActive, graveyard);
+          const tutorOptions = cachedTutorOptions(extras.missing);
           results.push({
             priority: combo.priority,
             category: "🔧 NEARLY THERE",
@@ -3756,14 +3784,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             // At least one required card isn't in this deck — don't suggest this combo
           } else {
           const missingNames = missing.slice(0, 3).join(", ");
-          const tutorOptions = getTutorOptions(missing[0], hand, battlefield, mana, infiniteManaActive, graveyard);
+          // Prefer to suggest tutoring whichever missing card is actually findable.
+          const tutorableMissing = missing.find(m => cachedTutorOptions(m).length > 0) ?? missing[0];
+          const tutorOptions = cachedTutorOptions(tutorableMissing);
           results.push({
             priority: combo.priority - 3,
             category: "🔨 BUILDING TOWARDS",
             headline: `${combo.name} — need: ${missingNames}${missing.length > 3 ? " …" : ""}`,
             detail: `You have ${ownedPieces.join(", ")}. Still need: ${missing.join(", ")}. ${combo.description}`,
             steps: tutorOptions.length > 0
-              ? [`Priority: use ${tutorOptions[0]} to find ${missing[0]}.`, ...combo.lines]
+              ? [`Priority: use ${tutorOptions[0]} to find ${tutorableMissing}.`, ...combo.lines]
               : [`Find ${missing.join(", ")} to assemble this combo.`, ...combo.lines],
             combo: combo.id,
             color: "#5d8a5d",
@@ -5056,8 +5086,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     else r.confidence = "speculative";
   });
 
-  // Sort by priority descending
-  results.sort((a, b) => b.priority - a.priority);
+  // Sort by priority descending; tie-break on category string (alphabetical) then insertion
+  // order (index) for fully deterministic output across renders.
+  results.forEach((r, i) => { r._idx = i; });
+  results.sort((a, b) =>
+    b.priority - a.priority ||
+    (a.category ?? "").localeCompare(b.category ?? "") ||
+    a._idx - b._idx
+  );
   const normal = results.filter(r => !r.isSuppressed).slice(0, 7);
   const suppressed = results.filter(r => r.isSuppressed);
   return { results: [...normal, ...suppressed], infiniteManaActive, activeComboName };
@@ -5068,11 +5104,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 // Sanitarium mill kill. Picks the best available untap variant and generates
 // concrete tap/activate instructions using actual card names on the board.
 //
-// Parameters: board, hand sets; pileNeeded = cards still to fetch from library.
-// Returns: { variant, steps[] } where variant names the kill line chosen.
+// Parameters:
+//   board      — Set<string>  cards on the battlefield
+//   hand       — Set<string> | string[]  cards in hand (normalised to Set internally)
+//   pileNeeded — string[]  cards still to fetch from library
+// Returns: { variant: string, steps: string[] }
 function buildMillSequence(board, hand, pileNeeded = []) {
+  // Normalise: callers may pass an array or a Set
+  if (!hand || typeof hand[Symbol.iterator] !== "function") hand = new Set();
+  const handSet = hand instanceof Set ? hand : new Set(hand);
   const has = (c) => board.has(c);
-  const hasHand = (c) => hand.has(c);
+  const hasHand = (c) => handSet.has(c);
   const hasAshaya  = has("Ashaya, Soul of the Wild");
   const hasTemur   = has("Temur Sabertooth");
   const hasKogla   = has("Kogla, the Titan Ape");
@@ -5173,17 +5215,27 @@ function buildMillSequence(board, hand, pileNeeded = []) {
   }
 
   // VARIANT D: Ashaya + Quirion/Scryb Ranger + Destiny Spinner
+  // HOW IT WORKS: Destiny Spinner animates Geier Reach Sanitarium into a creature.
+  // Ashaya makes all nontoken creatures Forests. Wirewood Symbiote / Ranger untap CREATURES.
+  // Quirion Ranger's ability: return a Forest you control to hand → untap a creature.
+  // So: return Ranger ITSELF (it's a Forest via Ashaya) to hand → untap Sanitarium (a creature via Destiny Spinner).
+  // Recast Ranger for {G} (it has haste from Destiny Spinner). Net: Sanitarium taps and untaps each loop.
   if (hasSanitarium && hasAshaya && hasQuirion && hasDestiny && hasEndurance) {
+    const rangerCost = rangerName === "Scryb Ranger" ? "{1}{G}" : "{G}";
     const loop = [
       `═══ EXECUTE MILL — ASHAYA + ${rangerName.toUpperCase()} + DESTINY SPINNER VARIANT ═══`,
-      `With Ashaya, all creatures (including ${rangerName}) are Forests. Destiny Spinner gives them haste.`,
+      `Destiny Spinner animates Geier Reach Sanitarium into a creature. Ashaya makes ${rangerName} a Forest. Destiny Spinner gives all creatures haste.`,
+      "HOW THE UNTAP WORKS:",
+      `  ${rangerName}'s ability: return a Forest you control to hand → untap target creature.`,
+      `  Return ${rangerName} ITSELF to hand (it is a Forest via Ashaya) → untap Geier Reach Sanitarium (now a creature via Destiny Spinner).`,
+      `  Recast ${rangerName} (${rangerCost}) — Destiny Spinner gives it haste immediately.`,
       "LOOP ITERATION:",
-      `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
-      `  2. Tap ${rangerName} ({T}): return a Forest from battlefield to hand. Choose Geier Reach Sanitarium — it returns to your hand. (${rangerName} untaps a basic Forest you control as the payment, or returns itself.)`,
-      `     ALTERNATIVE: activate ${rangerName}'s ability — pay the activation cost to return it, untapping a basic Forest, which untaps your mana engine.`,
-      `  3. Replay Geier Reach Sanitarium from hand (no mana cost — lands are free). It enters untapped (Destiny Spinner gives haste to the land-creature).`,
-      `  4. Repeat from step 1.`,
-      "LIBRARY PROTECTION: When library is low, resolve Endurance ETB → recast Endurance, hold new ETB, continue.",
+      `  1. Ensure Destiny Spinner's animation is on Geier Reach Sanitarium (it has haste as a creature-land).`,
+      `  2. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws then discards. Hold priority.`,
+      `  3. Activate ${rangerName}: return ${rangerName} itself to hand (it's a Forest via Ashaya) → untap Geier Reach Sanitarium (creature via Destiny Spinner).`,
+      `  4. Recast ${rangerName} (${rangerCost}). Destiny Spinner gives it haste immediately.`,
+      `  5. Repeat from step 2.`,
+      "LIBRARY PROTECTION: When library is low, resolve Endurance ETB → graveyard shuffles back in → recast Endurance, hold new ETB, continue.",
     ];
     return { variant: `Ashaya + ${rangerName} + Destiny Spinner`, steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...loop] };
   }
@@ -5272,7 +5324,14 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
   // No tutor needed if the card is already accessible
   if (inHand.has(target) || board.has(target)) return options;
   const witnessRetrievableLocal = (c) => inGrave.has(c) && inHand.has("Eternal Witness") && !board.has("Eternal Witness");
-  const accessible = (c) => inHand.has(c) || witnessRetrievableLocal(c);
+  // Fauna Shaman on board + Eternal Witness in graveyard → discard a creature → fetch Witness → Witness retrieves target
+  const faunaFetchesWitnessLocal = board.has("Fauna Shaman")
+    && inGrave.has("Eternal Witness")
+    && hand.some(c => getCard(c)?.type === "creature")
+    && (mana >= 1 || infiniteMana);
+  const accessible = (c) => inHand.has(c) || witnessRetrievableLocal(c)
+    // Fauna chain: Witness can retrieve c from graveyard if Fauna can first fetch Witness
+    || (faunaFetchesWitnessLocal && inGrave.has(c) && c !== "Eternal Witness");
 
   if (getCard(target)?.type === "creature" || getCard(target)?.type === "land") {
     // Formidable Speaker in hand: ETB — "you MAY discard a card. If you do, search library for any creature."
@@ -5308,6 +5367,17 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
     if (inHand.has("Sylvan Scrying") && getCard(target)?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
     if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
     if (accessible("Natural Order") && (mana >= 4 + (inGrave.has("Natural Order") ? 3 : 0) || infiniteMana)) options.push("Natural Order");
+    // Woodland Bellower: ETB puts any non-legendary green creature with CMC ≤ 3 directly onto the battlefield.
+    // It is itself CMC 6 — Bellower in hand is castable when we have 6+ mana or infinite mana.
+    if ((inHand.has("Woodland Bellower") || board.has("Woodland Bellower"))
+        && getCard(target)?.type === "creature"
+        && !["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Kogla, the Titan Ape",
+             "Temur Sabertooth","Woodland Bellower","Elvish Archdruid","Yisan, the Wanderer Bard",
+             "Eladamri, Korvecdal","Seedborn Muse"].includes(target) // legendary exclusion list
+        && (getCard(target)?.cmc ?? 99) <= 3
+        && (mana >= 6 || infiniteMana || board.has("Woodland Bellower"))) {
+      options.push("Woodland Bellower (ETB → directly onto battlefield)");
+    }
   }
   return options;
 }
@@ -6980,18 +7050,11 @@ function CustomCardEditor({ name, onSave, onCancel }) {
   );
 }
 
-function DeckCardChip({ name, count, isUnknown, isExternal, note, onRemove, onNoteChange, onCardDefined, editMode }) {
-  const [hovered, setHovered]         = useState(false);
-  const [rect, setRect]               = useState(null);
-  const [editingNote, setEditingNote] = useState(false);
-  const [noteVal, setNoteVal]         = useState(note || "");
-  const [showDefine, setShowDefine]   = useState(false);
+function DeckCardChip({ name, count, isUnknown, isExternal, onRemove, onCardDefined, editMode }) {
+  const [hovered, setHovered]       = useState(false);
+  const [rect, setRect]             = useState(null);
+  const [showDefine, setShowDefine] = useState(false);
   const ref = useRef(null);
-
-  const commitNote = () => {
-    setEditingNote(false);
-    if (onNoteChange) onNoteChange(name, noteVal.trim());
-  };
 
   return (
     <div style={{ display: "inline-flex", flexDirection: "column", gap: "2px", verticalAlign: "top", margin: "2px" }}>
@@ -7017,13 +7080,6 @@ function DeckCardChip({ name, count, isUnknown, isExternal, note, onRemove, onNo
             style={{ background: "none", border: "none", color: showDefine ? COLORS.gold : (isUnknown ? "#e74c3c88" : COLORS.textDim + "88"), cursor: "pointer", fontSize: "11px", padding: "0 0 0 2px", lineHeight: 1 }}
           >✎</button>
         )}
-        {editMode && onNoteChange && (
-          <button
-            onClick={() => { setEditingNote(true); setNoteVal(note || ""); }}
-            title="Add/edit note"
-            style={{ background: "none", border: "none", color: note ? COLORS.green1 : "#444", cursor: "pointer", fontSize: "11px", padding: "0 0 0 2px", lineHeight: 1 }}
-          >📝</button>
-        )}
         {editMode && onRemove && (
           <button
             onClick={() => onRemove(name)}
@@ -7039,30 +7095,6 @@ function DeckCardChip({ name, count, isUnknown, isExternal, note, onRemove, onNo
           onCancel={() => setShowDefine(false)}
         />
       )}
-      {note && !editingNote && (
-        <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontStyle: "italic", paddingLeft: "6px", maxWidth: "160px", wordBreak: "break-word" }}>
-          {note}
-        </span>
-      )}
-      {editingNote && (
-        <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-          <input
-            autoFocus
-            value={noteVal}
-            onChange={e => setNoteVal(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") commitNote(); if (e.key === "Escape") setEditingNote(false); }}
-            placeholder="Why is this card here?"
-            style={{
-              fontSize: "11px", fontFamily: "'Crimson Text', serif", fontStyle: "italic",
-              background: "#0a150a", border: `1px solid ${COLORS.green1}44`,
-              borderRadius: "3px", padding: "2px 6px", color: COLORS.text,
-              outline: "none", width: "180px",
-            }}
-          />
-          <button onClick={commitNote} style={{ background: "none", border: "none", color: COLORS.green1, cursor: "pointer", fontSize: "12px" }}>✓</button>
-          <button onClick={() => setEditingNote(false)} style={{ background: "none", border: "none", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>✕</button>
-        </div>
-      )}
     </div>
   );
 }
@@ -7071,7 +7103,6 @@ function DeckDetailModal({ deck, onClose, onSave }) {
   const [filter, setFilter]     = useState("");
   const [editMode, setEditMode] = useState(false);
   const [cards, setCards]       = useState([...(deck?.cards || [])]);
-  const [notes, setNotes]       = useState({ ...(deck?.notes || {}) });
   const [addInput, setAddInput] = useState("");
   const [addSuggs, setAddSuggs] = useState([]);
   const [dirty, setDirty]       = useState(false);
@@ -7116,12 +7147,6 @@ function DeckDetailModal({ deck, onClose, onSave }) {
     forceGroupUpdate(n => n + 1);
   };
 
-  const handleNoteChange = (name, val) => {
-    const next = { ...notes };
-    if (val) next[name] = val; else delete next[name];
-    setNotes(next); setDirty(true);
-  };
-
   const handleAddChange = (v) => {
     setAddInput(v);
     if (v.length < 2) { setAddSuggs([]); return; }
@@ -7145,14 +7170,13 @@ function DeckDetailModal({ deck, onClose, onSave }) {
   };
 
   const handleSave = () => {
-    if (onSave) onSave({ ...deck, cards, notes });
+    if (onSave) onSave({ ...deck, cards });
     setDirty(false);
     setEditMode(false);
   };
 
   const handleDiscard = () => {
     setCards([...(deck.cards || [])]);
-    setNotes({ ...(deck.notes || {}) });
     setDirty(false); setEditMode(false);
   };
 
@@ -7221,7 +7245,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
         {/* Card groups */}
         <div style={{ overflowY: "auto", padding: "14px 18px", flex: 1 }}>
           {Object.entries(groups).map(([groupName, groupCards]) => {
-            const filtered = groupCards.filter(c => !q || c.toLowerCase().includes(q) || (notes[c] && notes[c].toLowerCase().includes(q)));
+            const filtered = groupCards.filter(c => !q || c.toLowerCase().includes(q));
             if (filtered.length === 0) return null;
             return (
               <div key={groupName} style={{ marginBottom: "14px" }}>
@@ -7234,10 +7258,8 @@ function DeckDetailModal({ deck, onClose, onSave }) {
                       key={c} name={c} count={counts[c]}
                       isUnknown={c !== "Forest" && !CARDS[c] && !EXTRA_CARDS.has(c)}
                       isExternal={c !== "Forest" && !CARDS[c]}
-                      note={notes[c]}
                       editMode={editMode}
                       onRemove={editMode ? handleRemove : null}
-                      onNoteChange={editMode ? handleNoteChange : null}
                       onCardDefined={editMode ? handleCardDefined : null}
                     />
                   ))}
@@ -7245,7 +7267,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
               </div>
             );
           })}
-          {filter && Object.values(groups).every(g => g.filter(c => c.toLowerCase().includes(q) || (notes[c]||"").toLowerCase().includes(q)).length === 0) && (
+          {filter && Object.values(groups).every(g => g.filter(c => c.toLowerCase().includes(q)).length === 0) && (
             <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "13px", textAlign: "center", marginTop: "20px" }}>No cards match "{filter}"</div>
           )}
         </div>
@@ -7276,7 +7298,6 @@ function DeckCompareModal({ decks, onClose }) {
     const [hovered, setHovered] = useState(false);
     const [rect, setRect] = useState(null);
     const ref = useRef(null);
-    const note = deckA?.notes?.[name] || deckB?.notes?.[name];
     return (
       <div style={{ display: "inline-flex", flexDirection: "column", gap: "1px", margin: "2px", verticalAlign: "top" }}>
         <span ref={ref}
@@ -7288,7 +7309,6 @@ function DeckCompareModal({ decks, onClose }) {
           {label && <span style={{ fontSize: "9px", color: borderColor, marginLeft: "4px", letterSpacing: "0.5px" }}>{label}</span>}
           {hovered && <CardTooltip name={name} anchorRect={rect} />}
         </span>
-        {note && <span style={{ fontSize: "10px", color: COLORS.textDim, fontStyle: "italic", paddingLeft: "6px", maxWidth: "160px" }}>{note}</span>}
       </div>
     );
   };
@@ -7376,7 +7396,6 @@ function DeckCompareModal({ decks, onClose }) {
                       {entries.map(({ name: c, membership }) => {
                         const color = membership === "shared" ? "#58d68d" : membership === "a" ? "#5dade2" : "#e74c3c";
                         const border = color + "77";
-                        const note = deckA?.notes?.[c] || deckB?.notes?.[c];
                         return <CompareChip key={c} name={c} color={color + "15"} borderColor={border} label={membership === "a" ? "A" : membership === "b" ? "B" : null} />;
                       })}
                     </div>
