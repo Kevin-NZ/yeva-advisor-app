@@ -8570,12 +8570,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
         {/* Header */}
         <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "14px 20px", borderBottom: `1px solid ${COLORS.border}`,
-          flexShrink: 0,
+          display: "flex", alignItems: isMobile ? "flex-start" : "center",
+          justifyContent: "space-between",
+          padding: isMobile ? "10px 12px" : "14px 20px",
+          borderBottom: `1px solid ${COLORS.border}`,
+          flexShrink: 0, flexWrap: isMobile ? "wrap" : "nowrap", gap: "8px",
         }}>
-          <div>
-            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "14px", color: COLORS.green3, letterSpacing: "2px" }}>
+          {/* Title — takes full width on mobile so buttons wrap below */}
+          <div style={{ flex: isMobile ? "1 1 100%" : "0 0 auto" }}>
+            <div style={{ fontFamily: "'Cinzel', serif", fontSize: isMobile ? "12px" : "14px", color: COLORS.green3, letterSpacing: "2px" }}>
               🐟 GOLDFISH MODE
             </div>
             {activeDeck && (
@@ -8584,8 +8587,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               </div>
             )}
           </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            {phase === "playing" && (
+          {/* Button row — wraps naturally, ✕ always visible */}
+          <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+            {phase === "playing" && !isMobile && (
               <>
                 <div style={{ padding: "4px 12px", background: "#1a2e1a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
                   Turn {turnNumber} · {isMyTurn ? "Your Turn" : "Opp Turn"}
@@ -8593,47 +8597,56 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 <div style={{ padding: "4px 12px", background: "#0f1e0f", border: `1px solid ${COLORS.border}`, borderRadius: "6px", fontSize: "11px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>
                   {library.length} in library
                 </div>
+              </>
+            )}
+            {phase === "playing" && isMobile && (
+              <div style={{ padding: "3px 8px", background: "#1a2e1a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", fontSize: "10px", color: COLORS.textMid, fontFamily: "'Cinzel', serif" }}>
+                T{turnNumber}
+              </div>
+            )}
+            {phase === "playing" && (
+              <>
                 <button onClick={exportToAdvisor} style={{
                   background: "none", border: `1px solid ${COLORS.blue}`, borderRadius: "6px",
-                  padding: "5px 12px", color: COLORS.blue, cursor: "pointer",
+                  padding: isMobile ? "4px 8px" : "5px 12px", color: COLORS.blue, cursor: "pointer",
                   fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
                 }}
                   onMouseEnter={e => { e.target.style.background = "#0a1a2e"; }}
                   onMouseLeave={e => { e.target.style.background = "transparent"; }}
                   title="Send this board state to the main advisor"
-                >↗ EXPORT</button>
+                >↗ {isMobile ? "" : "EXPORT"}{isMobile && "EXP"}</button>
                 <button onClick={endGame} style={{
                   background: "none", border: `1px solid ${COLORS.gold}`, borderRadius: "6px",
-                  padding: "5px 12px", color: COLORS.gold, cursor: "pointer",
+                  padding: isMobile ? "4px 8px" : "5px 12px", color: COLORS.gold, cursor: "pointer",
                   fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
                 }}
                   onMouseEnter={e => { e.target.style.background = "#1a1a0a"; }}
                   onMouseLeave={e => { e.target.style.background = "transparent"; }}
                   title="End this game and record stats"
-                >★ END GAME</button>
+                >★ {isMobile ? "END" : "END GAME"}</button>
               </>
             )}
             {gameHistory.length > 0 && (
               <button onClick={() => setPhase("stats")} style={{
                 background: phase === "stats" ? "#1a1a0a" : "none",
                 border: `1px solid ${COLORS.gold}`, borderRadius: "6px",
-                padding: "5px 10px", color: COLORS.gold, cursor: "pointer",
+                padding: isMobile ? "4px 8px" : "5px 10px", color: COLORS.gold, cursor: "pointer",
                 fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
-              }}>★ STATS ({gameHistory.length})</button>
+              }}>★ {isMobile ? `${gameHistory.length}` : `STATS (${gameHistory.length})`}</button>
             )}
             {phase === "playing" && (
               <button onClick={() => setPhase("setup")} style={{
                 background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
-                padding: "5px 10px", color: COLORS.textDim, cursor: "pointer",
+                padding: isMobile ? "4px 8px" : "5px 10px", color: COLORS.textDim, cursor: "pointer",
                 fontFamily: "'Cinzel', serif", fontSize: "11px",
               }}
                 onMouseEnter={e => { e.target.style.borderColor = COLORS.red; e.target.style.color = COLORS.red; }}
                 onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-              >↺ NEW GAME</button>
+              >↺ {isMobile ? "" : "NEW GAME"}{isMobile && "NEW"}</button>
             )}
             <button onClick={onClose} style={{
               background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
-              padding: "5px 10px", color: COLORS.textDim, cursor: "pointer",
+              padding: isMobile ? "4px 10px" : "5px 10px", color: COLORS.textDim, cursor: "pointer",
               fontFamily: "'Cinzel', serif", fontSize: "13px",
             }}>✕</button>
           </div>
