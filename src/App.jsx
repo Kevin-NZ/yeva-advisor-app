@@ -7380,8 +7380,8 @@ function extractPlayableCard(result, hand, battlefield) {
   return null;
 }
 
-function simulateOneGame(deckCards, deckSet, mullLimit = 2) {
-  const MAX_TURNS = 20;
+function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
+  const MAX_TURNS = maxTurns;
   let hand, library;
 
   // ── Mulligan heuristic ─────────────────────────────────────
@@ -7534,11 +7534,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2) {
 }
 
 // Run N games synchronously, return aggregated stats
-function runNGames(deckCards, n = 50) {
+function runNGames(deckCards, n = 50, maxTurns = 20) {
   const deckSet = new Set(deckCards);
   const results = [];
   for (let i = 0; i < n; i++) {
-    results.push(simulateOneGame(deckCards, deckSet));
+    results.push(simulateOneGame(deckCards, deckSet, 2, maxTurns));
   }
 
   const wins        = results.filter(r => r.winTurn !== null);
@@ -7579,7 +7579,7 @@ function runNGames(deckCards, n = 50) {
   return {
     n, wins: wins.length, winRate, avgWinTurn, avgMulligans,
     t3Rate, t4Rate, t5Rate,
-    topBottlenecks, distribution, results,
+    topBottlenecks, distribution, results, maxTurns,
   };
 }
 
@@ -7621,8 +7621,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [dragOver, setDragOver] = useState(null); // zone name being hovered
   // ── Run N state ─────────────────────────────────────────────
   const [runNCount, setRunNCount] = useState(100);
+  const [runNMaxTurns, setRunNMaxTurns] = useState(10);
   const [runNResults, setRunNResults] = useState(null);
   const [runNRunning, setRunNRunning] = useState(false);
+  const [simTooltip, setSimTooltip] = useState(null); // {id, text, x, y} | null
 
   const deckCards = activeDeck?.cards ?? [];
   const hasDeck = deckCards.length > 0;
@@ -7992,7 +7994,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     // Defer to next tick so the UI can show the spinner before blocking
     setTimeout(() => {
       try {
-        const results = runNGames(deckCards, runNCount);
+        const results = runNGames(deckCards, runNCount, runNMaxTurns);
         setRunNResults(results);
       } catch (e) {
         console.error("runNGames error:", e);
@@ -8917,6 +8919,18 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                         }}>{n}</button>
                       ))}
                     </div>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+                      <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>MAX TURNS:</span>
+                      {[8, 10, 15, 20].map(t => (
+                        <button key={t} onClick={() => setRunNMaxTurns(t)} style={{
+                          background: runNMaxTurns === t ? "#1a1a3a" : "none",
+                          border: `1px solid ${runNMaxTurns === t ? COLORS.blue : COLORS.border}`,
+                          borderRadius: "6px", padding: "4px 10px",
+                          color: runNMaxTurns === t ? COLORS.blue : COLORS.textDim,
+                          cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px",
+                        }}>{t}</button>
+                      ))}
+                    </div>
                     <button
                       onClick={runGames}
                       disabled={!hasDeck || runNRunning}
@@ -8942,12 +8956,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       </div>
                     )}
                     {nr && !runNRunning && (() => {
-                      const simStatBox = (label, value, color, sub) => (
-                        <div style={{ background: "#0a1520", border: `1px solid ${color}33`, borderRadius: "6px", padding: "10px 12px", textAlign: "center" }}>
-                          <div style={{ fontSize: "18px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
-                          {sub && <div style={{ fontSize: "9px", color: COLORS.textDim, marginTop: "2px", fontFamily: "'Cinzel', serif" }}>{sub}</div>}
-                          <div style={{ fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "3px", fontFamily: "'Cinzel', serif" }}>{label}</div>
+                      // Tip: stores position in top-level simTooltip state so the
+                      // tooltip div is rendered outside the scrollable panel.
+                      const Tip = ({ id, text, children, wrapStyle }) => (
+                        <div style={{ display: "inline-block", ...wrapStyle }}
+                          onMouseEnter={e => {
+                            const r = e.currentTarget.getBoundingClientRect();
+                            setSimTooltip({ id, text, x: r.left + r.width / 2, y: r.top });
+                          }}
+                          onMouseLeave={() => setSimTooltip(null)}
+                        >
+                          {children}
                         </div>
+                      );
+                      const simStatBox = (label, value, color, sub, tipText) => (
+                        <Tip id={label} text={tipText} wrapStyle={{ display: "block" }}>
+                          <div style={{ background: "#0a1520", border: `1px solid ${color}33`, borderRadius: "6px", padding: "10px 12px", textAlign: "center", cursor: tipText ? "help" : "default" }}>
+                            <div style={{ fontSize: "18px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
+                            {sub && <div style={{ fontSize: "9px", color: COLORS.textDim, marginTop: "2px", fontFamily: "'Cinzel', serif" }}>{sub}</div>}
+                            <div style={{ fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "3px", fontFamily: "'Cinzel', serif" }}>{label}</div>
+                          </div>
+                        </Tip>
                       );
                       // Build distribution bar
                       const distKeys = ["T3","T4","T5","T6","T7","T8+"];
@@ -8965,22 +8994,34 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                           </div>
                           {/* Summary stat grid */}
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "12px" }}>
-                            {simStatBox("AVG WIN TURN", nr.avgWinTurn ? nr.avgWinTurn.toFixed(1) : "—", COLORS.red)}
-                            {simStatBox("WIN RATE", `${nr.winRate.toFixed(0)}%`, nr.winRate >= 80 ? COLORS.green2 : nr.winRate >= 50 ? COLORS.gold : COLORS.red, `${nr.wins}/${nr.n}`)}
-                            {simStatBox("AVG MULLIGANS", nr.avgMulligans.toFixed(1), COLORS.gold)}
-                            {simStatBox("WIN ≤T5", `${nr.t5Rate.toFixed(0)}%`, nr.t5Rate >= 60 ? COLORS.green2 : COLORS.gold)}
+                            {simStatBox("AVG WIN TURN", nr.avgWinTurn ? nr.avgWinTurn.toFixed(1) : "—", COLORS.red, null,
+                              "Average turn number when the advisor first detected a WIN NOW or CAST TO WIN line. Only counts games where a win was detected — did-not-win games are excluded from this average.")}
+                            {simStatBox("WIN RATE", `${nr.winRate.toFixed(0)}%`, nr.winRate >= 80 ? COLORS.green2 : nr.winRate >= 50 ? COLORS.gold : COLORS.red, `${nr.wins}/${nr.n}`,
+                              `Percentage of games where the advisor detected a win line within ${nr.maxTurns} turns. A game counts as a win the turn the advisor's top result first shows a WIN NOW, CAST TO WIN, or similar decisive category.`)}
+                            {simStatBox("AVG MULLIGANS", nr.avgMulligans.toFixed(1), COLORS.gold, null,
+                              "Average number of mulligans taken per game. The simulator keeps a hand if it has a dork + tutor (with a mana source), or 2+ dorks + a land. All other hands are mulliganed up to the configured limit.")}
+                            {simStatBox("WIN ≤T5", `${nr.t5Rate.toFixed(0)}%`, nr.t5Rate >= 60 ? COLORS.green2 : COLORS.gold, null,
+                              "Percentage of all games (including non-wins) where a win line was detected by end of turn 5. This is the key cEDH metric — your goal is to threaten a win before opponents can set up interaction.")}
                           </div>
                           {/* T3/T4/T5 breakdown */}
                           <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
-                            {[["≤T3", nr.t3Rate], ["≤T4", nr.t4Rate], ["≤T5", nr.t5Rate]].map(([label, rate]) => (
-                              <div key={label} style={{ flex: 1, background: "#0a1520", border: `1px solid ${COLORS.blue}33`, borderRadius: "6px", padding: "7px 6px", textAlign: "center" }}>
-                                <div style={{ fontSize: "14px", color: rate > 0 ? COLORS.blue : COLORS.textDim, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{rate.toFixed(0)}%</div>
-                                <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginTop: "2px" }}>{label}</div>
-                              </div>
+                            {[
+                              ["≤T3", nr.t3Rate, "Win detected by end of turn 3. Represents the fastest possible goldfish lines — usually requires a perfect opening hand with dork + tutor into immediate combo assembly."],
+                              ["≤T4", nr.t4Rate, "Win detected by end of turn 4. The benchmark for a fast cEDH combo deck. Hitting this consistently means your deck can threaten before most interaction comes online."],
+                              ["≤T5", nr.t5Rate, "Win detected by end of turn 5. The broader competitive threshold — if you can't threaten a win by T5 you'll often be racing against opponents who can."],
+                            ].map(([label, rate, tip]) => (
+                              <Tip key={label} id={`breakdown-${label}`} text={tip}>
+                                <div style={{ flex: 1, background: "#0a1520", border: `1px solid ${COLORS.blue}33`, borderRadius: "6px", padding: "7px 6px", textAlign: "center", cursor: "help" }}>
+                                  <div style={{ fontSize: "14px", color: rate > 0 ? COLORS.blue : COLORS.textDim, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{rate.toFixed(0)}%</div>
+                                  <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginTop: "2px" }}>{label}</div>
+                                </div>
+                              </Tip>
                             ))}
                           </div>
                           {/* Win turn distribution bars */}
-                          <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginBottom: "6px" }}>WIN TURN DISTRIBUTION</div>
+                          <Tip id="dist-header" text="How often the deck won on each specific turn. T3–T4 bars are green (fast), T5 gold (competitive), T6+ grey (slow). Taller bars = more games won that turn. Games with no win detected are not shown.">
+                            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>WIN TURN DISTRIBUTION (?)</div>
+                          </Tip>
                           <div style={{ display: "flex", gap: "4px", alignItems: "flex-end", height: "52px", marginBottom: "14px" }}>
                             {distKeys.map((k, i) => {
                               const count = distCounts[i];
@@ -8999,9 +9040,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                           {/* Bottlenecks */}
                           {nr.topBottlenecks.length > 0 && (
                             <div>
-                              <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.red, letterSpacing: "1px", marginBottom: "6px" }}>
-                                MOST COMMON BOTTLENECKS
-                              </div>
+                              <Tip id="bottleneck-header" text="Cards or conditions the advisor detected as missing when a combo was almost complete. Counted once per game per unique reason. High percentages mean the deck frequently gets close to a win but stalls on that specific piece — these are your best tutor targets or cut candidates.">
+                                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.red, letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>
+                                  MOST COMMON BOTTLENECKS (?)
+                                </div>
+                              </Tip>
                               {nr.topBottlenecks.map((b, i) => (
                                 <div key={i} style={{ marginBottom: "5px" }}>
                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "2px" }}>
@@ -9030,6 +9073,24 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           );
         })()}
 
+        {/* Fixed tooltip for auto-simulate panels — rendered outside scrollable containers */}
+        {simTooltip && (
+          <div style={{
+            position: "fixed",
+            left: simTooltip.x,
+            top: simTooltip.y - 8,
+            transform: "translate(-50%, -100%)",
+            zIndex: 9999,
+            background: "#1a2a1a", border: `1px solid ${COLORS.green1}`,
+            borderRadius: "6px", padding: "8px 12px",
+            width: "240px", pointerEvents: "none",
+            boxShadow: "0 4px 20px #000d",
+          }}>
+            <div style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>
+              {simTooltip.text}
+            </div>
+          </div>
+        )}
         {ContextMenuPopup()}
 
       </div>
