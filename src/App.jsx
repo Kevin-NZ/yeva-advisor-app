@@ -7765,6 +7765,18 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
 function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
+  // ── responsive layout ──────────────────────────────────────
+  const [containerWidth, setContainerWidth] = useState(window.innerWidth);
+  const containerRef2 = useRef(null);
+  useEffect(() => {
+    const el = containerRef2.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setContainerWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const isMobile = containerWidth < 700;
+  const [mobileTab, setMobileTab] = useState("advisor"); // "zones" | "advisor" | "log"
   const [library, setLibrary] = useState([]);
   const [hand, setHand] = useState([]);
   const [battlefield, setBattlefield] = useState([]);
@@ -8550,7 +8562,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       alignItems: "stretch", justifyContent: "center",
       padding: "12px",
     }} onClick={onClose}>
-      <div style={{
+      <div ref={containerRef2} style={{
         background: COLORS.bg, border: `1px solid ${COLORS.borderBright}`,
         borderRadius: "12px", width: "100%", maxWidth: "1400px",
         display: "flex", flexDirection: "column", overflow: "hidden",
@@ -8769,12 +8781,28 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         )}
 
         {phase === "playing" && (
-          <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+
+            {/* Mobile tab bar */}
+            {isMobile && (
+              <div style={{ display: "flex", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
+                {[["zones","⊞ Zones"],["advisor","✦ Advisor"],["log","📜 Log"]].map(([tab, label]) => (
+                  <button key={tab} onClick={() => setMobileTab(tab)} style={{
+                    flex: 1, padding: "8px 4px", border: "none", borderBottom: `2px solid ${mobileTab === tab ? COLORS.green1 : "transparent"}`,
+                    background: "none", color: mobileTab === tab ? COLORS.green2 : COLORS.textDim,
+                    fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px", cursor: "pointer",
+                  }}>{label}</button>
+                ))}
+              </div>
+            )}
+
+            <div style={{ flex: 1, display: "flex", flexDirection: "row", overflow: "hidden", minHeight: 0 }}>
 
             {/* LEFT: zones */}
             <div style={{
-              width: "330px", flexShrink: 0, borderRight: `1px solid ${COLORS.border}`,
-              display: "flex", flexDirection: "column", overflow: "hidden",
+              width: isMobile ? "100%" : "330px", flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${COLORS.border}`,
+              display: isMobile && mobileTab !== "zones" ? "none" : "flex",
+              flexDirection: "column", overflow: "hidden",
               position: "relative",
             }}>
               {/* Controls strip */}
@@ -8913,7 +8941,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               </div>
             </div>
             {/* MIDDLE: advisor */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+            <div style={{ flex: 1, display: isMobile && mobileTab !== "advisor" ? "none" : "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, width: isMobile ? "100%" : undefined }}>
               <div style={{
                 padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}`,
                 fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px",
@@ -8965,8 +8993,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
             {/* RIGHT: log */}
             <div style={{
-              width: "240px", flexShrink: 0, borderLeft: `1px solid ${COLORS.border}`,
-              display: "flex", flexDirection: "column", overflow: "hidden",
+              width: isMobile ? "100%" : "240px", flexShrink: 0, borderLeft: isMobile ? "none" : `1px solid ${COLORS.border}`,
+              display: isMobile && mobileTab !== "log" ? "none" : "flex",
+              flexDirection: "column", overflow: "hidden",
             }}>
               <div style={{ padding: "10px 14px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px", fontFamily: "'Cinzel', serif", flexShrink: 0 }}>
                 GAME LOG
@@ -8983,6 +9012,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 )}
               </div>
             </div>
+            </div> {/* end row wrapper */}
           </div>
         )}
 
