@@ -1152,7 +1152,7 @@ function calculateBattlefieldMana(battlefield) {
 
   let total = 0;
   for (const card of battlefield) {
-    const data = CARDS[card];
+    const data = CARDS[card] ?? EXTRA_CARDS.get(card);
     if (!data) continue;
     if (data.type === "land") {
       if (card === "Gaea's Cradle" || card === "Itlimoc, Cradle of the Sun") {
@@ -5336,7 +5336,7 @@ const TOUR_STEPS = [
   {
     target: "tour-deck",
     title: "Optional: Load a Deck",
-    body: "Click the 📦 DECKS button to load your decklist. When active, autocomplete only shows cards in your deck, and advice is filtered to cards you actually run. Use the preset 'Yeva Competitive' deck to get started immediately.",
+    body: "Click the 📦 DECKS button to load your decklist. When active, autocomplete only shows cards in your deck, and advice is filtered to cards you actually run. Use the preset 'Competitive' deck to get started immediately.",
     placement: "bottom",
     icon: "📦",
   },
@@ -5610,6 +5610,122 @@ function Tag({ label, color }) {
 
 // ── Scryfall image cache (module-level, persists across renders) ──────────────
 const scryfallCache = new Map(); // cardName → image URL or "error"
+
+// ── Runtime card data for unknown cards fetched from Scryfall ─────────────────
+// Merged into CARDS lookups via getCard(name) helper below.
+const EXTRA_CARDS = new Map(); // cardName → {type, cmc, tags, tapsFor, devotion}
+
+// Persistent cache in localStorage so we don't re-fetch every session
+const SCRYFALL_DATA_CACHE_KEY = "yeva_scryfall_data_v1";
+function loadScryfallDataCache() {
+  try { return JSON.parse(localStorage.getItem(SCRYFALL_DATA_CACHE_KEY) || "{}"); }
+  catch { return {}; }
+}
+function saveScryfallDataCache(cache) {
+  try { localStorage.setItem(SCRYFALL_DATA_CACHE_KEY, JSON.stringify(cache)); } catch {}
+}
+
+// Seed EXTRA_CARDS from localStorage on module load
+(function seedExtraCards() {
+  const cache = loadScryfallDataCache();
+  for (const [name, data] of Object.entries(cache)) {
+    if (!CARDS[name]) EXTRA_CARDS.set(name, data);
+  }
+})();
+
+// Derive a minimal card entry from Scryfall API card data
+function deriveCardEntry(sf) {
+  const typeLine = (sf.type_line || "").toLowerCase();
+  const oracle   = (sf.oracle_text || sf.card_faces?.[0]?.oracle_text || "").toLowerCase();
+  const cmc      = sf.cmc ?? 0;
+
+  // Type
+  let type = "unknown";
+  if (typeLine.includes("creature"))    type = "creature";
+  else if (typeLine.includes("land"))   type = "land";
+  else if (typeLine.includes("instant")) type = "instant";
+  else if (typeLine.includes("sorcery")) type = "sorcery";
+  else if (typeLine.includes("enchantment")) type = "enchantment";
+  else if (typeLine.includes("artifact"))    type = "artifact";
+  else if (typeLine.includes("planeswalker")) type = "planeswalker";
+
+  // Tags — best-effort from oracle text
+  const tags = [];
+  if (type === "land") tags.push("land");
+  if (typeLine.includes("basic")) tags.push("basic");
+  if (typeLine.includes("forest") || oracle.includes("add {g}") || oracle.includes("add one mana of any color")) {
+    if (!tags.includes("forest")) tags.push("forest");
+  }
+  if (typeLine.includes("elf"))   tags.push("elf");
+  if (typeLine.includes("human")) tags.push("human");
+  if (type === "creature" && (oracle.includes("{t}: add") || oracle.includes("tap: add"))) {
+    tags.push("dork");
+    if (cmc <= 1) tags.push("1drop");
+  }
+  if (oracle.includes("search your library") || oracle.includes("tutor")) tags.push("tutor");
+  if (oracle.includes("draw a card") || oracle.includes("draw cards")) tags.push("draw");
+  if (oracle.includes("untap")) tags.push("untap");
+  if (oracle.includes("fetch") || (type === "land" && oracle.includes("search your library for a"))) tags.push("fetch");
+  if (typeLine.includes("legendary") && type === "creature") tags.push("legendary");
+
+  // tapsFor heuristic for dorks
+  let tapsFor;
+  if (tags.includes("dork")) {
+    if (oracle.includes("add mana equal") || oracle.includes("for each")) tapsFor = "creatures";
+    else if (oracle.includes("add {g} for each elf")) tapsFor = "elves";
+    else tapsFor = 1;
+  }
+
+  // devotion: count coloured mana pips in mana cost
+  const cost = sf.mana_cost || "";
+  const devotion = (cost.match(/\{G\}/g) || []).length +
+                   (cost.match(/\{[WUBR]\}/g) || []).length;
+
+  return { type, cmc, tags, tapsFor, devotion };
+}
+
+// Enrich a list of unknown card names via Scryfall — returns a map of name→entry
+// Updates EXTRA_CARDS in place and persists to localStorage.
+// Returns { enriched: Set, failed: Set }
+async function enrichUnknownCards(names) {
+  const enriched = new Set();
+  const failed   = new Set();
+  const toFetch  = names.filter(n => !CARDS[n] && !EXTRA_CARDS.has(n));
+  if (toFetch.length === 0) return { enriched, failed };
+
+  const cache = loadScryfallDataCache();
+
+  for (const name of toFetch) {
+    // Small delay to respect Scryfall rate limit (50–100ms between requests)
+    await new Promise(r => setTimeout(r, 80));
+    try {
+      const url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) { failed.add(name); continue; }
+      const sf = await resp.json();
+      if (sf.object === "error") { failed.add(name); continue; }
+      // Use canonical Scryfall name as the key
+      const canonical = sf.name || name;
+      const entry = deriveCardEntry(sf);
+      EXTRA_CARDS.set(canonical, entry);
+      // Also map original name if different (fuzzy matched)
+      if (canonical !== name) EXTRA_CARDS.set(name, entry);
+      cache[canonical] = entry;
+      if (canonical !== name) cache[name] = entry;
+      enriched.add(name);
+    } catch {
+      failed.add(name);
+    }
+  }
+
+  saveScryfallDataCache(cache);
+  return { enriched, failed };
+}
+
+// Helper: look up a card from CARDS or EXTRA_CARDS
+function getCard(name) {
+  return CARDS[name] ?? EXTRA_CARDS.get(name) ?? null;
+}
 
 function useScryfallImage(name) {
   const [url, setUrl] = useState(() => scryfallCache.get(name) || null);
@@ -6378,7 +6494,7 @@ function QuickAdd({ zone, onAdd, deckCards }) {
 const PRESET_DECKS = [
   {
     id: "yeva-competitive",
-    name: "Yeva Competitive",
+    name: "Competitive",
     cards: [
       "Allosaurus Shepherd","Ancient Tomb","Arbor Elf","Archdruid's Charm",
       "Argothian Elder","Ashaya, Soul of the Wild","Badgermole Cub","Beast Whisperer",
@@ -6503,11 +6619,10 @@ function parseDecklist(text) {
     const name = match ? match[2].trim() : line;
     const qty  = match ? parseInt(match[1]) : 1;
     // Resolve aliases
-    const resolved = CARD_ALIASES[name.toLowerCase()] || name;
-    // Only include cards we know about (or keep unknown ones for custom lists)
+    const resolved = CARD_ALIASES.get(name.toLowerCase()) || name;
     for (let i = 0; i < Math.min(qty, 99); i++) cards.push(resolved);
   }
-  return [...new Set(cards)]; // deduplicate (deck lists each card once)
+  return cards;
 }
 
 function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, editMode }) {
@@ -6615,7 +6730,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
   });
 
   const q = filter.toLowerCase();
-  const unknown = cards.filter(c => c !== "Forest" && !CARDS[c]);
+  const unknown = cards.filter(c => c !== "Forest" && !CARDS[c] && !EXTRA_CARDS.has(c));
 
   const handleRemove = (name) => {
     const idx = cards.lastIndexOf(name);
@@ -6740,7 +6855,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
                   {filtered.sort().map(c => (
                     <DeckCardChip
                       key={c} name={c} count={counts[c]}
-                      isUnknown={c !== "Forest" && !CARDS[c]}
+                      isUnknown={c !== "Forest" && !CARDS[c] && !EXTRA_CARDS.has(c)}
                       note={notes[c]}
                       editMode={editMode}
                       onRemove={editMode ? handleRemove : null}
@@ -6912,6 +7027,26 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
   const [importName, setImportName]     = useState("");
   const [importError, setImportError]   = useState("");
   const [saveStatus, setSaveStatus]     = useState(""); // "" | "saving" | "saved" | "error"
+  // Scryfall enrichment: deckId → "idle"|"fetching"|"done"|"partial"|"failed"
+  const [enrichStatus, setEnrichStatus] = useState({});
+  const [, forceEnrichUpdate] = useState(0);
+
+  // Auto-enrich any deck that has unknown cards not yet in EXTRA_CARDS
+  useEffect(() => {
+    for (const deck of (decks || [])) {
+      const unknowns = deck.cards.filter(c => !CARDS[c] && !EXTRA_CARDS.has(c));
+      if (unknowns.length === 0) continue;
+      if (enrichStatus[deck.id] === "fetching") continue;
+      setEnrichStatus(prev => ({ ...prev, [deck.id]: "fetching" }));
+      enrichUnknownCards([...new Set(unknowns)]).then(({ enriched, failed }) => {
+        const status = failed.size === 0 ? "done"
+          : enriched.size === 0 ? "failed" : "partial";
+        setEnrichStatus(prev => ({ ...prev, [deck.id]: status }));
+        forceEnrichUpdate(n => n + 1); // re-render to pick up new EXTRA_CARDS entries
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decks]);
 
   const deleteDeck = (id) => {
     onSaveDecks((decks || []).filter(d => d.id !== id));
@@ -7028,8 +7163,36 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
               {activeDeckId === null && <span style={{ color: COLORS.green1 }}>✓</span>}
             </div>
 
-            {(decks || []).map(deck => {
-              const unknown = deck.cards.filter(c => c !== "Forest" && !CARDS[c]).length;
+            {/* Built-in decks — always visible */}
+            {PRESET_DECKS.map(deck => {
+              const isActive = activeDeckId === deck.id;
+              return (
+              <div key={deck.id} style={{
+                padding: "10px 14px", borderRadius: "6px", marginBottom: "8px",
+                background: isActive ? "#1a3a1a" : "#0a150a",
+                border: `1px solid ${isActive ? COLORS.green1 : COLORS.border}`,
+                display: "flex", alignItems: "center", gap: "10px",
+              }}>
+                <div onClick={() => { onSetActive(deck.id); onClose(); }} style={{ flex: 1, display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <span style={{ fontSize: "16px" }}>⭐</span>
+                  <div>
+                    <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: isActive ? COLORS.text : COLORS.textMid }}>{deck.name}</div>
+                    <div style={{ fontSize: "11px", color: COLORS.textDim }}>{deck.cards.length} cards · built-in</div>
+                  </div>
+                  {isActive && <span style={{ color: COLORS.green1 }}>✓</span>}
+                </div>
+                <button onClick={(e) => { e.stopPropagation(); setViewingDeck(deck); }} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", padding: "3px 8px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px" }}>👁</button>
+              </div>
+            )})}
+
+            {/* User decks */}
+            {(decks || []).filter(d => !PRESET_DECKS.some(p => p.id === d.id)).length > 0 && (
+              <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1.5px", marginBottom: "6px", marginTop: "4px" }}>MY DECKS</div>
+            )}
+            {(decks || []).filter(d => !PRESET_DECKS.some(p => p.id === d.id)).map(deck => {
+              const unknownCards = deck.cards.filter(c => !CARDS[c] && !EXTRA_CARDS.has(c));
+              const enrichedCards = deck.cards.filter(c => !CARDS[c] && EXTRA_CARDS.has(c));
+              const es = enrichStatus[deck.id];
               return (
               <div key={deck.id} style={{
                 padding: "10px 14px", borderRadius: "6px",
@@ -7044,7 +7207,21 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
                     <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: activeDeckId === deck.id ? COLORS.text : COLORS.textMid }}>{deck.name}</div>
                     <div style={{ fontSize: "11px", color: COLORS.textDim }}>
                       {deck.cards.length} cards
-                      {unknown > 0 && <span style={{ color: "#e74c3c", marginLeft: "6px" }}>· {unknown} unknown</span>}
+                      {es === "fetching" && (
+                        <span style={{ color: COLORS.blue, marginLeft: "6px" }}>· ⏳ looking up {unknownCards.length} unknown…</span>
+                      )}
+                      {(es === "done") && enrichedCards.length > 0 && (
+                        <span style={{ color: COLORS.green2, marginLeft: "6px" }}>· ✓ {enrichedCards.length} enriched via Scryfall</span>
+                      )}
+                      {es === "partial" && (
+                        <span style={{ color: COLORS.gold, marginLeft: "6px" }}>· ⚠ {enrichedCards.length} enriched, {unknownCards.length} not found</span>
+                      )}
+                      {es === "failed" && unknownCards.length > 0 && (
+                        <span style={{ color: "#e74c3c", marginLeft: "6px" }}>· ✕ {unknownCards.length} unknown (Scryfall unavailable)</span>
+                      )}
+                      {!es && unknownCards.length > 0 && (
+                        <span style={{ color: "#e74c3c", marginLeft: "6px" }}>· {unknownCards.length} unknown</span>
+                      )}
                     </div>
                   </div>
                   {activeDeckId === deck.id && <span style={{ color: COLORS.green1 }}>✓</span>}
@@ -7391,9 +7568,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     library = buildLibrary(deckCards);
     hand = library.slice(0, 7);
     library = library.slice(7);
-    const dorks = hand.filter(c => CARDS[c]?.tags?.includes("dork")).length;
-    const lands  = hand.filter(c => CARDS[c]?.type === "land").length;
-    const tutors = hand.filter(c => CARDS[c]?.tags?.includes("tutor")).length;
+    const dorks = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
+    const lands  = hand.filter(c => getCard(c)?.type === "land").length;
+    const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
     const canMakeT1Mana = lands >= 1 || dorks >= 2;
     const keep = (dorks >= 1 && tutors >= 1 && canMakeT1Mana) ||
                  (dorks >= 2 && lands >= 1);
@@ -7403,10 +7580,10 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         const toBottom = m; // bottom m cards (worst: excess lands, then non-combo)
         // Score cards — keep high-value, bottom basics and excess lands
         const scored = hand.map(c => {
-          const isDork  = CARDS[c]?.tags?.includes("dork") ? 3 : 0;
-          const isTutor = CARDS[c]?.tags?.includes("tutor") ? 3 : 0;
-          const isLand  = CARDS[c]?.type === "land" ? 1 : 0;
-          const isCombo = CARDS[c]?.tags?.some(t => ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t)) ? 2 : 0;
+          const isDork  = getCard(c)?.tags?.includes("dork") ? 3 : 0;
+          const isTutor = getCard(c)?.tags?.includes("tutor") ? 3 : 0;
+          const isLand  = getCard(c)?.type === "land" ? 1 : 0;
+          const isCombo = getCard(c)?.tags?.some(t => ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t)) ? 2 : 0;
           return { c, score: isDork + isTutor + isCombo + isLand };
         }).sort((a, b) => a.score - b.score); // lowest score → bottom
         const bottomed = scored.slice(0, toBottom).map(x => x.c);
@@ -7444,7 +7621,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // Always play a land first
       if (!landPlayed) {
-        const landIdx = hand.findIndex(c => CARDS[c]?.type === "land");
+        const landIdx = hand.findIndex(c => getCard(c)?.type === "land");
         if (landIdx >= 0) {
           const land = hand.splice(landIdx, 1)[0];
           battlefield.push(land);
@@ -7489,7 +7666,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       if (cardToPlay) {
         const idx = hand.indexOf(cardToPlay);
-        const cardData = CARDS[cardToPlay];
+        const cardData = getCard(cardToPlay);
         const cmc = cardData?.cmc ?? 0;
         const cardType = cardData?.type ?? "";
         if (idx >= 0 && cmc <= mana && cardType !== "land") {
@@ -7508,7 +7685,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       // Fallback: cast the highest-CMC affordable non-land card in hand
       if (!played) {
         const affordable = hand
-          .map((c, i) => ({ c, i, cmc: CARDS[c]?.cmc ?? 0, type: CARDS[c]?.type ?? "" }))
+          .map((c, i) => ({ c, i, cmc: getCard(c)?.cmc ?? 0, type: getCard(c)?.type ?? "" }))
           .filter(x => x.type !== "land" && x.cmc <= mana && x.cmc > 0)
           .sort((a, b) => b.cmc - a.cmc);
         if (affordable.length > 0) {
@@ -7849,7 +8026,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
   // ── CAST FROM HAND (single click) ───────────────────────────
   function castFromHand(card, idx) {
-    const type = CARDS[card]?.type;
+    const type = getCard(card)?.type;
     // Remove from hand
     setHand(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
     if (type === "land") {
@@ -7973,7 +8150,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
     if (toZone === "hand") setHand(prev => [...prev, card]);
     else if (toZone === "battlefield") {
-      const type = CARDS[card]?.type;
+      const type = getCard(card)?.type;
       if (type === "instant" || type === "sorcery") { setGraveyard(prev => [...prev, card]); addLog(`${card} → graveyard (instant/sorcery).`, COLORS.textDim); closeContextMenu(); return; }
       setBattlefield(prev => [...prev, card]);
     }
@@ -8152,7 +8329,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // remount it on every parent render, which would kill hover state
   // and cause the context menu to disappear.
   const renderCard = (card, i, zone, { isTap = false, curCount = 0, onClick, style: extraStyle } = {}) => {
-    const isLand = CARDS[card]?.type === "land";
+    const isLand = getCard(card)?.type === "land";
     const fetch = isFetch(card);
     return (
       <HoverCard key={`${zone}:${card}:${i}`} card={card}>
@@ -8180,7 +8357,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   };
 
   // ── render helpers ──────────────────────────────────────────
-  const isFetch = (card) => CARDS[card]?.tags?.includes("fetch");
+  const isFetch = (card) => getCard(card)?.tags?.includes("fetch");
 
   const cardPillStyle = (isTapped, isSelected) => ({
     display: "inline-flex", alignItems: "center", gap: "4px",
@@ -8297,7 +8474,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               }}>
                 <span style={{ flex: 1, fontSize: "12px", color: toBottom ? COLORS.textDim : COLORS.text, fontFamily: "'Crimson Text', serif", textDecoration: toBottom ? "line-through" : "none" }}>
                   {i + 1}. {card}
-                  {CARDS[card] && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "6px" }}>{CARDS[card].type}</span>}
+                  {getCard(card) && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "6px" }}>{getCard(card).type}</span>}
                 </span>
                 {!toBottom && (
                   <>
@@ -8353,7 +8530,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           <div key={i} onClick={() => tutorCard(card)} style={{ padding: "6px 10px", cursor: "pointer", borderRadius: "4px", fontSize: "12px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "2px" }}
             onMouseEnter={e => { e.currentTarget.style.background = "#1a3a1a"; e.currentTarget.style.color = COLORS.green2; }}
             onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = COLORS.textMid; }}>
-            {card}{CARDS[card] && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "8px" }}>{CARDS[card].type}</span>}
+            {card}{getCard(card) && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "8px" }}>{getCard(card).type}</span>}
           </div>
         ))}
         <button onClick={() => { setShowTutor(false); setTutorQuery(""); }} style={{
@@ -8644,7 +8821,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     {hand.length === 0
                       ? <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
                       : hand.map((card, i) => {
-                          const isLand = CARDS[card]?.type === "land";
+                          const isLand = getCard(card)?.type === "land";
                           const cantPlay = isLand && landPlayed;
                           return renderCard(card, i, "hand", {
                             onClick: () => !cantPlay && castFromHand(card, i),
@@ -9677,7 +9854,7 @@ function YevaAdvisor() {
   const tour = useTour();
 
   // Compute the active deck's card set for filtering
-  const activeDeck = decks?.find(d => d.id === activeDeckId) ?? null;
+  const activeDeck = (activeDeckId && PRESET_DECKS.find(d => d.id === activeDeckId)) || decks?.find(d => d.id === activeDeckId) || null;
   const deckList = activeDeck ? new Set(activeDeck.cards) : null;
   const [hand, setHand] = useState([]);
   const [battlefield, setBattlefield] = useState([]);
@@ -9764,10 +9941,10 @@ function YevaAdvisor() {
   // Each card is unique — adding to one zone removes it from the other two
   const addTo = (zone) => (card) => {
     if (zone === "battlefield") {
-      const type = CARDS[card]?.type;
+      const type = getCard(card)?.type;
       if (type === "instant" || type === "sorcery") return;
     }
-    const isBasic = CARDS[card]?.tags?.includes("basic");
+    const isBasic = getCard(card)?.tags?.includes("basic");
     // For non-basics: move semantics (remove from other zones, add to destination)
     // For basics: add semantics (can exist in multiple zones simultaneously — don't remove from others)
     if (!isBasic) {
