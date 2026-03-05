@@ -7247,8 +7247,9 @@ function shuffleArray(arr) {
 
 // Expand deck cards array: basics appear multiple times, non-basics once
 function buildLibrary(deckCards) {
-  // deckCards already has repeated basics (e.g. 10x "Forest")
-  return shuffleArray([...deckCards]);
+  // deckCards already has repeated basics (e.g. 10x "Forest").
+  // Exclude the commander — she lives in the command zone, not the library.
+  return shuffleArray(deckCards.filter(c => !CARDS[c]?.tags?.includes("commander")));
 }
 
 // Card image shown during mulligan — fetches from Scryfall, shows spinner while loading.
@@ -7535,10 +7536,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
 // Run N games synchronously, return aggregated stats
 function runNGames(deckCards, n = 50, maxTurns = 20) {
-  const deckSet = new Set(deckCards);
+  const nonCommanderCards = deckCards.filter(c => !CARDS[c]?.tags?.includes("commander"));
+  const deckSet = new Set(nonCommanderCards);
   const results = [];
   for (let i = 0; i < n; i++) {
-    results.push(simulateOneGame(deckCards, deckSet, 2, maxTurns));
+    results.push(simulateOneGame(nonCommanderCards, deckSet, 2, maxTurns));
   }
 
   const wins        = results.filter(r => r.winTurn !== null);
