@@ -8182,20 +8182,19 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setIsMyTurn(true);
     setTapped(new Set());
     setLandPlayed(false);
-    setLibrary(lib => {
-      if (lib.length === 0) {
-        setLog(l => [{ msg: `── Turn ${next} — untap, upkeep (library empty) ──`, color: COLORS.green3, turn: next }, ...l].slice(0, 100));
-        return lib;
-      }
-      const drawn = lib[0];
+    // Compute draw synchronously from current library snapshot — never nest setHand inside setLibrary
+    if (library.length === 0) {
+      setLog(l => [{ msg: `── Turn ${next} — untap, upkeep (library empty) ──`, color: COLORS.green3, turn: next }, ...l].slice(0, 100));
+    } else {
+      const drawn = library[0];
+      setLibrary(library.slice(1));
       setHand(h => [...h, drawn]);
       setLog(l => [
         { msg: `Drew ${drawn}.`, color: COLORS.blue, turn: next },
         { msg: `── Turn ${next} — untap, upkeep, draw ──`, color: COLORS.green3, turn: next },
         ...l,
       ].slice(0, 100));
-      return lib.slice(1);
-    });
+    }
   }
 
   function toggleTurn() {
