@@ -1144,10 +1144,10 @@ function calculateCardManaForPool(card, battlefield) {
   if (!data) return 0;
   if (data.type === "land") {
     if (card === "Gaea's Cradle" || card === "Itlimoc, Cradle of the Sun") {
-      const creatures = battlefield.filter(c => CARDS[c]?.type === "creature").length;
+      const creatures = battlefield.filter(c => getCard(c)?.type === "creature").length;
       return creatures;
     } else if (card === "Nykthos, Shrine to Nyx") {
-      const devotion = battlefield.reduce((s, c) => s + (CARDS[c]?.devotion ?? 0), 0);
+      const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
       return Math.max(0, devotion - 2);
     } else if (card === "Ancient Tomb") {
       return 2;
@@ -1159,10 +1159,10 @@ function calculateCardManaForPool(card, battlefield) {
   } else if (data.tags?.includes("dork") || data.tags?.includes("big-dork")) {
     if (data.tapsFor === "arbor") return 1;
     const board = new Set(battlefield);
-    const creatures = battlefield.filter(c => CARDS[c]?.type === "creature");
-    const elves = creatures.filter(c => CARDS[c]?.tags?.includes("elf")).length;
+    const creatures = battlefield.filter(c => getCard(c)?.type === "creature");
+    const elves = creatures.filter(c => getCard(c)?.tags?.includes("elf")).length;
     const creatureCount = creatures.length;
-    const devotion = battlefield.reduce((s, c) => s + (CARDS[c]?.devotion ?? 0), 0);
+    const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     const t = data.tapsFor;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
@@ -1180,10 +1180,10 @@ function calculateCardManaForPool(card, battlefield) {
 
 function calculateBattlefieldMana(battlefield) {
   const board = new Set(battlefield);
-  const creatures  = battlefield.filter(c => CARDS[c]?.type === "creature");
-  const elves      = creatures.filter(c => CARDS[c]?.tags?.includes("elf")).length;
+  const creatures  = battlefield.filter(c => getCard(c)?.type === "creature");
+  const elves      = creatures.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creatureCount = creatures.length;
-  const devotion   = battlefield.reduce((s, c) => s + (CARDS[c]?.devotion ?? 0), 0);
+  const devotion   = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
   const hasBadgermole = board.has("Badgermole Cub");
   const badgermoleBonus = hasBadgermole ? 1 : 0;
   const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
@@ -1234,10 +1234,10 @@ function calculateBattlefieldMana(battlefield) {
   // its own mana output. Without Yavimaya only real basic Forests are untappable.
   if (board.has("Earthcraft")) {
     const basicForests = battlefield.filter(c =>
-      CARDS[c]?.tags?.includes("basic") || CARDS[c]?.tags?.includes("forest")
+      getCard(c)?.tags?.includes("basic") || getCard(c)?.tags?.includes("forest")
     ).length;
     const untapTargets = hasYavimaya
-      ? battlefield.filter(c => CARDS[c]?.type === "land").length  // all lands are basics
+      ? battlefield.filter(c => getCard(c)?.type === "land").length  // all lands are basics
       : basicForests;
     // Each creature can tap to untap one land — effectively adds 1 mana per creature
     // up to the number of untappable lands available (each creature + land pair = 1 extra {G})
@@ -1281,7 +1281,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const faunaCanFetchWitness = () =>
     board.has("Fauna Shaman") &&
     inGrave.has("Eternal Witness") &&
-    hand.some(c => CARDS[c]?.type === "creature") && // need a creature to discard
+    hand.some(c => getCard(c)?.type === "creature") && // need a creature to discard
     mana >= 1; // Fauna Shaman activation cost
   const witnessRetrievable = (cardName) => {
     if (!inGrave.has(cardName)) return false;
@@ -1293,11 +1293,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const accessible = (cardName) => inHand.has(cardName) || witnessRetrievable(cardName);
 
   const mana = parseInt(manaAvailable) || 0;
-  const elvesOnBoard    = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
-  const creaturesOnBoard = battlefield.filter(c => CARDS[c]?.type === "creature").length;
-  const dorksOnBoard    = battlefield.filter(c => CARDS[c]?.tags?.includes("dork")).length;
+  const elvesOnBoard    = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
+  const dorksOnBoard    = battlefield.filter(c => getCard(c)?.tags?.includes("dork")).length;
   // Exact green devotion: sum of devotion field for every permanent on the battlefield
-  const devotionOnBoard = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
+  const devotionOnBoard = battlefield.reduce((sum, c) => sum + (getCard(c)?.devotion ?? 0), 0);
 
   // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
   const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || accessible("Temur Sabertooth") || accessible("Kogla, the Titan Ape");
@@ -1333,7 +1333,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           if (!inHand.has(r)) return false;
           // mustPreExist cards (summoning sick) need to be on the board unless haste is up
           if (mustPre.includes(r) && !_hasteOnBoard) return false;
-          if (CARDS[r]?.type === "land") return isMyTurn;
+          if (getCard(r)?.type === "land") return isMyTurn;
           return _castable;
         });
         if (!allReachable) continue;
@@ -1363,7 +1363,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- HELPER: exact mana output of a dork given board context ----
   function estimateDorkOutput(cardName, extraElves = 0) {
-    const t = CARDS[cardName]?.tapsFor;
+    const t = getCard(cardName)?.tapsFor;
     // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
@@ -1398,22 +1398,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     let _canCast = false;
     try { _canCast = canCastNow; } catch(e) { _canCast = false; }
     const elvesInHand = _canCast
-      ? hand.filter(c => CARDS[c]?.tags?.includes("elf")).length
+      ? hand.filter(c => getCard(c)?.tags?.includes("elf")).length
       : 0;
     const all = [...battlefield, ...hand];
     const candidates = all.filter(c => {
-      if (!CARDS[c]?.tags?.includes("dork") && !CARDS[c]?.tags?.includes("big-dork")) return false;
+      if (!getCard(c)?.tags?.includes("dork") && !getCard(c)?.tags?.includes("big-dork")) return false;
       // If the dork itself is in hand and is an elf, don't double-count it in the bonus
-      const effectiveBonus = Math.max(0, (inHand.has(c) && CARDS[c]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      const effectiveBonus = Math.max(0, (inHand.has(c) && getCard(c)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
       const rawOutput = estimateDorkOutput(c, effectiveBonus);
       // If dork is in hand and mana is finite, first loop must also cover its cast cost
-      const castCostPenalty = (inHand.has(c) && !infiniteManaActive) ? (CARDS[c]?.cmc ?? 0) : 0;
+      const castCostPenalty = (inHand.has(c) && !infiniteManaActive) ? (getCard(c)?.cmc ?? 0) : 0;
       return (rawOutput - castCostPenalty) >= threshold;
     });
     if (candidates.length === 0) return null;
     return candidates.sort((a, b) => {
-      const bonusA = Math.max(0, (inHand.has(a) && CARDS[a]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      const bonusB = Math.max(0, (inHand.has(b) && CARDS[b]?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      const bonusA = Math.max(0, (inHand.has(a) && getCard(a)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      const bonusB = Math.max(0, (inHand.has(b) && getCard(b)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
       return estimateDorkOutput(b, bonusB) - estimateDorkOutput(a, bonusA);
     })[0];
   }
@@ -1435,8 +1435,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // "return an elf to hand", and changelings satisfy that requirement at any CMC.
     if (combo.needsOneDrop) {
       const hasOneDrop = [...battlefield, ...hand].some(c =>
-        (CARDS[c]?.tags?.includes("1drop") && CARDS[c]?.tags?.includes("elf"))
-        || CARDS[c]?.tags?.includes("changeling") // changeling = all types including elf
+        (getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("elf"))
+        || getCard(c)?.tags?.includes("changeling") // changeling = all types including elf
       );
       if (!hasOneDrop) return { ok: false, missing: "a 1-drop elf (Llanowar Elves, Elvish Mystic, Fyndhorn Elves, etc.) — or Chomping Changeling as an elf of any cost" };
     }
@@ -1471,7 +1471,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // needsMinElves: need at least N elves on the battlefield
     if (combo.needsMinElves) {
-      const elfCount = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
+      const elfCount = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
       if (elfCount < combo.needsMinElves) {
         return { ok: false, missing: `at least ${combo.needsMinElves} elves on battlefield (have ${elfCount})` };
       }
@@ -1485,11 +1485,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       let _canCast2 = false;
       try { _canCast2 = canCastNow; } catch(e) { _canCast2 = false; }
       const elvesInHand2 = _canCast2
-        ? hand.filter(c => CARDS[c]?.tags?.includes("elf")).length
+        ? hand.filter(c => getCard(c)?.tags?.includes("elf")).length
         : 0;
       const dork = battlefield.find(c => {
-        if (!CARDS[c]?.tags?.includes("elf")) return false;
-        if (!CARDS[c]?.tags?.includes("dork") && !CARDS[c]?.tags?.includes("big-dork")) return false;
+        if (!getCard(c)?.tags?.includes("elf")) return false;
+        if (!getCard(c)?.tags?.includes("dork") && !getCard(c)?.tags?.includes("big-dork")) return false;
         return estimateDorkOutput(c, elvesInHand2) >= threshold;
       });
       if (!dork) return { ok: false, missing: `a big elf dork on battlefield producing ≥${threshold} mana (Priest of Titania, Elvish Archdruid, or Circle of Dreams Druid with ${threshold}+ elves/creatures)` };
@@ -1538,7 +1538,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // needsBattlefieldForest: requires at least one Forest land on the battlefield
     // (for Quirion Ranger to return to hand to untap a creature — no Ashaya needed)
     if (combo.needsBattlefieldForest) {
-      const hasForestOnBoard = battlefield.some(c => c === "Forest" || CARDS[c]?.type === "land" && c.includes("Forest"))
+      const hasForestOnBoard = battlefield.some(c => c === "Forest" || getCard(c)?.type === "land" && c.includes("Forest"))
         || board.has("Yavimaya, Cradle of Growth"); // Yavimaya makes all lands Forests
       if (!hasForestOnBoard) {
         return { ok: false, missing: "at least one Forest on the battlefield (for Quirion Ranger to return and untap Speaker)" };
@@ -1638,7 +1638,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // Flash in a big dork EOT for next-turn combo
-    const bigDorksInHand = hand.filter(c => CARDS[c]?.tags?.includes("big-dork"));
+    const bigDorksInHand = hand.filter(c => getCard(c)?.tags?.includes("big-dork"));
     if (bigDorksInHand.length > 0 && !board.has("Ashaya, Soul of the Wild")) {
       const dork = bigDorksInHand[0];
       results.push({
@@ -1658,7 +1658,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- EARLY GAME RAMP ADVICE ----
   if (dorksOnBoard === 0 && creaturesOnBoard === 0 && mana <= 2) {
-    const dorks1 = hand.filter(c => CARDS[c]?.tags?.includes("1drop") && CARDS[c]?.tags?.includes("dork") && CARDS[c]?.cmc <= mana);
+    const dorks1 = hand.filter(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc <= mana);
     if (dorks1.length > 0) {
       results.push({
         priority: 7,
@@ -1755,10 +1755,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- SURVIVAL OF THE FITTEST ----
-  if (board.has("Survival of the Fittest") && (hand.some(c => CARDS[c]?.type === "creature") || infiniteManaActive)) {
+  if (board.has("Survival of the Fittest") && (hand.some(c => getCard(c)?.type === "creature") || infiniteManaActive)) {
     const targets = getSurvivalTargets(hand, battlefield);
     if (targets.length > 0) {
-      const discardable = hand.filter(c => CARDS[c]?.type === "creature");
+      const discardable = hand.filter(c => getCard(c)?.type === "creature");
       results.push({
         priority: 8,
         category: "🎯 TUTOR",
@@ -1790,15 +1790,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     //   Requires: Ranger on board, big dork on board, Duskwatch accessible.
     //
     // Natural Order is a sorcery — flag as WIN NEXT TURN on opponent's turn.
-    const hasSacTarget = battlefield.some(c => CARDS[c]?.type === "creature");
+    const hasSacTarget = battlefield.some(c => getCard(c)?.type === "creature");
     if (hasSacTarget && mana >= 4 && !board.has("Ashaya, Soul of the Wild")) {
       const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger");
       const rangerName = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
       const rangerRecastCost = board.has("Quirion Ranger") ? 1 : 2;
       const dorkThreshold = 1 + rangerRecastCost;
       const bigDorkNO = battlefield.find(c => {
-        if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
-        const t = CARDS[c]?.tapsFor;
+        if (!getCard(c)?.tags?.includes("big-dork") && !getCard(c)?.tags?.includes("dork")) return false;
+        const t = getCard(c)?.tapsFor;
         if (typeof t === "number") return t >= dorkThreshold;
         if (t === "elves")    return elvesOnBoard >= dorkThreshold;
         if (t === "creatures") return creaturesOnBoard >= dorkThreshold;
@@ -1820,16 +1820,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Fanatic of Rhonas","Magus of the Candelabra","Formidable Speaker",
         ]);
         const sacCandidates = battlefield
-          .filter(c => CARDS[c]?.type === "creature" && c !== bigDorkNO)
+          .filter(c => getCard(c)?.type === "creature" && c !== bigDorkNO)
           .sort((a, b) => {
             const aCombo = COMBO_PIECES.has(a) ? 1 : 0;
             const bCombo = COMBO_PIECES.has(b) ? 1 : 0;
             if (aCombo !== bCombo) return aCombo - bCombo; // non-combo first
-            return (CARDS[a]?.cmc ?? 0) - (CARDS[b]?.cmc ?? 0); // then lowest CMC
+            return (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0); // then lowest CMC
           });
         const sacTarget = sacCandidates[0] || bigDorkNO;
         const dorkOutput = (() => {
-          const t = CARDS[bigDorkNO]?.tapsFor;
+          const t = getCard(bigDorkNO)?.tapsFor;
           if (typeof t === "number") return t;
           if (t === "elves")    return elvesOnBoard;
           if (t === "creatures") return creaturesOnBoard;
@@ -1844,9 +1844,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // Path A: Speaker in library (always true if not on board), need something to discard for ETB.
         // The discard can come from: any card in hand (other than Natural Order itself),
         // OR a Forest bounced from battlefield via Scryb/Quirion Ranger.
-        const hasForestInHand = hand.some(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")));
+        const hasForestInHand = hand.some(c => c === "Forest" || (getCard(c)?.type === "land" && c.toLowerCase().includes("forest")));
         const hasOtherCardInHand = hand.some(c => c !== "Natural Order");
-        const hasBattlefieldForest = battlefield.some(c => c === "Forest" || CARDS[c]?.tags?.includes("basic"));
+        const hasBattlefieldForest = battlefield.some(c => c === "Forest" || getCard(c)?.tags?.includes("basic"));
         const scrybCanBounceForest = board.has("Scryb Ranger") && hasBattlefieldForest;
         const quirionCanBounceForest = board.has("Quirion Ranger") && hasBattlefieldForest;
         const hasDiscardForSpeaker = hasOtherCardInHand || scrybCanBounceForest || quirionCanBounceForest;
@@ -1860,7 +1860,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           let headline, detail, steps;
           if (pathA) {
             // Preferred: Natural Order → Speaker → ETB → Ashaya → infinite → bounce Speaker → Duskwatch
-            const forestInHand = hand.find(c => c === "Forest" || (CARDS[c]?.type === "land" && c.toLowerCase().includes("forest")));
+            const forestInHand = hand.find(c => c === "Forest" || (getCard(c)?.type === "land" && c.toLowerCase().includes("forest")));
             const otherCardInHand = hand.find(c => c !== "Natural Order");
             const bounceRangerForForest = !hasOtherCardInHand && (scrybCanBounceForest || quirionCanBounceForest);
             const bounceRanger = scrybCanBounceForest ? "Scryb Ranger" : "Quirion Ranger";
@@ -1939,12 +1939,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Calculate how much mana a dork can produce *after* Witness is on the battlefield.
   const dorkManaAfterWitness = (() => {
     for (const c of battlefield) {
-      if (!CARDS[c]) continue;
-      const t = CARDS[c].tapsFor;
+      if (!getCard(c)) continue;
+      const t = getCard(c).tapsFor;
       if (typeof t === "number" && t >= 2) return t;
       if (t === "elves")     return elvesOnBoard;          // Witness is NOT an elf
       if (t === "creatures") return creaturesOnBoard + 1;  // +1 for Witness (any creature)
-      if (t === "devotion")  return devotionOnBoard + (CARDS[c]?.devotion ?? 0); // Witness devotion 1
+      if (t === "devotion")  return devotionOnBoard + (getCard(c)?.devotion ?? 0); // Witness devotion 1
     }
     return 0;
   })();
@@ -1966,8 +1966,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const LOOP_PIECES = new Set(["Quirion Ranger","Scryb Ranger","Priest of Titania","Seedborn Muse","Yeva, Nature's Herald","Elvish Archdruid","Circle of Dreams Druid"]);
     // Need a creature to sac that is NOT the ranger and NOT the dork powering the loop
     const bigDork = battlefield.find(c => {
-      if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
-      const t = CARDS[c]?.tapsFor;
+      if (!getCard(c)?.tags?.includes("big-dork") && !getCard(c)?.tags?.includes("dork")) return false;
+      const t = getCard(c)?.tapsFor;
       if (typeof t === "number") return t >= dorkThreshold;
       if (t === "elves")    return (elvesOnBoard + 1) >= dorkThreshold; // +1 for Witness
       if (t === "creatures") return (creaturesOnBoard + 1) >= dorkThreshold;
@@ -1975,25 +1975,25 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       return false;
     });
     const sacCandidates = battlefield.filter(c =>
-      CARDS[c]?.type === "creature" &&
+      getCard(c)?.type === "creature" &&
       c !== bigDork &&
       c !== rangerName &&        // ranger must survive for the loop
       !LOOP_PIECES.has(c)        // prefer not to sac other loop pieces either
     );
     // Fall back to any non-ranger, non-dork creature if no clean target
     const sacFallback = battlefield.filter(c =>
-      CARDS[c]?.type === "creature" && c !== bigDork && c !== rangerName
+      getCard(c)?.type === "creature" && c !== bigDork && c !== rangerName
     );
     const sacTarget = sacCandidates[0] || sacFallback[0] || null;
     // Discard source for Speaker ETB
     const discardCard = hand.find(c => c !== "Eternal Witness") || null;
-    const hasBattlefieldForest = battlefield.some(c => c === "Forest" || CARDS[c]?.tags?.includes("basic"));
+    const hasBattlefieldForest = battlefield.some(c => c === "Forest" || getCard(c)?.tags?.includes("basic"));
     const rangerCanBounce = hasBattlefieldForest && hasRanger;
     const hasDiscardForSpeaker = !!discardCard || rangerCanBounce;
 
     if (hasRanger && bigDork && sacTarget && hasDiscardForSpeaker) {
       const dorkOutput = (() => {
-        const t = CARDS[bigDork]?.tapsFor;
+        const t = getCard(bigDork)?.tapsFor;
         if (typeof t === "number") return t;
         if (t === "elves")    return elvesOnBoard + 1;
         if (t === "creatures") return creaturesOnBoard + 1;
@@ -2006,7 +2006,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? [`Activate ${rangerName}: return a Forest from battlefield to hand — discard source for Speaker's ETB.`]
         : [];
       const faunaFirstSteps = faunaFetchesWitnessForNO && !witnessInHandForNO
-        ? [`Activate Fauna Shaman ({G}): discard ${hand.find(c => CARDS[c]?.type === "creature") || "a creature"} → search for Eternal Witness. Put Witness into your hand.`]
+        ? [`Activate Fauna Shaman ({G}): discard ${hand.find(c => getCard(c)?.type === "creature") || "a creature"} → search for Eternal Witness. Put Witness into your hand.`]
         : [];
       const headlinePrefix = faunaFetchesWitnessForNO && !witnessInHandForNO
         ? "Fauna Shaman → fetch Eternal Witness → retrieve Natural Order"
@@ -2036,15 +2036,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   if (inHand.has("Natural Order") && isMyTurn) {
-    const hasSacTarget = battlefield.some(c => CARDS[c]?.type === "creature");
+    const hasSacTarget = battlefield.some(c => getCard(c)?.type === "creature");
     if (hasSacTarget && (mana >= 4 || infiniteManaActive)) {
       // Ashaya win line already handled above — only show generic advice if no win line
       if (results.some(r => r.combo === "natural_order_ashaya_win")) {
         // Win line already emitted — skip generic advice
       } else {
       // Prioritise targets based on current board state
-      const has3drop = battlefield.some(c => CARDS[c]?.cmc === 3 && CARDS[c]?.type === "creature");
-      const has1drop = battlefield.some(c => CARDS[c]?.cmc === 1 && CARDS[c]?.type === "creature");
+      const has3drop = battlefield.some(c => getCard(c)?.cmc === 3 && getCard(c)?.type === "creature");
+      const has1drop = battlefield.some(c => getCard(c)?.cmc === 1 && getCard(c)?.type === "creature");
 
       // Build ranked target list based on what's missing and what unlocks
       const targetList = [
@@ -2121,11 +2121,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Sacrifice a creature, find one with CMC <= sacrificed CMC + 2.
     // Key line: sac 1-drop dork → find CMC<=3 (Eternal Witness, Hyrax Tower Scout, Heartwood Storyteller)
     // Or: sac 3-drop → find CMC<=5 (Ashaya!)
-    const sacCandidates = battlefield.filter(c => CARDS[c]?.type === "creature")
-      .sort((a,b) => (CARDS[a]?.cmc ?? 0) - (CARDS[b]?.cmc ?? 0));
+    const sacCandidates = battlefield.filter(c => getCard(c)?.type === "creature")
+      .sort((a,b) => (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0));
     if (sacCandidates.length > 0 && (mana >= 3 || infiniteManaActive)) {
       const bestSac = sacCandidates[0]; // lowest CMC to sacrifice
-      const maxCmc  = (CARDS[bestSac]?.cmc ?? 1) + 2;
+      const maxCmc  = (getCard(bestSac)?.cmc ?? 1) + 2;
       // Find the best missing target at or below maxCmc
       const targetPriority = [
         "Ashaya, Soul of the Wild",  // CMC 5 — sac a 3-drop
@@ -2135,20 +2135,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "Duskwatch Recruiter",       // CMC 2 — sac a 0-drop (Dryad Arbor)
         "Destiny Spinner",           // CMC 2
         "Quirion Ranger",            // CMC 1 — rarely worth sacrificing for
-      ].filter(t => !board.has(t) && (CARDS[t]?.cmc ?? 0) <= maxCmc);
+      ].filter(t => !board.has(t) && (getCard(t)?.cmc ?? 0) <= maxCmc);
       const target = targetPriority[0];
       if (target) {
         const sacName = bestSac;
-        const sacCmc  = CARDS[bestSac]?.cmc ?? 1;
+        const sacCmc  = getCard(bestSac)?.cmc ?? 1;
         results.push({
           priority: 8,
           category: "🎯 TUTOR",
-          headline: `Eldritch Evolution: sac ${sacName} (CMC ${sacCmc}) → find ${target} (CMC ${CARDS[target]?.cmc})`,
+          headline: `Eldritch Evolution: sac ${sacName} (CMC ${sacCmc}) → find ${target} (CMC ${getCard(target)?.cmc})`,
           detail: sacCmc === 1 && target === "Heartwood Storyteller"
             ? "Powerful early line: turn 1 dork → turn 2 Heartwood Storyteller. Punishes opponents for casting non-creature spells, drawing you cards while applying stax pressure."
-            : `Sacrifice ${sacName} to find ${target} — ${CARDS[target]?.cmc ?? 0} ≤ ${sacCmc} + 2. ${target} enters the battlefield directly.`,
+            : `Sacrifice ${sacName} to find ${target} — ${getCard(target)?.cmc ?? 0} ≤ ${sacCmc} + 2. ${target} enters the battlefield directly.`,
           steps: [
-            `Cast Eldritch Evolution ({1}{G}{G}): sacrifice ${sacName} → search for ${target} (CMC ${CARDS[target]?.cmc}).`,
+            `Cast Eldritch Evolution ({1}{G}{G}): sacrifice ${sacName} → search for ${target} (CMC ${getCard(target)?.cmc}).`,
             `${target} enters the battlefield.`,
             ...(target === "Heartwood Storyteller" ? ["Storyteller: whenever a player casts a non-creature spell, each other player draws a card. Strong draw engine + soft stax."] : []),
             ...(target === "Ashaya, Soul of the Wild" ? ["Ashaya enters — all your nontoken creatures are now Forests. Infinite mana combos are now live."] : []),
@@ -2277,7 +2277,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Each upkeep: search library for a creature with CMC ≤ lands you control.
   // Persistent tutor engine — advise what to find next upkeep based on current board.
   if (board.has("Nature's Rhythm")) {
-    const landsOnBoard = battlefield.filter(c => CARDS[c]?.type === "land").length;
+    const landsOnBoard = battlefield.filter(c => getCard(c)?.type === "land").length;
     const nrBoardTargets = [
       { name: "Ashaya, Soul of the Wild",  xCost: 5, reason: "unlocks all infinite mana combos" },
       { name: "Duskwatch Recruiter",        xCost: 2, reason: "win condition with infinite mana" },
@@ -2455,13 +2455,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const provisionerOnBoard = board.has("Tireless Provisioner");
     const provisionerInHand  = inHand.has("Tireless Provisioner") && (isMyTurn || yevaAvailable);
     const provisionerAvail   = provisionerOnBoard || provisionerInHand;
-    const fetchesInHand      = hand.filter(c => CARDS[c]?.tags?.includes("fetch")).length;
+    const fetchesInHand      = hand.filter(c => getCard(c)?.tags?.includes("fetch")).length;
     const ashayaOnBoard      = board.has("Ashaya, Soul of the Wild");
 
     if (provisionerAvail && !infiniteManaActive) {
       const treasurePerFetch  = fetchesInHand;
       const creaturesInHand   = ashayaOnBoard
-        ? hand.filter(c => CARDS[c]?.type === "creature").length
+        ? hand.filter(c => getCard(c)?.type === "creature").length
         : 0;
 
       const bonuses = [];
@@ -2883,8 +2883,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // — but Ashaya makes creatures INTO lands (they tap as Forests), not land drops.
   // NOTE: Ashaya does NOT trigger landfall from creature casts. Only real land plays trigger.
   if (board.has("Nature's Rhythm")) {
-    const fetchesLeft   = hand.filter(c => CARDS[c]?.tags?.includes("fetch")).length
-      + battlefield.filter(c => CARDS[c]?.tags?.includes("fetch")).length;
+    const fetchesLeft   = hand.filter(c => getCard(c)?.tags?.includes("fetch")).length
+      + battlefield.filter(c => getCard(c)?.tags?.includes("fetch")).length;
     const reclaimerUp   = (board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && infiniteManaActive;
     const cropRotation  = inHand.has("Crop Rotation");
     const sylvanScrying = inHand.has("Sylvan Scrying");
@@ -3034,7 +3034,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     if (gravePriority.length > 0) {
       const target = gravePriority[0];
-      const targetType = CARDS[target]?.type ?? "permanent";
+      const targetType = getCard(target)?.type ?? "permanent";
       // If it's a creature, copying it gives us a creature-land with haste considerations
       const isCreature = targetType === "creature";
       results.push({
@@ -3355,8 +3355,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const hasMoxDiamond  = inHand.has("Mox Diamond");
     const hasChromeMox   = inHand.has("Chrome Mox");
     const hasLotusPetal  = inHand.has("Lotus Petal");
-    const landsInHand    = hand.filter(c => CARDS[c]?.type === "land").length;
-    const nonLandsInHand = hand.filter(c => CARDS[c]?.type !== "land" && c !== "Heartwood Storyteller" && c !== "Chrome Mox").length;
+    const landsInHand    = hand.filter(c => getCard(c)?.type === "land").length;
+    const nonLandsInHand = hand.filter(c => getCard(c)?.type !== "land" && c !== "Heartwood Storyteller" && c !== "Chrome Mox").length;
 
     // Each fast mana that can realistically fire this turn.
     // Mox Diamond discards a land on entry — but if we have 2+ lands, we can
@@ -3378,15 +3378,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Build a clear description of how we get to 3 mana
       const manaSources = [];
       if (bestPath === "C") {
-        const landToDrop    = hand.find(c => CARDS[c]?.type === "land") || "a land";
-        const landToDiscard = hand.filter(c => CARDS[c]?.type === "land")[1] || "a second land";
+        const landToDrop    = hand.find(c => getCard(c)?.type === "land") || "a land";
+        const landToDiscard = hand.filter(c => getCard(c)?.type === "land")[1] || "a second land";
         manaSources.push(`Play ${landToDrop} (land drop)`);
         manaSources.push(`Mox Diamond (discard ${landToDiscard} → tap for {G})`);
       } else if (bestPath === "B" && hasMoxDiamond && landsInHand >= 1) {
-        const discardTarget = hand.find(c => CARDS[c]?.type === "land") || "a land";
+        const discardTarget = hand.find(c => getCard(c)?.type === "land") || "a land";
         manaSources.push(`Mox Diamond (discard ${discardTarget} → tap for {G})`);
       } else if (landsInHand >= 1) {
-        const landToDrop = hand.find(c => CARDS[c]?.type === "land") || "a land";
+        const landToDrop = hand.find(c => getCard(c)?.type === "land") || "a land";
         manaSources.push(`Play ${landToDrop} (land drop)`);
       }
       if (hasChromeMox && nonLandsInHand >= 1) manaSources.push("Chrome Mox (imprint a non-land card)");
@@ -3616,7 +3616,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const missingCastable   = castableOnBoard.filter(r => {
       if (board.has(r)) return false;
       if (!inHand.has(r)) return true;                            // not accessible at all
-      if (CARDS[r]?.type === "land") return !isMyTurn;           // lands: only on our turn
+      if (getCard(r)?.type === "land") return !isMyTurn;           // lands: only on our turn
       return !canCastNow;                                         // spells/creatures: canCastNow
     });
     // Tier 3: requires-only (spells cast during combo) — anywhere in hand or board
@@ -3662,7 +3662,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           color: typeMeta.color,
         });
       } else {
-        const totalCost = needToCast.reduce((acc, c) => acc + (CARDS[c]?.cmc || 0), 0);
+        const totalCost = needToCast.reduce((acc, c) => acc + (getCard(c)?.cmc || 0), 0);
         if ((mana >= totalCost || infiniteManaActive) || !isMyTurn) {
           results.push({
             priority: combo.priority + typeMeta.boost,
@@ -3825,8 +3825,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Note: Fierce Empath finds CMC 6+ only; Elvish Harbinger finds elves — Duskwatch is neither
   // Fauna Shaman requires a creature to discard — check we have one available in hand or on board
   // (with infinite mana we can always find something to discard)
-  const hasCreatureToDiscard = hand.some(c => CARDS[c]?.type === "creature")
-    || battlefield.some(c => CARDS[c]?.type === "creature" && c !== "Fauna Shaman");
+  const hasCreatureToDiscard = hand.some(c => getCard(c)?.type === "creature")
+    || battlefield.some(c => getCard(c)?.type === "creature" && c !== "Fauna Shaman");
   const faunaCanActivate = board.has("Fauna Shaman")
     && (hasCreatureToDiscard || infiniteManaActive);
   // Survival of the Fittest also needs a creature to discard
@@ -4247,9 +4247,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "Hyrax Tower Scout":      "enters play — ETB untaps a creature; key Sanitarium untap method",
         "Quirion Ranger":         "enters play — enables Ashaya infinite mana loop",
         "Scryb Ranger":           "enters play — flash untap engine for Ashaya loop",
-        "Priest of Titania":      `enters play — taps for ${battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length} green mana (elves on board)`,
-        "Elvish Archdruid":       `enters play — taps for ${battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length} green mana (elves on board)`,
-        "Circle of Dreams Druid": `enters play — taps for ${battlefield.filter(c => CARDS[c]?.type === "creature").length} green mana (creatures on board)`,
+        "Priest of Titania":      `enters play — taps for ${battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length} green mana (elves on board)`,
+        "Elvish Archdruid":       `enters play — taps for ${battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length} green mana (elves on board)`,
+        "Circle of Dreams Druid": `enters play — taps for ${battlefield.filter(c => getCard(c)?.type === "creature").length} green mana (creatures on board)`,
         "Magus of the Candelabra":"enters play — {X}: untap X lands; key Ashaya/Nykthos combo piece",
       }[primaryTarget] || "enters play directly — no casting cost";
 
@@ -4385,8 +4385,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const speakerElvBonus = 1; // Speaker is an elf, raises elf count by 1
       const postCastElves = elvesOnBoard + speakerElvBonus;
       const dorkForLoop = [...battlefield, ...hand].find(c => {
-        if (!CARDS[c]?.tags?.includes("big-dork") && !CARDS[c]?.tags?.includes("dork")) return false;
-        const t = CARDS[c]?.tapsFor;
+        if (!getCard(c)?.tags?.includes("big-dork") && !getCard(c)?.tags?.includes("dork")) return false;
+        const t = getCard(c)?.tapsFor;
         if (typeof t === "number") return t >= 3;
         if (t === "elves")     return postCastElves >= 3;
         if (t === "creatures") return (creaturesOnBoard + speakerElvBonus) >= 3;
@@ -4397,7 +4397,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (dorkForLoop && !results.some(r => r.combo === "speaker_hand_cast_to_win")) {
         const dorkName = dorkForLoop;
         const dorkOutput = (() => {
-          const t = CARDS[dorkName]?.tapsFor;
+          const t = getCard(dorkName)?.tapsFor;
           if (typeof t === "number") return t;
           if (t === "elves")     return postCastElves;
           if (t === "creatures") return creaturesOnBoard + speakerElvBonus;
@@ -4406,7 +4406,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         })();
         const netMana = dorkOutput - 3; // Speaker costs {2}{G} = 3
         const loopDesc = netMana > 0 ? `net +${netMana}G per loop` : "mana-neutral (infinite)";
-        const discardTarget = hand.filter(c => c !== "Formidable Speaker").find(c => CARDS[c]?.type !== "creature") || "a land/spell";
+        const discardTarget = hand.filter(c => c !== "Formidable Speaker").find(c => getCard(c)?.type !== "creature") || "a land/spell";
         const sharedSteps = [
           `Cast Formidable Speaker ({2}{G}). ETB: discard ${discardTarget !== "a land/spell" ? discardTarget : "a non-creature card"} → search library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
           `Cast Ashaya, Soul of the Wild. All your nontoken creatures are now Forest lands.`,
@@ -4469,7 +4469,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const quirionName     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
     const hasDuskwatch    = board.has("Duskwatch Recruiter") || accessible("Duskwatch Recruiter");
     const bigDork         = findBigDork(battlefield, hand, infiniteManaActive, 2);
-    const creatureCount   = battlefield.filter(c => CARDS[c]?.type === "creature").length;
+    const creatureCount   = battlefield.filter(c => getCard(c)?.type === "creature").length;
 
     if (infiniteManaActive && ashayaOnBoard && quirionOnBoard && bigDork && !hasDuskwatch) {
       // When Speaker is in hand (not yet cast), verify there's another card to discard for the ETB.
@@ -4502,7 +4502,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // Engine advice (no infinite mana yet, but pieces in place)
     if (!infiniteManaActive && ashayaOnBoard && quirionOnBoard && speakerOnBoard && bigDork) {
-      const dorkOutput = CARDS[bigDork]?.manaOutput ?? 2;
+      const dorkOutput = getCard(bigDork)?.manaOutput ?? 2;
       if (dorkOutput >= 4) {
         results.push({
           priority: 9,
@@ -4568,7 +4568,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if ((board.has("Regal Force") || (inHand.has("Regal Force") && canCastNow))
       && board.has("Temur Sabertooth")
       && infiniteManaActive) {
-    const gCreatures = battlefield.filter(c => CARDS[c]?.type === "creature" && (CARDS[c]?.devotion ?? 0) >= 1).length;
+    const gCreatures = battlefield.filter(c => getCard(c)?.type === "creature" && (getCard(c)?.devotion ?? 0) >= 1).length;
     if (!results.some(r => r.combo === "regal_force_draw")) {
       results.push({
         priority: 12,
@@ -4593,7 +4593,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       && (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape"))
       && infiniteManaActive) {
     const bouncer2 = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
-    const crCount = battlefield.filter(c => CARDS[c]?.type === "creature").length;
+    const crCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
     if (!results.some(r => r.combo === "disciple_loop")) {
       results.push({
         priority: 11,
@@ -4878,7 +4878,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- GENERIC HIGH PRIORITY TUTOR WHEN NOTHING ELSE ----
   if (results.filter(r => r.priority >= 7).length === 0) {
-    const tutors = hand.filter(c => CARDS[c]?.tags?.includes("tutor") && (CARDS[c]?.cmc <= mana || infiniteManaActive));
+    const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor") && (getCard(c)?.cmc <= mana || infiniteManaActive));
     if (tutors.length > 0) {
       const tutor = tutors[0];
       const targets = getPriorityTargets(battlefield, hand);
@@ -4959,7 +4959,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const noInHand = inHand.has("Natural Order");
     const noInGrave = inGrave.has("Natural Order");
     const hasRangerNO = board.has("Quirion Ranger") || board.has("Scryb Ranger");
-    const hasSacNO = battlefield.some(c => CARDS[c]?.type === "creature");
+    const hasSacNO = battlefield.some(c => getCard(c)?.type === "creature");
     const hasAshaya = board.has("Ashaya, Soul of the Wild");
 
     if (noInHand && hasSacNO && !hasAshaya) {
@@ -5274,39 +5274,39 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
   const witnessRetrievableLocal = (c) => inGrave.has(c) && inHand.has("Eternal Witness") && !board.has("Eternal Witness");
   const accessible = (c) => inHand.has(c) || witnessRetrievableLocal(c);
 
-  if (CARDS[target]?.type === "creature" || CARDS[target]?.type === "land") {
+  if (getCard(target)?.type === "creature" || getCard(target)?.type === "land") {
     // Formidable Speaker in hand: ETB — "you MAY discard a card. If you do, search library for any creature."
     // Requires at least one OTHER card in hand to discard, otherwise ETB fizzles with no tutor.
     const speakerDiscardAvail = hand.filter(c => c !== "Formidable Speaker").length > 0;
     if (accessible("Formidable Speaker") && !board.has("Formidable Speaker")
-        && CARDS[target]?.type === "creature"
+        && getCard(target)?.type === "creature"
         && speakerDiscardAvail
         && (mana >= 3 || infiniteMana)) options.push("Formidable Speaker (cast → ETB finds any creature)");
     // Elvish Harbinger: ETB puts any elf on top of library. Cost {2}{G}, elf itself.
     if ((inHand.has("Elvish Harbinger") || board.has("Elvish Harbinger"))
-        && CARDS[target]?.tags?.includes("elf")
+        && getCard(target)?.tags?.includes("elf")
         && (mana >= 3 || infiniteMana)) options.push("Elvish Harbinger (ETB → top of library next draw)");
-    if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && CARDS[target]?.type === "creature") options.push("Worldly Tutor");
-    if (accessible("Summoner's Pact") && CARDS[target]?.type === "creature") options.push("Summoner's Pact");
-    if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
+    if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && getCard(target)?.type === "creature") options.push("Worldly Tutor");
+    if (accessible("Summoner's Pact") && getCard(target)?.type === "creature") options.push("Summoner's Pact");
+    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
     if (inHand.has("Chord of Calling")) {
-      const targetCmc = CARDS[target]?.cmc ?? 2;
+      const targetCmc = getCard(target)?.cmc ?? 2;
       const chordCost = Math.max(0, targetCmc + 3 - (battlefield?.length ?? 0));
       if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, battlefield?.length ?? 0)} creatures)`);
     }
     if (accessible("Green Sun's Zenith") && !inGrave.has("Green Sun's Zenith")) {
-      const targetCmc = CARDS[target]?.cmc ?? getCard(target)?.cmc ?? 0;
+      const targetCmc = getCard(target)?.cmc ?? getCard(target)?.cmc ?? 0;
       const gszCost = targetCmc + 1; // X=CMC plus {G}
       if (mana >= gszCost || infiniteMana) options.push("Green Sun's Zenith");
     }
     if (accessible("Green Sun's Zenith") && inGrave.has("Green Sun's Zenith")) {
       // Needs Eternal Witness to retrieve first — don't suggest as immediate tutor
     }
-    if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteMana) && hand.some(c => CARDS[c]?.type === "creature")) options.push("Survival of the Fittest");
-    if (inHand.has("Crop Rotation") && CARDS[target]?.type === "land" && (mana >= 1 || infiniteMana)) options.push("Crop Rotation");
-    if ((board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && CARDS[target]?.type === "land") options.push("Elvish Reclaimer");
-    if (inHand.has("Sylvan Scrying") && CARDS[target]?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
-    if (inHand.has("Archdruid's Charm") && CARDS[target]?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
+    if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteMana) && hand.some(c => getCard(c)?.type === "creature")) options.push("Survival of the Fittest");
+    if (inHand.has("Crop Rotation") && getCard(target)?.type === "land" && (mana >= 1 || infiniteMana)) options.push("Crop Rotation");
+    if ((board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && getCard(target)?.type === "land") options.push("Elvish Reclaimer");
+    if (inHand.has("Sylvan Scrying") && getCard(target)?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
+    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
     if (accessible("Natural Order") && (mana >= 4 + (inGrave.has("Natural Order") ? 3 : 0) || infiniteMana)) options.push("Natural Order");
   }
   return options;
@@ -5662,10 +5662,12 @@ const scryfallCache = new Map(); // cardName → image URL or "error"
 
 // ── Runtime card data for unknown cards fetched from Scryfall ─────────────────
 // Merged into CARDS lookups via getCard(name) helper below.
-const EXTRA_CARDS = new Map(); // cardName → {type, cmc, tags, tapsFor, devotion}
+const EXTRA_CARDS = new Map(); // cardName → {type, cmc, tags, tapsFor, devotion, role, note}
 
-// Persistent cache in localStorage so we don't re-fetch every session
+// Cache version — bump this when deriveCardEntry logic changes to auto-evict stale entries
+const SCRYFALL_CACHE_VERSION = 3;
 const SCRYFALL_DATA_CACHE_KEY = "yeva_scryfall_data_v1";
+
 function loadScryfallDataCache() {
   try {
     if (typeof window === "undefined") return {};
@@ -5679,68 +5681,169 @@ function saveScryfallDataCache(cache) {
   } catch {}
 }
 
-// Seed EXTRA_CARDS from localStorage on module load
+// Seed EXTRA_CARDS from localStorage on module load, evicting stale versions
 (function seedExtraCards() {
   const cache = loadScryfallDataCache();
+  let dirty = false;
   for (const [name, data] of Object.entries(cache)) {
+    if (data._v !== SCRYFALL_CACHE_VERSION) { delete cache[name]; dirty = true; continue; }
     if (!CARDS[name]) EXTRA_CARDS.set(name, data);
   }
+  if (dirty) saveScryfallDataCache(cache);
 })();
 
-// Derive a minimal card entry from Scryfall API card data
+// Validate a derived card entry — ensures required fields are present and sane.
+// Returns a safe minimal entry on failure rather than letting bad data propagate.
+function validateCardEntry(entry, name) {
+  try {
+    if (!entry || typeof entry !== "object") throw new Error("null entry");
+    const validTypes = ["creature","land","instant","sorcery","enchantment","artifact","planeswalker","unknown"];
+    if (!validTypes.includes(entry.type)) throw new Error(`bad type: ${entry.type}`);
+    if (typeof entry.cmc !== "number" || isNaN(entry.cmc)) throw new Error("bad cmc");
+    if (!Array.isArray(entry.tags)) throw new Error("bad tags");
+    // If tagged as dork, tapsFor must be defined
+    if (entry.tags.includes("dork") && entry.tapsFor === undefined) {
+      entry.tapsFor = 1; // safe fallback
+    }
+    // tapsFor must be a number or a known string
+    if (entry.tapsFor !== undefined) {
+      const validTapsFor = ["elves","creatures","devotion","arbor"];
+      if (typeof entry.tapsFor !== "number" && !validTapsFor.includes(entry.tapsFor)) {
+        entry.tapsFor = 1;
+      }
+    }
+    if (typeof entry.devotion !== "number" || isNaN(entry.devotion)) entry.devotion = 0;
+    return entry;
+  } catch (e) {
+    console.warn(`[Yeva] validateCardEntry failed for "${name}":`, e.message);
+    return { type: "unknown", cmc: 0, tags: ["unknown"], devotion: 0, _v: SCRYFALL_CACHE_VERSION };
+  }
+}
+
+// Derive a rich card entry from Scryfall API data.
+// Infers type, tags, tapsFor, and devotion from type_line and oracle_text.
 function deriveCardEntry(sf) {
   const typeLine = (sf.type_line || "").toLowerCase();
   const oracle   = (sf.oracle_text || sf.card_faces?.[0]?.oracle_text || "").toLowerCase();
-  const cmc      = sf.cmc ?? 0;
+  const cmc      = typeof sf.cmc === "number" ? sf.cmc : 0;
 
-  // Type
+  // ── Card type ──────────────────────────────────────────────────────────────
   let type = "unknown";
-  if (typeLine.includes("creature"))    type = "creature";
-  else if (typeLine.includes("land"))   type = "land";
-  else if (typeLine.includes("instant")) type = "instant";
-  else if (typeLine.includes("sorcery")) type = "sorcery";
+  if (typeLine.includes("creature"))        type = "creature";
+  else if (typeLine.includes("land"))       type = "land";
+  else if (typeLine.includes("instant"))    type = "instant";
+  else if (typeLine.includes("sorcery"))    type = "sorcery";
   else if (typeLine.includes("enchantment")) type = "enchantment";
-  else if (typeLine.includes("artifact"))    type = "artifact";
+  else if (typeLine.includes("artifact"))   type = "artifact";
   else if (typeLine.includes("planeswalker")) type = "planeswalker";
 
-  // Tags — best-effort from oracle text
+  // ── Tags ───────────────────────────────────────────────────────────────────
   const tags = [];
+
+  // Land subtypes
   if (type === "land") tags.push("land");
   if (typeLine.includes("basic")) tags.push("basic");
   if (typeLine.includes("forest") || oracle.includes("add {g}") || oracle.includes("add one mana of any color")) {
     if (!tags.includes("forest")) tags.push("forest");
   }
-  if (typeLine.includes("elf"))   tags.push("elf");
-  if (typeLine.includes("human")) tags.push("human");
-  if (type === "creature" && (oracle.includes("{t}: add") || oracle.includes("tap: add"))) {
+
+  // Creature subtypes
+  if (typeLine.includes("elf"))        tags.push("elf");
+  if (typeLine.includes("human"))      tags.push("human");
+  if (typeLine.includes("legendary") && type === "creature") tags.push("legendary");
+  if (typeLine.includes("changeling") || oracle.includes("changeling")) tags.push("changeling");
+
+  // Mana production — dork detection
+  const isDork = type === "creature" && (
+    oracle.includes("{t}: add") || oracle.includes("tap: add") ||
+    oracle.includes("{t}, tap") ||
+    oracle.includes("add mana") && oracle.includes("{t}")
+  );
+  if (isDork) {
     tags.push("dork");
     if (cmc <= 1) tags.push("1drop");
+    // Big dork: scales with board state
+    const isBigDork = (
+      oracle.includes("for each creature") ||
+      oracle.includes("for each elf") ||
+      oracle.includes("for each land") ||
+      oracle.includes("equal to your devotion") ||
+      oracle.includes("equal to the number of") ||
+      oracle.includes("add mana equal")
+    );
+    if (isBigDork) {
+      tags.push("big-dork");
+      tags.push("infinite-dork");
+    }
   }
-  if (oracle.includes("search your library") || oracle.includes("tutor")) tags.push("tutor");
-  if (oracle.includes("draw a card") || oracle.includes("draw cards")) tags.push("draw");
-  if (oracle.includes("untap")) tags.push("untap");
-  if (oracle.includes("fetch") || (type === "land" && oracle.includes("search your library for a"))) tags.push("fetch");
-  if (typeLine.includes("legendary") && type === "creature") tags.push("legendary");
 
-  // tapsFor heuristic for dorks
+  // Artifact mana rocks
+  if (type === "artifact" && (oracle.includes("{t}: add") || oracle.includes("tap: add"))) {
+    tags.push("rock");
+  }
+
+  // Fetch land
+  if (type === "land" && oracle.includes("search your library for a") && oracle.includes("land")) {
+    tags.push("fetch");
+  }
+
+  // Tutor
+  if (oracle.includes("search your library") && !tags.includes("fetch")) tags.push("tutor");
+
+  // Draw
+  if (oracle.includes("draw a card") || oracle.includes("draw cards") || oracle.includes("draw two")) tags.push("draw");
+
+  // Untap
+  if (oracle.includes("untap target") || oracle.includes("untap up to") || oracle.includes("untap each")) tags.push("untap");
+
+  // Flash
+  if (oracle.includes("flash") || typeLine.startsWith("flash") || oracle.includes("may cast") && oracle.includes("as though it had flash")) {
+    tags.push("flash");
+  }
+
+  // Bounce / protection
+  if (oracle.includes("return target creature") || oracle.includes("return target permanent")) tags.push("bounce");
+  if (oracle.includes("can\'t be countered") || oracle.includes("cannot be countered")) tags.push("protection");
+
+  // Removal
+  if (oracle.includes("destroy target") || oracle.includes("exile target")) tags.push("removal");
+
+  // Aura / enchant land
+  if (typeLine.includes("enchantment — aura") && oracle.includes("enchant land")) tags.push("enchant-land");
+
+  // Engine-style draw triggers
+  if (oracle.includes("whenever you cast a creature") && oracle.includes("draw")) tags.push("engine");
+  if (oracle.includes("whenever a creature") && oracle.includes("enters") && oracle.includes("draw")) tags.push("engine");
+
+  // ── tapsFor ────────────────────────────────────────────────────────────────
   let tapsFor;
   if (tags.includes("dork")) {
-    if (oracle.includes("add mana equal") || oracle.includes("for each")) tapsFor = "creatures";
-    else if (oracle.includes("add {g} for each elf")) tapsFor = "elves";
+    if (oracle.includes("for each elf"))          tapsFor = "elves";
+    else if (oracle.includes("for each creature") || oracle.includes("equal to the number of creatures")) tapsFor = "creatures";
+    else if (oracle.includes("equal to your devotion")) tapsFor = "devotion";
+    else if (oracle.includes("add mana equal") || oracle.includes("for each land")) tapsFor = "creatures"; // best approximation
+    else tapsFor = 1;
+  } else if (tags.includes("rock")) {
+    if (oracle.includes("{t}: add {c}{c}") || oracle.includes("add two")) tapsFor = 2;
+    else if (oracle.includes("add one mana of any color") || oracle.includes("add {c}")) tapsFor = 1;
     else tapsFor = 1;
   }
 
-  // devotion: count coloured mana pips in mana cost
+  // ── Devotion ───────────────────────────────────────────────────────────────
   const cost = sf.mana_cost || "";
   const devotion = (cost.match(/\{G\}/g) || []).length +
                    (cost.match(/\{[WUBR]\}/g) || []).length;
 
-  return { type, cmc, tags, tapsFor, devotion };
+  const entry = { type, cmc, tags, tapsFor, devotion, _v: SCRYFALL_CACHE_VERSION };
+  return validateCardEntry(entry, sf.name || "unknown");
 }
 
-// Enrich a list of unknown card names via Scryfall — returns a map of name→entry
-// Updates EXTRA_CARDS in place and persists to localStorage.
-// Returns { enriched: Set, failed: Set }
+// Enrich a list of unknown card names via Scryfall.
+// Uses the /cards/collection batch endpoint (up to 75 per request) to minimise
+// round-trips and avoid rate-limit issues. Falls back to individual /cards/named
+// requests for any cards that the batch endpoint can't match.
+// Updates EXTRA_CARDS in place, validates entries, and persists to localStorage.
+// Returns { enriched: Set<string>, failed: Set<string> }
 async function enrichUnknownCards(names) {
   const enriched = new Set();
   const failed   = new Set();
@@ -5749,26 +5852,68 @@ async function enrichUnknownCards(names) {
 
   const cache = loadScryfallDataCache();
 
-  for (const name of toFetch) {
-    // Small delay to respect Scryfall rate limit (50–100ms between requests)
-    await new Promise(r => setTimeout(r, 80));
+  function storeEntry(originalName, sf) {
+    const canonical = sf.name || originalName;
+    const entry = deriveCardEntry(sf); // already calls validateCardEntry
+    EXTRA_CARDS.set(canonical, entry);
+    if (canonical !== originalName) EXTRA_CARDS.set(originalName, entry);
+    cache[canonical] = entry;
+    if (canonical !== originalName) cache[originalName] = entry;
+    return canonical;
+  }
+
+  // Split into batches of 75 (Scryfall collection limit)
+  const BATCH_SIZE = 75;
+  for (let batchStart = 0; batchStart < toFetch.length; batchStart += BATCH_SIZE) {
+    const batch = toFetch.slice(batchStart, batchStart + BATCH_SIZE);
+
+    // Build the identifiers array Scryfall expects
+    const identifiers = batch.map(name => ({ name }));
+
+    let batchMatched = new Set();
     try {
-      const url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`;
-      const resp = await fetch(url);
-      if (!resp.ok) { failed.add(name); continue; }
-      const sf = await resp.json();
-      if (sf.object === "error") { failed.add(name); continue; }
-      // Use canonical Scryfall name as the key
-      const canonical = sf.name || name;
-      const entry = deriveCardEntry(sf);
-      EXTRA_CARDS.set(canonical, entry);
-      // Also map original name if different (fuzzy matched)
-      if (canonical !== name) EXTRA_CARDS.set(name, entry);
-      cache[canonical] = entry;
-      if (canonical !== name) cache[name] = entry;
-      enriched.add(name);
+      const resp = await fetch("https://api.scryfall.com/cards/collection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifiers }),
+      });
+
+      if (resp.ok) {
+        const json = await resp.json();
+        // json.data = array of matched cards; json.not_found = array of unmatched identifiers
+        for (const sf of (json.data || [])) {
+          const originalName = batch.find(n =>
+            n.toLowerCase() === (sf.name || "").toLowerCase()
+          ) || sf.name;
+          storeEntry(originalName, sf);
+          enriched.add(originalName);
+          batchMatched.add(originalName.toLowerCase());
+        }
+      }
     } catch {
-      failed.add(name);
+      // If batch request fails entirely, fall through to per-card fallback below
+    }
+
+    // Fall back to individual requests for anything the batch didn't match
+    const unmatched = batch.filter(n => !batchMatched.has(n.toLowerCase()));
+    for (const name of unmatched) {
+      await new Promise(r => setTimeout(r, 80)); // respect rate limit
+      try {
+        const url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) { failed.add(name); continue; }
+        const sf = await resp.json();
+        if (sf.object === "error") { failed.add(name); continue; }
+        storeEntry(name, sf);
+        enriched.add(name);
+      } catch {
+        failed.add(name);
+      }
+    }
+
+    // Brief pause between batches to be polite to Scryfall
+    if (batchStart + BATCH_SIZE < toFetch.length) {
+      await new Promise(r => setTimeout(r, 100));
     }
   }
 
@@ -5900,10 +6045,10 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
     const matches = searchPool.filter(n => {
       if (seen.has(n)) return false; // deduplicate (deck pools have multiple Forest etc.)
       if (!n.toLowerCase().includes(q)) return false;
-      const isBasic = CARDS[n]?.tags?.includes("basic");
+      const isBasic = getCard(n)?.tags?.includes("basic");
       if (!isBasic && cards.includes(n)) return false;
       if (zone === "battlefield") {
-        const type = CARDS[n]?.type;
+        const type = getCard(n)?.type;
         if (type === "instant" || type === "sorcery") return false;
       }
       seen.add(n);
@@ -6712,11 +6857,134 @@ function parseDecklist(text) {
   return cards;
 }
 
-function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, editMode }) {
-  const [hovered, setHovered]     = useState(false);
-  const [rect, setRect]           = useState(null);
+// ── Custom card editor — shown for unknown cards so users can manually define
+// type, CMC, and key tags without needing Scryfall connectivity.
+function CustomCardEditor({ name, onSave, onCancel }) {
+  const [type, setType]       = useState("creature");
+  const [cmc, setCmc]         = useState(2);
+  const [tapsFor, setTapsFor] = useState(1);
+  const [tags, setTags]       = useState([]);
+  const [role, setRole]       = useState("");
+
+  const TAG_OPTIONS = [
+    { id: "dork",        label: "Mana dork" },
+    { id: "big-dork",    label: "Big dork (scales)" },
+    { id: "elf",         label: "Elf" },
+    { id: "human",       label: "Human" },
+    { id: "tutor",       label: "Tutor" },
+    { id: "combo",       label: "Combo piece" },
+    { id: "draw",        label: "Draw" },
+    { id: "removal",     label: "Removal" },
+    { id: "flash",       label: "Flash" },
+    { id: "protection",  label: "Protection" },
+    { id: "rock",        label: "Mana rock" },
+    { id: "fetch",       label: "Fetch land" },
+    { id: "forest",      label: "Forest / taps {G}" },
+    { id: "engine",      label: "Engine" },
+    { id: "untap",       label: "Untap effect" },
+    { id: "bounce",      label: "Bounce" },
+    { id: "1drop",       label: "1-drop" },
+    { id: "infinite-dork", label: "Infinite dork" },
+  ];
+
+  const toggleTag = (id) => setTags(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]);
+
+  const TAPS_FOR_OPTIONS = [
+    { value: 1, label: "1 mana" },
+    { value: 2, label: "2 mana" },
+    { value: "elves",    label: "# elves" },
+    { value: "creatures", label: "# creatures" },
+    { value: "devotion", label: "# devotion" },
+  ];
+
+  const handleSave = () => {
+    const finalTags = [...new Set(tags)];
+    if (type === "land") { if (!finalTags.includes("land")) finalTags.unshift("land"); }
+    const entry = {
+      type, cmc: Number(cmc), tags: finalTags, devotion: 0,
+      _v: SCRYFALL_CACHE_VERSION, _custom: true,
+    };
+    if (finalTags.includes("dork") || finalTags.includes("rock")) entry.tapsFor = tapsFor;
+    if (role.trim()) entry.role = role.trim();
+    // validate and persist
+    const validated = validateCardEntry(entry, name);
+    EXTRA_CARDS.set(name, validated);
+    // save to cache
+    try {
+      const cache = loadScryfallDataCache();
+      cache[name] = validated;
+      saveScryfallDataCache(cache);
+    } catch {}
+    onSave(validated);
+  };
+
+  const fieldStyle = { background: "#0a150a", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.text, padding: "4px 8px", fontSize: "12px", fontFamily: "'Crimson Text', serif", outline: "none" };
+  const labelStyle = { fontSize: "10px", color: COLORS.textDim, letterSpacing: "1px", fontFamily: "'Cinzel', serif", marginBottom: "3px" };
+
+  return (
+    <div style={{ background: "#0d1a0d", border: `1px solid ${COLORS.green1}44`, borderRadius: "8px", padding: "14px 16px", marginTop: "6px", width: "320px" }}>
+      <div style={{ fontSize: "11px", color: COLORS.gold, letterSpacing: "1px", fontFamily: "'Cinzel', serif", marginBottom: "10px" }}>
+        ✎ DEFINE CARD: {name}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+        <div>
+          <div style={labelStyle}>TYPE</div>
+          <select value={type} onChange={e => setType(e.target.value)} style={{ ...fieldStyle, width: "100%" }}>
+            {["creature","land","instant","sorcery","enchantment","artifact","planeswalker"].map(t =>
+              <option key={t} value={t}>{t}</option>
+            )}
+          </select>
+        </div>
+        <div>
+          <div style={labelStyle}>CMC</div>
+          <input type="number" min={0} max={20} value={cmc} onChange={e => setCmc(e.target.value)} style={{ ...fieldStyle, width: "100%" }} />
+        </div>
+      </div>
+
+      {(tags.includes("dork") || tags.includes("rock")) && (
+        <div style={{ marginBottom: "10px" }}>
+          <div style={labelStyle}>TAPS FOR</div>
+          <select value={tapsFor} onChange={e => { const v = e.target.value; setTapsFor(isNaN(Number(v)) ? v : Number(v)); }} style={{ ...fieldStyle, width: "100%" }}>
+            {TAPS_FOR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div style={{ marginBottom: "10px" }}>
+        <div style={labelStyle}>TAGS (select all that apply)</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+          {TAG_OPTIONS.map(({ id, label }) => (
+            <button key={id} onClick={() => toggleTag(id)} style={{
+              background: tags.includes(id) ? "#1a3a1a" : "#111",
+              border: `1px solid ${tags.includes(id) ? COLORS.green1 : COLORS.border}`,
+              borderRadius: "4px", padding: "2px 8px",
+              color: tags.includes(id) ? COLORS.green1 : COLORS.textDim,
+              fontSize: "11px", cursor: "pointer", fontFamily: "'Crimson Text', serif",
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: "12px" }}>
+        <div style={labelStyle}>ROLE NOTE (optional)</div>
+        <input value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. 'proxy Priest of Titania'" style={{ ...fieldStyle, width: "100%", boxSizing: "border-box" }} />
+      </div>
+
+      <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+        <button onClick={onCancel} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", padding: "4px 12px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px" }}>Cancel</button>
+        <button onClick={handleSave} style={{ background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "4px", padding: "4px 14px", color: COLORS.green1, cursor: "pointer", fontSize: "11px", fontFamily: "'Cinzel', serif" }}>✓ Save</button>
+      </div>
+    </div>
+  );
+}
+
+function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, onCardDefined, editMode }) {
+  const [hovered, setHovered]         = useState(false);
+  const [rect, setRect]               = useState(null);
   const [editingNote, setEditingNote] = useState(false);
-  const [noteVal, setNoteVal]     = useState(note || "");
+  const [noteVal, setNoteVal]         = useState(note || "");
+  const [showDefine, setShowDefine]   = useState(false);
   const ref = useRef(null);
 
   const commitNote = () => {
@@ -6741,6 +7009,13 @@ function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, ed
         }}
       >
         {name}{count > 1 ? <span style={{ color: COLORS.green1, marginLeft: "4px" }}>×{count}</span> : ""}
+        {isUnknown && editMode && (
+          <button
+            onClick={() => setShowDefine(v => !v)}
+            title="Manually define this card's type and tags"
+            style={{ background: "none", border: "none", color: showDefine ? COLORS.gold : "#e74c3c88", cursor: "pointer", fontSize: "11px", padding: "0 0 0 2px", lineHeight: 1 }}
+          >✎</button>
+        )}
         {editMode && onNoteChange && (
           <button
             onClick={() => { setEditingNote(true); setNoteVal(note || ""); }}
@@ -6756,6 +7031,13 @@ function DeckCardChip({ name, count, isUnknown, note, onRemove, onNoteChange, ed
         )}
         {hovered && !editMode && <CardTooltip name={name} anchorRect={rect} />}
       </span>
+      {showDefine && isUnknown && editMode && (
+        <CustomCardEditor
+          name={name}
+          onSave={(entry) => { setShowDefine(false); if (onCardDefined) onCardDefined(name, entry); }}
+          onCancel={() => setShowDefine(false)}
+        />
+      )}
       {note && !editingNote && (
         <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontStyle: "italic", paddingLeft: "6px", maxWidth: "160px", wordBreak: "break-word" }}>
           {note}
@@ -6800,13 +7082,13 @@ function DeckDetailModal({ deck, onClose, onSave }) {
   const counts = {};
   cards.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
 
-  // Group cards by category
+  // Group cards by category — use getCard so enriched/custom cards are classified correctly
   const groups = {
     "⚡ Combo Pieces": [], "🌿 Mana Dorks": [], "📚 Tutors": [],
     "🔄 Engines": [], "🌍 Lands": [], "🃏 Other": [],
   };
   dedupedCards.forEach(c => {
-    const info = CARDS[c]; const tags = info?.tags || [];
+    const info = getCard(c); const tags = info?.tags || [];
     if (!info)                        groups["🃏 Other"].push(c);
     else if (info.type === "land")    groups["🌍 Lands"].push(c);
     else if (tags.includes("combo") || tags.includes("finisher") || tags.includes("recursion") || tags.includes("etb")) groups["⚡ Combo Pieces"].push(c);
@@ -6816,6 +7098,8 @@ function DeckDetailModal({ deck, onClose, onSave }) {
     else                              groups["🃏 Other"].push(c);
   });
 
+  const [, forceGroupUpdate] = useState(0);
+
   const q = filter.toLowerCase();
   const unknown = cards.filter(c => c !== "Forest" && !CARDS[c] && !EXTRA_CARDS.has(c));
 
@@ -6824,6 +7108,11 @@ function DeckDetailModal({ deck, onClose, onSave }) {
     if (idx === -1) return;
     const next = [...cards]; next.splice(idx, 1);
     setCards(next); setDirty(true);
+  };
+
+  // Called when user saves a custom card definition — re-render to reflect new data
+  const handleCardDefined = (name, entry) => {
+    forceGroupUpdate(n => n + 1);
   };
 
   const handleNoteChange = (name, val) => {
@@ -6921,7 +7210,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
                   <div key={s} onMouseDown={() => handleAddCard(s)} style={{ padding: "7px 12px", cursor: "pointer", color: COLORS.textMid, fontSize: "13px", fontFamily: "'Crimson Text', serif", borderBottom: `1px solid ${COLORS.border}` }}
                     onMouseEnter={e => e.currentTarget.style.background = "#1a3a1a"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >{s}{CARDS[s] && <span style={{ marginLeft: "8px", fontSize: "11px", color: COLORS.textDim }}>{CARDS[s].type} · CMC {CARDS[s].cmc}</span>}</div>
+                  >{s}{getCard(s) && <span style={{ marginLeft: "8px", fontSize: "11px", color: COLORS.textDim }}>{getCard(s).type} · CMC {getCard(s).cmc}</span>}</div>
                 ))}
               </div>
             )}
@@ -6947,6 +7236,7 @@ function DeckDetailModal({ deck, onClose, onSave }) {
                       editMode={editMode}
                       onRemove={editMode ? handleRemove : null}
                       onNoteChange={editMode ? handleNoteChange : null}
+                      onCardDefined={editMode ? handleCardDefined : null}
                     />
                   ))}
                 </div>
@@ -7826,7 +8116,7 @@ function shuffleArray(arr) {
 function buildLibrary(deckCards) {
   // deckCards already has repeated basics (e.g. 10x "Forest").
   // Exclude the commander — she lives in the command zone, not the library.
-  return shuffleArray(deckCards.filter(c => !CARDS[c]?.tags?.includes("commander")));
+  return shuffleArray(deckCards.filter(c => !getCard(c)?.tags?.includes("commander")));
 }
 
 // Card image shown during mulligan — fetches from Scryfall, shows spinner while loading.
@@ -8150,7 +8440,7 @@ function extractComboLabel(result) {
 
 // Run N games synchronously, return aggregated stats
 function runNGames(deckCards, n = 50, maxTurns = 20) {
-  const nonCommanderCards = deckCards.filter(c => !CARDS[c]?.tags?.includes("commander"));
+  const nonCommanderCards = deckCards.filter(c => !getCard(c)?.tags?.includes("commander"));
   const deckSet = new Set(nonCommanderCards);
   const results = [];
   for (let i = 0; i < n; i++) {
@@ -8452,7 +8742,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       });
       // Auto-detect milestones
       if (phase === "playing") {
-        const hasDork = battlefield.some(c => CARDS[c]?.tags?.includes("dork"));
+        const hasDork = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
         if (hasDork) recordMilestone("firstDork");
         if (result?.infiniteManaActive) recordMilestone("infiniteMana");
         const topCat = result?.results?.[0]?.category || "";
@@ -8682,7 +8972,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     if (!wasTapped && cardData?.tags?.includes("untap-elf")) {
       const elfTargets = battlefield
         .map((c, idx) => ({ c, idx }))
-        .filter(({ c, idx }) => CARDS[c]?.tags?.includes("elf") && c !== card);
+        .filter(({ c, idx }) => getCard(c)?.tags?.includes("elf") && c !== card);
       if (elfTargets.length > 0) {
         setShowUntapModal({ card, i, targets: elfTargets });
         return; // tap happens after target chosen
@@ -8870,7 +9160,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     }
     setGraveyard(prev => [...prev, card]);
     // Find a Forest in library
-    const forestIdx = library.findIndex(c => c === "Forest" || CARDS[c]?.tags?.includes("forest") || CARDS[c]?.tags?.includes("basic"));
+    const forestIdx = library.findIndex(c => c === "Forest" || getCard(c)?.tags?.includes("forest") || getCard(c)?.tags?.includes("basic"));
     if (forestIdx === -1) {
       addLog(`Cracked ${card} → graveyard, but no Forest found in library.`, COLORS.red);
     } else {
@@ -8989,10 +9279,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
   // ── HAND GRADER ─────────────────────────────────────────────
   function gradeHand(cards, advisorAnalysis) {
-    const dorks  = cards.filter(c => CARDS[c]?.tags?.includes("dork")).length;
-    const lands  = cards.filter(c => CARDS[c]?.type === "land").length;
-    const tutors = cards.filter(c => CARDS[c]?.tags?.includes("tutor")).length;
-    const combo  = cards.filter(c => CARDS[c]?.tags?.some(t =>
+    const dorks  = cards.filter(c => getCard(c)?.tags?.includes("dork")).length;
+    const lands  = cards.filter(c => getCard(c)?.type === "land").length;
+    const tutors = cards.filter(c => getCard(c)?.tags?.includes("tutor")).length;
+    const combo  = cards.filter(c => getCard(c)?.tags?.some(t =>
       ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t))).length;
     const canMakeT1Mana = lands >= 1 || dorks >= 2;
     let notes = [];
@@ -9259,7 +9549,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               onMouseEnter={e => { e.currentTarget.style.background = "#1a3a1a"; e.currentTarget.style.color = COLORS.green2; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = COLORS.textMid; }}>
               {c}
-              <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "8px" }}>{CARDS[c]?.tags?.includes("big-dork") ? "big dork" : "elf"}</span>
+              <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "8px" }}>{getCard(c)?.tags?.includes("big-dork") ? "big dork" : "elf"}</span>
             </div>
           ))}
           <button onClick={() => setShowUntapModal(null)} style={{ marginTop: "8px", width: "100%", background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "4px", color: COLORS.textDim, cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px" }}>✕ CANCEL (Esc)</button>
@@ -9728,11 +10018,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
                 {/* Gamestate breadcrumb */}
                 {(() => {
-                  const elves = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
-                  const dorks = battlefield.filter(c => CARDS[c]?.tags?.includes("dork")).length;
-                  const tutors = hand.filter(c => CARDS[c]?.tags?.includes("tutor")).length;
+                  const elves = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+                  const dorks = battlefield.filter(c => getCard(c)?.tags?.includes("dork")).length;
+                  const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
                   const comboPieces = [...hand, ...battlefield].filter(c =>
-                    CARDS[c]?.tags?.some(t => ["ashaya","earthcraft","quirion","wirewood","duskwatch"].includes(t))
+                    getCard(c)?.tags?.some(t => ["ashaya","earthcraft","quirion","wirewood","duskwatch"].includes(t))
                   ).length;
                   const crumbs = [
                     { label: `T${turnNumber}`, color: COLORS.gold },
@@ -9786,9 +10076,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       </div>
                     : (() => {
                         const groups = [
-                          { label: "LANDS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => CARDS[c]?.type === "land"), color: "#3a7a2a" },
-                          { label: "CREATURES", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => CARDS[c]?.type === "creature"), color: COLORS.green3 },
-                          { label: "OTHER", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => !["land","creature"].includes(CARDS[c]?.type)), color: COLORS.textDim },
+                          { label: "LANDS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "land"), color: "#3a7a2a" },
+                          { label: "CREATURES", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature"), color: COLORS.green3 },
+                          { label: "OTHER", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => !["land","creature"].includes(getCard(c)?.type)), color: COLORS.textDim },
                         ].filter(g => g.cards.length > 0);
                         return (
                           <div {...dropZoneProps("battlefield")} style={{ borderRadius: "4px", border: dragOver === "battlefield" ? `1px dashed ${COLORS.green3}` : "1px solid transparent", padding: "2px" }}>
@@ -10739,7 +11029,7 @@ function SavedStatesPanel({ currentState, onLoad, onClose }) {
   const statePreview = (s) => {
     const parts = [];
     if (s.hand?.length)        parts.push(`Hand: ${s.hand.slice(0,3).join(", ")}${s.hand.length > 3 ? "…" : ""}`);
-    if (s.battlefield?.length) parts.push(`Board: ${s.battlefield.filter(c=>CARDS[c]?.type==="creature").slice(0,2).join(", ")}…`);
+    if (s.battlefield?.length) parts.push(`Board: ${s.battlefield.filter(c=>getCard(c)?.type==="creature").slice(0,2).join(", ")}…`);
     return parts.join(" · ") || "Empty board";
   };
 
@@ -11040,9 +11330,9 @@ function YevaAdvisor() {
     }
   }, [hand, battlefield, graveyard, mana, isMyTurn, yisanCounters]);
 
-  const elvesOnBoard     = battlefield.filter(c => CARDS[c]?.tags?.includes("elf")).length;
-  const creaturesOnBoard = battlefield.filter(c => CARDS[c]?.type === "creature").length;
-  const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (CARDS[c]?.devotion ?? 0), 0);
+  const elvesOnBoard     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
+  const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (getCard(c)?.devotion ?? 0), 0);
 
   return (
     <>
@@ -11356,7 +11646,7 @@ function YevaAdvisor() {
                       ? <div style={{ paddingLeft: "12px", color: COLORS.textDim, fontStyle: "italic" }}>empty</div>
                       : cards.map(c => (
                           <div key={c} style={{ paddingLeft: "12px", color: COLORS.textMid }}>
-                            · {c} <span style={{ color: COLORS.textDim }}>({CARDS[c]?.type}, cmc {CARDS[c]?.cmc})</span>
+                            · {c} <span style={{ color: COLORS.textDim }}>({getCard(c)?.type}, cmc {getCard(c)?.cmc})</span>
                           </div>
                         ))
                     }
