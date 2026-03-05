@@ -7361,6 +7361,7 @@ function HelpModal({ onClose, onStartTour }) {
     { id: "shortcuts",  label: "Shortcuts" },
     { id: "combos",     label: "Combos" },
     { id: "tour",       label: "Tour" },
+    { id: "changelog",  label: "What's New" },
   ];
 
   const H = ({ children }) => (
@@ -7503,6 +7504,124 @@ function HelpModal({ onClose, onStartTour }) {
         </div>
       </>
     ),
+    changelog: (() => {
+      const versions = [
+        {
+          version: "1.7.0", date: "2026-03-06", title: "Help System & Polish",
+          added: [
+            "In-app manual (? button) with tabbed sections: Overview, Advisor, Goldfish, Shortcuts, Combos, Tour, What's New",
+            "Tooltips on all main header buttons and goldfish control buttons",
+          ],
+          fixed: [
+            "Escape in tutor overlay no longer closes entire Goldfish modal",
+            "Escape now consistently closes Synergy Map modal",
+            "Close (✕) buttons pinned absolutely to top-right of modal headers — no longer wrap on small screens",
+          ],
+        },
+        {
+          version: "1.6.0", date: "2026-03-06", title: "Goldfish Productivity",
+          added: [
+            "Undo system — up to 20 levels; Ctrl+Z shortcut and ↩ UNDO button",
+            "Wirewood Lodge untap targeting modal — pick which elf to untap",
+            "Mana pool delta flash — +N / −N animates above pool badge on change",
+            "⚡ TAP ALL MANA — one click taps every mana source on the battlefield",
+            "Keyboard shortcuts: N next turn, U untap, T tutor, D draw, M tap all, Ctrl+Z undo, Esc close",
+            "Tutor search by type/tag — type 'dork', 'tutor', 'land' etc. to filter results",
+            "Gamestate breadcrumb — turn · mana · elves · dorks · tutors · combo pieces",
+          ],
+        },
+        {
+          version: "1.5.0", date: "2026-03-05", title: "Replay, Mana Pool & Card Images",
+          added: [
+            "Game replay viewer — step through any completed game turn by turn with card images",
+            "Win combo tracking — winning combo line recorded and shown in stats",
+            "Mana pool tracker — auto-increments on tap, auto-decrements on cast; resets each turn",
+            "Mana curve and win condition breakdown charts in stats panel",
+          ],
+          fixed: [
+            "Per-card mana calculation overhauled — Utopia Sprawl and Arbor Elf now calculated correctly",
+          ],
+        },
+        {
+          version: "1.4.0", date: "2026-03-05", title: "Mobile Layout & Drag-Drop",
+          added: [
+            "Mobile responsive layout for goldfish — tab bar replaces side panels below 700px",
+            "Drag-and-drop between any zones in goldfish mode",
+          ],
+          fixed: [
+            "Green Sun's Zenith mana check corrected; GSZ now shuffles back into library",
+            "Commander (Yeva) excluded from library in goldfish",
+            "SSR/hydration crash on initial render fixed",
+          ],
+        },
+        {
+          version: "1.3.0", date: "2026-03-05", title: "Auto-Simulation & Scryfall",
+          added: [
+            "Run N Games — automated simulator plays N games and reports win rates, bottlenecks, turn distribution",
+            "Scryfall auto-enrichment — unknown cards get type and CMC from Scryfall on import",
+          ],
+          fixed: [
+            "Rules of Hooks violation (useState inside IIFE) — hoisted to component top",
+            "Stats persistence fixed outside Claude artifact environment",
+          ],
+        },
+        {
+          version: "1.2.0", date: "2026-03-05", title: "Statistics & Hand Grader",
+          added: [
+            "Persistent game statistics — win rate, average win turn, milestones per deck",
+            "Hand grader — A–F grade with reasoning during mulligan, advisor-enriched",
+            "Stats panel — game history table, win rates by turn, milestone breakdown",
+          ],
+        },
+        {
+          version: "1.1.0", date: "2026-03-04", title: "Goldfish Mode",
+          added: [
+            "Full solo play simulation (Goldfish mode) with London mulligan",
+            "Tap/untap, counters, scry, fetch cracking, context menus, cast from hand",
+            "Commander tax tracking for Yeva",
+            "77-test harness (node yeva-advisor.test.js)",
+          ],
+        },
+        {
+          version: "1.0.0", date: "2026-03-04", title: "Initial Release",
+          added: [
+            "Core advisor engine with 43 combo definitions",
+            "Deck management with import, editor, comparison, and preset decks",
+            "Synergy map, saved states, guided tutorial tour",
+            "Scryfall card image tooltips on all card names",
+          ],
+        },
+      ];
+
+      return (
+        <>
+          {versions.map(v => (
+            <div key={v.version} style={{ marginBottom: "20px", paddingBottom: "16px", borderBottom: `1px solid ${COLORS.border}` }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "8px", marginTop: "16px" }}>
+                <span style={{ fontSize: "12px", fontFamily: "'Cinzel', serif", color: COLORS.green2, letterSpacing: "1px" }}>v{v.version}</span>
+                <span style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>{v.date}</span>
+                <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>— {v.title.toUpperCase()}</span>
+              </div>
+              {v.added && v.added.map((item, i) => (
+                <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "5px", paddingLeft: "8px" }}>
+                  <span style={{ color: COLORS.green1, fontSize: "11px", flexShrink: 0, marginTop: "2px" }}>+</span>
+                  <span style={{ fontSize: "13px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>{item}</span>
+                </div>
+              ))}
+              {v.fixed && v.fixed.map((item, i) => (
+                <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "5px", paddingLeft: "8px" }}>
+                  <span style={{ color: COLORS.blue, fontSize: "11px", flexShrink: 0, marginTop: "2px" }}>✦</span>
+                  <span style={{ fontSize: "13px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>{item}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+          <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontStyle: "italic", textAlign: "center", paddingTop: "8px" }}>
+            + added &nbsp;·&nbsp; ✦ fixed/changed
+          </div>
+        </>
+      );
+    })(),
   };
 
   return (
