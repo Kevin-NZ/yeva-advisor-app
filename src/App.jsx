@@ -582,26 +582,6 @@ const COMBOS = [
     ]
   },
 
-  // ── ENGINE: Seedborn Muse + Yeva (or Yisan) ──────────────────────────
-  {
-    id: "seedborn_yeva",
-    name: "Seedborn Muse + Yeva/Yisan (Free Activations Every Turn)",
-    onBattlefield: ["Seedborn Muse"],
-    mustPreExist: ["Seedborn Muse"],
-    description: "Seedborn Muse untaps all permanents on each opponent's turn. With Yeva on board you already have flash every opponent's turn — cast green creatures at instant speed and untap for free. Adding Yisan would give a free verse activation each upkeep too.",
-    requires: ["Seedborn Muse"],
-    priority: 7,
-    type: "engine",
-    // NOTE: steps are overridden dynamically in the combo-firing block to suppress
-    // Yisan references when Yisan is not on the battlefield.
-    lines: [
-      "Seedborn Muse on battlefield: ALL your permanents untap at the beginning of each other player's untap step.",
-      "With Yeva's flash active: cast green creatures at instant speed on any opponent's turn, untap, do it again on the next opponent's turn.",
-      "SEQUENCING: Seedborn untap happens BEFORE opponent draws — your mana is replenished before any threat resolves.",
-      "TIP: With Elvish Guidance or Gaea's Cradle, Seedborn means effective mana production across all turns.",
-    ]
-  },
-
   // ── WIN CON: Disciple of Freyalise bounce loop ────────────────────────
   {
     id: "disciple_freyalise_loop",
@@ -3580,11 +3560,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const canBeAnywhere  = combo.requires;
 
     // Tier 1: mustPreExist — summoning-sick tappers must already be on board.
-    //   Exception: if a haste enabler is available (Ashaya + Destiny Spinner/Badgermole),
+    //   Exception A: if a haste enabler is available (Ashaya + Destiny Spinner/Badgermole),
     //   these cards can be cast this turn and tap immediately.
+    //   Exception B: if the card is in hand and castable this turn, it's not "missing" —
+    //   it just needs to be cast first (will appear in needToCast below).
     const missingPreExist   = mustPreExist.filter(r => {
       if (board.has(r)) return false;                              // already there
-      if (inHand.has(r) && hasHasteEnabler && canCastNow) return false; // haste available
+      if (inHand.has(r) && canCastNow) return false;              // in hand, can cast it
       return true;
     });
     // Tier 2: onBattlefield (non-mustPreExist) — can be in hand and cast/played this turn
@@ -3603,9 +3585,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     const extras = comboExtrasSatisfied(combo, infiniteManaActive);
 
-    // Seedborn engine combos are fully handled by the bespoke Seedborn block above
-    // (which generates context-aware steps). Skip the generic COMBOS-array entries.
-    if ((combo.id === "seedborn_yeva" || combo.id === "seedborn_engine") &&
+    // Seedborn engine combos: the bespoke block (board) and seedborn_engine are equivalent.
+    // seedborn_yeva is redundant whenever seedborn_engine has already fired.
+    // seedborn_engine is fully handled by the bespoke Seedborn block when Seedborn is on board
+    if (combo.id === "seedborn_engine" &&
         results.some(r => r.combo === "seedborn_bespoke")) continue;
 
     if (missing.length === 0 && extras.ok) {
@@ -3624,6 +3607,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const needToCast = [
         ...castableOnBoard.filter(r => inHand.has(r) && !board.has(r)), // permanents to cast
         ...requiresOnly.filter(r => inHand.has(r)),                     // spells cast during combo
+        ...mustPreExist.filter(r => inHand.has(r) && !board.has(r) && canCastNow), // mustPreExist cards in hand
       ];
       if (needToCast.length === 0) {
         results.push({
@@ -3639,7 +3623,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const totalCost = needToCast.reduce((acc, c) => acc + (CARDS[c]?.cmc || 0), 0);
         if ((mana >= totalCost || infiniteManaActive) || !isMyTurn) {
           results.push({
-            priority: combo.priority + typeMeta.boost - 2,
+            priority: combo.priority + typeMeta.boost,
             category: typeMeta.cast,
             headline: `Cast ${needToCast.join(" + ")} → ${combo.name}`,
             detail: `You have all named pieces! Cast ${needToCast.join(", ")} to complete ${combo.name}.`,
@@ -5242,6 +5226,9 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
   const board = new Set(battlefield);
   const inHand = new Set(hand);
   const inGrave = new Set(graveyard);
+
+  // No tutor needed if the card is already accessible
+  if (inHand.has(target) || board.has(target)) return options;
   const witnessRetrievableLocal = (c) => inGrave.has(c) && inHand.has("Eternal Witness") && !board.has("Eternal Witness");
   const accessible = (c) => inHand.has(c) || witnessRetrievableLocal(c);
 
@@ -7355,6 +7342,247 @@ function HoverCard({ card, children }) {
   );
 }
 
+// ── Pure goldfish simulation engine ───────────────────────────────────────────
+// Runs entirely synchronously with no React state. Returns a result object for
+// each game. Called in a loop by runNGames().
+//
+// Decision logic (per turn):
+//   1. Run analyzeGameState on current board
+//   2. If top result is a WIN category → record win and stop
+//   3. Otherwise execute the top non-win play:
+//        - Always play a land first if one is in hand and no land played yet
+//        - Cast the card named in the top result's headline (if identifiable & affordable)
+//        - Fallback: cast highest-CMC affordable card from hand
+//   4. Advance turn (untap, draw)
+//   Repeat until win or turn 20 (hard cap)
+
+const WIN_CATS = ["WIN NOW", "CAST TO WIN", "WIN NEXT TURN", "INSTANT SPEED WIN",
+                  "WIN — PILE", "WIN — FETCH", "POISON WIN", "CAST FOR WIN",
+                  "TUTOR LOOP", "WIN NEXT"];
+
+function isWinCategory(cat) {
+  return WIN_CATS.some(w => cat.includes(w));
+}
+
+// Extract the first card name from a result headline that appears in hand or battlefield.
+// e.g. "Cast Natural Order → ..." → "Natural Order"
+function extractPlayableCard(result, hand, battlefield) {
+  if (!result) return null;
+  const text = (result.steps?.[0] ?? result.headline ?? "");
+  // Try to match any card in hand mentioned in the text
+  for (const card of hand) {
+    if (text.includes(card)) return card;
+  }
+  // Fallback: scan headline
+  for (const card of hand) {
+    if ((result.headline ?? "").includes(card)) return card;
+  }
+  return null;
+}
+
+function simulateOneGame(deckCards, deckSet, mullLimit = 2) {
+  const MAX_TURNS = 20;
+  let hand, library;
+
+  // ── Mulligan heuristic ─────────────────────────────────────
+  let mulligans = 0;
+  for (let m = 0; m <= mullLimit; m++) {
+    library = buildLibrary(deckCards);
+    hand = library.slice(0, 7);
+    library = library.slice(7);
+    const dorks = hand.filter(c => CARDS[c]?.tags?.includes("dork")).length;
+    const lands  = hand.filter(c => CARDS[c]?.type === "land").length;
+    const tutors = hand.filter(c => CARDS[c]?.tags?.includes("tutor")).length;
+    const canMakeT1Mana = lands >= 1 || dorks >= 2;
+    const keep = (dorks >= 1 && tutors >= 1 && canMakeT1Mana) ||
+                 (dorks >= 2 && lands >= 1);
+    if (keep || m === mullLimit) {
+      // Bottom cards for mulligans
+      if (m > 0) {
+        const toBottom = m; // bottom m cards (worst: excess lands, then non-combo)
+        // Score cards — keep high-value, bottom basics and excess lands
+        const scored = hand.map(c => {
+          const isDork  = CARDS[c]?.tags?.includes("dork") ? 3 : 0;
+          const isTutor = CARDS[c]?.tags?.includes("tutor") ? 3 : 0;
+          const isLand  = CARDS[c]?.type === "land" ? 1 : 0;
+          const isCombo = CARDS[c]?.tags?.some(t => ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t)) ? 2 : 0;
+          return { c, score: isDork + isTutor + isCombo + isLand };
+        }).sort((a, b) => a.score - b.score); // lowest score → bottom
+        const bottomed = scored.slice(0, toBottom).map(x => x.c);
+        hand = hand.filter(c => !bottomed.includes(c));
+        // Don't re-add to library — close enough for simulation
+      }
+      mulligans = m;
+      break;
+    }
+    mulligans = m + 1;
+  }
+
+  const openingHand = [...hand];
+
+  // ── Game state ──────────────────────────────────────────────
+  let battlefield = [];
+  let graveyard   = [];
+  let landPlayed  = false;
+  let winTurn     = null;
+  let bottlenecks = []; // missing piece strings from suppressed wins
+
+  for (let turn = 1; turn <= MAX_TURNS; turn++) {
+    // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
+    if (turn > 1) {
+      if (library.length > 0) { hand.push(library.shift()); }
+    }
+    landPlayed = false;
+
+    // Play out the turn — loop until no more affordable plays this turn
+    let madePlay = true;
+    let turnsPlays = 0;
+    while (madePlay && turnsPlays < 20) {
+      madePlay = false;
+      turnsPlays++;
+
+      // Always play a land first
+      if (!landPlayed) {
+        const landIdx = hand.findIndex(c => CARDS[c]?.type === "land");
+        if (landIdx >= 0) {
+          const land = hand.splice(landIdx, 1)[0];
+          battlefield.push(land);
+          landPlayed = true;
+          madePlay = true;
+          continue;
+        }
+      }
+
+      // Calculate available mana
+      const mana = calculateBattlefieldMana(battlefield);
+
+      // Run advisor
+      let analysis;
+      try {
+        analysis = analyzeGameState({
+          hand, battlefield, graveyard,
+          manaAvailable: mana, isMyTurn: true,
+          deckList: deckSet,
+        });
+      } catch { break; }
+
+      const liveResults = (analysis.results ?? []).filter(r => !r.isSuppressed);
+      const top = liveResults[0];
+
+      // Check for win
+      if (top && isWinCategory(top.category)) {
+        winTurn = turn;
+        break;
+      }
+
+      // Collect bottleneck data from suppressed wins
+      const suppressed = (analysis.results ?? []).filter(r => r.isSuppressed);
+      for (const s of suppressed) {
+        const reason = (s.headline ?? "").replace(/^[^:]+:\s*/, "");
+        if (reason) bottlenecks.push(reason);
+      }
+
+      // Try to execute the top recommendation
+      const cardToPlay = top ? extractPlayableCard(top, hand, battlefield) : null;
+      let played = false;
+
+      if (cardToPlay) {
+        const idx = hand.indexOf(cardToPlay);
+        const cardData = CARDS[cardToPlay];
+        const cmc = cardData?.cmc ?? 0;
+        const cardType = cardData?.type ?? "";
+        if (idx >= 0 && cmc <= mana && cardType !== "land") {
+          hand.splice(idx, 1);
+          if (cardType === "instant" || cardType === "sorcery") {
+            graveyard.push(cardToPlay);
+          } else {
+            battlefield.push(cardToPlay);
+          }
+          played = true;
+          madePlay = true;
+          continue;
+        }
+      }
+
+      // Fallback: cast the highest-CMC affordable non-land card in hand
+      if (!played) {
+        const affordable = hand
+          .map((c, i) => ({ c, i, cmc: CARDS[c]?.cmc ?? 0, type: CARDS[c]?.type ?? "" }))
+          .filter(x => x.type !== "land" && x.cmc <= mana && x.cmc > 0)
+          .sort((a, b) => b.cmc - a.cmc);
+        if (affordable.length > 0) {
+          const best = affordable[0];
+          hand.splice(best.i, 1);
+          if (best.type === "instant" || best.type === "sorcery") {
+            graveyard.push(best.c);
+          } else {
+            battlefield.push(best.c);
+          }
+          madePlay = true;
+          continue;
+        }
+      }
+
+      // Nothing left to do this turn
+      break;
+    }
+
+    if (winTurn !== null) break;
+  }
+
+  return { openingHand, mulligans, winTurn, bottlenecks };
+}
+
+// Run N games synchronously, return aggregated stats
+function runNGames(deckCards, n = 50) {
+  const deckSet = new Set(deckCards);
+  const results = [];
+  for (let i = 0; i < n; i++) {
+    results.push(simulateOneGame(deckCards, deckSet));
+  }
+
+  const wins        = results.filter(r => r.winTurn !== null);
+  const winTurns    = wins.map(r => r.winTurn);
+  const avgWinTurn  = winTurns.length ? (winTurns.reduce((a,b) => a+b,0) / winTurns.length) : null;
+  const winRate     = (wins.length / n * 100);
+  const t3Rate      = (results.filter(r => r.winTurn !== null && r.winTurn <= 3).length / n * 100);
+  const t4Rate      = (results.filter(r => r.winTurn !== null && r.winTurn <= 4).length / n * 100);
+  const t5Rate      = (results.filter(r => r.winTurn !== null && r.winTurn <= 5).length / n * 100);
+  const avgMulligans = (results.reduce((a, r) => a + r.mulligans, 0) / n);
+
+  // Bottleneck frequency: count how often each missing-piece phrase appears
+  const bottleneckCounts = {};
+  for (const r of results) {
+    // Deduplicate within a single game first
+    const seen = new Set();
+    for (const b of r.bottlenecks) {
+      // Normalise: strip trailing detail, keep first ~50 chars
+      const key = b.slice(0, 55).replace(/\(.*?\)/g, "").trim();
+      if (!seen.has(key)) {
+        seen.add(key);
+        bottleneckCounts[key] = (bottleneckCounts[key] ?? 0) + 1;
+      }
+    }
+  }
+  const topBottlenecks = Object.entries(bottleneckCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([reason, count]) => ({ reason, count, pct: Math.round(count / n * 100) }));
+
+  // Win turn distribution (T1–T10+)
+  const distribution = {};
+  for (const t of winTurns) {
+    const key = t <= 10 ? `T${t}` : "T11+";
+    distribution[key] = (distribution[key] ?? 0) + 1;
+  }
+
+  return {
+    n, wins: wins.length, winRate, avgWinTurn, avgMulligans,
+    t3Rate, t4Rate, t5Rate,
+    topBottlenecks, distribution, results,
+  };
+}
+
 function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
@@ -7391,6 +7619,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── Drag state ──────────────────────────────────────────────
   const [dragCard, setDragCard] = useState(null); // {card, fromZone, fromIndex}
   const [dragOver, setDragOver] = useState(null); // zone name being hovered
+  // ── Run N state ─────────────────────────────────────────────
+  const [runNCount, setRunNCount] = useState(100);
+  const [runNResults, setRunNResults] = useState(null);
+  const [runNRunning, setRunNRunning] = useState(false);
 
   const deckCards = activeDeck?.cards ?? [];
   const hasDeck = deckCards.length > 0;
@@ -7751,6 +7983,22 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   function exportToAdvisor() {
     onLoadState({ hand, battlefield, graveyard, mana: calculateBattlefieldMana(untappedBattlefield), isMyTurn });
     onClose();
+  }
+
+  function runGames() {
+    if (!hasDeck || runNRunning) return;
+    setRunNRunning(true);
+    setRunNResults(null);
+    // Defer to next tick so the UI can show the spinner before blocking
+    setTimeout(() => {
+      try {
+        const results = runNGames(deckCards, runNCount);
+        setRunNResults(results);
+      } catch (e) {
+        console.error("runNGames error:", e);
+      }
+      setRunNRunning(false);
+    }, 20);
   }
 
   // ── DRAG AND DROP ───────────────────────────────────────────
@@ -8569,85 +8817,221 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             return games.length ? `${Math.round(n / games.length * 100)}%` : "—";
           };
           const statBox = (label, value, color) => (
-            <div style={{ background: "#0d1a0d", border: `1px solid ${color}44`, borderRadius: "8px", padding: "14px 18px", textAlign: "center", minWidth: "100px" }}>
-              <div style={{ fontSize: "22px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
-              <div style={{ fontSize: "10px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "4px", fontFamily: "'Cinzel', serif" }}>{label}</div>
+            <div style={{ background: "#0d1a0d", border: `1px solid ${color}44`, borderRadius: "8px", padding: "12px 16px", textAlign: "center", minWidth: "90px" }}>
+              <div style={{ fontSize: "20px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
+              <div style={{ fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "4px", fontFamily: "'Cinzel', serif" }}>{label}</div>
             </div>
           );
+          const nr = runNResults;
           return (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{ padding: "20px 28px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "13px", color: COLORS.gold, letterSpacing: "2px", marginRight: "8px" }}>
-                  ★ GAME STATISTICS — {games.length} GAME{games.length !== 1 ? "S" : ""}
+
+              {/* ── Manual game stats header ── */}
+              <div style={{ padding: "16px 24px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px", marginRight: "6px", flexShrink: 0 }}>
+                  ★ MANUAL — {games.length} GAME{games.length !== 1 ? "S" : ""}
                 </div>
                 {statBox("AVG WIN TURN", avg(g => g.winCondition), COLORS.red)}
-                {statBox("AVG ∞ MANA", avg(g => g.infiniteMana), "#c084fc")}
-                {statBox("AVG 1ST DORK", avg(g => g.firstDork), COLORS.green2)}
-                {statBox("AVG MULLIGANS", avg(g => g.mulligans), COLORS.gold)}
-                {statBox("WIN BY T4", pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
-                {statBox("WIN BY T5", pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
-                <button onClick={startGame} style={{
-                  background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
-                  padding: "10px 20px", color: COLORS.green2, cursor: "pointer",
-                  fontFamily: "'Cinzel', serif", fontSize: "12px", letterSpacing: "1px", marginLeft: "auto",
-                }}>▶ NEW GAME</button>
-                {games.length > 0 && (
-                  <button onClick={() => {
-                    if (!window.confirm("Clear all goldfish stats for this deck? This cannot be undone.")) return;
-                    setGameHistory([]);
-                    gameNumRef.current = 0;
-                    storage.set(statsKey, JSON.stringify({ history: [], gameNum: 0 })).catch(() => {});
-                  }} style={{
-                    background: "none", border: `1px solid ${COLORS.red}`, borderRadius: "8px",
-                    padding: "10px 16px", color: COLORS.red, cursor: "pointer",
-                    fontFamily: "'Cinzel', serif", fontSize: "12px", letterSpacing: "1px",
-                  }}>✕ CLEAR</button>
-                )}
+                {statBox("AVG ∞ MANA",   avg(g => g.infiniteMana),  "#c084fc")}
+                {statBox("AVG 1ST DORK", avg(g => g.firstDork),     COLORS.green2)}
+                {statBox("AVG MULLS",    avg(g => g.mulligans),      COLORS.gold)}
+                {statBox("WIN ≤T4",      pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
+                {statBox("WIN ≤T5",      pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
+                <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
+                  <button onClick={startGame} style={{
+                    background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
+                    padding: "8px 18px", color: COLORS.green2, cursor: "pointer",
+                    fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                  }}>▶ NEW GAME</button>
+                  {games.length > 0 && (
+                    <button onClick={() => {
+                      if (!window.confirm("Clear all goldfish stats for this deck? This cannot be undone.")) return;
+                      setGameHistory([]); gameNumRef.current = 0;
+                      storage.set(statsKey, JSON.stringify({ history: [], gameNum: 0 })).catch(() => {});
+                    }} style={{
+                      background: "none", border: `1px solid ${COLORS.red}`, borderRadius: "8px",
+                      padding: "8px 14px", color: COLORS.red, cursor: "pointer",
+                      fontFamily: "'Cinzel', serif", fontSize: "11px",
+                    }}>✕ CLEAR</button>
+                  )}
+                </div>
               </div>
-              <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                      {["#","Mulligans","Opening Hand","1st Dork","∞ Mana","Win Cond.","Final Turn"].map(h => (
-                        <th key={h} style={{ padding: "6px 10px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px", textAlign: "left", fontWeight: "normal" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...games].reverse().map((g, idx) => (
-                      <tr key={g.gameNum} style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
-                        <td style={{ padding: "7px 10px", color: COLORS.textDim }}>{g.gameNum}</td>
-                        <td style={{ padding: "7px 10px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "None" : `${g.mulligans}×`}</td>
-                        <td style={{ padding: "7px 10px", color: COLORS.textDim, fontSize: "11px", maxWidth: "220px" }}>
-                          <span title={g.openingHand.join(", ")} style={{ cursor: "default" }}>
-                            {g.openingHand.slice(0, 3).join(", ")}{g.openingHand.length > 3 ? ` +${g.openingHand.length - 3}` : ""}
-                          </span>
-                        </td>
-                        <td style={{ padding: "7px 10px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>
-                          {g.firstDork ? `T${g.firstDork}` : "—"}
-                        </td>
-                        <td style={{ padding: "7px 10px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>
-                          {g.infiniteMana ? `T${g.infiniteMana}` : "—"}
-                        </td>
-                        <td style={{ padding: "7px 10px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>
-                          {g.winCondition ? `T${g.winCondition}` : "—"}
-                        </td>
-                        <td style={{ padding: "7px 10px", color: COLORS.textDim }}>{g.turns}</td>
+
+              <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+                {/* ── Left: manual game log table ── */}
+                <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", borderRight: `1px solid ${COLORS.border}` }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                        {["#","Mulligans","Opening Hand","1st Dork","∞ Mana","Win Cond.","Turn"].map(h => (
+                          <th key={h} style={{ padding: "5px 8px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px", textAlign: "left", fontWeight: "normal" }}>{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {games.length === 0 && (
-                  <div style={{ color: COLORS.textDim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "40px", textAlign: "center" }}>
-                    No games recorded yet. Play a game and click ★ END GAME to record it.
+                    </thead>
+                    <tbody>
+                      {[...games].reverse().map((g, idx) => (
+                        <tr key={g.gameNum} style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
+                          <td style={{ padding: "6px 8px", color: COLORS.textDim }}>{g.gameNum}</td>
+                          <td style={{ padding: "6px 8px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "None" : `${g.mulligans}×`}</td>
+                          <td style={{ padding: "6px 8px", color: COLORS.textDim, fontSize: "11px", maxWidth: "180px" }}>
+                            <span title={g.openingHand.join(", ")} style={{ cursor: "default" }}>
+                              {g.openingHand.slice(0, 3).join(", ")}{g.openingHand.length > 3 ? ` +${g.openingHand.length - 3}` : ""}
+                            </span>
+                          </td>
+                          <td style={{ padding: "6px 8px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>{g.firstDork ? `T${g.firstDork}` : "—"}</td>
+                          <td style={{ padding: "6px 8px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>{g.infiniteMana ? `T${g.infiniteMana}` : "—"}</td>
+                          <td style={{ padding: "6px 8px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>{g.winCondition ? `T${g.winCondition}` : "—"}</td>
+                          <td style={{ padding: "6px 8px", color: COLORS.textDim }}>{g.turns}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {games.length === 0 && (
+                    <div style={{ color: COLORS.textDim, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "30px", textAlign: "center" }}>
+                      No games recorded yet. Play a game and click ★ END GAME to record it.
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Right: Run N panel ── */}
+                <div style={{ width: "340px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+                  {/* Run N controls */}
+                  <div style={{ padding: "14px 18px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
+                    <div style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.blue, letterSpacing: "2px", marginBottom: "10px" }}>
+                      ⚡ AUTO-SIMULATE
+                    </div>
+                    <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginBottom: "10px", lineHeight: 1.5 }}>
+                      Plays N games fully automatically using the advisor's top recommendation each turn.
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+                      <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>GAMES:</span>
+                      {[50, 100, 250, 500].map(n => (
+                        <button key={n} onClick={() => setRunNCount(n)} style={{
+                          background: runNCount === n ? "#1a3a1a" : "none",
+                          border: `1px solid ${runNCount === n ? COLORS.green1 : COLORS.border}`,
+                          borderRadius: "6px", padding: "4px 10px",
+                          color: runNCount === n ? COLORS.green2 : COLORS.textDim,
+                          cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px",
+                        }}>{n}</button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={runGames}
+                      disabled={!hasDeck || runNRunning}
+                      style={{
+                        width: "100%", background: hasDeck ? "#0d1f3a" : "transparent",
+                        border: `1px solid ${hasDeck ? COLORS.blue : COLORS.border}`,
+                        borderRadius: "8px", padding: "9px",
+                        color: hasDeck ? COLORS.blue : COLORS.textDim,
+                        cursor: hasDeck ? "pointer" : "not-allowed",
+                        fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                        opacity: runNRunning ? 0.6 : 1,
+                      }}
+                    >{runNRunning ? `⏳ Running ${runNCount} games…` : `▶ RUN ${runNCount} GAMES`}</button>
+                    {!hasDeck && <div style={{ fontSize: "10px", color: COLORS.red, marginTop: "6px", fontFamily: "'Crimson Text', serif" }}>Load a deck first.</div>}
                   </div>
-                )}
+
+                  {/* Run N results */}
+                  <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px" }}>
+                    {runNRunning && (
+                      <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
+                        <div style={{ width: 28, height: 28, border: `2px solid ${COLORS.border}`, borderTopColor: COLORS.blue, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+                        Simulating {runNCount} games…
+                      </div>
+                    )}
+                    {nr && !runNRunning && (() => {
+                      const simStatBox = (label, value, color, sub) => (
+                        <div style={{ background: "#0a1520", border: `1px solid ${color}33`, borderRadius: "6px", padding: "10px 12px", textAlign: "center" }}>
+                          <div style={{ fontSize: "18px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
+                          {sub && <div style={{ fontSize: "9px", color: COLORS.textDim, marginTop: "2px", fontFamily: "'Cinzel', serif" }}>{sub}</div>}
+                          <div style={{ fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "3px", fontFamily: "'Cinzel', serif" }}>{label}</div>
+                        </div>
+                      );
+                      // Build distribution bar
+                      const distKeys = ["T3","T4","T5","T6","T7","T8+"];
+                      const distCounts = distKeys.map(k => {
+                        if (k === "T8+") {
+                          return Object.entries(nr.distribution).filter(([key]) => parseInt(key.slice(1)) >= 8).reduce((s,[,v]) => s+v, 0);
+                        }
+                        return nr.distribution[k] ?? 0;
+                      });
+                      const maxCount = Math.max(...distCounts, 1);
+                      return (
+                        <div>
+                          <div style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: COLORS.blue, letterSpacing: "1.5px", marginBottom: "10px" }}>
+                            RESULTS — {nr.n} GAMES
+                          </div>
+                          {/* Summary stat grid */}
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "12px" }}>
+                            {simStatBox("AVG WIN TURN", nr.avgWinTurn ? nr.avgWinTurn.toFixed(1) : "—", COLORS.red)}
+                            {simStatBox("WIN RATE", `${nr.winRate.toFixed(0)}%`, nr.winRate >= 80 ? COLORS.green2 : nr.winRate >= 50 ? COLORS.gold : COLORS.red, `${nr.wins}/${nr.n}`)}
+                            {simStatBox("AVG MULLIGANS", nr.avgMulligans.toFixed(1), COLORS.gold)}
+                            {simStatBox("WIN ≤T5", `${nr.t5Rate.toFixed(0)}%`, nr.t5Rate >= 60 ? COLORS.green2 : COLORS.gold)}
+                          </div>
+                          {/* T3/T4/T5 breakdown */}
+                          <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+                            {[["≤T3", nr.t3Rate], ["≤T4", nr.t4Rate], ["≤T5", nr.t5Rate]].map(([label, rate]) => (
+                              <div key={label} style={{ flex: 1, background: "#0a1520", border: `1px solid ${COLORS.blue}33`, borderRadius: "6px", padding: "7px 6px", textAlign: "center" }}>
+                                <div style={{ fontSize: "14px", color: rate > 0 ? COLORS.blue : COLORS.textDim, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{rate.toFixed(0)}%</div>
+                                <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginTop: "2px" }}>{label}</div>
+                              </div>
+                            ))}
+                          </div>
+                          {/* Win turn distribution bars */}
+                          <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginBottom: "6px" }}>WIN TURN DISTRIBUTION</div>
+                          <div style={{ display: "flex", gap: "4px", alignItems: "flex-end", height: "52px", marginBottom: "14px" }}>
+                            {distKeys.map((k, i) => {
+                              const count = distCounts[i];
+                              const h = count > 0 ? Math.max(4, Math.round(count / maxCount * 48)) : 2;
+                              const isGood = i <= 1; // T3/T4
+                              const col = count === 0 ? COLORS.border : isGood ? COLORS.green2 : i <= 2 ? COLORS.gold : COLORS.textDim;
+                              return (
+                                <div key={k} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+                                  <div style={{ fontSize: "8px", color: col, fontFamily: "'Cinzel', serif" }}>{count > 0 ? count : ""}</div>
+                                  <div style={{ width: "100%", height: `${h}px`, background: col, borderRadius: "2px 2px 0 0", opacity: count === 0 ? 0.2 : 1 }} />
+                                  <div style={{ fontSize: "8px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>{k}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* Bottlenecks */}
+                          {nr.topBottlenecks.length > 0 && (
+                            <div>
+                              <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.red, letterSpacing: "1px", marginBottom: "6px" }}>
+                                MOST COMMON BOTTLENECKS
+                              </div>
+                              {nr.topBottlenecks.map((b, i) => (
+                                <div key={i} style={{ marginBottom: "5px" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "2px" }}>
+                                    <span style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", flex: 1, lineHeight: 1.3 }}>{b.reason}</span>
+                                    <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginLeft: "6px", flexShrink: 0 }}>{b.pct}%</span>
+                                  </div>
+                                  <div style={{ height: "3px", background: COLORS.border, borderRadius: "2px", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", width: `${b.pct}%`, background: COLORS.red, borderRadius: "2px", opacity: 0.7 }} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {!nr && !runNRunning && (
+                      <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", padding: "20px 0", textAlign: "center", lineHeight: 1.6 }}>
+                        Run the simulator to see win-rate statistics, turn distribution, and bottleneck analysis.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           );
         })()}
 
         {ContextMenuPopup()}
+
       </div>
     </div>
   );
