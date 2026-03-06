@@ -1062,6 +1062,55 @@ const COMBOS = [
     ]
   },
 
+  // ── WIN CON: Destiny Spinner + Ashaya Trample + Finale of Devastation ────
+  {
+    id: "finale_trample_win",
+    name: "Finale of Devastation (X≥10) + Ashaya + Destiny Spinner (Trample Combat Win)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Destiny Spinner"],
+    description: "With infinite mana: cast Finale of Devastation at a very large X (≥10 for the bonus). Finale puts any creature from your library or graveyard directly onto the battlefield, then gives ALL your creatures +X/+X and haste until end of turn. Ashaya makes all nontoken creatures Forests; Destiny Spinner gives all creatures with a Forest type trample. The result is an arbitrarily large, haste-enabled, trample-equipped army that attacks for lethal that turn.",
+    requires: ["Finale of Devastation", "Ashaya, Soul of the Wild", "Destiny Spinner"],
+    needsInfiniteMana: true,
+    priority: 11,
+    type: "win-combat",
+    lines: [
+      "SETUP: Infinite mana active. Ashaya, Soul of the Wild + Destiny Spinner on battlefield. Finale of Devastation in hand or accessible.",
+      "Ashaya: all your nontoken creatures are Forests in addition to their other types.",
+      "Destiny Spinner: creatures you control that are Forests have trample.",
+      "Cast Finale of Devastation at X = your desired power boost (≥10 to also get the +X/+X and haste bonus).",
+      "  • Finale finds ANY creature from your library or graveyard and puts it directly onto the battlefield.",
+      "  • If X ≥ 10: ALL creatures you control get +X/+X and gain haste until end of turn.",
+      "Choose X equal to your opponents' combined life totals (or simply use infinite mana for arbitrarily large X).",
+      "Your entire army — all now Forests via Ashaya — gains trample from Destiny Spinner.",
+      "Every creature has haste (Finale bonus), +X/+X (Finale bonus), and trample (Destiny Spinner + Ashaya).",
+      "Attack with everything. Trample means excess damage punches through to players even if blockers are thrown in the way.",
+      "TIP: If opponents try to chump-block, trample ensures lethal regardless. No combat tricks can save them with infinite power.",
+    ]
+  },
+
+  // ── WIN CON: Infectious Bite fight-loop + Beast Within cleanup → combat ──
+  {
+    id: "bite_fight_pivot",
+    name: "Infectious Bite Fight Loop + Beast Within Cleanup (Combat Win)",
+    onBattlefield: ["Eternal Witness"],
+    description: "With infinite mana: use Infectious Bite recursion via Eternal Witness to fight away blockers one by one (each fight also gives each opponent a poison counter), then attack for lethal. Beast Within can stop any combo win on the stack (countering by destroying the permanent mid-resolution), then the same looping plan removes the resulting Beast tokens and remaining blockers. A backup when opponents have enough blockers to prevent a direct poison kill but not enough life to survive a clean alpha strike.",
+    requires: ["Infectious Bite", "Eternal Witness"],
+    needsInfiniteMana: true,
+    needsAlsoBouncer: true,
+    priority: 8,
+    type: "win-combat",
+    lines: [
+      "SETUP: Infinite mana. Eternal Witness + bouncer (Temur Sabertooth or Kogla) on battlefield. Infectious Bite in hand or graveyard.",
+      "INTERRUPT PHASE (if needed): If an opponent has a win on the stack, cast Beast Within targeting the permanent driving their combo (Thassa's Oracle, Laboratory Maniac, Ad Nauseam, etc.). This destroys it mid-stack and neutralises the threat. They receive a 3/3 Beast token.",
+      "CLEANUP PHASE: Use Infectious Bite to fight away all relevant blockers and the Beast token(s) just created.",
+      "  • Each Bite cast: target one of your creatures — it fights target opponent's creature. Chosen opponent gets 1 poison counter per cast.",
+      "  • Recover Bite: Sabertooth bounces Eternal Witness → recast Witness → ETB retrieves Infectious Bite. Repeat.",
+      "  • With Kogla: attack with Kogla → return Eternal Witness (Human) to hand → recast Witness → retrieve Bite.",
+      "After clearing all blockers (and incidentally accumulating poison counters), attack with your full team for lethal.",
+      "NOTE: If opponents have already accumulated ≥10 poison counters during cleanup, that is also a win. Otherwise fall back to combat damage.",
+      "TIP: Ram Through and Tail Swipe serve the same blocker-removal role without recursion if they are in hand and the target count is low.",
+    ]
+  },
+
   // ── Shifting Woodland + Ashaya + Argothian Elder (copy Elder from graveyard) ─
   {
     id: "shifting_woodland_elder",
