@@ -21,8 +21,8 @@ const CARDS = {
   "Priest of Titania":     { type:"creature", cmc:2, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves" , devotion:1},
   "Elvish Archdruid":      { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","pump"], tapsFor:"elves" , devotion:2},
   "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , devotion:2},
-  "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork"], tapsFor:"devotion" , devotion:1},
-  "Fanatic of Rhonas":     { type:"creature", cmc:4, tags:["dork","elf","big-dork"], tapsFor:4 , devotion:1, role:"big-dork-combo"},
+  "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork","human"], tapsFor:"devotion" , devotion:1},
+  "Fanatic of Rhonas":     { type:"creature", cmc:4, tags:["dork","elf","big-dork","human"], tapsFor:4 , devotion:1, role:"big-dork-combo"},
   "Hope Tender":           { type:"creature", cmc:2, tags:["dork","elf","human","untap-lands","exert"], tapsFor:1 , devotion:1, role:"untap-combo"},
   // COMBO PIECES
   "Ashaya, Soul of the Wild": { type:"creature", cmc:5, tags:["combo","key","ashaya"], tapsFor:0 , devotion:2},
@@ -112,8 +112,8 @@ const CARDS = {
   // ── VARIANT / SIDEBOARD CARDS ──────────────────────────────────────────
   // Mana dorks & big dorks
   "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"dork-combo"},
-  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"big-dork-combo"},
-  "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork"], tapsFor:"power", devotion:2, role:"big-dork-combo"},
+  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"elves", devotion:1, role:"big-dork-combo"},
+  "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork","human"], tapsFor:"power", devotion:2, role:"big-dork-combo"},
   "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"big-dork-combo"},
   "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], devotion:4, role:"storm-engine"},
   // Untap & haste combo pieces
@@ -1204,6 +1204,236 @@ const COMBOS = [
     ]
   },
 
+  // ── Haste Enabler + Temur Sabertooth + Big Dork (CMC+3) ─────────────────
+  {
+    id: "haste_sabertooth_dork",
+    name: "Haste Enabler + Temur Sabertooth + Big Dork (taps for CMC+3)",
+    onBattlefield: ["Temur Sabertooth"],
+    mustPreExist: ["Temur Sabertooth"],
+    description: "Infinite mana. A haste enabler (Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity, or Thousand-Year Elixir) lets a freshly-cast big dork tap immediately. Temur Sabertooth bounces it to hand for {1}{G}, you recast it — the dork must produce at least its own CMC + 3 mana ({1}{G} Sabertooth bounce + CMC recast cost) to be net-positive. Any dork producing ≥ CMC+3 generates infinite mana this way. Quirion/Scryb Ranger variants also satisfy this with the untap line instead of bouncing.",
+    requires: ["Temur Sabertooth"],
+    needsBigDorkHasteCMC: true,
+    needsHasteEnabler: true,
+    priority: 7,
+    type: "infinite-mana",
+    lines: [
+      "Haste enabler (Concordant Crossroads / Surrak / Ulvenwald Oddity / Elixir) + Temur Sabertooth on battlefield.",
+      "Cast the big dork — haste lets it tap immediately for N mana (N ≥ dork's CMC + 3).",
+      "Pay {1}{G}: Temur Sabertooth returns the dork to your hand.",
+      "Recast the dork for its CMC. Total cost per loop: {1}{G} + CMC.",
+      "Net mana per loop: N − CMC − 2 (≥ +1 when N ≥ CMC+3). Repeat for infinite mana.",
+    ],
+  },
+
+  // ── Haste Enabler + Kogla + Human Big Dork (CMC+3) ──────────────────────
+  {
+    id: "haste_kogla_human_dork",
+    name: "Haste Enabler + Kogla + Human Big Dork (taps for CMC+3)",
+    onBattlefield: ["Kogla, the Titan Ape"],
+    mustPreExist: ["Kogla, the Titan Ape"],
+    description: "Infinite mana — Kogla variant. Kogla's activated ability returns a Human you control to hand for {2} (no green required). Pair with any Human big dork (Selvala, Heart of the Wilds; Marwyn; Karametra's Acolyte; Elvish Archdruid if Human; Fanatic of Rhonas) and a haste enabler. The dork taps immediately on ETB, then Kogla bounces it for {2}. Net positive when dork produces ≥ CMC+3 (covering {2} Kogla bounce + CMC recast). Kogla also destroys an artifact or enchantment each time you cast the Human, adding incidental disruption.",
+    requires: ["Kogla, the Titan Ape"],
+    needsBigDorkHasteCMC: true,
+    needsHasteEnabler: true,
+    needsHumanDork: true,
+    priority: 7,
+    type: "infinite-mana",
+    lines: [
+      "Haste enabler + Kogla, the Titan Ape on battlefield, plus a Human big dork in hand.",
+      "Cast the Human dork — haste lets it tap immediately for N mana (N ≥ dork's CMC + 3).",
+      "Pay {2}: Kogla returns the Human dork to your hand. Kogla also destroys target artifact or enchantment.",
+      "Recast the Human dork for CMC. Total cost per loop: {2} + CMC.",
+      "Net mana per loop: N − CMC − 2 (≥ +1 when N ≥ CMC+3). Repeat for infinite mana.",
+    ],
+  },
+
+
+  // ── Ashaya + Scryb Ranger + Named Big Dork ───────────────────────────────
+  // Covers Spellbook #3,7,11,14,21,26,27,41,49 — Scryb Ranger untaps dork (costs {1}{G})
+  // Net positive when dork ≥3 mana. Named dorks: Priest, Circle, Selvala, Karametra,
+  // Archdruid, Marwyn, Fanatic, Joraga (levelled), Wirewood Channeler.
+  {
+    id: "ashaya_scryb_named_dork",
+    name: "Ashaya + Scryb Ranger + Big Dork (≥3 mana, named)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Scryb Ranger"],
+    description: "Infinite mana. Scryb Ranger returns itself to hand (as a Forest via Ashaya), untapping the big dork. Recast for {1}{G}. Net positive when dork produces ≥3. Covers: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥3 creatures), Selvala (≥3 power creature + {G} input), Karametra's Acolyte (≥4 devotion), Elvish Archdruid (≥2 elves), Marwyn (≥2 power), Fanatic of Rhonas (taps for 4), Joraga Treespeaker (levelled, taps {G}{G}), Wirewood Channeler (≥2 elves).",
+    requires: ["Ashaya, Soul of the Wild", "Scryb Ranger"],
+    needsBigDork: 3,
+    needsNamedDork: ["Priest of Titania", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Elvish Archdruid", "Marwyn, the Nurturer", "Fanatic of Rhonas", "Joraga Treespeaker", "Wirewood Channeler"],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Ashaya, Soul of the Wild + Scryb Ranger + a big dork (≥3 mana) on battlefield.",
+      "Tap the big dork as a Forest (via Ashaya) for ≥3 mana.",
+      "Activate Scryb Ranger: return itself to hand (it's a Forest via Ashaya), untapping the big dork.",
+      "Recast Scryb Ranger for {1}{G}. Net: ≥+{G} per loop.",
+      "Scryb Ranger has flash — this line works at instant speed even without Yeva.",
+    ],
+  },
+
+  // ── Hyrax Tower Scout + Temur Sabertooth + Named Big Dork ────────────────
+  // Covers Spellbook #8,18,28,29,30,57 — Scout ETB untaps dork, bounce cost {1}{G}+{2}{G} recast
+  // Net positive when dork ≥6. Named dorks: Priest, Selvala, Archdruid, Marwyn, Wirewood Channeler.
+  {
+    id: "hyrax_sabertooth_named_dork",
+    name: "Hyrax Tower Scout + Temur Sabertooth + Big Dork (≥6 mana, named)",
+    onBattlefield: ["Temur Sabertooth"],
+    mustPreExist: ["Temur Sabertooth"],
+    description: "Infinite mana. Sabertooth bounces Hyrax Tower Scout ({1}{G}), recast for {2}{G} — ETB untaps big dork. Total loop cost {3}{G}+{G} net, positive at ≥6. Covers: Priest of Titania (5+ elves), Selvala (power 7+ creature + {G}), Elvish Archdruid (5+ elves), Marwyn (6+ power), Wirewood Channeler (5+ elves).",
+    requires: ["Hyrax Tower Scout", "Temur Sabertooth"],
+    needsBigDork: 6,
+    needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler", "Karametra's Acolyte"],
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Hyrax Tower Scout + Temur Sabertooth + big dork (≥6 mana) on battlefield.",
+      "Tap big dork for ≥6 mana.",
+      "Pay {1}{G}: Sabertooth bounces Hyrax Tower Scout to hand.",
+      "Recast Hyrax Tower Scout ({2}{G}): ETB untaps the big dork.",
+      "Loop cost: {1}{G}+{2}{G} = {3}{G}. Net: ≥+{G}{G} when dork taps for ≥6. Repeat.",
+    ],
+  },
+
+  // ── Kogla + Hyrax Tower Scout + Named Big Dork ───────────────────────────
+  // Covers Spellbook #15,19,23,25,35,38,59 — Kogla bounces Scout ({1}{G}), recast {2}{G}
+  // Same loop cost as Sabertooth variant. Dork must be non-Human (Kogla bounces Humans separately).
+  {
+    id: "kogla_hyrax_named_dork",
+    name: "Kogla + Hyrax Tower Scout + Big Dork (≥6 mana, named)",
+    onBattlefield: ["Kogla, the Titan Ape"],
+    mustPreExist: ["Kogla, the Titan Ape"],
+    description: "Infinite mana — Kogla variant. Kogla bounces Hyrax Tower Scout (a Human) for {1}{G}; recast Scout for {2}{G} to untap the big dork. Loop cost identical to Sabertooth line. Covers: Priest of Titania (5+ elves), Selvala (power 6+ + {G}), Karametra's Acolyte (6+ devotion), Circle of Dreams Druid (5+ creatures), Elvish Archdruid (5+ elves), Marwyn (5+ power), Wirewood Channeler (5+ elves). Kogla also destroys an artifact or enchantment each time Scout is recast.",
+    requires: ["Kogla, the Titan Ape", "Hyrax Tower Scout"],
+    needsBigDork: 6,
+    needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Circle of Dreams Druid", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Kogla + Hyrax Tower Scout + big dork (≥6 mana) on battlefield.",
+      "Tap big dork for ≥6 mana.",
+      "Pay {1}{G}: Kogla bounces Hyrax Tower Scout (a Human) to hand. Kogla destroys target artifact/enchantment.",
+      "Recast Hyrax Tower Scout ({2}{G}): ETB untaps the big dork.",
+      "Loop cost: {3}{G}. Net: ≥+{G}{G} when dork taps for ≥6. Repeat.",
+    ],
+  },
+
+  // ── Ashaya + Magus of the Candelabra + Named Big Dork ────────────────────
+  // Covers Spellbook #32,34,36,43,47,52,60,62 — Magus pays {2} to untap itself + dork.
+  // Net positive when dork produces ≥3 (pays for {2} activation + 1 net).
+  {
+    id: "magus_ashaya_named_dork",
+    name: "Ashaya + Magus of the Candelabra + Big Dork (≥3 mana, named)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Magus of the Candelabra"],
+    mustPreExist: ["Magus of the Candelabra"],
+    description: "Infinite mana. Magus of the Candelabra (a Forest via Ashaya) pays {X} and taps to untap X lands — targeting itself and the big dork. Pay {2}: untap both. Net positive when dork produces ≥3. Covers: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥3 creatures), Selvala (≥4 power creature + {G}), Karametra's Acolyte (≥4 devotion), Fanatic of Rhonas (taps 4), Elvish Archdruid (≥2 elves), Marwyn (≥2 power), Wirewood Channeler (≥2 elves).",
+    requires: ["Ashaya, Soul of the Wild", "Magus of the Candelabra"],
+    needsBigDork: 3,
+    needsNamedDork: ["Priest of Titania", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Fanatic of Rhonas", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Ashaya + Magus of the Candelabra + big dork (≥3 mana) on battlefield, both without summoning sickness.",
+      "Tap the big dork as a Forest (via Ashaya) for ≥3 mana.",
+      "Pay {2}, tap Magus of the Candelabra: untap Magus + the big dork (both are Forests via Ashaya).",
+      "Net: ≥+{G} per loop (≥3 produced minus {2} Magus cost). Repeat for infinite mana.",
+    ],
+  },
+
+  // ── Haste Enabler + Temur Sabertooth + Named Big Dork ────────────────────
+  // Covers Spellbook #9,10,20,22,37 — Concordant/Surrak/Elixir gives haste, Sabertooth bounces dork
+  // Loop cost {1}{G} bounce + CMC recast. Net positive when dork ≥ CMC+3.
+  {
+    id: "haste_sabertooth_named_dork",
+    name: "Haste Enabler + Temur Sabertooth + Named Big Dork (≥CMC+3)",
+    onBattlefield: ["Temur Sabertooth"],
+    mustPreExist: ["Temur Sabertooth"],
+    description: "Infinite mana. Haste enabler (Concordant Crossroads, Surrak and Goreclaw, Thousand-Year Elixir) lets a freshly-cast big dork tap immediately. Sabertooth bounces it for {1}{G}, recast. Net positive when dork produces ≥ its CMC+3. Covers: Circle of Dreams Druid ({G}{G}{G} CMC, needs 6+ creatures for 6+ mana), Selvala ({1}{G}{G} CMC=3, needs 7+ power creature), Karametra's Acolyte ({3}{G} CMC=4, needs 7+ devotion).",
+    requires: ["Temur Sabertooth"],
+    needsBigDorkHasteCMC: true,
+    needsHasteEnabler: true,
+    needsNamedDork: ["Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Priest of Titania", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
+    priority: 7,
+    type: "infinite-mana",
+    lines: [
+      "Haste enabler + Temur Sabertooth + big dork on battlefield.",
+      "Cast the big dork — haste lets it tap immediately for N mana (N ≥ CMC+3).",
+      "Pay {1}{G}: Sabertooth bounces the dork to hand.",
+      "Recast for CMC. Loop cost: {1}{G}+CMC. Net: ≥+{G} per loop. Repeat.",
+    ],
+  },
+
+  // ── Ashaya + Hope Tender + Named Big Dork ────────────────────────────────
+  // Covers Spellbook #45,48,50,56,61 — Hope Tender exerts ({1}) to untap itself + dork/land
+  // Works with: Nykthos (4+ devotion), Gaea's Cradle (2+ creatures), Circle of Dreams Druid,
+  // Selvala (power≥3 + {G}), Marwyn (power≥2).
+  {
+    id: "hope_tender_ashaya_dork",
+    name: "Ashaya + Hope Tender + Big Dork or Cradle (exert loop)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Hope Tender"],
+    mustPreExist: ["Hope Tender"],
+    description: "Infinite mana. Hope Tender exerts for {1} to untap itself and target land (or creature-land via Ashaya). Works with Nykthos (≥4 devotion), Gaea's Cradle (≥3 creatures), Circle of Dreams Druid (≥3 creatures via Ashaya), Selvala (power≥3), or Marwyn (power≥2). Loop cost {1} per activation; net positive when the untapped source produces ≥2.",
+    requires: ["Ashaya, Soul of the Wild", "Hope Tender"],
+    needsNamedDork: ["Nykthos, Shrine to Nyx", "Gaea's Cradle", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Marwyn, the Nurturer"],
+    priority: 7,
+    type: "infinite-mana",
+    lines: [
+      "Ashaya + Hope Tender + a land or big dork producing ≥2 on battlefield, Hope Tender without summoning sickness.",
+      "Tap the land/dork for ≥2 mana (Nykthos, Cradle, Circle, Selvala, or Marwyn).",
+      "Pay {1}, tap and exert Hope Tender: untap Hope Tender AND the tapped source.",
+      "Net: ≥+{G} per loop (≥2 produced minus {1} exert cost). Hope Tender re-readies for next activation.",
+      "Repeat for infinite mana.",
+    ],
+  },
+
+  // ── Vitalize + Eternal Witness + Big Dork ────────────────────────────────
+  // Covers Spellbook #33,39,44,51 — Vitalize ({G}) untaps all, EWit recurses it, Sabertooth/Kogla bounces EWit
+  // Dork must produce ≥8 to cover costs: {G} Vitalize + {1}{G}{G} EWit + {1}{G} Sabertooth bounce = {3}{G}{G}
+  {
+    id: "vitalize_ewit_dork_loop",
+    name: "Vitalize + Eternal Witness + Big Dork (≥8 mana) + Bouncer",
+    onBattlefield: ["Eternal Witness"],
+    mustPreExist: ["Eternal Witness"],
+    description: "Infinite mana. Vitalize ({G}) untaps all creatures. Eternal Witness recurs Vitalize from graveyard. Sabertooth or Kogla bounces EWit back to hand ({1}{G} or {2}) to replay next loop. Big dork must produce ≥8 mana per tap to cover total loop cost: {G} Vitalize + {1}{G}{G} EWit + {1}{G} Sabertooth bounce = {3}{G}{G}. Covers Marwyn (8+ power), Selvala (9+ power creature), and any dork reaching ≥8 output.",
+    requires: ["Eternal Witness"],
+    needsBigDork: 8,
+    needsAlsoBouncer: true,
+    needsVitalize: true,
+    priority: 7,
+    type: "infinite-mana",
+    lines: [
+      "Big dork (≥8) + Eternal Witness + Temur Sabertooth (or Kogla) on battlefield. Vitalize in hand.",
+      "Tap big dork for ≥8 mana.",
+      "Cast Vitalize ({G}): untap all creatures you control.",
+      "Pay {1}{G}: Sabertooth bounces Eternal Witness to hand. (Or {2}: Kogla returns EWit as a Human.)",
+      "Cast Eternal Witness ({1}{G}{G}): ETB returns Vitalize from graveyard to hand.",
+      "Loop cost: {3}{G}{G}. Net: ≥+{G} when dork taps ≥8. Repeat for infinite mana.",
+    ],
+  },
+
+  // ── Emerald Charm + Eternal Witness + Marwyn ─────────────────────────────
+  // Covers Spellbook #58 — Emerald Charm ({G} instant) untaps one creature.
+  // Marwyn (≥7 power) + EWit (recurs Charm) + Sabertooth (bounces EWit). Loop cost {3}{G}{G}.
+  {
+    id: "emerald_charm_ewit_marwyn",
+    name: "Emerald Charm + Eternal Witness + Marwyn (≥7 power) + Sabertooth",
+    onBattlefield: ["Eternal Witness", "Temur Sabertooth"],
+    mustPreExist: ["Eternal Witness", "Temur Sabertooth"],
+    description: "Infinite mana. Emerald Charm ({G} instant) in its 'untap target permanent' mode untaps Marwyn. Eternal Witness recurs Emerald Charm. Sabertooth bounces EWit. Marwyn needs ≥7 power (tapping for ≥7) to cover loop costs: {G} Charm + {1}{G}{G} EWit + {1}{G} Sabertooth = {3}{G}{G}. Net +{G} when Marwyn ≥7 power. Instant-speed option on non-summoning-sick Marwyn.",
+    requires: ["Eternal Witness", "Temur Sabertooth", "Emerald Charm"],
+    needsBigDork: 7,
+    needsNamedDork: ["Marwyn, the Nurturer"],
+    priority: 7,
+    type: "infinite-mana",
+    lines: [
+      "Marwyn (≥7 power) + Eternal Witness + Temur Sabertooth on battlefield. Emerald Charm in hand.",
+      "Tap Marwyn for ≥7 mana.",
+      "Cast Emerald Charm ({G}), choosing 'untap target permanent': untap Marwyn.",
+      "Pay {1}{G}: Sabertooth bounces Eternal Witness to hand.",
+      "Cast Eternal Witness ({1}{G}{G}): ETB returns Emerald Charm from graveyard.",
+      "Loop cost: {3}{G}{G}. Net: ≥+{G}. Repeat for infinite mana.",
+    ],
+  },
+
   // ── Genesis Hydra + Temur Sabertooth (Infinite Mana Outlet / Storm) ──
   {
     id: "genesis_hydra_sabertooth",
@@ -1796,6 +2026,61 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         missing: nonHumanBounce
           ? "Temur Sabertooth (Kogla only bounces Humans — this creature is not a Human)"
           : "Temur Sabertooth or Kogla, the Titan Ape"
+      };
+    }
+
+    // needsBigDorkHasteCMC: need a dork that produces >= its own CMC + 3 mana
+    // (to cover {1}{G} Sabertooth bounce or {2} Kogla bounce + its own recast cost)
+    if (combo.needsBigDorkHasteCMC) {
+      const all = [...battlefield, ...hand];
+      const humanOnly = !!combo.needsHumanDork;
+      const found = all.find(c => {
+        const data = getCard(c);
+        if (!data) return false;
+        if (!data.tags?.includes("dork") && !data.tags?.includes("big-dork")) return false;
+        if (humanOnly && !data.tags?.includes("human")) return false;
+        const output = estimateDorkOutput(c, 0);
+        const cmc = data.cmc ?? 0;
+        return output >= cmc + 3;
+      });
+      if (!found) return {
+        ok: false,
+        missing: humanOnly
+          ? "a Human mana dork producing ≥ its CMC+3 mana (e.g. Selvala, Marwyn, Karametra's Acolyte, Fanatic of Rhonas with ≥6 creatures)"
+          : "a mana dork producing ≥ its CMC+3 mana (e.g. Priest of Titania, Circle of Dreams Druid, Selvala with large creatures)",
+      };
+    }
+
+    // needsHumanDork: (checked inside needsBigDorkHasteCMC above; also standalone guard)
+    // No standalone check needed — always paired with needsBigDorkHasteCMC.
+
+    // needsNamedDork: at least one of the listed named cards must be on battlefield or in hand
+    if (combo.needsNamedDork) {
+      const found = combo.needsNamedDork.some(name => board.has(name) || inHand.has(name));
+      if (!found) return {
+        ok: false,
+        missing: "one of: " + combo.needsNamedDork.slice(0, 4).join(", ") + (combo.needsNamedDork.length > 4 ? ", …" : ""),
+      };
+    }
+
+    // needsVitalize: Vitalize must be in hand or graveyard (for the Vitalize loop)
+    if (combo.needsVitalize) {
+      const hasVitalize = inHand.has("Vitalize") || graveyard.includes("Vitalize");
+      if (!hasVitalize) return { ok: false, missing: "Vitalize (in hand or graveyard)" };
+    }
+
+    // needsHasteEnabler: need a haste source on the battlefield or in hand
+    // Valid enablers: Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity,
+    // Thousand-Year Elixir (grants haste to tapped creatures), Touch of Vitae (sorcery, grants haste until EOT)
+    if (combo.needsHasteEnabler) {
+      const HASTE_ENABLERS = [
+        "Concordant Crossroads", "Surrak and Goreclaw", "Ulvenwald Oddity",
+        "Thousand-Year Elixir", "Touch of Vitae",
+      ];
+      const hasHaste = HASTE_ENABLERS.some(h => board.has(h) || inHand.has(h));
+      if (!hasHaste) return {
+        ok: false,
+        missing: "a haste enabler (Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity, or Thousand-Year Elixir)",
       };
     }
 
@@ -4828,6 +5113,77 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const bigDork         = findBigDork(battlefield, hand, infiniteManaActive, 2);
     const creatureCount   = battlefield.filter(c => getCard(c)?.type === "creature").length;
 
+    // ── All pieces in hand: Yeva → Ashaya + Argothian Elder → infinite → Speaker → Duskwatch → WIN ──
+    // State: Ashaya + Argothian Elder + Speaker all in hand (or accessible), Yeva available for flash,
+    // enough mana (Yeva 4 + Ashaya 4 + Elder 4 + Speaker 3 = 15, but Elder untaps lands so net much less).
+    // Simplified: need ≥11 mana (Yeva 4 + Ashaya 4 + Elder is free after infinite + Speaker 3).
+    // Actually: cast Yeva (4), cast Ashaya (4), cast Elder (4) → infinite mana → cast Speaker (free) → win.
+    // Min mana: 4+4+4 = 12 to get to infinite, then Speaker is free with infinite mana.
+    {
+      const ashayaInHand   = accessible("Ashaya, Soul of the Wild") && !board.has("Ashaya, Soul of the Wild");
+      const elderInHand    = accessible("Argothian Elder") && !board.has("Argothian Elder");
+      const speakerInHand2 = accessible("Formidable Speaker") && !board.has("Formidable Speaker");
+      const hasDuskwatch2  = board.has("Duskwatch Recruiter") || accessible("Duskwatch Recruiter");
+      const hasDiscard2    = hand.filter(c => c !== "Formidable Speaker").length > 1; // need ≥1 discard after casting others
+      // Need Yeva flash (opponent's turn), or it's our turn already
+      const canFlashIn     = isMyTurn || yevaAvailable;
+      // Mana check: Yeva(4) + Ashaya(4) + Elder(4) = 12. On our turn skip Yeva cost.
+      const minMana        = isMyTurn ? 8 : (yevaFlash ? 8 : 12); // Yeva from command zone costs 4
+      const alreadyFired   = results.some(r => r.combo === "speaker_inf_duskwatch_direct" || r.combo === "speaker_hand_cast_to_win" || r.combo === "full_hand_inf_speaker_win");
+
+      if (ashayaInHand && elderInHand && speakerInHand2 && !hasDuskwatch2 && canFlashIn && mana >= minMana && hasDiscard2 && !infiniteManaActive && !alreadyFired) {
+        const yevaStep = !isMyTurn && !yevaFlash
+          ? [`Cast Yeva, Nature's Herald (command zone, {2}{G}{G}) — all green creatures gain flash this turn.`]
+          : [];
+        const discardCard = hand.filter(c => c !== "Formidable Speaker" && c !== "Ashaya, Soul of the Wild" && c !== "Argothian Elder")[0] ?? "a card";
+        results.push({
+          priority: 15,
+          category: "⚡ CAST TO WIN",
+          headline: !isMyTurn && !yevaFlash
+            ? "Cast Yeva → flash Ashaya + Argothian Elder → infinite mana → Formidable Speaker → Duskwatch → WIN"
+            : "Cast Ashaya + Argothian Elder → infinite mana → Formidable Speaker → Duskwatch → WIN",
+          combo: "full_hand_inf_speaker_win",
+          detail: "All pieces are in hand. Cast Yeva for flash (if opponent's turn), then Ashaya + Argothian Elder to go infinite (Elder is a Forest via Ashaya and can untap itself). With infinite mana, cast Formidable Speaker: ETB discard → search library for Duskwatch Recruiter. Activate Duskwatch with infinite mana to assemble the win pile.",
+          steps: [
+            ...yevaStep,
+            "Cast Ashaya, Soul of the Wild ({2}{G}{G}): all your nontoken creatures become Forest lands.",
+            "Cast Argothian Elder ({3}{G}): it enters as a Forest (via Ashaya). Tap Elder as a Forest for {G}, then activate its tap ability to untap itself + any other land. Infinite mana.",
+            `Cast Formidable Speaker ({2}{G}): ETB — discard ${discardCard} → search your entire library for Duskwatch Recruiter. Shuffle.`,
+            "Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana — look at top 3 cards, put any creature found into hand.",
+            "Find Endurance + Geier Reach Sanitarium (or Talon Gates of Madara) + Eternal Witness → mill all opponents to win.",
+          ],
+          color: "#ff4500",
+        });
+      }
+    }
+
+    // ── Infinite mana active + Speaker in hand → instant win (no Ranger needed) ──
+    // With infinite mana already online, cast Speaker → ETB fetch Duskwatch → activate → win.
+    // No Ranger loop required — just cast, fetch, activate.
+    if (infiniteManaActive && speakerInHand && !speakerOnBoard && !hasDuskwatch) {
+      const speakerFirstCastOk = hand.filter(c => c !== "Formidable Speaker").length > 0;
+      if (speakerFirstCastOk && (isMyTurn || yevaAvailable)) {
+        const alreadyShown = results.some(r => r.combo === "speaker_inf_duskwatch_direct");
+        if (!alreadyShown) {
+          results.push({
+            priority: 15,
+            category: "⚡ CAST TO WIN",
+            headline: "Cast Formidable Speaker → ETB fetches Duskwatch Recruiter → activate → WIN",
+            combo: "speaker_inf_duskwatch_direct",
+            detail: "Infinite mana is already active. Cast Formidable Speaker ({2}{G}): ETB — discard any card, search your entire library for Duskwatch Recruiter. Cast Duskwatch. Activate ({2}{G}) repeatedly to find Endurance, Eternal Witness, and Geier Reach Sanitarium. Mill all opponents to win.",
+            steps: [
+              "Infinite mana is active.",
+              `Cast Formidable Speaker ({2}{G}): ETB — discard ${hand.filter(c => c !== "Formidable Speaker")[0] ?? "a card"} → search your entire library for Duskwatch Recruiter. Shuffle.`,
+              "Cast Duskwatch Recruiter ({1}{G}). With infinite mana: activate ({2}{G}) repeatedly — look at top 3, put any creature found into hand.",
+              "Find Endurance, Eternal Witness, and Geier Reach Sanitarium (or Talon Gates of Madara).",
+              "Tap Geier Reach Sanitarium, Eternal Witness recurs it each loop — mill all opponents to win.",
+            ],
+            color: "#ff4500",
+          });
+        }
+      }
+    }
+
     if (infiniteManaActive && ashayaOnBoard && quirionOnBoard && bigDork && !hasDuskwatch) {
       // When Speaker is in hand (not yet cast), verify there's another card to discard for the ETB.
       // Once on board the loop is self-sustaining: each fetch provides a card to discard next loop.
@@ -5338,12 +5694,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // Formidable Speaker win
-  if (!winFired("speaker_hand_cast_to_win")) {
+  if (!winFired("speaker_hand_cast_to_win") && !winFired("speaker_inf_duskwatch_direct") && !winFired("full_hand_inf_speaker_win")) {
     const spkrAvail = accessible("Formidable Speaker") && !board.has("Formidable Speaker");
     const hasRangerSpkr = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const hasDiscardSpkr = hand.filter(c => c !== "Formidable Speaker").length > 0 ||
       (battlefield.some(c => c === "Forest") && hasRangerSpkr);
-    if (spkrAvail && !infiniteManaActive) {
+    // Don't suppress if we have Ashaya + Argothian Elder in hand (full-hand win path)
+    const hasFullHandPath = accessible("Ashaya, Soul of the Wild") && accessible("Argothian Elder") && mana >= 8;
+    if (spkrAvail && !infiniteManaActive && !hasFullHandPath) {
       const needs = [];
       if (!hasRangerSpkr) needs.push("Quirion/Scryb Ranger on board (for loop)");
       if (!hasDiscardSpkr) needs.push("another card in hand to discard for Speaker ETB");
@@ -8686,6 +9044,52 @@ function extractPlayableCard(result, hand, battlefield) {
   return null;
 }
 
+// Extracted to module level so simulateOneGame (runNGames) can call it without being
+// inside GoldfishModal's closure.
+function selectBottomsFromScored(scored, bottomCount) {
+  if (bottomCount <= 0 || scored.length === 0) return [];
+  const GREEN_LANDS_SET = new Set([
+    "Forest","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath",
+    "Wooded Foothills","Yavimaya, Cradle of Growth","Castle Garenbrig",
+    "Turntimber Symbiosis","Shifting Woodland","Gaea's Cradle","Itlimoc, Cradle of the Sun",
+    "Nykthos, Shrine to Nyx",
+  ]);
+  const allCards = scored.map(x => x.c);
+  const greenLandCount = allCards.filter(c => GREEN_LANDS_SET.has(c)).length;
+  const oneDropCount   = allCards.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
+
+  const isProtected = (c) => {
+    if (greenLandCount === 1 && GREEN_LANDS_SET.has(c)) return true;
+    if (oneDropCount   === 1 && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1) return true;
+    return false;
+  };
+
+  const result = scored.slice(0, bottomCount).map(x => ({ ...x }));
+  const kept   = scored.slice(bottomCount);
+
+  for (let pass = 0; pass < result.length; pass++) {
+    const protectedIdx = result.findIndex(x => isProtected(x.c));
+    if (protectedIdx === -1) break;
+
+    let swapIdx = -1;
+    for (let j = result.length - 1; j >= 0; j--) {
+      if (j !== protectedIdx && !isProtected(result[j].c)) { swapIdx = j; break; }
+    }
+
+    if (swapIdx !== -1) {
+      const temp = result[protectedIdx];
+      result[protectedIdx] = result[swapIdx];
+      result[swapIdx] = temp;
+      const savedProtected = result.splice(protectedIdx < swapIdx ? protectedIdx : swapIdx, 1)[0];
+      if (kept.length > 0) result.push(kept.shift());
+    } else {
+      break;
+    }
+  }
+
+  return result.map(x => x.c);
+}
+
 function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   const MAX_TURNS = maxTurns;
   let hand, library;
@@ -9367,59 +9771,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   //   2. Never bottom the only 1-CMC dork (if the hand has exactly one).
   // If a protected card lands in the bottom slice, swap it with the highest-scoring
   // card from the bottom slice that is NOT itself protected.
-  function selectBottomsFromScored(scored, bottomCount) {
-    if (bottomCount <= 0 || scored.length === 0) return [];
-    const GREEN_LANDS_SET = new Set([
-      "Forest","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath",
-      "Wooded Foothills","Yavimaya, Cradle of Growth","Castle Garenbrig",
-      "Turntimber Symbiosis","Shifting Woodland","Gaea's Cradle","Itlimoc, Cradle of the Sun",
-      "Nykthos, Shrine to Nyx",
-    ]);
-    const allCards = scored.map(x => x.c);
-    const greenLandCount = allCards.filter(c => GREEN_LANDS_SET.has(c)).length;
-    const oneDropCount   = allCards.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
+  // selectBottomsFromScored is defined at module level (above simulateOneGame)
+  // so it is accessible to both runNGames and this interactive mulligan UI.
 
-    // A card is "protected" if it is the sole copy of a required resource.
-    const isProtected = (c) => {
-      if (greenLandCount === 1 && GREEN_LANDS_SET.has(c)) return true;
-      if (oneDropCount   === 1 && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1) return true;
-      return false;
-    };
-
-    // Start with the naive bottom slice (lowest-scored cards).
-    const result = scored.slice(0, bottomCount).map(x => ({ ...x }));
-    const kept   = scored.slice(bottomCount);
-
-    // For each protected card in the bottom slice, swap it with the highest-scoring
-    // non-protected card currently in the bottom slice (or from kept if none available).
-    for (let pass = 0; pass < result.length; pass++) {
-      const protectedIdx = result.findIndex(x => isProtected(x.c));
-      if (protectedIdx === -1) break; // nothing protected in bottom slice
-
-      // Find the best swap candidate: highest-scoring entry in result that is NOT protected.
-      let swapIdx = -1;
-      for (let j = result.length - 1; j >= 0; j--) {
-        if (j !== protectedIdx && !isProtected(result[j].c)) { swapIdx = j; break; }
-      }
-
-      if (swapIdx !== -1) {
-        // Swap the protected card out with the least-bad non-protected card in bottom slice
-        const temp = result[protectedIdx];
-        result[protectedIdx] = result[swapIdx];
-        result[swapIdx] = temp;
-        // Move the now-kept protected card back to kept (order doesn't matter)
-        const savedProtected = result.splice(protectedIdx < swapIdx ? protectedIdx : swapIdx, 1)[0];
-        // result now has bottomCount-1 entries; pull in the next-worst from kept
-        if (kept.length > 0) result.push(kept.shift());
-      } else {
-        // Every card in the bottom slice is protected — can't avoid bottoming one.
-        // Leave as-is (forced situation, hand has no good options).
-        break;
-      }
-    }
-
-    return result.map(x => x.c);
-  }
 
   function doMulligan() {
     const newCount = mulliganCount + 1;
@@ -11205,7 +11559,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   );
 }
 
-function SynergyMapModal({ onClose, activeDeck }) {
+function SynergyMapModal({ onClose, activeDeck, onLoadCombo }) {
   const containerRef = useRef(null);
   const outerRef     = useRef(null);  // stable ref always in DOM for ResizeObserver
   const [view, setView]               = useState("graph");
@@ -11218,6 +11572,7 @@ function SynergyMapModal({ onClose, activeDeck }) {
   const [zoom, setZoom]               = useState(1);
   const [draggingNode, setDraggingNode] = useState(null);
   const [deckOnly, setDeckOnly]       = useState(!!activeDeck);
+  const [comboCtxMenu, setComboCtxMenu] = useState(null); // { combo, x, y }
   const dragOffRef  = useRef({ x: 0, y: 0 });
   const isPanningRef = useRef(false);
   const panStartRef  = useRef({ x: 0, y: 0, px: 0, py: 0 });
@@ -11230,10 +11585,26 @@ function SynergyMapModal({ onClose, activeDeck }) {
 
   // Measure the stable outer wrapper — always mounted regardless of view
   useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    const handler = (e) => { if (e.key === "Escape") { e.stopPropagation(); if (comboCtxMenu) { setComboCtxMenu(null); } else { onClose(); } } };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  }, [onClose, comboCtxMenu]);
+
+  // Close combo context menu on any outside click
+  useEffect(() => {
+    if (!comboCtxMenu) return;
+    const handler = () => setComboCtxMenu(null);
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, [comboCtxMenu]);
+
+  function openComboCtx(e, comboNode) {
+    e.preventDefault();
+    e.stopPropagation();
+    const combo = COMBOS.find(c => c.id === comboNode.comboId);
+    if (!combo) return;
+    setComboCtxMenu({ combo, x: e.clientX, y: e.clientY });
+  }
 
   useEffect(() => {
     if (!outerRef.current) return;
@@ -11479,6 +11850,7 @@ function SynergyMapModal({ onClose, activeDeck }) {
                       style={{ cursor:"pointer", opacity: dimmed ? 0.2 : 1 }}
                       onMouseDown={e => handleNodeMouseDown(e, n.id)}
                       onClick={e => handleNodeClick(e, n.id)}
+                      onContextMenu={e => openComboCtx(e, n)}
                       onMouseEnter={e => { setHovered(n.id); setTooltipPos({x:e.clientX,y:e.clientY}); }}
                       onMouseLeave={() => setHovered(null)}>
                       <rect x={-COMBO_W/2} y={-COMBO_H/2} width={COMBO_W} height={COMBO_H}
@@ -11570,10 +11942,12 @@ function SynergyMapModal({ onClose, activeDeck }) {
                     CARD / COMBO →
                   </th>
                   {matrixCombos.map(c => (
-                    <th key={c.id} style={{ padding:"2px 4px", writingMode:"vertical-rl",
+                    <th key={c.id}
+                      onContextMenu={e => openComboCtx(e, { comboId: c.id })}
+                      style={{ padding:"2px 4px", writingMode:"vertical-rl",
                       transform:"rotate(180deg)", color:TYPE_COLORS[c.type]||COLORS.textDim,
                       fontSize:"9px", fontFamily:"'Cinzel', serif", letterSpacing:"0.5px",
-                      maxHeight:"110px", whiteSpace:"nowrap",
+                      maxHeight:"110px", whiteSpace:"nowrap", cursor: "context-menu",
                       position:"sticky", top:0, background:"#0a160a", zIndex:1 }}>
                       {c.name.replace(/\s*\(.*?\)/g,"").slice(0,22)}
                     </th>
@@ -11601,6 +11975,60 @@ function SynergyMapModal({ onClose, activeDeck }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Combo right-click context menu */}
+        {comboCtxMenu && (
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              left: Math.min(comboCtxMenu.x, window.innerWidth - 260),
+              top: Math.min(comboCtxMenu.y, window.innerHeight - 180),
+              zIndex: 9999,
+              background: "#0d1f0d",
+              border: `1px solid ${COLORS.green1}88`,
+              borderRadius: "8px",
+              padding: "6px 0",
+              minWidth: "240px",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.85)",
+              fontFamily: "'Cinzel', serif",
+            }}
+          >
+            {/* Combo name header */}
+            <div style={{ padding: "6px 14px 8px", borderBottom: `1px solid ${COLORS.border}`, marginBottom: "4px" }}>
+              <div style={{ fontSize: "10px", color: TYPE_COLORS[comboCtxMenu.combo.type] || COLORS.green1, letterSpacing: "1px", marginBottom: "2px" }}>
+                {(comboCtxMenu.combo.type || "combo").toUpperCase()}
+              </div>
+              <div style={{ fontSize: "11px", color: COLORS.text, lineHeight: 1.4 }}>
+                {comboCtxMenu.combo.name.replace(/\s*\(.*?\)/g, "")}
+              </div>
+            </div>
+            {/* Required cards list */}
+            <div style={{ padding: "2px 14px 6px", borderBottom: `1px solid ${COLORS.border}`, marginBottom: "4px" }}>
+              <div style={{ fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginBottom: "4px" }}>REQUIRES</div>
+              {(comboCtxMenu.combo.requires || []).map(card => (
+                <div key={card} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.6 }}>
+                  · {card}
+                </div>
+              ))}
+            </div>
+            {/* Open in Advisor action */}
+            {onLoadCombo && (
+              <div
+                onClick={() => {
+                  onLoadCombo({ hand: comboCtxMenu.combo.requires || [], battlefield: [], graveyard: [] });
+                  setComboCtxMenu(null);
+                  onClose();
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "#1a3a1a"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                style={{ padding: "8px 14px", cursor: "pointer", color: COLORS.green2, fontSize: "11px", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                <span>↗</span> Open in Advisor
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -12128,7 +12556,12 @@ function YevaAdvisor() {
           {/* HELP MODAL */}
           {showHelp && <HelpModal onClose={() => setShowHelp(false)} onStartTour={() => { setShowHelp(false); tour.start(); }} />}
           {/* SYNERGY MAP MODAL */}
-          {showSynergyMap && <SynergyMapModal activeDeck={activeDeck} onClose={() => setShowSynergyMap(false)} />}
+          {showSynergyMap && <SynergyMapModal activeDeck={activeDeck} onClose={() => setShowSynergyMap(false)} onLoadCombo={(s) => {
+            if (s.hand)        setHand(s.hand);
+            if (s.battlefield) setBattlefield(s.battlefield);
+            if (s.graveyard)   setGraveyard(s.graveyard);
+            setShowSynergyMap(false);
+          }} />}
           {/* GOLDFISH MODAL */}
           {showGoldfish && (
             <GoldfishModal
