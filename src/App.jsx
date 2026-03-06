@@ -9990,6 +9990,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [isMyTurn, setIsMyTurn] = useState(true);
   const [landPlayed, setLandPlayed] = useState(false);
   const [log, setLog] = useState([]);
+  const [expandedSteps, setExpandedSteps] = useState(new Set());
   const [mulliganCount, setMulliganCount] = useState(0);
   const [contextMenu, setContextMenu] = useState(null);
   const [pendingBottoms, setPendingBottoms] = useState([]);
@@ -10325,6 +10326,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setTapped(new Set());
     setManaPool(0);
     setLandPlayed(false);
+    setExpandedSteps(new Set());
     // Compute draw synchronously from current library snapshot — never nest setHand inside setLibrary
     if (library.length === 0) {
       setLog(l => [{ msg: `── Turn ${next} — untap, upkeep (library empty) ──`, color: COLORS.green3, turn: next }, ...l].slice(0, 100));
@@ -11601,14 +11603,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       </div>
                       {a.steps && a.steps.length > 0 && (
                         <div style={{ marginTop: "8px", borderTop: `1px solid ${COLORS.border}`, paddingTop: "8px" }}>
-                          {a.steps.slice(0, 4).map((s, j) => (
+                          {(expandedSteps.has(i) ? a.steps : a.steps.slice(0, 4)).map((s, j) => (
                             <div key={j} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${COLORS.border}` }}>
                               {j + 1}. <HighlightWithPopups text={s} />
                             </div>
                           ))}
                           {a.steps.length > 4 && (
-                            <div style={{ fontSize: "10px", color: COLORS.textDim, paddingLeft: "10px", marginTop: "2px" }}>
-                              +{a.steps.length - 4} more steps…
+                            <div
+                              onClick={e => { e.stopPropagation(); setExpandedSteps(prev => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; }); }}
+                              style={{ fontSize: "10px", color: a.color || COLORS.green1, paddingLeft: "10px", marginTop: "4px", cursor: "pointer", opacity: 0.8, userSelect: "none" }}>
+                              {expandedSteps.has(i) ? "▲ show less" : `▼ +${a.steps.length - 4} more steps…`}
                             </div>
                           )}
                         </div>
@@ -12084,11 +12088,17 @@ function SynergyMapModal({ onClose, activeDeck, onLoadCombo }) {
   const { nodes, links, cardCentrality } = React.useMemo(() => {
     const centrality = {};
     COMBOS.forEach(c => (c.requires||[]).forEach(r => { centrality[r] = (centrality[r]||0)+1; }));
+
+    // Only cards that appear in at least one combo's requires array
     const cardNodes = [...new Set(COMBOS.flatMap(c => c.requires||[]))].map(name => ({
       id: "card:"+name, label: name, kind: "card", centrality: centrality[name]||1,
+      cardRole: CARDS[name]?.role || null,
+      cardType: CARDS[name]?.type || "unknown",
+      cardTags: CARDS[name]?.tags || [],
     }));
+
     const comboNodes = COMBOS.map(c => ({
-      id: "combo:"+c.id, label: c.name, kind: "combo",
+      id: `combo:${c.id}`, label: c.name, kind: "combo",
       comboType: c.type, comboId: c.id, requires: c.requires||[],
       shortLabel: c.name.replace(/\s*\(.*?\)/g,"").slice(0,26),
     }));
@@ -12186,8 +12196,23 @@ function SynergyMapModal({ onClose, activeDeck, onLoadCombo }) {
     if (!tooltipNode) return [];
     if (tooltipNode.kind === "card") {
       const combosUsing = COMBOS.filter(c => (c.requires||[]).includes(tooltipNode.label) && activeTypes.has(c.type));
-      return [`Used in ${combosUsing.length} combo${combosUsing.length!==1?"s":""}`,
-        ...combosUsing.map(c => "• "+c.name.replace(/\s*\(.*?\)/g,"").slice(0,40))];
+      const cd = CARDS[tooltipNode.label];
+      const roleLabel = cd?.role ? cd.role.replace(/-/g," ") : null;
+      const typeLabel = cd?.type ? cd.type.charAt(0).toUpperCase() + cd.type.slice(1) : null;
+      const tags = (cd?.tags || []).filter(t => !["elf","creature","land","artifact","enchantment","instant","sorcery"].includes(t)).slice(0,3);
+      if (combosUsing.length > 0) {
+        return [
+          `${typeLabel || ""}${roleLabel ? " · " + roleLabel : ""}`,
+          `Used in ${combosUsing.length} combo${combosUsing.length!==1?"s":""}`,
+          ...combosUsing.slice(0,5).map(c => "• "+c.name.replace(/\s*\(.*?\)/g,"").slice(0,38)),
+        ].filter(Boolean);
+      } else {
+        return [
+          `${typeLabel || ""}${roleLabel ? " · " + roleLabel : ""}`,
+          tags.length > 0 ? tags.join(", ") : "Support card — no direct combo link",
+          "Click to highlight in graph",
+        ].filter(Boolean);
+      }
     }
     return [TYPE_LABELS[tooltipNode.comboType]||tooltipNode.comboType,
       ...(tooltipNode.requires||[]).map(r => "• "+r)];
