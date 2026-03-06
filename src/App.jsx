@@ -108,6 +108,81 @@ const CARDS = {
   "Delighted Halfling":    { type:"creature", cmc:2, tags:["dork","protection"] , devotion:1, role:"protection"},
   "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop"] , devotion:1},
   "Yeva, Nature's Herald": { type:"creature", cmc:4, tags:["commander","flash-enabler"] , devotion:2},
+
+  // ── VARIANT / SIDEBOARD CARDS ──────────────────────────────────────────
+  // Mana dorks & big dorks
+  "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"dork-combo"},
+  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"big-dork-combo"},
+  "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork"], tapsFor:"power", devotion:2, role:"big-dork-combo"},
+  "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"big-dork-combo"},
+  "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], devotion:4, role:"storm-engine"},
+  // Untap & haste combo pieces
+  "Ley Weaver":            { type:"creature", cmc:4, tags:["combo","human","untap-lands"], devotion:1, role:"untap-combo"},
+  "Cloudstone Curio":      { type:"artifact", cmc:3, tags:["combo","bounce","sabertooth"], devotion:0, role:"bounce-combo"},
+  "Thousand-Year Elixir":  { type:"artifact", cmc:3, tags:["combo","haste","untap"], devotion:0, role:"haste-combo"},
+  "Concordant Crossroads": { type:"enchantment", cmc:1, tags:["combo","haste","enchantment"], devotion:1, role:"haste-enabler"},
+  "Surrak and Goreclaw":   { type:"creature", cmc:5, tags:["combo","haste","pump"], devotion:2, role:"haste-enabler"},
+  "Touch of Vitae":        { type:"instant", cmc:2, tags:["combo","haste","untap","instant"], devotion:0, role:"haste-combo"},
+  "Ulvenwald Oddity":      { type:"creature", cmc:4, tags:["combo","haste","mana-sink"], devotion:2, role:"haste-enabler"},
+  "Vitalize":              { type:"instant", cmc:1, tags:["combo","untap","storm","instant"], devotion:0, role:"storm-ritual"},
+  "Leyline of Abundance":  { type:"enchantment", cmc:4, tags:["combo","ramp","elf-synergy","enchantment"], devotion:2, role:"mana-boost"},
+  "Great Oak Guardian":    { type:"creature", cmc:6, tags:["combo","flash","pump","untap"], devotion:2, role:"flash-combo"},
+  "Genesis Hydra":         { type:"creature", cmc:2, tags:["combo","outlet","etb"], devotion:1, role:"infinite-outlet"},
+  "Agatha's Soul Cauldron":{ type:"artifact", cmc:2, tags:["combo","graveyard","recursion"], devotion:0, role:"graveyard-engine"},
+  "Beastrider Vanguard":   { type:"creature", cmc:3, tags:["combo","outlet","mana-sink"], devotion:1, role:"infinite-outlet"},
+  "Lotus Cobra":           { type:"creature", cmc:2, tags:["combo","landfall","ramp"], devotion:1, role:"ramp-combo"},
+  "Nissa, Resurgent Animist": { type:"creature", cmc:3, tags:["combo","elf","landfall","tutor"], devotion:2, role:"ramp-combo"},
+  // Tutors
+  "Finale of Devastation": { type:"sorcery", cmc:2, tags:["tutor","finisher","sorcery"], devotion:0, role:"tutor-finisher"},
+  "Invasion of Ikoria":    { type:"battle", cmc:4, tags:["tutor","recursion"], devotion:0, role:"tutor"},
+  "Skyshroud Poacher":     { type:"creature", cmc:4, tags:["tutor","elf","engine"], devotion:1, role:"elf-tutor"},
+  "Treefolk Harbinger":    { type:"creature", cmc:1, tags:["tutor","treefolk","1drop"], devotion:1, role:"tutor"},
+  "Lignify":               { type:"enchantment", cmc:2, tags:["removal","aura","treefolk"], devotion:1, role:"removal"},
+  // Ramp & utility lands
+  "Carpet of Flowers":     { type:"enchantment", cmc:1, tags:["ramp","enchantment","meta"], devotion:1, role:"meta-ramp"},
+  "Castle Garenbrig":      { type:"land", cmc:0, tags:["land","ramp","combo"], devotion:0},
+  "Bonders' Enclave":      { type:"land", cmc:0, tags:["land","draw","utility"], devotion:0},
+  "Bridgeworks Battle":    { type:"land", cmc:0, tags:["land","removal","utility"], devotion:0},
+  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], devotion:0},
+  "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"], devotion:0},
+  "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"], devotion:0},
+  "Turntimber Symbiosis":  { type:"land", cmc:0, tags:["land","utility","forest"], devotion:0},
+  "Emerald Medallion":     { type:"artifact", cmc:2, tags:["ramp","cost-reducer"], devotion:0, role:"cost-reducer"},
+  "Nylea, Keen-Eyed":      { type:"creature", cmc:5, tags:["combo","mana-sink","cost-reducer"], devotion:4, role:"storm-engine"},
+  // Draw engines
+  "Sylvan Library":        { type:"enchantment", cmc:2, tags:["draw","engine","enchantment"], devotion:1, role:"draw-engine"},
+  "Guardian Project":      { type:"enchantment", cmc:4, tags:["draw","engine","enchantment"], devotion:1, role:"draw-engine"},
+  "Runic Armasaur":        { type:"creature", cmc:3, tags:["draw","engine","meta"], devotion:1, role:"draw-engine"},
+  "Compost":               { type:"enchantment", cmc:2, tags:["draw","engine","meta","enchantment"], devotion:1, role:"meta-draw"},
+  "Viridian Revel":        { type:"enchantment", cmc:3, tags:["draw","engine","meta","enchantment"], devotion:1, role:"meta-draw"},
+  // Interaction & removal
+  "Reclamation Sage":      { type:"creature", cmc:3, tags:["removal","elf","etb"], devotion:1, role:"removal"},
+  "Outland Liberator":     { type:"creature", cmc:2, tags:["removal","werewolf"], devotion:1, role:"removal"},
+  "Manglehorn":            { type:"creature", cmc:3, tags:["removal","stax","hate"], devotion:1, role:"removal"},
+  "Nature's Claim":        { type:"instant", cmc:1, tags:["removal","instant"], devotion:0, role:"removal"},
+  "Ram Through":           { type:"instant", cmc:2, tags:["removal","instant","trample"], devotion:0, role:"removal"},
+  "Tail Swipe":            { type:"instant", cmc:2, tags:["removal","instant"], devotion:0, role:"removal"},
+  "Bouncer's Beatdown":    { type:"instant", cmc:2, tags:["removal","instant","meta"], devotion:0, role:"removal"},
+  "Kenrith's Transformation": { type:"enchantment", cmc:2, tags:["removal","aura","draw"], devotion:1, role:"removal"},
+  "King of the Coldblood Curse": { type:"creature", cmc:4, tags:["removal","etb","commander-hate"], devotion:2, role:"removal"},
+  "Insidious Fungus":      { type:"creature", cmc:3, tags:["removal","land-tutor","fungus"], devotion:1, role:"removal"},
+  "Saryth, the Viper's Fang": { type:"creature", cmc:4, tags:["protection","untap","dork"], devotion:2, role:"protection"},
+  "Skullwinder":           { type:"creature", cmc:3, tags:["recursion","etb","snake","politics"], devotion:1, role:"recursion"},
+  "Noxious Revival":       { type:"instant", cmc:0, tags:["recursion","graveyard","instant","free"], devotion:0, role:"recursion"},
+  "Emerald Charm":         { type:"instant", cmc:1, tags:["utility","untap","removal","instant"], devotion:0, role:"ritual"},
+  "Warping Wail":          { type:"instant", cmc:2, tags:["utility","counter","removal","instant"], devotion:0, role:"interaction"},
+  "Scavenging Ooze":       { type:"creature", cmc:2, tags:["hate","graveyard"], devotion:1, role:"hate"},
+  "Autumn's Veil":         { type:"instant", cmc:1, tags:["protection","instant","meta"], devotion:0, role:"protection"},
+  "Veil of Summer":        { type:"instant", cmc:1, tags:["protection","instant","draw"], devotion:0, role:"protection"},
+  // Stax
+  "Root Maze":             { type:"enchantment", cmc:2, tags:["stax","enchantment"], devotion:1, role:"stax"},
+  "Orb of Dreams":         { type:"artifact", cmc:3, tags:["stax"], devotion:0, role:"stax"},
+  "Null Rod":              { type:"artifact", cmc:2, tags:["stax","hate"], devotion:0, role:"stax"},
+  "Thorn of Amethyst":     { type:"artifact", cmc:2, tags:["stax","tax"], devotion:0, role:"stax"},
+  "Trinisphere":           { type:"artifact", cmc:3, tags:["stax"], devotion:0, role:"stax"},
+  "Titania's Song":        { type:"enchantment", cmc:4, tags:["stax","hate","enchantment"], devotion:1, role:"stax"},
+  "Vexing Bauble":         { type:"artifact", cmc:1, tags:["stax","hate","free"], devotion:0, role:"stax"},
+  "The Cabbage Merchant":  { type:"creature", cmc:3, tags:["stax","storm-hate"], devotion:1, role:"stax"},
 };
 
 const ALL_CARD_NAMES = Object.keys(CARDS).sort();
@@ -1369,9 +1444,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
-    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid
+    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler, Marwyn
     if (t === "creatures") return creaturesOnBoard + extraElves + badgermoleBonus; // Circle of Dreams Druid
     if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
+    if (t === "power") {
+      // Selvala, Heart of the Wilds: tap to add mana equal to the greatest power among creatures you control.
+      // Estimate using creaturesOnBoard as a proxy for the largest power (conservative).
+      const greatestPower = Math.max(0, creaturesOnBoard); // rough proxy
+      return greatestPower + badgermoleBonus;
+    }
     if (t === "arbor") {
       // Arbor Elf untaps an enchanted Forest or (with Yavimaya) any land
       const hasAura = board.has("Utopia Sprawl") || board.has("Wild Growth");
@@ -5367,13 +5448,37 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
     if (inHand.has("Sylvan Scrying") && getCard(target)?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
     if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
     if (accessible("Natural Order") && (mana >= 4 + (inGrave.has("Natural Order") ? 3 : 0) || infiniteMana)) options.push("Natural Order");
+    // Finale of Devastation: finds any creature from library or graveyard (X ≥ CMC). At X≥10 gives +X/+X and haste.
+    if (accessible("Finale of Devastation") && getCard(target)?.type === "creature") {
+      const targetCmc = getCard(target)?.cmc ?? 0;
+      const finaleCost = targetCmc + 2; // X=CMC plus {X}{G}{G}
+      if (mana >= finaleCost || infiniteMana) options.push(`Finale of Devastation (X=${targetCmc} — finds ${target} from library or graveyard)`);
+    }
+    // Invasion of Ikoria: finds any non-Human creature from library (CMC ≤ X). Defends = flip.
+    if (accessible("Invasion of Ikoria") && getCard(target)?.type === "creature"
+        && !getCard(target)?.tags?.includes("human")) {
+      const targetCmc = getCard(target)?.cmc ?? 0;
+      const ikoriaCost = targetCmc + 4; // {X}{G}{G}{G}{G}, X ≥ CMC
+      if (mana >= ikoriaCost || infiniteMana) options.push(`Invasion of Ikoria (X=${targetCmc})`);
+    }
+    // Skyshroud Poacher: {3}{G} activated ability, search library for an elf, put into play tapped.
+    if ((board.has("Skyshroud Poacher") || inHand.has("Skyshroud Poacher"))
+        && getCard(target)?.tags?.includes("elf")
+        && (mana >= 4 || infiniteMana)) options.push("Skyshroud Poacher (activated ability → elf directly to battlefield)");
+    // Treefolk Harbinger: on cast, search top of library for a treefolk or Forest card.
+    // Fetches: Heartwood Storyteller, Lignify, Great Oak Guardian, Treefolk Harbinger itself.
+    if (accessible("Treefolk Harbinger")
+        && (getCard(target)?.tags?.includes("treefolk") || target === "Heartwood Storyteller" || target === "Great Oak Guardian" || target === "Lignify")
+        && (mana >= 1 || infiniteMana)) options.push("Treefolk Harbinger (cast → top of library next draw)");
     // Woodland Bellower: ETB puts any non-legendary green creature with CMC ≤ 3 directly onto the battlefield.
     // It is itself CMC 6 — Bellower in hand is castable when we have 6+ mana or infinite mana.
     if ((inHand.has("Woodland Bellower") || board.has("Woodland Bellower"))
         && getCard(target)?.type === "creature"
         && !["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Kogla, the Titan Ape",
              "Temur Sabertooth","Woodland Bellower","Elvish Archdruid","Yisan, the Wanderer Bard",
-             "Eladamri, Korvecdal","Seedborn Muse"].includes(target) // legendary exclusion list
+             "Eladamri, Korvecdal","Seedborn Muse","Marwyn, the Nurturer","Selvala, Heart of the Wilds",
+             "Saryth, the Viper's Fang","Skyshroud Poacher","Surrak and Goreclaw","Nylea, Keen-Eyed",
+             "Nissa, Resurgent Animist","King of the Coldblood Curse"].includes(target) // legendary exclusion list
         && (getCard(target)?.cmc ?? 99) <= 3
         && (mana >= 6 || infiniteMana || board.has("Woodland Bellower"))) {
       options.push("Woodland Bellower (ETB → directly onto battlefield)");
