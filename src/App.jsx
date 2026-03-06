@@ -1137,6 +1137,200 @@ const COMBOS = [
   // No Ashaya needed. Speaker's activated ability {1},{T}: untap another permanent.
   // Quirion Ranger can return a Forest from the BATTLEFIELD (not hand) to hand to untap a creature.
   // Loop: Speaker {1},{T} untaps Dork → Dork taps for N mana → Quirion returns battlefield Forest
+
+  // ── Ley Weaver + Ashaya (2-Card Infinite Mana — Argothian Elder variant) ─
+  {
+    id: "ley_weaver_ashaya",
+    name: "Ley Weaver + Ashaya (2-Card Infinite Mana)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Ley Weaver"],
+    mustPreExist: ["Ley Weaver"],
+    description: "Identical to the Argothian Elder + Ashaya combo. Ashaya makes Ley Weaver a Forest, allowing it to tap for {G} AND target itself with its 'untap two lands' ability. Tap Weaver for {G}, activate untap targeting itself + any other land. Repeat for infinite mana. Note: Ley Weaver is Human, not Elf — Wirewood Lodge cannot untap it.",
+    requires: ["Ashaya, Soul of the Wild", "Ley Weaver"],
+    priority: 10,
+    type: "infinite-mana",
+    lines: [
+      "Ashaya in play — Ley Weaver is now a Forest land (taps for {G} like any Forest).",
+      "Tap Ley Weaver for {G} (its Forest mana ability via Ashaya).",
+      "Activate Ley Weaver's tap ability ({T}): untap two target lands — target itself AND any other land.",
+      "Ley Weaver untaps. Tap again for {G}. Also tap the second untapped land for bonus mana.",
+      "Repeat for infinite {G}.",
+      "NOTE: Ley Weaver is Human (not Elf) — Wirewood Lodge cannot untap it. Use Hyrax Tower Scout, Temur Sabertooth, or Kogla for additional lines.",
+    ]
+  },
+
+  // ── Cloudstone Curio + Big Dork + Another Creature (sorcery-speed Sabertooth) ─
+  {
+    id: "cloudstone_curio_loop",
+    name: "Cloudstone Curio + Big Dork + Any Creature (Bounce Loop)",
+    onBattlefield: ["Cloudstone Curio"],
+    mustPreExist: ["Cloudstone Curio"],
+    description: "Cloudstone Curio: whenever a nonartifact permanent enters, its controller may return another nonartifact, nonland permanent they control to hand. With two creatures in hand and a big dork on board (≥3 mana): cast creature A → Curio triggers → return creature B to hand. Cast B → Curio triggers → return A. Each cast nets mana from the dork. Sorcery-speed Temur Sabertooth analogue. More fragile (requires two creatures to alternate) but functions without Sabertooth.",
+    requires: ["Cloudstone Curio"],
+    needsBigDork: 3,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Cloudstone Curio on battlefield. Big dork producing ≥3 mana. Two cheap creatures to alternate (e.g. any two 1-mana elves, or Eternal Witness + any creature).",
+      "Tap the big dork for {N} mana.",
+      "Cast Creature A ({1}). Cloudstone Curio triggers: return Creature B (already on battlefield) to hand.",
+      "Cast Creature B ({1}). Curio triggers: return Creature A to hand.",
+      "Each cast of a creature untaps the big dork via normal untap — or use ETB effects to generate value.",
+      "Net: N − (cost of alternating creatures) per loop. With free/1-mana creatures, nets N−2 per loop.",
+      "Repeat for infinite mana. Pivot to draw loop or win condition once established.",
+      "TIP: Eternal Witness in the loop retrieves any spell each cycle — Infectious Bite, tutors, etc.",
+    ]
+  },
+
+  // ── Great Oak Guardian + Temur Sabertooth + Big Dork ─────────────────
+  {
+    id: "great_oak_guardian_loop",
+    name: "Great Oak Guardian + Temur Sabertooth + Big Dork (≥6 mana, Flash)",
+    onBattlefield: ["Temur Sabertooth"],
+    mustPreExist: ["Temur Sabertooth"],
+    description: "Great Oak Guardian has flash and ETB: untap all creatures you control, then give them all +2/+2 until end of turn. With Temur Sabertooth and a big dork producing ≥6 mana: cast Guardian (flash, instant speed) → ETB untaps the dork → tap dork for N ≥ 6 → pay {1}{G} to bounce Guardian → recast for {4}{G}. Net: N − 6 per loop. With a dork producing more it quickly snowballs. No Yeva required — flash is built in.",
+    requires: ["Great Oak Guardian", "Temur Sabertooth"],
+    needsBigDork: 6,
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Temur Sabertooth + big dork (≥6 mana output) on battlefield. Great Oak Guardian in hand.",
+      "Cast Great Oak Guardian ({4}{G}) — it has flash, no Yeva needed.",
+      "ETB: untap ALL your creatures (including the big dork). All your creatures get +2/+2 until end of turn.",
+      "Tap the big dork for N mana (N ≥ 6).",
+      "Pay {1}{G}: activate Temur Sabertooth, returning Great Oak Guardian to hand.",
+      "Net: N − 6 per loop. With Priest of Titania + 7 elves = 1 net mana; each additional elf adds 1.",
+      "Repeat for infinite mana. Guardian's +2/+2 also stacks — army grows larger each iteration if needed.",
+      "NOTE: Be aware of Deflecting Swat — opponents can redirect the ETB trigger targeting the bouncer.",
+    ]
+  },
+
+  // ── Genesis Hydra + Temur Sabertooth (Infinite Mana Outlet / Storm) ──
+  {
+    id: "genesis_hydra_sabertooth",
+    name: "Genesis Hydra + Temur Sabertooth (Infinite Mana Loop / Storm)",
+    onBattlefield: ["Temur Sabertooth"],
+    mustPreExist: ["Temur Sabertooth"],
+    description: "With infinite mana: cast Genesis Hydra at X=any value. Its cast trigger (not ETB — can't be countered separately) lets you reveal cards from library equal to X and put any nonland permanent with CMC ≤ X directly onto battlefield. With Temur Sabertooth: bounce Hydra between casts to find any nonland permanent from library while generating unlimited ETB triggers. Loops cleanly as a win pile assembler or pure storm piece.",
+    requires: ["Genesis Hydra", "Temur Sabertooth"],
+    needsInfiniteMana: true,
+    priority: 10,
+    type: "win-now",
+    lines: [
+      "Infinite mana established. Genesis Hydra in hand. Temur Sabertooth on battlefield.",
+      "Cast Genesis Hydra for X = desired CMC target (or very large X).",
+      "ON CAST (not ETB — uncounterable separately): reveal top X cards of library, put any nonland permanent with CMC ≤ X directly onto battlefield.",
+      "Find Duskwatch Recruiter, Regal Force, Disciple of Freyalise, Eternal Witness, or any key piece.",
+      "Pay {1}{G}: activate Temur Sabertooth, returning Genesis Hydra to hand.",
+      "Recast Hydra for the next needed card. Repeat to assemble the entire win pile from library.",
+      "WIN: Once Duskwatch Recruiter is on board, activate for {2}{G} to find remaining pieces (Endurance, Eternal Witness). Mill all opponents via Sanitarium loop.",
+    ]
+  },
+
+  // ── Leyline of Abundance + Quirion Ranger + Ashaya + 1-Drop Dork ──────
+  {
+    id: "leyline_quirion_ashaya",
+    name: "Leyline of Abundance + Ashaya + Quirion Ranger + 1-Drop Dork",
+    onBattlefield: ["Leyline of Abundance", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    description: "Leyline of Abundance: whenever you tap a creature for mana, add {G}. This effectively doubles every dork's output. With a 1-mana dork producing {G}: Leyline makes it tap for {G}{G}. Quirion Ranger loop (via Ashaya) then nets {G} per iteration where previously it was neutral. Converts any 1-drop dork into an infinite mana engine.",
+    requires: ["Leyline of Abundance", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    needsBigDork: 2,
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Leyline of Abundance + Ashaya + Quirion Ranger + any creature dork on battlefield.",
+      "Leyline: whenever you tap a creature for mana, add {G} in addition to normal output.",
+      "Tap dork for {G} → Leyline adds {G} → dork effectively taps for {G}{G}.",
+      "Tap Quirion Ranger as a Forest for {G} → Leyline adds {G} → Ranger taps for {G}{G}.",
+      "Activate Quirion Ranger: return itself to hand (it's a Forest via Ashaya), untapping the dork.",
+      "Recast Ranger for {G}. Net: {G}{G}{G} generated, {G}{G} spent = +{G} per loop.",
+      "Repeat for infinite mana. Even Llanowar Elves becomes a full infinite mana engine.",
+      "NOTE: Any creature dork qualifies — the Leyline bonus makes the math work regardless of base output.",
+    ]
+  },
+
+  // ── Vitalize + Gaea's Cradle / Big Dorks (Mass Untap Ritual) ─────────
+  {
+    id: "vitalize_ritual",
+    name: "Vitalize + Gaea's Cradle / Big Dorks (Mass Untap Ritual)",
+    onBattlefield: [],
+    description: "Vitalize ({G}) untaps all creatures you control at instant speed. With Gaea's Cradle and several creatures, or a board with multiple big dorks, Vitalize produces a massive mana surplus. With Eternal Witness recursion and infinite mana it becomes a true ritual. Most effective mid-combo to reset all creatures after a partial tap-out.",
+    requires: ["Vitalize"],
+    priority: 6,
+    type: "engine",
+    lines: [
+      "Cast Vitalize ({G}): untap all creatures you control.",
+      "With Gaea's Cradle: re-tap all creatures immediately for N mana (N = creature count). Net: N − 1.",
+      "With big dorks (Priest of Titania, Circle of Dreams Druid): re-tap each for their full output.",
+      "With Eternal Witness + Sabertooth/Kogla and infinite mana: retrieve Vitalize each loop for repeated use.",
+      "TIP: Vitalize at instant speed (opponent's turn with Yeva) creates a surprise mana surge for a flash win.",
+    ]
+  },
+
+  // ── Hope Tender + Castle Garenbrig (Restricted Mana Filter) ──────────
+  {
+    id: "hope_tender_castle",
+    name: "Hope Tender + Castle Garenbrig (Restricted Mana Filter → Combo Enabler)",
+    onBattlefield: ["Hope Tender", "Castle Garenbrig"],
+    mustPreExist: ["Hope Tender", "Castle Garenbrig"],
+    description: "Castle Garenbrig produces {G} that can only be spent to cast creatures or activated abilities of creatures. Hope Tender's exert ability ({T}, exert: untap up to two lands) combined with Castle Garenbrig's output enables sequences where restricted mana is filtered through creature costs. Garenbrig + Hope Tender exert untaps Cradle/Nykthos, effectively converting the restriction into free mana generation.",
+    requires: ["Hope Tender", "Castle Garenbrig"],
+    needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    priority: 7,
+    type: "engine",
+    lines: [
+      "Castle Garenbrig + Hope Tender on battlefield. A big land (Cradle, Nykthos, or Itlimoc) also in play.",
+      "Tap Castle Garenbrig for {G}{G} (restricted to creature costs/activations).",
+      "Tap Hope Tender for {G}. Use the Garenbrig mana to pay activation costs or recast costs.",
+      "Exert Hope Tender: untap up to two lands — target Cradle/Nykthos + Castle Garenbrig.",
+      "Tap Cradle/Nykthos for full unrestricted mana. Re-tap Castle Garenbrig next turn.",
+      "TIP: This line enables the Hope Tender + Kogla or Hope Tender + Lodge combos with fewer green sources.",
+    ]
+  },
+
+  // ── Lotus Cobra + Quirion Ranger + Ashaya (Landfall Mana) ────────────
+  {
+    id: "lotus_cobra_quirion_ashaya",
+    name: "Lotus Cobra + Quirion Ranger + Ashaya (Landfall Infinite Mana)",
+    onBattlefield: ["Lotus Cobra", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    mustPreExist: ["Lotus Cobra"],
+    description: "Ashaya makes all your nontoken creatures Forests. When Quirion Ranger enters the battlefield (or re-enters via its own bounce), it ETBs as a Forest — triggering Lotus Cobra's landfall for {G} of any color. Combined with the Quirion loop's mana from tapping the Ranger as a Forest, each iteration now generates additional landfall mana. With a dork producing ≥2, the loop becomes infinite.",
+    requires: ["Lotus Cobra", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    needsBigDork: 2,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Lotus Cobra + Ashaya + Quirion Ranger + a dork producing ≥2 mana on battlefield.",
+      "Ashaya: all your nontoken creatures are Forests.",
+      "Tap Quirion Ranger as a Forest for {G}. Activate: return itself to hand, untapping the dork.",
+      "Lotus Cobra triggers: Quirion Ranger left the battlefield — no trigger. BUT when recast:",
+      "Recast Quirion Ranger ({G}) → it ETBs as a Forest (Ashaya) → Lotus Cobra landfall: add {G} of any color.",
+      "Tap the dork for ≥2 mana. Net per loop: dork output + Cobra trigger − Ranger recast cost.",
+      "With a dork producing 2: net = 2 + 1 (Cobra) − 1 (Ranger) = +2 per loop. Infinite.",
+      "TIP: Cobra's mana can be any color — useful for paying off-color activation costs.",
+    ]
+  },
+
+  // ── Thousand-Year Elixir + Big Dork (Haste + Untap Engine) ───────────
+  {
+    id: "thousand_year_elixir",
+    name: "Thousand-Year Elixir + Big Dork (Haste + Second Activation)",
+    onBattlefield: ["Thousand-Year Elixir"],
+    mustPreExist: ["Thousand-Year Elixir"],
+    description: "Thousand-Year Elixir: creatures you control have haste. Once per turn, {1}: untap target creature. With a big dork: Elixir gives it haste (tap immediately on ETB) AND its {1} activation untaps it for a second tap that turn. Removes the final summoning-sickness bottleneck from freshly-cast dorks and allows mid-combo plays where a newly-cast dork needs to contribute mana immediately.",
+    requires: ["Thousand-Year Elixir"],
+    needsBigDork: 2,
+    priority: 7,
+    type: "engine",
+    lines: [
+      "Thousand-Year Elixir on battlefield. Cast a big dork (Priest of Titania, Elvish Archdruid, etc.).",
+      "Elixir grants the dork haste — tap it immediately for N mana.",
+      "Pay {1}: activate Elixir's second ability, untapping the dork.",
+      "Tap the dork again for N more mana. Total: 2N − 1 mana from a single newly-cast dork.",
+      "Combined with Wirewood Lodge (for elf dorks): Lodge + Elixir = 3 taps per turn from a single big dork.",
+      "TIP: Elixir's haste also allows Ashaya + Quirion lines to function on the same turn Ashaya is cast.",
+    ]
+  },
+
 ];
 
 // ============================================================
@@ -6196,6 +6390,72 @@ function CardTooltip({ name, anchorRect }) {
   );
 }
 
+// Renders a string with card names highlighted as hoverable spans showing CardTooltip.
+// Scans the text for any known card name (longest match first) and wraps them.
+function HighlightWithPopups({ text, style }) {
+  // Sort card names longest-first so "Ashaya, Soul of the Wild" matches before "Ashaya"
+  const sortedNames = React.useMemo(() =>
+    Object.keys(CARDS).sort((a, b) => b.length - a.length), []);
+
+  const parts = React.useMemo(() => {
+    if (!text) return [];
+    const result = [];
+    let remaining = text;
+    let key = 0;
+    while (remaining.length > 0) {
+      let matched = false;
+      for (const name of sortedNames) {
+        const idx = remaining.indexOf(name);
+        if (idx === 0) {
+          result.push({ type: "card", name, key: key++ });
+          remaining = remaining.slice(name.length);
+          matched = true;
+          break;
+        } else if (idx > 0) {
+          // There's plain text before the match
+          result.push({ type: "text", text: remaining.slice(0, idx), key: key++ });
+          result.push({ type: "card", name, key: key++ });
+          remaining = remaining.slice(idx + name.length);
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        result.push({ type: "text", text: remaining, key: key++ });
+        remaining = "";
+      }
+    }
+    return result;
+  }, [text, sortedNames]);
+
+  return (
+    <span style={style}>
+      {parts.map(p =>
+        p.type === "text"
+          ? <span key={p.key}>{p.text}</span>
+          : <InlineCardHover key={p.key} name={p.name} />
+      )}
+    </span>
+  );
+}
+
+function InlineCardHover({ name }) {
+  const [hovered, setHovered] = useState(false);
+  const [rect, setRect] = useState(null);
+  const ref = useRef(null);
+  return (
+    <span
+      ref={ref}
+      onMouseEnter={() => { setRect(ref.current?.getBoundingClientRect() || null); setHovered(true); }}
+      onMouseLeave={() => setHovered(false)}
+      style={{ color: COLORS.gold, cursor: "default", borderBottom: `1px dotted ${COLORS.gold}66` }}
+    >
+      {name}
+      {hovered && <CardTooltip name={name} anchorRect={rect} />}
+    </span>
+  );
+}
+
 function CardPill({ name, onRemove, zone, onDragStart, onPlay }) {
   const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim };
   const c = zoneColors[zone] || COLORS.green1;
@@ -9377,9 +9637,14 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
       }
-    } else {
+    } else if (type === "creature" || type === "enchantment" || type === "artifact" || type === "planeswalker" || type === "battle") {
       setBattlefield(prev => [...prev, card]);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
+    } else {
+      // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
+      // unless name suggests a spell. Conservative: go to battlefield.
+      setBattlefield(prev => [...prev, card]);
+      addLog(`Cast ${card} → battlefield (type: ${type || "unknown"}).`, COLORS.green2);
     }
   }
 
@@ -10238,7 +10503,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               } catch (e) {}
               const { grade, notes } = gradeHand(hand, mulliganAnalysis);
               return (
-                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "flex-start", marginTop: "16px" }}>
                   <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
                     <button onClick={keepHand} style={{
                       background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
@@ -10516,13 +10781,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                         {a.category}
                       </div>
                       <div style={{ fontSize: "12px", color: COLORS.text, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>
-                        {a.headline}
+                        <HighlightWithPopups text={a.headline} />
                       </div>
                       {a.steps && a.steps.length > 0 && (
                         <div style={{ marginTop: "8px", borderTop: `1px solid ${COLORS.border}`, paddingTop: "8px" }}>
                           {a.steps.slice(0, 4).map((s, j) => (
                             <div key={j} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${COLORS.border}` }}>
-                              {j + 1}. {s}
+                              {j + 1}. <HighlightWithPopups text={s} />
                             </div>
                           ))}
                           {a.steps.length > 4 && (
