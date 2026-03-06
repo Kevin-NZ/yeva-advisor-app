@@ -9082,7 +9082,7 @@ function HelpModal({ onClose, onStartTour }) {
         <P>Goldfish mode simulates playing the deck alone — no opponent — to test how consistently it assembles its combo. You draw opening hands, play through turns, and track milestones.</P>
         <H>PLAYING A GAME</H>
         <Tip label="Opening hand">You start with 7 cards. Click KEEP to keep the hand or MULLIGAN to take a new one (one fewer card each time). Cards sent to the bottom are chosen before you see the new hand.</Tip>
-        <Tip label="Playing cards">Click any card in your hand to play it. Lands go to the battlefield, instants/sorceries go to the graveyard. The land-played indicator shows whether you've played your land for the turn.</Tip>
+        <Tip label="Playing cards">Click any card in your hand to play it. Lands go to the battlefield, instants/sorceries go to the graveyard. The land-played indicator shows whether you've played your land for the turn. When you cast a creature, the advisor automatically taps your cheapest available mana sources to cover its cost and updates the mana pool accordingly.</Tip>
         <Tip label="Tapping permanents">Click a card on the battlefield to tap or untap it. Mana-producing cards automatically update the mana pool. The pool badge shows your current floating mana.</Tip>
         <Tip label="Mana pool">The pool tracks mana as you tap sources and cast spells. Use − and + to adjust manually. It resets to 0 at the start of each turn.</Tip>
         <Tip label="Context menu">Right-click any card to move it between zones, crack fetch lands, or access other actions.</Tip>
@@ -9091,9 +9091,10 @@ function HelpModal({ onClose, onStartTour }) {
         <Tip label="↺ UNTAP">Untaps all permanents without advancing the turn. Use this mid-turn for Wirewood Lodge effects.</Tip>
         <Tip label="🔍 TUTOR">Search your library by card name, type, or tag (e.g. type 'dork' to find all mana creatures).</Tip>
         <Tip label="⚡ TAP ALL">Taps all untapped mana sources at once and fills the pool to its maximum for the turn.</Tip>
-        <Tip label="↩ UNDO">Reverts the last action. Up to 20 levels of undo are stored per game.</Tip>
+        <Tip label="↩ UNDO">Reverts the last action, including casting Yeva from the command zone. Up to 20 levels of undo are stored per game.</Tip>
         <Tip label="👁 SCRY">Look at the top cards of your library and choose which to keep on top or send to the bottom.</Tip>
-        <Tip label="🌿 YEVA">Cast Yeva from the command zone. Tax increases by 2 each time she's cast.</Tip>
+        <Tip label="🌿 YEVA">Cast Yeva from the command zone. Tax increases by 2 each time she's cast. Fully undoable with Ctrl+Z.</Tip>
+        <Tip label="🃏 IMAGE / 📋 LIST">Toggle between text list view and card image playfield view. In image view, cards display as full card art — click to tap/cast as normal, right-click for the context menu. Tapped cards rotate 90°. Hover any card for a full-size preview.</Tip>
         <H>STATISTICS</H>
         <Tip label="Game log">The right panel records every action taken this game. Scroll down to see earlier turns.</Tip>
         <Tip label="★ END GAME">Records the game result, turn count, milestones, and opening hand. Adds to your stats history.</Tip>
@@ -9166,6 +9167,17 @@ function HelpModal({ onClose, onStartTour }) {
     ),
     changelog: (() => {
       const versions = [
+        {
+          version: "1.9.0", date: "2026-03-07", title: "Card Image Playfield View",
+          added: [
+            "Card image playfield view in Goldfish — toggle with the 🃏 IMAGE button in the controls strip. Displays hand, battlefield, graveyard, and exile as real Scryfall card art. Click to cast/tap, right-click for context menu, hover for a full-size preview. Images load live from Scryfall and are cached for the session.",
+            "Tapped cards rotate 90° with a smooth CSS transition. Counter badges stay upright. Battlefield is split into Creatures/Spells and Lands rows.",
+            "The toggle button always shows where it will take you — reads IMAGE when in list mode, LIST when in image mode.",
+          ],
+          fixed: [
+            "Yeva cast from command zone is now fully undoable with Ctrl+Z (pushUndo was missing from castYeva).",
+          ],
+        },
         {
           version: "1.8.0", date: "2026-03-06", title: "Advisor Intelligence & Card Coverage",
           added: [
@@ -10172,6 +10184,308 @@ function ReplayModal({ game, onClose }) {
 }
 
 
+// ── PlayfieldImageView ─────────────────────────────────────────────────────────
+// Card image playfield view for the goldfish screen.
+// Renders zones (hand, battlefield, graveyard) as actual card images,
+// with tap rotation, counter badges, hover zoom, and click-to-interact.
+
+function PlayfieldCardImg({ card, zone, tapped, counters, onClick, onContextMenu, size = "normal", dimmed = false }) {
+  const url = useScryfallImage(card);
+  const [hovered, setHovered] = useState(false);
+  const isLand = getCard(card)?.type === "land";
+
+  const W = size === "small" ? 60 : size === "hand" ? 86 : 76;
+  const H = Math.round(W * 1.396);
+
+  // The outer div acts as the layout placeholder.
+  // When tapped, it takes up H×W (landscape) space in the flex row.
+  // The inner card div is always W×H (portrait), absolutely centered,
+  // then rotated 90deg — so it fills exactly the H×W placeholder.
+  const glowColor = tapped ? COLORS.gold + "55" : COLORS.green2 + "44";
+  const outerW = tapped ? H : W;
+  const outerH = tapped ? W : H;
+
+  return (
+    <div
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={card}
+      style={{
+        position: "relative",
+        width: outerW,
+        height: outerH,
+        flexShrink: 0,
+        cursor: onClick ? "pointer" : "default",
+        zIndex: hovered ? 10 : 1,
+        transition: "width 0.2s ease, height 0.2s ease",
+      }}
+    >
+      {/* Inner card — always portrait (W×H), centered in outer, rotated when tapped */}
+      <div style={{
+        position: "absolute",
+        width: W, height: H,
+        top: "50%", left: "50%",
+        transform: `translate(-50%, -50%)${tapped ? " rotate(90deg)" : ""}${hovered ? " scale(1.07)" : ""}`,
+        transformOrigin: "center center",
+        transition: "transform 0.2s ease",
+      }}>
+        <div style={{
+          width: "100%", height: "100%",
+          borderRadius: "6px", overflow: "hidden",
+          border: `1px solid ${tapped ? COLORS.gold + "99" : hovered ? COLORS.green2 + "aa" : COLORS.border}`,
+          boxShadow: hovered
+            ? `0 0 14px ${glowColor}, 0 4px 20px rgba(0,0,0,0.8)`
+            : "0 2px 8px rgba(0,0,0,0.5)",
+          opacity: dimmed ? 0.45 : 1,
+          background: "#0d1a0d",
+          transition: "border-color 0.15s, box-shadow 0.15s",
+        }}>
+          {url && url !== "error" ? (
+            <img
+              src={url} alt={card}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", pointerEvents: "none" }}
+            />
+          ) : url === "error" ? (
+            <div style={{
+              width: "100%", height: "100%",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              padding: "6px", background: "linear-gradient(160deg, #0a1a0a, #162816)",
+            }}>
+              <div style={{ fontSize: isLand ? "18px" : "20px", marginBottom: "4px" }}>{isLand ? "🌲" : "🌿"}</div>
+              <div style={{
+                fontSize: "9px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif",
+                textAlign: "center", lineHeight: 1.2, wordBreak: "break-word",
+              }}>{card}</div>
+            </div>
+          ) : (
+            <div style={{
+              width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+              background: "linear-gradient(160deg, #0a1a0a, #162816)",
+            }}>
+              <div style={{ width: 16, height: 16, border: `2px solid ${COLORS.border}`, borderTopColor: COLORS.green2, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+            </div>
+          )}
+        </div>
+
+        {/* Counter badge — counter-rotated to stay upright */}
+        {counters > 0 && (
+          <div style={{
+            position: "absolute", bottom: 3, right: 3,
+            background: COLORS.gold, color: "#000",
+            borderRadius: "50%", width: 17, height: 17,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "9px", fontWeight: "bold", fontFamily: "'Cinzel', serif",
+            border: "1px solid #000", pointerEvents: "none",
+            transform: tapped ? "rotate(-90deg)" : "none",
+          }}>{counters}</div>
+        )}
+      </div>
+
+      {/* Hover zoom — rendered outside the rotating inner div, always upright */}
+      {hovered && url && url !== "error" && (
+        <div style={{
+          position: "absolute",
+          bottom: "calc(100% + 8px)",
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: 200, height: 279,
+          zIndex: 9999, pointerEvents: "none",
+          borderRadius: "10px", overflow: "hidden",
+          border: `1px solid ${COLORS.borderBright}`,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.9)",
+        }}>
+          <img src={url} alt={card} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function PlayfieldImageView({
+  hand, battlefield, graveyard, exile,
+  tapped, counters, cardKey,
+  onHandClick, onBattlefieldClick, onContextMenu,
+  dragOver, dropZoneProps,
+  getCard, isFetch, landPlayed,
+}) {
+  // Group battlefield cards by type for visual layout
+  const bfLands     = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+  const bfCreatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+  const bfOther     = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => !["land", "creature"].includes(getCard(c)?.type));
+
+  const zoneHeader = (label, count, color) => (
+    <div style={{
+      fontSize: "9px", letterSpacing: "2px", color: color || COLORS.textDim,
+      fontFamily: "'Cinzel', serif", marginBottom: "6px",
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+    }}>
+      <span>{label}</span>
+      <span style={{ color: COLORS.textDim, fontSize: "9px" }}>{count}</span>
+    </div>
+  );
+
+  const CardRow = ({ cards, label, color, isHand = false, isBf = false, isGrave = false }) => (
+    <div style={{ marginBottom: "12px" }}>
+      {label && zoneHeader(label, cards.length, color)}
+      <div
+        {...(isBf ? dropZoneProps("battlefield") : isHand ? dropZoneProps("hand") : {})}
+        style={{
+          display: "flex", flexWrap: "wrap", gap: isHand ? "6px" : "4px",
+          minHeight: isHand ? 124 : 112,
+          padding: "6px",
+          background: "#06100680",
+          borderRadius: "6px",
+          border: (isBf && dragOver === "battlefield") ? `1px dashed ${COLORS.green3}` :
+                  (isHand && dragOver === "hand")       ? `1px dashed ${COLORS.green2}` : "1px solid transparent",
+          transition: "border 0.1s",
+          alignItems: "flex-end",
+        }}
+      >
+        {cards.length === 0
+          ? <span style={{ fontSize: "10px", color: COLORS.textDim, fontStyle: "italic", alignSelf: "center", padding: "4px 8px" }}>Empty</span>
+          : cards.map(({ c, i }) => {
+              const key = cardKey(c, i);
+              const isTapped = isBf && tapped.has(key);
+              const cardCounters = isBf ? (counters[key] ?? 0) : 0;
+              const isGraveCard = isGrave;
+              const cantPlay = isHand && getCard(c)?.type === "land" && landPlayed;
+              return (
+                <PlayfieldCardImg
+                  key={`${c}:${i}`}
+                  card={c}
+                  zone={isBf ? "battlefield" : isHand ? "hand" : "graveyard"}
+                  tapped={isTapped}
+                  counters={cardCounters}
+                  dimmed={isGrave || (isHand && cantPlay)}
+                  size={isHand ? "hand" : "normal"}
+                  onClick={isBf ? () => onBattlefieldClick(c, i) : isHand && !cantPlay ? () => onHandClick(c, i) : undefined}
+                  onContextMenu={e => onContextMenu(c, i, isBf ? "battlefield" : isHand ? "hand" : "graveyard", e)}
+                />
+              );
+            })
+        }
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ padding: "10px 12px" }}>
+      {/* HAND */}
+      <CardRow
+        cards={hand.map((c, i) => ({ c, i }))}
+        label="HAND — click to cast"
+        color={COLORS.green2}
+        isHand
+      />
+
+      {/* BATTLEFIELD */}
+      <div style={{ marginBottom: "12px" }}>
+        {zoneHeader("BATTLEFIELD — click to tap", battlefield.length, COLORS.green3)}
+        <div
+          {...dropZoneProps("battlefield")}
+          style={{
+            background: "#06100680",
+            borderRadius: "8px",
+            border: dragOver === "battlefield" ? `1px dashed ${COLORS.green3}` : `1px solid ${COLORS.border}22`,
+            padding: "6px",
+            minHeight: 120,
+            transition: "border 0.1s",
+          }}
+        >
+          {/* Non-land creatures and spells — top row */}
+          {(bfCreatures.length > 0 || bfOther.length > 0) && (
+            <div style={{ marginBottom: "8px" }}>
+              <div style={{ fontSize: "8px", color: COLORS.green3, letterSpacing: "1.5px", fontFamily: "'Cinzel', serif", marginBottom: "4px", opacity: 0.7 }}>
+                CREATURES / SPELLS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "flex-end" }}>
+                {[...bfCreatures, ...bfOther].map(({ c, i }) => {
+                  const key = cardKey(c, i);
+                  return (
+                    <PlayfieldCardImg
+                      key={`${c}:${i}`} card={c} zone="battlefield"
+                      tapped={tapped.has(key)} counters={counters[key] ?? 0}
+                      onClick={() => onBattlefieldClick(c, i)}
+                      onContextMenu={e => onContextMenu(c, i, "battlefield", e)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* Lands — bottom row */}
+          {bfLands.length > 0 && (
+            <div>
+              <div style={{ fontSize: "8px", color: "#3a7a2a", letterSpacing: "1.5px", fontFamily: "'Cinzel', serif", marginBottom: "4px", opacity: 0.7 }}>
+                LANDS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "flex-end" }}>
+                {bfLands.map(({ c, i }) => {
+                  const key = cardKey(c, i);
+                  return (
+                    <PlayfieldCardImg
+                      key={`${c}:${i}`} card={c} zone="battlefield"
+                      tapped={tapped.has(key)} counters={counters[key] ?? 0}
+                      onClick={() => onBattlefieldClick(c, i)}
+                      onContextMenu={e => onContextMenu(c, i, "battlefield", e)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {battlefield.length === 0 && (
+            <span style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic", padding: "8px" }}>Empty</span>
+          )}
+        </div>
+      </div>
+
+      {/* GRAVEYARD + EXILE row */}
+      <div style={{ display: "flex", gap: "12px" }}>
+        <div style={{ flex: 1 }}>
+          {zoneHeader("GRAVEYARD", graveyard.length, COLORS.textDim)}
+          <div {...dropZoneProps("graveyard")} style={{
+            display: "flex", flexWrap: "wrap", gap: "4px", minHeight: 56,
+            background: "#06100650", borderRadius: "6px", padding: "6px",
+            border: dragOver === "graveyard" ? `1px dashed ${COLORS.textDim}` : "1px solid transparent",
+          }}>
+            {graveyard.length === 0
+              ? <span style={{ fontSize: "10px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
+              : graveyard.map((c, i) => (
+                  <PlayfieldCardImg key={`${c}:${i}`} card={c} zone="graveyard"
+                    tapped={false} counters={0} dimmed size="small"
+                    onContextMenu={e => onContextMenu(c, i, "graveyard", e)}
+                  />
+                ))
+            }
+          </div>
+        </div>
+        <div style={{ flex: 1 }}>
+          {zoneHeader("EXILE", exile.length, COLORS.textDim)}
+          <div {...dropZoneProps("exile")} style={{
+            display: "flex", flexWrap: "wrap", gap: "4px", minHeight: 56,
+            background: "#06100650", borderRadius: "6px", padding: "6px",
+            border: dragOver === "exile" ? `1px dashed ${COLORS.textDim}` : "1px solid transparent",
+          }}>
+            {exile.length === 0
+              ? <span style={{ fontSize: "10px", color: COLORS.textDim, fontStyle: "italic" }}>Empty</span>
+              : exile.map((c, i) => (
+                  <PlayfieldCardImg key={`${c}:${i}`} card={c} zone="exile"
+                    tapped={false} counters={0} dimmed size="small"
+                    onContextMenu={e => onContextMenu(c, i, "exile", e)}
+                  />
+                ))
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
@@ -10232,6 +10546,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── Drag state ──────────────────────────────────────────────
   const [dragCard, setDragCard] = useState(null); // {card, fromZone, fromIndex}
   const [dragOver, setDragOver] = useState(null); // zone name being hovered
+  // ── View mode ───────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState("list"); // "list" | "image"
   // ── Run N state ─────────────────────────────────────────────
   const [runNCount, setRunNCount] = useState(100);
   const [runNMaxTurns, setRunNMaxTurns] = useState(8);
@@ -10710,6 +11026,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
   // ── YEVA ────────────────────────────────────────────────────
   function castYeva() {
+    pushUndo();
     const inHand = hand.includes("Yeva, Nature's Herald");
     if (inHand) setHand(prev => { const i = prev.indexOf("Yeva, Nature's Herald"); return [...prev.slice(0,i), ...prev.slice(i+1)]; });
     setBattlefield(prev => { const without = prev.filter(c => c !== "Yeva, Nature's Herald"); return [...without, "Yeva, Nature's Herald"]; });
@@ -11627,7 +11944,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
             {/* LEFT: zones */}
             <div style={{
-              width: isMobile ? "100%" : "330px", flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${COLORS.border}`,
+              width: isMobile ? "100%" : viewMode === "image" ? "460px" : "330px", flexShrink: 0, borderRight: isMobile ? "none" : `1px solid ${COLORS.border}`,
               display: isMobile && mobileTab !== "zones" ? "none" : "flex",
               flexDirection: "column", overflow: "hidden",
               position: "relative",
@@ -11644,6 +11961,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 <button onClick={openTutor} style={btnStyle(COLORS.purple)} title="Search your library by card name, type, or tag — e.g. type 'dork' to find mana creatures (T)">🔍 TUTOR</button>
                 <button onClick={() => openScry(3)} style={btnStyle(COLORS.blue)} title="Look at the top 3 cards of your library. Choose which to keep on top and which to send to the bottom.">👁 SCRY 3</button>
                 <button onClick={() => openScry(1)} style={btnStyle(COLORS.border)} title="Look at the top card of your library and keep or bottom it.">👁 1</button>
+                <button
+                  onClick={() => setViewMode(v => v === "list" ? "image" : "list")}
+                  title={viewMode === "list" ? "Switch to card image playfield view" : "Switch to text list view"}
+                  style={{ ...btnStyle(COLORS.green2), background: "#0a2a0a" }}
+                >{viewMode === "list" ? "🃏 IMAGE" : "📋 LIST"}</button>
                 <button onClick={castYeva}
                   disabled={battlefield.includes("Yeva, Nature's Herald")}
                   title={`Cast Yeva from command zone (${4 + yevaTax} mana)`}
@@ -11677,7 +11999,30 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               {ScryModal()}
               {UntapModal()}
 
-              <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: viewMode === "image" ? "0" : "12px 14px" }}>
+                {viewMode === "image" ? (
+                  <PlayfieldImageView
+                    hand={hand}
+                    battlefield={battlefield}
+                    graveyard={graveyard}
+                    exile={exile}
+                    tapped={tapped}
+                    counters={counters}
+                    cardKey={cardKey}
+                    onHandClick={(card, i) => {
+                      const isLand = getCard(card)?.type === "land";
+                      if (isLand && landPlayed) return;
+                      castFromHand(card, i);
+                    }}
+                    onBattlefieldClick={toggleTap}
+                    onContextMenu={openContextMenu}
+                    dragOver={dragOver}
+                    dropZoneProps={dropZoneProps}
+                    getCard={getCard}
+                    isFetch={isFetch}
+                    landPlayed={landPlayed}
+                  />
+                ) : (<>
                 {/* Gamestate breadcrumb */}
                 {(() => {
                   const elves = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
@@ -11802,6 +12147,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     {library.length > 3 && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "4px" }}>+{library.length - 3} more</span>}
                   </div>
                 </div>
+                </>)} {/* end viewMode === "list" */}
               </div>
             </div>
             {/* MIDDLE: advisor */}
