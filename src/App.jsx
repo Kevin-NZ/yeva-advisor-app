@@ -1826,6 +1826,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   //   1. Eternal Witness in hand → ETB retrieves any card from grave
   //   2. Fauna Shaman on board + Eternal Witness in grave → discard creature → find Witness → retrieve target
   //      (Fauna Shaman must be able to activate: needs a creature to discard + {G})
+  //   3. Noxious Revival in hand (free instant) → puts any graveyard card on top of library
+  //      (only counts as "accessible" for cards we can draw+cast same turn, or if library is empty)
+  //   4. Skullwinder in hand/board — ETB retrieves a card from grave
   const faunaCanFetchWitness = () =>
     board.has("Fauna Shaman") &&
     inGrave.has("Eternal Witness") &&
@@ -1836,9 +1839,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (inHand.has("Eternal Witness") && !board.has("Eternal Witness")) return true;
     // Fauna Shaman on board → discard → find Witness → Witness retrieves cardName
     if (faunaCanFetchWitness()) return true;
+    // Skullwinder in hand — ETB retrieves from graveyard
+    if (inHand.has("Skullwinder") && mana >= 3) return true;
     return false;
   };
+  // Noxious Revival puts a card on top — only accessible if we have draw in hand or infinite mana
+  const noxiousRetrievable = (cardName) => {
+    if (!inGrave.has(cardName)) return false;
+    if (!inHand.has("Noxious Revival")) return false;
+    // Can only "access" it this turn if we can immediately draw (e.g. Survival, Regal, draw spell)
+    // or if library is empty (would draw it next)
+    return false; // conservative — treat as "recoverable next turn" not "accessible now"
+  };
   const accessible = (cardName) => inHand.has(cardName) || witnessRetrievable(cardName);
+
+  // graveRecoverable(cardName) — card is in graveyard with a recovery path available
+  // (broader than accessible — includes Noxious Revival → top of library next draw)
+  const graveRecoverable = (cardName) => {
+    if (!inGrave.has(cardName)) return false;
+    if (witnessRetrievable(cardName)) return true;
+    if (inHand.has("Noxious Revival")) return true; // puts on top → draw next turn
+    return false;
+  };
 
   const mana = parseInt(manaAvailable) || 0;
   const elvesOnBoard    = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
@@ -1937,13 +1959,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   //   Pass 2: pieces in hand castable on our turn or with Yeva flash.
   //           mustPreExist cards (summoning-sick tappers) must be on the board even in pass 2
   //           UNLESS a haste enabler (Ashaya + Destiny Spinner on board) is clearly present.
-  let _inf = false, _infName = null;
+  let _inf = false, _infName = null, _trueInf = false;
   for (const combo of COMBOS) {
     if (combo.type !== "infinite-mana") continue;
     const allOnBoard = combo.requires.every(r => board.has(r));
     if (!allOnBoard) continue;
     const extras = comboExtrasSatisfied(combo, false);
-    if (extras.ok) { _inf = true; _infName = combo.name; break; }
+    if (extras.ok) { _inf = true; _trueInf = true; _infName = combo.name; break; }
   }
   if (!_inf) {
     const _castable = isMyTurn || yevaFlash;
@@ -1970,6 +1992,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
   const infiniteManaActive = _inf;
+  // trueInfiniteManaActive: ALL combo pieces are on the battlefield (loop is running, not bootstrap).
+  const trueInfiniteManaActive = _trueInf;
   // Yeva is the commander — always castable from command zone for {2}{G}{G} (or more with tax).
   // yevaAvailable = flash already active, OR infinite mana (tax irrelevant), OR ≥4 mana to cast her.
   const yevaAvailable = yevaFlash || infiniteManaActive || mana >= 4;
@@ -2404,6 +2428,69 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
     }
   }
+  // ---- GRAVEYARD RECOVERY — KEY COMBO PIECES ----
+  // If critical combo pieces (Ashaya, Argothian Elder, Quirion/Scryb Ranger, big dorks, etc.)
+  // are in the graveyard with a recovery path, surface this as high-priority advice.
+  {
+    const KEY_COMBO_PIECES = [
+      "Ashaya, Soul of the Wild", "Argothian Elder", "Quirion Ranger", "Scryb Ranger",
+      "Temur Sabertooth", "Kogla, the Titan Ape", "Earthcraft", "Wirewood Symbiote",
+      "Duskwatch Recruiter", "Formidable Speaker", "Priest of Titania",
+      "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Elvish Archdruid",
+      "Marwyn, the Nurturer", "Karametra's Acolyte", "Magus of the Candelabra",
+      "Hope Tender", "Hyrax Tower Scout", "Natural Order",
+    ];
+    const graveCombopieces = KEY_COMBO_PIECES.filter(c => inGrave.has(c) && !board.has(c) && !inHand.has(c));
+
+    if (graveCombopieces.length > 0) {
+      // Determine the best recovery path
+      const hasWitness       = inHand.has("Eternal Witness") && mana >= 2;
+      const hasFaunaWitness  = faunaCanFetchWitness();
+      const hasSkullwinder   = inHand.has("Skullwinder") && mana >= 3;
+      const hasNoxRevival    = inHand.has("Noxious Revival");
+      const hasRecoveryPath  = hasWitness || hasFaunaWitness || hasSkullwinder || hasNoxRevival;
+
+      if (hasRecoveryPath) {
+        const target = graveCombopieces[0]; // highest priority missing piece
+        const recoveryMethod = hasWitness
+          ? `Cast Eternal Witness ({1}{G}{G}): ETB returns ${target} to hand.`
+          : hasFaunaWitness
+            ? `Fauna Shaman: discard a creature → find Eternal Witness → EWit ETB returns ${target}.`
+            : hasSkullwinder
+              ? `Cast Skullwinder ({2}{G}): ETB returns ${target} from graveyard to hand.`
+              : `Cast Noxious Revival (free, pay 2 life): put ${target} on top of library. Draw it next turn or with a draw effect.`;
+        const isThisTurn = hasWitness || hasFaunaWitness || hasSkullwinder;
+        results.push({
+          priority: 12,
+          category: `♻️ RECOVER ${isThisTurn ? "NOW" : "NEXT TURN"}`,
+          headline: `${target} is in graveyard — recover it ${isThisTurn ? "this turn" : "via Noxious Revival"}`,
+          detail: `${target} is a key combo piece sitting in your graveyard. ${isThisTurn
+            ? "You have a creature recursion path available this turn."
+            : "Noxious Revival (free instant, pay 2 life) puts it on top of your library — draw it next turn."}${graveCombopieces.length > 1 ? ` Other graveyard pieces: ${graveCombopieces.slice(1, 3).join(", ")}.` : ""}`,
+          steps: [
+            recoveryMethod,
+            ...(graveCombopieces.length > 1 && isThisTurn ? [`Other graveyard pieces also recoverable: ${graveCombopieces.slice(1, 3).join(", ")}.`] : []),
+            `Once recovered, proceed with standard ${target.includes("Ashaya") || target.includes("Elder") ? "infinite mana" : target.includes("Duskwatch") ? "win" : "combo"} line.`,
+          ],
+          color: "#27ae60",
+        });
+      } else if (graveCombopieces.length >= 2) {
+        // Multiple combo pieces in grave but no recovery — note it as suppressed info
+        results.push({
+          priority: 3,
+          category: "💀 GRAVEYARD",
+          headline: `${graveCombopieces.length} combo pieces in graveyard — no recovery path`,
+          detail: `${graveCombopieces.slice(0, 3).join(", ")} are in your graveyard. No Eternal Witness, Skullwinder, or Noxious Revival available to recover them. Consider fetching Eternal Witness as your next tutor target.`,
+          steps: [
+            `Pieces in graveyard: ${graveCombopieces.join(", ")}.`,
+            "Fetch Eternal Witness (CMC 3, any tutor) to recover the most critical piece.",
+          ],
+          color: "#7f8c8d",
+        });
+      }
+    }
+  }
+
   // ---- NATURAL ORDER ----
   if (inHand.has("Natural Order")) {
     // ---- Check if Natural Order is an immediate WIN LINE ----
@@ -4744,8 +4831,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       } else {
         const totalCost = needToCast.reduce((acc, c) => acc + (getCard(c)?.cmc || 0), 0);
         if ((mana >= totalCost || infiniteManaActive) || !isMyTurn) {
+          // Bootstrap scenario: elevate CAST TO ENABLE to priority 13 so it surfaces above
+          // ONE PIECE AWAY results when infinite mana is only reachable (not yet running).
+          const isBootstrapPath = infiniteManaActive && !trueInfiniteManaActive
+            && combo.type === "infinite-mana";
+          const castPriority = isBootstrapPath ? 13 : combo.priority + typeMeta.boost;
           results.push({
-            priority: combo.priority + typeMeta.boost,
+            priority: castPriority,
             category: typeMeta.cast,
             headline: `Cast ${needToCast.join(" + ")} → ${combo.name}`,
             detail: `You have all named pieces! Cast ${needToCast.join(", ")} to complete ${combo.name}.`,
@@ -4996,7 +5088,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const castYevaFirst = !isMyTurn && !yevaFlash && yevaAvailable;
 
   if (duskwatchCastable && (infiniteManaActive || mana >= 20)) {
-    // Determine which Sanitarium untap method is available
+    // Determine which Sanitarium untap method is available — MUST be on the board already
+    // (not just in hand) because Sanitarium mill requires the loop to already be running.
     const untapMethods = [];
     if (board.has("Woodcaller Automaton") && board.has("Temur Sabertooth"))
       untapMethods.push("Woodcaller Automaton + Temur Sabertooth");
@@ -5010,6 +5103,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       untapMethods.push(`Ashaya + Wirewood Symbiote + ${badgermoleActive ? "Badgermole Cub" : "Destiny Spinner"} (haste)`);
     if (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder") && hasLandAnimate)
       untapMethods.push(`Ashaya + Argothian Elder + ${badgermoleActive ? "Badgermole Cub" : "Destiny Spinner"} (haste)`);
+
+    // Only show WIN NOW if an untap method is actually established on the board,
+    // OR if infinite mana is truly running (not bootstrap). When bootstrap-only,
+    // suppress WIN NOW and let CAST TO ENABLE surface the correct next action.
+    const loopTrulyReady = untapMethods.length > 0 || trueInfiniteManaActive;
+    if (!loopTrulyReady && infiniteManaActive) {
+      // Bootstrap scenario: pieces still need to be cast. Downgrade to a reminder.
+      // The CAST TO ENABLE MANA LOOP advice will surface the correct next action.
+      results.push({
+        priority: 9,
+        isSuppressed: false,
+        category: "⏳ WIN PENDING SETUP",
+        headline: `${duskwatchAccessNote}Win pile ready once infinite mana loop is established`,
+        detail: "Infinite mana is within reach but the loop pieces haven't been cast yet. Cast the pieces shown in CAST TO ENABLE MANA LOOP first, then Duskwatch will assemble the win pile.",
+        steps: ["Complete the mana loop setup first (see CAST TO ENABLE MANA LOOP advice above).", `Then: ${duskwatchAccessNote}activate Duskwatch to pull the win pile.`],
+        color: "#7f8c8d",
+      });
+    } else {
 
     // Determine which pile pieces are already on board
     const pileNeeded = ["Destiny Spinner","Elvish Reclaimer","Ashaya, Soul of the Wild",
@@ -5043,6 +5154,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       ],
       color: "#ff6b35",
     });
+    } // end else (loop truly ready)
   }
 
   // ---- ELVISH RECLAIMER — LAND TUTOR ----
@@ -8426,6 +8538,26 @@ function DeckDetailModal({ deck, onClose, onSave }) {
           {onSave && !editMode && (
             <button onClick={() => setEditMode(true)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px", padding: "4px 10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✏ EDIT</button>
           )}
+          {!editMode && (() => {
+            // Build Moxfield-format decklist (1x Name per unique card, multiples for basics)
+            const exportText = Object.entries(counts).map(([name, qty]) => `${qty} ${name}`).join("\n");
+            return (
+              <button onClick={() => {
+                if (navigator.clipboard) {
+                  navigator.clipboard.writeText(exportText).then(() => {
+                    // brief visual feedback via title change — no state needed
+                  });
+                }
+                // Fallback: open in textarea overlay
+                const ta = document.createElement("textarea");
+                ta.value = exportText;
+                ta.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:400px;height:300px;z-index:9999;background:#0d1f0d;color:#ccc;border:1px solid #2a4a2a;border-radius:8px;padding:12px;font-size:12px;font-family:monospace";
+                document.body.appendChild(ta);
+                ta.select();
+                setTimeout(() => document.body.removeChild(ta), 8000);
+              }} title="Copy decklist to clipboard (Moxfield format)" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textDim, cursor: "pointer", fontSize: "11px", padding: "4px 10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>⬆ EXPORT</button>
+            );
+          })()}
           {editMode && dirty && (
             <button onClick={handleSave} style={{ background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "4px", color: COLORS.text, cursor: "pointer", fontSize: "11px", padding: "4px 10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✓ SAVE</button>
           )}
@@ -9618,15 +9750,45 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   }
 
   const openingHand = [...hand];
+  const t1DorkInHand = hand.some(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
+
+  // ── Smarter sequencing helpers ────────────────────────────
+  // Should we hold a tutor this turn? Hold if mana after cast < target CMC.
+  function shouldHoldTutor(card, mana) {
+    const TUTOR_MIN = { "Natural Order": 6, "Fierce Empath": 6, "Chord of Calling": 2,
+      "Eldritch Evolution": 2, "Worldly Tutor": 1, "Elvish Harbinger": 1,
+      "Shared Summons": 1, "Archdruid's Charm": 1 };
+    const min = TUTOR_MIN[card];
+    if (!min) return false;
+    const cmc = getCard(card)?.cmc ?? 0;
+    return (mana - cmc) < min;
+  }
+
+  function playCard(card, idx) {
+    hand.splice(idx, 1);
+    const cardType = getCard(card)?.type ?? "";
+    if (cardType === "instant" || cardType === "sorcery") {
+      if (card === "Green Sun's Zenith") {
+        library.push(card);
+        for (let i = library.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [library[i], library[j]] = [library[j], library[i]]; }
+      } else {
+        graveyard.push(card);
+      }
+    } else {
+      battlefield.push(card);
+    }
+  }
 
   // ── Game state ──────────────────────────────────────────────
   let battlefield = [];
   let graveyard   = [];
   let landPlayed  = false;
   let winTurn     = null;
-  let winCombo    = null; // short label of the winning combo
-  let bottlenecks = []; // missing piece strings from suppressed wins
-  let manaCurve   = []; // mana available per turn
+  let winCombo    = null;
+  let bottlenecks = [];
+  let manaCurve   = [];
+  let t1Dork      = false;
+  let winBattlefield = null;
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
@@ -9656,7 +9818,16 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // Calculate available mana
       const mana = calculateBattlefieldMana(battlefield);
-      if (manaCurve.length < turn) manaCurve.push(mana); // record once per turn
+      if (manaCurve.length < turn) manaCurve.push(mana);
+
+      // Track T1 dork
+      if (turn === 1 && battlefield.some(c => getCard(c)?.tags?.includes("dork"))) t1Dork = true;
+
+      // Smarter sequencing: always try to cast a 1-drop dork T1 before anything else
+      if (turn === 1 && mana >= 1 && !battlefield.some(c => getCard(c)?.tags?.includes("dork"))) {
+        const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
+        if (odIdx >= 0) { playCard(hand[odIdx], odIdx); t1Dork = true; madePlay = true; continue; }
+      }
 
       // Run advisor
       let analysis;
@@ -9675,6 +9846,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       if (top && isWinCategory(top.category)) {
         winTurn = turn;
         winCombo = extractComboLabel(top);
+        winBattlefield = [...battlefield];
         break;
       }
 
@@ -9694,39 +9866,37 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         const cardData = getCard(cardToPlay);
         const cmc = cardData?.cmc ?? 0;
         const cardType = cardData?.type ?? "";
+        const isTutor = cardData?.tags?.includes("tutor");
         if (idx >= 0 && cmc <= mana && cardType !== "land") {
-          hand.splice(idx, 1);
-          if (cardType === "instant" || cardType === "sorcery") {
-            if (cardToPlay === "Green Sun's Zenith") {
-              // GSZ shuffles back into library
-              library.push(cardToPlay);
-              for (let i = library.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [library[i], library[j]] = [library[j], library[i]]; }
-            } else {
-              graveyard.push(cardToPlay);
-            }
-          } else {
-            battlefield.push(cardToPlay);
+          // Smarter: hold tutors on early turns if we can't act on the found card
+          const holdIt = isTutor && turn <= 3 && shouldHoldTutor(cardToPlay, mana);
+          if (!holdIt) {
+            playCard(cardToPlay, idx);
+            played = true;
+            madePlay = true;
+            continue;
           }
-          played = true;
-          madePlay = true;
-          continue;
         }
       }
 
-      // Fallback: cast the highest-CMC affordable non-land card in hand
+      // Fallback: cast best affordable card by smarter scoring (dorks > combos > spells; hold tutors)
       if (!played) {
-        const affordable = hand
-          .map((c, i) => ({ c, i, cmc: getCard(c)?.cmc ?? 0, type: getCard(c)?.type ?? "" }))
-          .filter(x => x.type !== "land" && x.cmc <= mana && x.cmc > 0)
-          .sort((a, b) => b.cmc - a.cmc);
+        const affordable = hand.map((c, i) => {
+          const cd = getCard(c);
+          const cmc  = cd?.cmc ?? 0;
+          const type = cd?.type ?? "";
+          const tags = cd?.tags ?? [];
+          if (type === "land" || cmc > mana || cmc === 0) return null;
+          let score = cmc;
+          if (tags.includes("dork") && cmc === 1) score += 8;
+          else if (tags.includes("dork"))          score += 5;
+          else if (tags.includes("tutor") && !shouldHoldTutor(c, mana)) score += 4;
+          else if (tags.includes("combo"))         score += 3;
+          else if (tags.includes("tutor"))         score -= 3; // hold if can't act
+          return { c, i, score };
+        }).filter(Boolean).sort((a, b) => b.score - a.score);
         if (affordable.length > 0) {
-          const best = affordable[0];
-          hand.splice(best.i, 1);
-          if (best.type === "instant" || best.type === "sorcery") {
-            graveyard.push(best.c);
-          } else {
-            battlefield.push(best.c);
-          }
+          playCard(affordable[0].c, affordable[0].i);
           madePlay = true;
           continue;
         }
@@ -9739,7 +9909,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     if (winTurn !== null) break;
   }
 
-  return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve };
+  return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork, winBattlefield };
 }
 
 // Derive a short combo label from an advisor result headline
@@ -9787,13 +9957,14 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   const t5Rate      = (results.filter(r => r.winTurn !== null && r.winTurn <= 5).length / n * 100);
   const avgMulligans = (results.reduce((a, r) => a + r.mulligans, 0) / n);
 
-  // Bottleneck frequency: count how often each missing-piece phrase appears
+  // T1 dork rate
+  const t1DorkRate = (results.filter(r => r.t1Dork).length / n * 100);
+
+  // Bottleneck frequency
   const bottleneckCounts = {};
   for (const r of results) {
-    // Deduplicate within a single game first
     const seen = new Set();
     for (const b of r.bottlenecks) {
-      // Normalise: strip trailing detail, keep first ~50 chars
       const key = b.slice(0, 55).replace(/\(.*?\)/g, "").trim();
       if (!seen.has(key)) {
         seen.add(key);
@@ -9806,10 +9977,10 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
     .slice(0, 8)
     .map(([reason, count]) => ({ reason, count, pct: Math.round(count / n * 100) }));
 
-  // Win turn distribution (T1–T10+)
+  // Win turn distribution — full T1–T8+ for bar chart
   const distribution = {};
   for (const t of winTurns) {
-    const key = t <= 10 ? `T${t}` : "T11+";
+    const key = t <= 8 ? `T${t}` : "T9+";
     distribution[key] = (distribution[key] ?? 0) + 1;
   }
 
@@ -9831,10 +10002,49 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
     manaCurveAvg.push(vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0);
   }
 
+  // ── Cut suggestions ──────────────────────────────────────
+  // Count how often each non-commander card appears in winning vs losing battlefields
+  const cardWinCount  = {};
+  const cardLossCount = {};
+  const deckCardNames = [...new Set(nonCommanderCards)];
+  for (const r of results) {
+    const bf = new Set(r.winBattlefield ?? []);
+    for (const c of deckCardNames) {
+      if (getCard(c)?.type === "land") continue; // skip lands
+      if (r.winTurn !== null) {
+        if (bf.has(c)) cardWinCount[c]  = (cardWinCount[c]  ?? 0) + 1;
+      } else {
+        cardLossCount[c] = (cardLossCount[c] ?? 0) + 1;
+      }
+    }
+  }
+  // Score each card: win appearances / total wins. Low score = often absent from wins = cut candidate
+  const cutCandidates = deckCardNames
+    .filter(c => {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") return false;
+      const tags = cd.tags ?? [];
+      // Skip obvious auto-includes
+      if (tags.includes("dork") && (cd.cmc ?? 0) <= 1) return false;
+      return true;
+    })
+    .map(c => {
+      const winApps  = cardWinCount[c]  ?? 0;
+      const lossApps = cardLossCount[c] ?? 0;
+      const winPct   = wins.length ? Math.round(winApps  / wins.length  * 100) : 0;
+      const lossPct  = (n - wins.length) ? Math.round(lossApps / (n - wins.length) * 100) : 0;
+      const score    = winPct - lossPct; // negative = appears more in losses than wins
+      return { card: c, winPct, lossPct, score, winApps };
+    })
+    .filter(x => x.winPct < 15) // only cards rarely seen in winning games
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 8);
+
   return {
     n, wins: wins.length, winRate, avgWinTurn, avgMulligans,
-    t3Rate, t4Rate, t5Rate,
+    t3Rate, t4Rate, t5Rate, t1DorkRate,
     topBottlenecks, distribution, winCombos, manaCurveAvg, results, maxTurns,
+    cutCandidates,
   };
 }
 
@@ -9991,6 +10201,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [landPlayed, setLandPlayed] = useState(false);
   const [log, setLog] = useState([]);
   const [expandedSteps, setExpandedSteps] = useState(new Set());
+  const [gameNotes, setGameNotes] = useState(""); // scratchpad for current game
   const [mulliganCount, setMulliganCount] = useState(0);
   const [contextMenu, setContextMenu] = useState(null);
   const [pendingBottoms, setPendingBottoms] = useState([]);
@@ -10143,6 +10354,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     replaySnapshotsRef.current = [];
     winComboRef.current = null;
     openingHandRef.current = lib.slice(0, 7);
+    setGameNotes("");
     setPhase("mulligan");
     addLog("Game started — 7-card opening hand drawn.", COLORS.green2);
   }
@@ -10183,6 +10395,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       winCombo: winComboRef.current,
       turns: turnRef.current,
       replay: finalSnapshots,
+      notes: gameNotes.trim() || null,
     };
     setGameHistory(prev => {
       const next = [...prev, entry];
@@ -10426,6 +10639,35 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     const type = cardData?.type;
     const cmc = cardData?.cmc ?? 0;
     pushUndo();
+
+    // ── Auto-tap: if manaPool < cmc, tap untapped mana sources to cover cost ──
+    if (cmc > 0 && manaPool < cmc) {
+      const needed = cmc - manaPool;
+      // Gather untapped mana producers sorted by output descending (tap bigger sources first)
+      const untappedSources = battlefield
+        .map((c, i) => ({ c, i, key: cardKey(c, i), mana: calculateCardManaForPool(c, battlefield) }))
+        .filter(({ key, mana }) => !tapped.has(key) && mana > 0)
+        .sort((a, b) => b.mana - a.mana);
+      let tapped_ = new Set(tapped);
+      let autoMana = 0;
+      const autoTapped = [];
+      for (const src of untappedSources) {
+        if (autoMana >= needed) break;
+        tapped_.add(src.key);
+        autoMana += src.mana;
+        autoTapped.push(src);
+      }
+      if (autoMana > 0) {
+        setTapped(tapped_);
+        setManaPool(prev => prev + autoMana);
+        if (autoTapped.length === 1) {
+          addLog(`Auto-tapped ${autoTapped[0].c} for ${autoTapped[0].mana} mana.`, COLORS.green1);
+        } else {
+          addLog(`Auto-tapped ${autoTapped.length} sources for ${autoMana} mana.`, COLORS.green1);
+        }
+      }
+    }
+
     // Remove from hand
     setHand(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
     // Deduct mana cost from pool
@@ -11643,6 +11885,17 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   <div style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic" }}>No actions yet.</div>
                 )}
               </div>
+              {/* Game notes scratchpad */}
+              <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: "8px 10px", flexShrink: 0 }}>
+                <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1.5px", marginBottom: "4px" }}>NOTES</div>
+                <textarea
+                  value={gameNotes}
+                  onChange={e => setGameNotes(e.target.value)}
+                  placeholder="Annotate this game… (saved with replay)"
+                  rows={3}
+                  style={{ width: "100%", background: "#070f07", border: `1px solid ${COLORS.border}`, borderRadius: "4px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", fontSize: "11px", padding: "5px 8px", outline: "none", resize: "none", boxSizing: "border-box", lineHeight: 1.5 }}
+                />
+              </div>
             </div>
             </div> {/* end row wrapper */}
           </div>
@@ -11678,6 +11931,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 {statBox("AVG ∞ MANA",   avg(g => g.infiniteMana),  "#c084fc")}
                 {statBox("AVG 1ST DORK", avg(g => g.firstDork),     COLORS.green2)}
                 {statBox("AVG MULLS",    avg(g => g.mulligans),      COLORS.gold)}
+                {statBox("T1 DORK",      pct(g => g.firstDork === 1), COLORS.green2)}
                 {statBox("WIN ≤T4",      pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
                 {statBox("WIN ≤T5",      pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
                 <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
@@ -11707,7 +11961,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                        {["#","Mulls","Opening Hand","Dork","∞","Win T","Combo",""].map(h => (
+                        {["#","Mulls","Opening Hand","Dork","∞","Win T","Combo","Notes",""].map(h => (
                           <th key={h} style={{ padding: "5px 6px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px", textAlign: "left", fontWeight: "normal" }}>{h}</th>
                         ))}
                       </tr>
@@ -11727,6 +11981,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                           <td style={{ padding: "5px 6px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>{g.winCondition ? `T${g.winCondition}` : "—"}</td>
                           <td style={{ padding: "5px 6px", color: COLORS.textMid, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.winCombo}>
                             {g.winCombo || "—"}
+                          </td>
+                          <td style={{ padding: "5px 6px", maxWidth: "120px" }} title={g.notes || ""}>
+                            {g.notes ? (
+                              <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                💬 {g.notes}
+                              </span>
+                            ) : null}
                           </td>
                           <td style={{ padding: "5px 6px" }}>
                             {g.replay?.length > 0 && (
@@ -11853,8 +12114,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                           </div>
                         </Tip>
                       );
-                      // Build distribution bar
-                      const distKeys = ["T3","T4","T5","T6","T7","T8+"];
+                      // Build distribution bar — full T1–T8+
+                      const distKeys = ["T1","T2","T3","T4","T5","T6","T7","T8+"];
                       const distCounts = distKeys.map(k => {
                         if (k === "T8+") {
                           return Object.entries(nr.distribution).filter(([key]) => parseInt(key.slice(1)) >= 8).reduce((s,[,v]) => s+v, 0);
@@ -11877,6 +12138,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                               "Average number of mulligans taken per game. The simulator keeps a hand if it has a dork + tutor (with a mana source), or 2+ dorks + a land. All other hands are mulliganed up to the configured limit.")}
                             {simStatBox("WIN ≤T5", `${nr.t5Rate.toFixed(0)}%`, nr.t5Rate >= 60 ? COLORS.green2 : COLORS.gold, null,
                               "Percentage of all games (including non-wins) where a win line was detected by end of turn 5. This is the key cEDH metric — your goal is to threaten a win before opponents can set up interaction.")}
+                            {simStatBox("T1 DORK RATE", `${(nr.t1DorkRate ?? 0).toFixed(0)}%`, (nr.t1DorkRate ?? 0) >= 65 ? COLORS.green2 : (nr.t1DorkRate ?? 0) >= 40 ? COLORS.gold : COLORS.red, null,
+                              "Percentage of games where a 1-CMC mana dork hit the battlefield on turn 1. This is the single most predictive metric for this deck — a T1 dork accelerates every subsequent turn and dramatically improves win probability.")}
                           </div>
                           {/* T3/T4/T5 breakdown */}
                           <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
@@ -11901,8 +12164,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                             {distKeys.map((k, i) => {
                               const count = distCounts[i];
                               const h = count > 0 ? Math.max(4, Math.round(count / maxCount * 48)) : 2;
-                              const isGood = i <= 1; // T3/T4
-                              const col = count === 0 ? COLORS.border : isGood ? COLORS.green2 : i <= 2 ? COLORS.gold : COLORS.textDim;
+                              const isExcept = i <= 1; // T1/T2 — exceptional
+                              const isGood   = i <= 3; // T3/T4 — good
+                              const col = count === 0 ? COLORS.border : isExcept ? "#7c3aed" : isGood ? COLORS.green2 : i <= 4 ? COLORS.gold : COLORS.textDim;
                               return (
                                 <div key={k} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
                                   <div style={{ fontSize: "8px", color: col, fontFamily: "'Cinzel', serif" }}>{count > 0 ? count : ""}</div>
@@ -11956,6 +12220,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                             </div>
                           )}
 
+                          {/* Cut Suggestions */}
+                          {nr.cutCandidates?.length > 0 && (
+                            <div style={{ marginTop: "10px" }}>
+                              <Tip id="cut-header" text="Cards that rarely appear on the battlefield in winning games. Low win-presence doesn't automatically mean cut — consider whether the card enables wins indirectly (e.g. tutors that find other pieces). But cards with 0% win presence and high loss presence are strong cut candidates.">
+                                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: COLORS.gold, letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>
+                                  ✂ POTENTIAL CUTS (?)
+                                </div>
+                              </Tip>
+                              {nr.cutCandidates.map((c, i) => (
+                                <div key={i} style={{ marginBottom: "5px" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "2px" }}>
+                                    <span style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", flex: 1 }}>{c.card}</span>
+                                    <span style={{ fontSize: "9px", color: c.winPct === 0 ? COLORS.red : COLORS.gold, fontFamily: "'Cinzel', serif", marginLeft: "6px", flexShrink: 0 }}>{c.winPct}% wins</span>
+                                  </div>
+                                  <div style={{ height: "2px", background: COLORS.border, borderRadius: "1px", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", width: `${c.winPct}%`, background: c.winPct === 0 ? COLORS.red : COLORS.gold, borderRadius: "1px", opacity: 0.6 }} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {/* Mana curve */}
                           {nr.manaCurveAvg?.length > 0 && (
                             <div style={{ marginTop: "10px" }}>
