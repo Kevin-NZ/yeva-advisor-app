@@ -3132,7 +3132,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const regalInHand   = inHand.has("Regal Force");
     const hasBouncer    = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
     const bouncer       = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
-    const regalCastable = regalInHand && (infiniteManaActive || (mana >= 7 || infiniteManaActive)) && isMyTurn;
+    const regalCastable = regalInHand && (mana >= 7 || infiniteManaActive) && (isMyTurn || yevaAvailable);
     const regalActive   = (regalOnBoard || regalCastable) && hasBouncer && infiniteManaActive;
 
     if (regalActive) {
@@ -3220,7 +3220,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- FIERCE EMPATH ----
-  if ((inHand.has("Fierce Empath") || board.has("Fierce Empath")) && isMyTurn) {
+  if ((inHand.has("Fierce Empath") || board.has("Fierce Empath")) && (isMyTurn || yevaAvailable)) {
     const empathTargets = [
       { name: "Woodland Bellower",    cmc: 6, reason: "ETB finds any CMC≤3 creature onto battlefield — 2-for-1 tutor" },
       { name: "Kogla, the Titan Ape", cmc: 6, reason: "destroys a non-land permanent on ETB, bounces Humans" },
@@ -3981,7 +3981,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- HEARTWOOD STORYTELLER ----
   // Suggest casting Heartwood Storyteller when it's in hand and we can reach 3 mana,
   // potentially via fast mana (Mox Diamond discarding a land, Chrome Mox, Lotus Petal).
-  if (inHand.has("Heartwood Storyteller") && isMyTurn && !board.has("Heartwood Storyteller")) {
+  if (inHand.has("Heartwood Storyteller") && (isMyTurn || yevaAvailable) && !board.has("Heartwood Storyteller")) {
     // Calculate extra mana available from fast mana in hand
     const hasMoxDiamond  = inHand.has("Mox Diamond");
     const hasChromeMox   = inHand.has("Chrome Mox");
@@ -4042,6 +4042,446 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Note: opponents draw when YOU cast non-creature spells too. Lean into creature-based play while Storyteller is live.",
         ],
         color: "#5dade2",
+      });
+    }
+  }
+
+  // ---- JORAGA TREESPEAKER ----
+  // 1-drop elf that levels up to tap for {G}{G} per elf — functions as a big dork once levelled
+  if ((inHand.has("Joraga Treespeaker") || board.has("Joraga Treespeaker")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Joraga Treespeaker");
+    const canCast = inHand.has("Joraga Treespeaker") && mana >= 1;
+    const canLevel1 = onBoard && mana >= 2; // {1}{G} to reach level 1 (taps for {G} per elf)
+    const canLevel5 = onBoard && mana >= 8; // {7}{G} total to reach level 5 (all elves gain +1/+1)
+    if (!onBoard && canCast && isMyTurn) {
+      results.push({
+        priority: 6,
+        category: "🌿 RAMP",
+        headline: "Cast Joraga Treespeaker ({G}) → level up to become a big dork",
+        detail: "Joraga Treespeaker starts as a 1/1 mana dork but levels up into a serious engine. Level 2+ ({1}{G}): taps to add {G} per elf you control — equivalent to Priest of Titania. Level 5+ ({7}{G} total): all Elves you control get +1/+1. Once levelled, she enables Ashaya + Quirion/Scryb Ranger infinite mana loops.",
+        steps: [
+          "Cast Joraga Treespeaker ({G}). She enters as a 1/1 — wait one turn for summoning sickness.",
+          "On next turn: pay {1}{G} to level up to level 2. She now taps to add {G} per elf you control.",
+          "With Ashaya + Quirion/Scryb Ranger: Treespeaker (≥2 elves in play) enables the infinite mana loop.",
+        ],
+        color: "#27ae60",
+      });
+    }
+    if (onBoard && canLevel1 && isMyTurn) {
+      results.push({
+        priority: 7,
+        category: "🌿 LEVEL UP",
+        headline: "Level up Joraga Treespeaker ({1}{G}) → tap for {G} per elf",
+        detail: "Levelling Treespeaker to level 2 transforms her into a Priest of Titania equivalent. With any elf-counting loop (Ashaya + Quirion Ranger, Hyrax Tower Scout + Sabertooth), she immediately enables infinite mana.",
+        steps: [
+          "Pay {1}{G}: Joraga Treespeaker advances to level 2. She now taps to add {G} per elf you control.",
+          `With ${elvesOnBoard} elves on board, she produces ${elvesOnBoard} mana per tap.`,
+          "Now enable infinite mana via Ashaya + Quirion/Scryb Ranger loop (needs ≥3 elves total).",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- WIREWOOD CHANNELER ----
+  // Elf that taps for {G} per elf — identical to Priest of Titania, CMC 4
+  if ((inHand.has("Wirewood Channeler") || board.has("Wirewood Channeler")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Wirewood Channeler");
+    const canCast = inHand.has("Wirewood Channeler") && (mana >= 4 || infiniteManaActive);
+    const output = elvesOnBoard + (onBoard ? 0 : 1); // +1 elf when she enters
+    const bigDorkAvail = findBigDork(3);
+    if (!onBoard && canCast) {
+      results.push({
+        priority: 7,
+        category: "🌿 RAMP",
+        headline: `Cast Wirewood Channeler → taps for ${output} mana (${output} elves)`,
+        detail: `Wirewood Channeler taps to add {G} for each Elf you control — effectively Priest of Titania for elves. With ${output} elves, she immediately produces ${output} mana. Enables Ashaya loops (Quirion/Scryb Ranger) and Hyrax Scout/Sabertooth bounce lines.`,
+        steps: [
+          `Cast Wirewood Channeler ({3}{G}). With ${output} elves on board, she taps for ${output} mana.`,
+          `With Ashaya + Quirion Ranger: tap Channeler (≥3 mana) → Ranger bounces her (untapping → she's a Forest via Ashaya) → recast for {1} → loop for infinite mana.`,
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- DEFILER OF VIGOR ----
+  // Phyrexian card: cast green spells paying life instead of {G}; creatures entering put +1/+1 counters on all creatures
+  if ((inHand.has("Defiler of Vigor") || board.has("Defiler of Vigor")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Defiler of Vigor");
+    const canCast = inHand.has("Defiler of Vigor") && (mana >= 3 || infiniteManaActive); // can pay life for {G}{G}
+    if (onBoard && infiniteManaActive) {
+      results.push({
+        priority: 11,
+        category: "⚡ STORM ENGINE",
+        headline: "Defiler of Vigor: every spell cast puts +1/+1 counters on ALL creatures → storm win",
+        detail: "With infinite mana: every green spell you cast causes Defiler to trigger, putting +1/+1 counters on all your creatures. Infinite storm count → infinite +1/+1 counters. Swing for lethal. Defiler also lets you substitute 2 life for {G} in casting costs.",
+        steps: [
+          "Infinite mana is active. Cast any green spell — Defiler triggers, all creatures get +1/+1 counters.",
+          "With infinite spell casts (Formidable Speaker loop or Duskwatch): trigger Defiler infinitely.",
+          "All creatures become arbitrarily large. Swing for lethal combat damage.",
+        ],
+        color: "#9b59b6",
+      });
+    } else if (!onBoard && canCast) {
+      results.push({
+        priority: 6,
+        category: "⚡ STORM PIECE",
+        headline: "Cast Defiler of Vigor → enables +1/+1 counter storm win with infinite mana",
+        detail: "Defiler of Vigor is a powerful storm-win payoff: once you have infinite mana and begin casting spells in a loop (Formidable Speaker + Quirion Ranger, or Duskwatch activations), Defiler triggers on every cast, putting +1/+1 counters on all your creatures. Also lets you pay 2 life instead of {G} in casting costs.",
+        steps: [
+          "Cast Defiler of Vigor ({3}{G}{G}, or pay 2 life for each {G} in cost).",
+          "Assemble infinite mana (Ashaya + Argothian Elder, etc.).",
+          "Begin infinite spell loop → Defiler triggers each cast → all creatures get +1/+1 counters → attack for lethal.",
+        ],
+        color: "#9b59b6",
+      });
+    }
+  }
+
+  // ---- AGATHA'S SOUL CAULDRON ----
+  // Exiles creatures from graveyards, puts +1/+1 counter on equipped creature, grants their activated abilities
+  if ((inHand.has("Agatha's Soul Cauldron") || board.has("Agatha's Soul Cauldron")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Agatha's Soul Cauldron");
+    const canCast = inHand.has("Agatha's Soul Cauldron") && (mana >= 2 || infiniteManaActive);
+    const hasBigDorkInGrave = graveyard.some(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("dork"));
+    const graveDorks = graveyard.filter(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("dork"));
+    if (onBoard && hasBigDorkInGrave) {
+      results.push({
+        priority: 9,
+        category: "💀 GRAVEYARD ENGINE",
+        headline: `Agatha's Soul Cauldron: exile ${graveDorks[0]} → grant its mana ability to a creature`,
+        detail: `Agatha's Soul Cauldron exiles creatures from graveyards. Any creature with a +1/+1 counter gains all activated abilities of exiled cards. Exile ${graveDorks[0]} to grant its mana tap ability to another creature — effectively duplicating your best dork's output.`,
+        steps: [
+          `Activate Agatha's Soul Cauldron ({1}): exile ${graveDorks[0]} from graveyard.`,
+          "Any creature you control with a +1/+1 counter now has that dork's tap-for-mana ability.",
+          "Use a +1/+1 counter source (Defiler of Vigor, Marwyn ETB, etc.) to give counters to your creatures.",
+          "A creature with the exiled dork's mana ability can now be used in infinite mana loops.",
+        ],
+        color: "#8e44ad",
+      });
+    } else if (!onBoard && canCast) {
+      results.push({
+        priority: 5,
+        category: "💀 GRAVEYARD ENGINE",
+        headline: "Cast Agatha's Soul Cauldron → graveyard synergy engine",
+        detail: "Agatha's Soul Cauldron exiles creatures from any graveyard, giving creatures with +1/+1 counters their activated abilities. Key synergy: exile a mana dork to grant its tap ability to any creature with a counter, enabling additional infinite mana loops. Also disrupts opponent graveyard strategies.",
+        steps: [
+          "Cast Agatha's Soul Cauldron ({1}{G}).",
+          "Activate ({1}): exile a mana dork from any graveyard.",
+          "Give a +1/+1 counter to a creature (via Marwyn ETB, Defiler, or +1/+1 counter effects).",
+          "That creature now has the exiled dork's activated ability — can be used in mana loops.",
+        ],
+        color: "#8e44ad",
+      });
+    }
+  }
+
+  // ---- BEASTRIDER VANGUARD ----
+  // Infinite mana outlet: pays mana to create tokens or similar — key win condition
+  if ((inHand.has("Beastrider Vanguard") || board.has("Beastrider Vanguard")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Beastrider Vanguard");
+    if (onBoard && infiniteManaActive) {
+      results.push({
+        priority: 11,
+        category: "⚡ WIN OUTLET",
+        headline: "Beastrider Vanguard: infinite mana → activate repeatedly → win",
+        detail: "With infinite mana active, Beastrider Vanguard is a mana sink that converts infinite mana into a winning board state. Activate repeatedly to create infinite tokens or grow a creature to an arbitrarily large size.",
+        steps: [
+          "Infinite mana is active.",
+          "Activate Beastrider Vanguard repeatedly — each activation converts mana into tokens/counters.",
+          "With infinite activations: create infinite tokens or infinite power → attack for lethal.",
+        ],
+        color: "#e74c3c",
+      });
+    } else if (!onBoard && (isMyTurn || yevaAvailable) && (mana >= 3 || infiniteManaActive)) {
+      results.push({
+        priority: 6,
+        category: "🎯 WIN PIECE",
+        headline: "Cast Beastrider Vanguard → infinite mana outlet for win",
+        detail: "Beastrider Vanguard is a mana sink win condition. Once you have infinite mana, activate it repeatedly to generate infinite tokens or power. Cast it now to have it ready when infinite mana comes online.",
+        steps: [
+          "Cast Beastrider Vanguard.",
+          "Assemble infinite mana.",
+          "Activate Beastrider Vanguard repeatedly for infinite tokens/power → attack to win.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+  }
+
+  // ---- CARPET OF FLOWERS ----
+  // Taps for mana equal to the number of Islands opponents control (blue meta card)
+  if ((inHand.has("Carpet of Flowers") || board.has("Carpet of Flowers")) && isMyTurn) {
+    const onBoard = board.has("Carpet of Flowers");
+    if (!onBoard && mana >= 1) {
+      results.push({
+        priority: 4,
+        category: "🌿 META RAMP",
+        headline: "Cast Carpet of Flowers ({G}) → free mana vs blue decks each turn",
+        detail: "Carpet of Flowers once per turn lets you add {G} for each Island an opponent controls. In blue-heavy metas this is free extra mana every turn at a cost of only {G}. Even one Island = {G} per turn; multiple blue players = ramp engine.",
+        steps: [
+          "Cast Carpet of Flowers ({G}).",
+          "Each of your turns: tap Carpet to add {G} per Island opponents control (no cost).",
+          "Against blue opponents this typically produces 1-4 bonus {G} per turn.",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- UTILITY LANDS (in hand / castable) ----
+  // Bonders' Enclave, Mikokoro, Mariposa Military Base — draw utility lands
+  {
+    const drawLands = [
+      { name: "Bonders' Enclave", cost: 4, desc: "{4}: draw a card if you control a creature with power 4+. Repeatable draw engine with big dorks.", powerReq: 4 },
+      { name: "Mikokoro, Center of the Sea", cost: 3, desc: "{3}: each player draws a card. Group draw — best used on your turn with Yeva to fill your hand in response to a key spell.", powerReq: 0 },
+      { name: "Mariposa Military Base", cost: 2, desc: "Enters tapped. {T}: scry 1, then draw if you control a legendary creature. Filtering draw with Yeva/commanders.", powerReq: 0 },
+    ];
+    for (const dl of drawLands) {
+      if (inHand.has(dl.name) && isMyTurn) {
+        results.push({
+          priority: 3,
+          category: "🏔️ UTILITY LAND",
+          headline: `Play ${dl.name} — draw utility land`,
+          detail: dl.desc,
+          steps: [`Play ${dl.name} as your land drop.`, dl.desc],
+          color: "#7f8c8d",
+        });
+      }
+    }
+    // Bonders' Enclave activation when on board
+    if (board.has("Bonders' Enclave") && isMyTurn && (mana >= 4 || infiniteManaActive)) {
+      const hasPowerCreature = battlefield.some(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && (cd?.power ?? 0) >= 4;
+      });
+      const bigEnoughDork = findBigDork(4);
+      if (hasPowerCreature || bigEnoughDork) {
+        results.push({
+          priority: 6,
+          category: "📖 DRAW",
+          headline: "Activate Bonders' Enclave ({4}) → draw a card",
+          detail: "You control a creature with power 4 or greater. Bonders' Enclave lets you draw a card for {4}.",
+          steps: ["Pay {4}: activate Bonders' Enclave → draw a card."],
+          color: "#3498db",
+        });
+      }
+    }
+  }
+
+  // ---- SYLVAN LIBRARY ----
+  if (board.has("Sylvan Library") && isMyTurn) {
+    results.push({
+      priority: 5,
+      category: "📖 DRAW ENGINE",
+      headline: "Sylvan Library: draw 3, keep 1 free or pay 4 life per extra",
+      detail: "Sylvan Library lets you draw 3 cards at the start of your draw step. You keep 1 for free; each additional card kept costs 4 life. With infinite mana and life to spare, keep all 3. Selectively keep extra cards when they're combo pieces you need immediately.",
+      steps: [
+        "At draw step: draw 3 cards via Sylvan Library.",
+        "Keep 1 for free. For each additional card kept, pay 4 life.",
+        "With infinite mana: life is irrelevant — keep all 3 cards.",
+        "Without infinite mana: keep an extra card only if it's a critical combo piece.",
+      ],
+      color: "#27ae60",
+    });
+  }
+
+  // ---- GUARDIAN PROJECT ----
+  if (board.has("Guardian Project") && (isMyTurn || yevaAvailable)) {
+    const hasNonLegendCreatureInHand = hand.some(c => {
+      const cd = getCard(c);
+      return cd?.type === "creature" && !cd?.tags?.includes("legendary");
+    });
+    if (hasNonLegendCreatureInHand) {
+      results.push({
+        priority: 6,
+        category: "📖 DRAW ENGINE",
+        headline: "Guardian Project is live — cast creatures to draw cards",
+        detail: "Guardian Project draws you a card whenever a nontoken creature enters under your control, if it doesn't share a name with another creature you control. Every creature cast this turn triggers a draw.",
+        steps: [
+          "Guardian Project is on the battlefield.",
+          "Each nontoken creature you cast (with a unique name) draws a card on ETB.",
+          "Prioritise casting creatures that also advance your game plan.",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- REMOVAL SPELLS (contextual — when opponents have threats) ----
+  {
+    const hasThreats = opponentThreats && opponentThreats.length > 0;
+    const removalSpells = [
+      { name: "Nature's Claim", cmc: 1, desc: "Destroy target artifact or enchantment. They gain 4 life. Instant speed.", category: "🗑️ REMOVAL" },
+      { name: "Ram Through", cmc: 2, desc: "Target creature you control deals damage equal to its power to target creature. Trample means excess bleeds through.", category: "🗑️ REMOVAL" },
+      { name: "Tail Swipe", cmc: 2, desc: "Target creature you control fights another creature — but only works if yours has more power.", category: "🗑️ REMOVAL" },
+      { name: "Bouncer's Beatdown", cmc: 2, desc: "Target creature with the greatest power fights another target creature.", category: "🗑️ REMOVAL" },
+      { name: "Kenrith's Transformation", cmc: 2, desc: "Enchant target creature — it becomes a 3/3 Elk and loses all abilities. Draw a card.", category: "🗑️ REMOVAL" },
+      { name: "Reclamation Sage", cmc: 3, desc: "ETB: destroy target artifact or enchantment. Flash via Yeva.", category: "🗑️ REMOVAL" },
+      { name: "Outland Liberator", cmc: 2, desc: "Transforms into Frenzied Trapbreaker — destroys artifact or enchantment when it attacks.", category: "🗑️ REMOVAL" },
+      { name: "Manglehorn", cmc: 3, desc: "ETB destroys target artifact. Artifacts opponents control enter tapped. Stax + removal hybrid.", category: "🗑️ REMOVAL" },
+      { name: "Warping Wail", cmc: 2, desc: "Counter target sorcery / exile creature with power ≤1 / create Eldrazi Scion. Versatile instant interaction.", category: "🗑️ INTERACTION" },
+      { name: "Insidious Fungus", cmc: 3, desc: "ETB destroys target land. Also a land tutor. Excellent against greedy mana bases.", category: "🗑️ REMOVAL" },
+    ];
+    for (const spell of removalSpells) {
+      if (inHand.has(spell.name)) {
+        const canCast = mana >= spell.cmc || infiniteManaActive;
+        const isInstant = getCard(spell.name)?.type === "instant";
+        const castableNow = canCast && (isInstant ? true : isMyTurn || yevaAvailable);
+        if (castableNow && (hasThreats || isInstant)) {
+          results.push({
+            priority: hasThreats ? 7 : 4,
+            category: spell.category,
+            headline: `${spell.name}${isInstant ? " (instant)" : ""}${!isMyTurn && isInstant ? " — can cast NOW on opponent's turn" : ""}`,
+            detail: spell.desc,
+            steps: [
+              `Cast ${spell.name} (${spell.cmc > 0 ? `{${spell.cmc - 1}}{G}` : "{G}"}).`,
+              spell.desc,
+            ],
+            color: "#e74c3c",
+          });
+        }
+      }
+    }
+  }
+
+  // ---- PROTECTION SPELLS (Veil of Summer, Autumn's Veil) ----
+  {
+    const veils = [
+      { name: "Veil of Summer", cmc: 1, desc: "Counter target blue or black spell. You and your spells can't be targeted by blue/black this turn. Draw a card if opponent cast a blue/black spell. Incredible value at {G}.", priority: 9 },
+      { name: "Autumn's Veil", cmc: 1, desc: "Spells you control can't be countered by blue or black spells this turn. Creatures can't be targeted by blue/black instant/sorceries. Use when going off against blue counterspell decks.", priority: 8 },
+    ];
+    for (const veil of veils) {
+      if (inHand.has(veil.name) && mana >= veil.cmc) {
+        results.push({
+          priority: veil.priority,
+          category: "🛡️ PROTECTION",
+          headline: `${veil.name} — protect your spells from blue/black interaction`,
+          detail: veil.desc,
+          steps: [
+            `Hold ${veil.name} up (${veil.cmc} mana) until an opponent tries to counter or target your spells.`,
+            "Cast in response to counterspells or targeted removal.",
+            veil.desc,
+          ],
+          color: "#2980b9",
+        });
+      }
+    }
+  }
+
+  // ---- NOXIOUS REVIVAL ----
+  // Free instant that puts a card from any graveyard on top of its owner's library
+  if (inHand.has("Noxious Revival")) {
+    const keyCardsInGrave = graveyard.filter(c => {
+      const cd = getCard(c);
+      return cd?.tags?.some(t => ["combo","key","tutor","big-dork","infinite-dork"].includes(t));
+    });
+    if (keyCardsInGrave.length > 0) {
+      results.push({
+        priority: 8,
+        category: "♻️ RECURSION",
+        headline: `Noxious Revival (free) → return ${keyCardsInGrave[0]} to top of library`,
+        detail: `Noxious Revival costs {0} but requires paying 2 life (Phyrexian {G}{G} = pay 2 life). Returns any card from any graveyard to the top of its owner's library. Use it now to recover ${keyCardsInGrave[0]}.`,
+        steps: [
+          `Cast Noxious Revival for free (pay 2 life).`,
+          `Target ${keyCardsInGrave[0]} in graveyard — it goes to the top of your library.`,
+          "Draw it next turn, or draw it immediately if you have a draw spell.",
+        ],
+        color: "#27ae60",
+      });
+    } else {
+      // Offer disruption use case
+      results.push({
+        priority: 3,
+        category: "♻️ RECURSION",
+        headline: "Noxious Revival (free instant) — graveyard disruption or key card recovery",
+        detail: "Noxious Revival costs {0} (pay 2 life). Puts any card from any graveyard on top of its owner's library. Use offensively to recover combo pieces, or defensively to put an opponent's combo piece back on top of their library instead of letting them use it.",
+        steps: [
+          "Cast Noxious Revival for free (pay 2 life) at instant speed.",
+          "Target a key card in your graveyard to put it on top of your library, OR",
+          "Target an opponent's graveyard piece to put it on top of their library (denying graveyard access).",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- SKULLWINDER ----
+  // ETB: return a card from your graveyard to hand, opponent may return a card from their graveyard
+  if ((inHand.has("Skullwinder") || board.has("Skullwinder")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Skullwinder");
+    const keyInGrave = graveyard.find(c => {
+      const cd = getCard(c);
+      return cd?.tags?.some(t => ["combo","key","tutor","big-dork"].includes(t));
+    });
+    if (!onBoard && inHand.has("Skullwinder") && keyInGrave && (mana >= 3 || infiniteManaActive)) {
+      results.push({
+        priority: 7,
+        category: "♻️ RECURSION",
+        headline: `Cast Skullwinder → ETB returns ${keyInGrave} from graveyard`,
+        detail: `Skullwinder's ETB returns a card from your graveyard to your hand. An opponent may also return a card from their graveyard — use politics to negotiate. With ${keyInGrave} in grave, this recovers a key piece.`,
+        steps: [
+          `Cast Skullwinder ({2}{G}).`,
+          `ETB: return ${keyInGrave} to your hand.`,
+          "An opponent may also return a card from their graveyard to their hand — negotiate if needed.",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- SCAVENGING OOZE ----
+  if ((inHand.has("Scavenging Ooze") || board.has("Scavenging Ooze")) && (isMyTurn || yevaAvailable)) {
+    const onBoard = board.has("Scavenging Ooze");
+    const oppGraveThreats = graveyard.length > 0; // simplified — in real play check opponent graveyards
+    if (onBoard && isMyTurn && (mana >= 2 || infiniteManaActive)) {
+      results.push({
+        priority: 5,
+        category: "🗑️ GRAVEYARD HATE",
+        headline: "Activate Scavenging Ooze ({G}) — exile graveyard creature, grow",
+        detail: "Scavenging Ooze can activate for {G} to exile a creature card from a graveyard and get a +1/+1 counter. With infinite mana, exile all graveyards, deny reanimation/flashback, and grow Ooze to an arbitrarily large size.",
+        steps: [
+          "Pay {G}: Scavenging Ooze exiles target creature card from any graveyard → gets +1/+1 counter.",
+          "With infinite mana: exile all creature cards from all graveyards → Ooze grows infinitely → attack to win.",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
+  // ---- EMERALD MEDALLION ----
+  if ((inHand.has("Emerald Medallion") || board.has("Emerald Medallion")) && isMyTurn) {
+    if (!board.has("Emerald Medallion") && mana >= 2) {
+      results.push({
+        priority: 5,
+        category: "🌿 COST REDUCER",
+        headline: "Cast Emerald Medallion ({2}) → all green spells cost {1} less",
+        detail: "Emerald Medallion reduces the cost of all green spells by {1}. Key loop impacts: Scryb Ranger recast drops from {1}{G} to {G}, Formidable Speaker from {2}{G} to {1}{G}, Eternal Witness from {1}{G}{G} to {G}{G}. Makes marginal loops go net-positive.",
+        steps: [
+          "Cast Emerald Medallion ({2}).",
+          "All green spells cost {1} less — accelerates loop thresholds.",
+          "Example: Scryb Ranger now costs only {G} to recast, so a dork producing ≥2 mana enables the infinite loop.",
+        ],
+        color: "#f39c12",
+      });
+    }
+  }
+
+  // ---- RUNIC ARMASAUR ----
+  if ((inHand.has("Runic Armasaur") || board.has("Runic Armasaur")) && (isMyTurn || yevaAvailable)) {
+    if (!board.has("Runic Armasaur") && (mana >= 3 || infiniteManaActive)) {
+      results.push({
+        priority: 5,
+        category: "📖 DRAW ENGINE",
+        headline: "Cast Runic Armasaur → draws cards whenever opponents activate abilities",
+        detail: "Runic Armasaur draws you a card whenever an opponent activates a non-mana ability of a creature or land. Devastating against creature-based decks (Yisan, Derevi, Kinnan) and activated ability commanders. Flash in via Yeva to catch opponent's end step activations.",
+        steps: [
+          "Cast Runic Armasaur ({1}{G}{G}).",
+          "Whenever an opponent activates a non-mana ability of a creature or land: draw a card.",
+          "Against commanders like Yisan or Kinnan, this draws multiple cards per turn.",
+        ],
+        color: "#3498db",
       });
     }
   }
@@ -4428,6 +4868,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const enduranceCastable    = enduranceOnBoard
     || (enduranceInHand && isMyTurn)
     || (enduranceInHand && yevaFlash) // Endurance has flash naturally
+    || (enduranceInHand && yevaAvailable) // Yeva from command zone also enables flash
     || enduranceInGrave; // retrievable via Eternal Witness
   // For WIN NOW the bar is higher: must be on board or in hand right now.
   // BUT if Duskwatch Recruiter is castable, it can fetch Endurance from the library
@@ -5700,7 +6141,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const hasDiscardSpkr = hand.filter(c => c !== "Formidable Speaker").length > 0 ||
       (battlefield.some(c => c === "Forest") && hasRangerSpkr);
     // Don't suppress if we have Ashaya + Argothian Elder in hand (full-hand win path)
-    const hasFullHandPath = accessible("Ashaya, Soul of the Wild") && accessible("Argothian Elder") && mana >= 8;
+    const hasFullHandPath = accessible("Ashaya, Soul of the Wild") && accessible("Argothian Elder") &&
+      (mana >= (isMyTurn ? 8 : yevaFlash ? 8 : 12));
     if (spkrAvail && !infiniteManaActive && !hasFullHandPath) {
       const needs = [];
       if (!hasRangerSpkr) needs.push("Quirion/Scryb Ranger on board (for loop)");
@@ -8592,6 +9034,26 @@ function HelpModal({ onClose, onStartTour }) {
     ),
     changelog: (() => {
       const versions = [
+        {
+          version: "1.8.0", date: "2026-03-06", title: "Advisor Intelligence & Card Coverage",
+          added: [
+            "Advice for 20+ previously unrecognised cards: Joraga Treespeaker (level-up advice + loop thresholds), Wirewood Channeler (elf-count output), Defiler of Vigor (storm-win outlet with infinite mana), Agatha's Soul Cauldron (graveyard dork recycling), Beastrider Vanguard (infinite mana outlet), Carpet of Flowers (meta ramp), Emerald Medallion (loop threshold impact), Runic Armasaur (flash-in vs activated-ability commanders)",
+            "Draw engine awareness: Sylvan Library (draw-3 with life trade-offs), Guardian Project (triggers when creatures in hand), Bonders' Enclave (activation advice when power-4 creature on board)",
+            "Removal suite advice: Nature's Claim, Ram Through, Tail Swipe, Bouncer's Beatdown, Kenrith's Transformation, Reclamation Sage, Outland Liberator, Manglehorn, Warping Wail, Insidious Fungus — all now surface contextually when threats are present or instant-speed matters",
+            "Protection spells: Veil of Summer and Autumn's Veil now appear as hold-up advice with mana thresholds",
+            "Graveyard recursion: Noxious Revival (free instant recovery or disruption), Skullwinder (ETB recursion when key piece in graveyard), Scavenging Ooze (activation + infinite mana → lethal path)",
+            "62 Commander Spellbook combos now have explicit named entries (previously only covered generically via flags)",
+            "Auto-simulate run button fixed — selectBottomsFromScored was defined inside GoldfishModal closure, making it inaccessible to the module-level runNGames function",
+          ],
+          fixed: [
+            "Fierce Empath, Regal Force, Heartwood Storyteller now fire on opponent's turn when Yeva is available (were incorrectly restricted to isMyTurn only)",
+            "Endurance castable check now includes Yeva from command zone (it has native flash — command zone Yeva is sufficient)",
+            "Full-hand win path (Yeva → Ashaya + Argothian Elder → infinite → Formidable Speaker → Duskwatch) now correctly detects on opponent's turn with 23+ mana",
+            "Formidable Speaker win suppression no longer fires when Ashaya + Argothian Elder are in hand with sufficient mana",
+            "Infinite mana already active + Formidable Speaker in hand now correctly fires ⚡ CAST TO WIN (no Ranger loop needed — single ETB fetches Duskwatch directly)",
+            "Full-hand win path mana threshold: 12 on opponent's turn without flash (was incorrectly using 8 in suppression check)",
+          ],
+        },
         {
           version: "1.7.0", date: "2026-03-06", title: "Help System & Polish",
           added: [
