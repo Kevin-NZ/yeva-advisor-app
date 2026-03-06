@@ -1431,6 +1431,83 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
   const yevaFlash = board.has("Yeva, Nature's Herald");
 
+  // ---- HELPER: exact mana output of a dork given board context ----
+  function estimateDorkOutput(cardName, extraElves = 0) {
+    const t = getCard(cardName)?.tapsFor;
+    // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
+    const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
+    if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
+    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler, Marwyn
+    if (t === "creatures") return creaturesOnBoard + extraElves + badgermoleBonus; // Circle of Dreams Druid
+    if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
+    if (t === "power") {
+      // Selvala, Heart of the Wilds: tap to add mana equal to the greatest power among creatures you control.
+      // Estimate using creaturesOnBoard as a proxy for the largest power (conservative).
+      const greatestPower = Math.max(0, creaturesOnBoard); // rough proxy
+      return greatestPower + badgermoleBonus;
+    }
+    if (t === "arbor") {
+      // Arbor Elf untaps an enchanted Forest or (with Yavimaya) any land
+      const hasAura = board.has("Utopia Sprawl") || board.has("Wild Growth");
+      const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
+      // With Yavimaya + Cradle/Nykthos: can untap a big land
+      if (hasYavimaya && (board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx")))
+        return Math.max(creaturesOnBoard, devotionOnBoard) + badgermoleBonus;
+      // With aura enchantment: tap Forest for base mana + enchantment bonus
+      if (hasAura) return 2 + badgermoleBonus;
+      return 1 + badgermoleBonus;
+    }
+    return 0;
+  }
+
+  // Memoization cache for findBigDork — pure per threshold within a single analyzeGameState call.
+  const _findBigDorkCache = new Map();
+  function findBigDork(threshold) {
+    if (_findBigDorkCache.has(threshold)) return _findBigDorkCache.get(threshold);
+    const result = _findBigDorkUncached(threshold);
+    _findBigDorkCache.set(threshold, result);
+    return result;
+  }
+  // ---- HELPER: find the best big dork available and its output ----
+  // extraElves: elves in hand that would enter the battlefield as part of assembling the combo,
+  // boosting elf-counting dorks like Priest of Titania before the loop begins.
+  // FIX #12: when a dork is in hand (not yet cast), its first-loop output must cover its
+  // own cast cost before being net-positive. We reduce its effective threshold contribution
+  // by its CMC when mana is not infinite, preventing false "ONE PIECE AWAY" advice when
+  // the player has 0 available mana and the dork costs 2+ to cast.
+  function _findBigDorkUncached(threshold) {
+    // Count castable elves in hand — casting them first raises elf/creature count before the loop starts.
+    // NOTE: canCastNow may not be initialized yet when called from the infiniteManaActive IIFE,
+    // so we use a try/catch to safely fall back to false in that case.
+    let _canCast = false;
+    try { _canCast = canCastNow; } catch(e) { _canCast = false; }
+    let _infMana = false;
+    try { _infMana = infiniteManaActive; } catch(e) { _infMana = false; }
+    const elvesInHand = _canCast
+      ? hand.filter(c => getCard(c)?.tags?.includes("elf")).length
+      : 0;
+    const all = [...battlefield, ...hand];
+    const candidates = all.filter(c => {
+      if (!getCard(c)?.tags?.includes("dork") && !getCard(c)?.tags?.includes("big-dork")) return false;
+      // If the dork itself is in hand and is an elf, don't double-count it in the bonus
+      const effectiveBonus = Math.max(0, (inHand.has(c) && getCard(c)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      const rawOutput = estimateDorkOutput(c, effectiveBonus);
+      // If dork is in hand and mana is finite, first loop must also cover its cast cost
+      const castCostPenalty = (inHand.has(c) && !_infMana) ? (getCard(c)?.cmc ?? 0) : 0;
+      return (rawOutput - castCostPenalty) >= threshold;
+    });
+    if (candidates.length === 0) return null;
+    return candidates.sort((a, b) => {
+      const bonusA = Math.max(0, (inHand.has(a) && getCard(a)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      const bonusB = Math.max(0, (inHand.has(b) && getCard(b)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
+      return estimateDorkOutput(b, bonusB) - estimateDorkOutput(a, bonusA);
+    })[0];
+  }
+
+  // ---- HELPER: check combo-specific extra requirements ----
+  // infiniteMana is passed explicitly so this function is safe to call from the
+  // infiniteManaActive IIFE before the closure variable is initialised.
+
   // Compute infiniteManaActive in two passes:
   //   Pass 1: all named pieces already on the board.
   //   Pass 2: pieces in hand castable on our turn or with Yeva flash.
@@ -1487,80 +1564,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const results = [];
   const suppressedWins = []; // { label, reason } — shown as collapsed notes at end
 
-  // ---- HELPER: exact mana output of a dork given board context ----
-  function estimateDorkOutput(cardName, extraElves = 0) {
-    const t = getCard(cardName)?.tapsFor;
-    // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
-    const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
-    if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
-    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler, Marwyn
-    if (t === "creatures") return creaturesOnBoard + extraElves + badgermoleBonus; // Circle of Dreams Druid
-    if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
-    if (t === "power") {
-      // Selvala, Heart of the Wilds: tap to add mana equal to the greatest power among creatures you control.
-      // Estimate using creaturesOnBoard as a proxy for the largest power (conservative).
-      const greatestPower = Math.max(0, creaturesOnBoard); // rough proxy
-      return greatestPower + badgermoleBonus;
-    }
-    if (t === "arbor") {
-      // Arbor Elf untaps an enchanted Forest or (with Yavimaya) any land
-      const hasAura = board.has("Utopia Sprawl") || board.has("Wild Growth");
-      const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
-      // With Yavimaya + Cradle/Nykthos: can untap a big land
-      if (hasYavimaya && (board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx")))
-        return Math.max(creaturesOnBoard, devotionOnBoard) + badgermoleBonus;
-      // With aura enchantment: tap Forest for base mana + enchantment bonus
-      if (hasAura) return 2 + badgermoleBonus;
-      return 1 + badgermoleBonus;
-    }
-    return 0;
-  }
-
-  // Memoization cache for findBigDork — pure per threshold within a single analyzeGameState call.
-  const _findBigDorkCache = new Map();
-  function findBigDork(threshold) {
-    if (_findBigDorkCache.has(threshold)) return _findBigDorkCache.get(threshold);
-    const result = _findBigDorkUncached(threshold);
-    _findBigDorkCache.set(threshold, result);
-    return result;
-  }
-  // ---- HELPER: find the best big dork available and its output ----
-  // extraElves: elves in hand that would enter the battlefield as part of assembling the combo,
-  // boosting elf-counting dorks like Priest of Titania before the loop begins.
-  // FIX #12: when a dork is in hand (not yet cast), its first-loop output must cover its
-  // own cast cost before being net-positive. We reduce its effective threshold contribution
-  // by its CMC when mana is not infinite, preventing false "ONE PIECE AWAY" advice when
-  // the player has 0 available mana and the dork costs 2+ to cast.
-  function _findBigDorkUncached(threshold) {
-    // Count castable elves in hand — casting them first raises elf/creature count before the loop starts.
-    // NOTE: canCastNow may not be initialized yet when called from the infiniteManaActive IIFE,
-    // so we use a try/catch to safely fall back to false in that case.
-    let _canCast = false;
-    try { _canCast = canCastNow; } catch(e) { _canCast = false; }
-    const elvesInHand = _canCast
-      ? hand.filter(c => getCard(c)?.tags?.includes("elf")).length
-      : 0;
-    const all = [...battlefield, ...hand];
-    const candidates = all.filter(c => {
-      if (!getCard(c)?.tags?.includes("dork") && !getCard(c)?.tags?.includes("big-dork")) return false;
-      // If the dork itself is in hand and is an elf, don't double-count it in the bonus
-      const effectiveBonus = Math.max(0, (inHand.has(c) && getCard(c)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      const rawOutput = estimateDorkOutput(c, effectiveBonus);
-      // If dork is in hand and mana is finite, first loop must also cover its cast cost
-      const castCostPenalty = (inHand.has(c) && !infiniteManaActive) ? (getCard(c)?.cmc ?? 0) : 0;
-      return (rawOutput - castCostPenalty) >= threshold;
-    });
-    if (candidates.length === 0) return null;
-    return candidates.sort((a, b) => {
-      const bonusA = Math.max(0, (inHand.has(a) && getCard(a)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      const bonusB = Math.max(0, (inHand.has(b) && getCard(b)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      return estimateDorkOutput(b, bonusB) - estimateDorkOutput(a, bonusA);
-    })[0];
-  }
-
-  // ---- HELPER: check combo-specific extra requirements ----
-  // infiniteMana is passed explicitly so this function is safe to call from the
-  // infiniteManaActive IIFE before the closure variable is initialised.
   function comboExtrasSatisfied(combo, infiniteMana = false) {
 
     // needsBigDork: need a dork producing >= N mana
@@ -8428,32 +8431,59 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   let hand, library;
 
   // ── Mulligan heuristic ─────────────────────────────────────
+  // A keepable hand needs:
+  //   • At least one green-mana source (Forest, fetch, Dryad Arbor, Castle Garenbrig,
+  //     Yavimaya, or Turntimber Symbiosis — lands that can actually produce {G})
+  //   • At least one 1-CMC mana dork (Llanowar Elves, Arbor Elf, etc.) — the deck's
+  //     primary T1 play that enables everything else
+  //   • Some additional action (tutor, second dork, or combo piece)
+  const GREEN_LANDS = new Set([
+    "Forest","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath",
+    "Wooded Foothills","Yavimaya, Cradle of Growth","Castle Garenbrig",
+    "Turntimber Symbiosis","Shifting Woodland","Gaea's Cradle","Itlimoc, Cradle of the Sun",
+    "Nykthos, Shrine to Nyx",
+  ]);
   let mulligans = 0;
   for (let m = 0; m <= mullLimit; m++) {
     library = buildLibrary(deckCards);
     hand = library.slice(0, 7);
     library = library.slice(7);
-    const dorks = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
-    const lands  = hand.filter(c => getCard(c)?.type === "land").length;
-    const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
-    const canMakeT1Mana = lands >= 1 || dorks >= 2;
-    const keep = (dorks >= 1 && tutors >= 1 && canMakeT1Mana) ||
-                 (dorks >= 2 && lands >= 1);
+    const greenLands = hand.filter(c => GREEN_LANDS.has(c)).length;
+    const oneDrop    = hand.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
+    const dorks      = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
+    const tutors     = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
+    // Hard requirements: need a green land AND a 1-CMC dork
+    const hasBase    = greenLands >= 1 && oneDrop >= 1;
+    // Additional action: tutor, second dork, or a key combo piece
+    const hasAction  = tutors >= 1 || dorks >= 2;
+    const keep = hasBase && hasAction;
     if (keep || m === mullLimit) {
       // Bottom cards for mulligans
       if (m > 0) {
-        const toBottom = m; // bottom m cards (worst: excess lands, then non-combo)
-        // Score cards — keep high-value, bottom basics and excess lands
+        const toBottom = m;
         const scored = hand.map(c => {
-          const isDork  = getCard(c)?.tags?.includes("dork") ? 3 : 0;
-          const isTutor = getCard(c)?.tags?.includes("tutor") ? 3 : 0;
-          const isLand  = getCard(c)?.type === "land" ? 1 : 0;
-          const isCombo = getCard(c)?.tags?.some(t => ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t)) ? 2 : 0;
-          return { c, score: isDork + isTutor + isCombo + isLand };
-        }).sort((a, b) => a.score - b.score); // lowest score → bottom
-        const bottomed = scored.slice(0, toBottom).map(x => x.c);
+          const tags = getCard(c)?.tags ?? [];
+          const type = getCard(c)?.type ?? "";
+          const cmc  = getCard(c)?.cmc ?? 0;
+          let score = 0;
+          if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
+          if (tags.includes("tutor"))               score += 4;
+          if (tags.includes("dork") && cmc > 1)    score += 3;
+          if (tags.includes("combo") || tags.includes("key")) score += 3;
+          if (tags.some(t => ["ashaya","quirion","earthcraft","wirewood","sabertooth","duskwatch"].includes(t))) score += 2;
+          if (type === "land" && GREEN_LANDS.has(c)) {
+            const greenAlready = hand.slice(0, hand.indexOf(c)).filter(cc => GREEN_LANDS.has(cc)).length;
+            score += greenAlready === 0 ? 4 : 1; // first green land critical; extras less so
+          } else if (type === "land") {
+            score += 1; // non-green land still useful
+          }
+          if (tags.includes("fast-mana")) score += 2;
+          if (cmc >= 5 && !tags.includes("combo") && !tags.includes("key") && !tags.includes("dork")) score -= 2;
+          if (cmc >= 7) score -= 2;
+          return { c, score };
+        }).sort((a, b) => a.score - b.score);
+        const bottomed = selectBottomsFromScored(scored, toBottom);
         hand = hand.filter(c => !bottomed.includes(c));
-        // Don't re-add to library — close enough for simulation
       }
       mulligans = m;
       break;
@@ -8927,7 +8957,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         }
       }
       return result;
-    } catch { return null; }
+    } catch (e) { return { results: [], error: e?.message || "Unknown error", infiniteManaActive: false }; }
   }, [hand, battlefield, graveyard, isMyTurn, tapped]);
 
   // ── helpers ─────────────────────────────────────────────────
@@ -9039,25 +9069,130 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setPhase("stats");
   }
 
+  function scoreMulliganHand(cards) {
+    const GREEN_LANDS_SET = new Set([
+      "Forest","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath",
+      "Wooded Foothills","Yavimaya, Cradle of Growth","Castle Garenbrig",
+      "Turntimber Symbiosis","Shifting Woodland","Gaea's Cradle","Itlimoc, Cradle of the Sun",
+      "Nykthos, Shrine to Nyx",
+    ]);
+    return cards.map((c, i) => {
+      const tags = getCard(c)?.tags ?? [];
+      const type = getCard(c)?.type ?? "";
+      const cmc  = getCard(c)?.cmc ?? 0;
+      let score = 0;
+      if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
+      if (tags.includes("tutor"))               score += 4;
+      if (tags.includes("dork") && cmc > 1)    score += 3;
+      if (tags.includes("combo") || tags.includes("key")) score += 3;
+      if (tags.some(t => ["ashaya","quirion","earthcraft","wirewood","sabertooth","duskwatch"].includes(t))) score += 2;
+      if (type === "land" && GREEN_LANDS_SET.has(c)) {
+        const greenAlready = cards.slice(0, i).filter(cc => GREEN_LANDS_SET.has(cc)).length;
+        score += greenAlready === 0 ? 4 : 1; // first green land critical; extras less so
+      } else if (type === "land") {
+        score += 1; // non-green land still has some value
+      }
+      if (tags.includes("fast-mana")) score += 2;
+      if (tags.includes("stax") || tags.includes("hate")) score += 1;
+      if (tags.includes("removal")) score += 1;
+      if (cmc >= 5 && !tags.includes("combo") && !tags.includes("key") && !tags.includes("dork")) score -= 2;
+      if (cmc >= 7) score -= 2;
+      return { c, i, score };
+    }).sort((a, b) => a.score - b.score);
+  }
+
+  // Given a scored+sorted hand, pick exactly bottomCount cards to bottom.
+  // Enforces two protection rules after scoring:
+  //   1. Never bottom the only green land (if the hand has exactly one).
+  //   2. Never bottom the only 1-CMC dork (if the hand has exactly one).
+  // If a protected card lands in the bottom slice, swap it with the highest-scoring
+  // card from the bottom slice that is NOT itself protected.
+  function selectBottomsFromScored(scored, bottomCount) {
+    if (bottomCount <= 0 || scored.length === 0) return [];
+    const GREEN_LANDS_SET = new Set([
+      "Forest","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath",
+      "Wooded Foothills","Yavimaya, Cradle of Growth","Castle Garenbrig",
+      "Turntimber Symbiosis","Shifting Woodland","Gaea's Cradle","Itlimoc, Cradle of the Sun",
+      "Nykthos, Shrine to Nyx",
+    ]);
+    const allCards = scored.map(x => x.c);
+    const greenLandCount = allCards.filter(c => GREEN_LANDS_SET.has(c)).length;
+    const oneDropCount   = allCards.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
+
+    // A card is "protected" if it is the sole copy of a required resource.
+    const isProtected = (c) => {
+      if (greenLandCount === 1 && GREEN_LANDS_SET.has(c)) return true;
+      if (oneDropCount   === 1 && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1) return true;
+      return false;
+    };
+
+    // Start with the naive bottom slice (lowest-scored cards).
+    const result = scored.slice(0, bottomCount).map(x => ({ ...x }));
+    const kept   = scored.slice(bottomCount);
+
+    // For each protected card in the bottom slice, swap it with the highest-scoring
+    // non-protected card currently in the bottom slice (or from kept if none available).
+    for (let pass = 0; pass < result.length; pass++) {
+      const protectedIdx = result.findIndex(x => isProtected(x.c));
+      if (protectedIdx === -1) break; // nothing protected in bottom slice
+
+      // Find the best swap candidate: highest-scoring entry in result that is NOT protected.
+      let swapIdx = -1;
+      for (let j = result.length - 1; j >= 0; j--) {
+        if (j !== protectedIdx && !isProtected(result[j].c)) { swapIdx = j; break; }
+      }
+
+      if (swapIdx !== -1) {
+        // Swap the protected card out with the least-bad non-protected card in bottom slice
+        const temp = result[protectedIdx];
+        result[protectedIdx] = result[swapIdx];
+        result[swapIdx] = temp;
+        // Move the now-kept protected card back to kept (order doesn't matter)
+        const savedProtected = result.splice(protectedIdx < swapIdx ? protectedIdx : swapIdx, 1)[0];
+        // result now has bottomCount-1 entries; pull in the next-worst from kept
+        if (kept.length > 0) result.push(kept.shift());
+      } else {
+        // Every card in the bottom slice is protected — can't avoid bottoming one.
+        // Leave as-is (forced situation, hand has no good options).
+        break;
+      }
+    }
+
+    return result.map(x => x.c);
+  }
+
   function doMulligan() {
     const newCount = mulliganCount + 1;
     const lib = buildLibrary(deckCards);
+    const newHand = lib.slice(0, 7);
     setLibrary(lib.slice(7));
     setMulliganCount(newCount);
-    setHand(lib.slice(0, 7));
-    setPendingBottoms([]);
+    setHand(newHand);
     const bottomCount = Math.max(0, newCount - 1);
     const newHandSize = 7 - bottomCount;
     if (bottomCount === 0) {
+      setPendingBottoms([]);
       setPhase2(null);
       addLog(`Mulligan #${newCount} — free! Drew 7, no cards to bottom.`, COLORS.gold);
     } else if (newHandSize <= 0) {
       // Mulliganing to 0 — auto-bottom everything, skip selection
       setHand([]);
+      setPendingBottoms([]);
       setLibrary(prev => [...prev, ...shuffleArray(lib.slice(0, 7))]);
       setPhase2(null);
       addLog(`Mulligan #${newCount} — mulliganed to 0. All cards returned to library.`, COLORS.gold);
     } else {
+      // Pre-select the suggested cards to bottom
+      const scored = scoreMulliganHand(newHand);
+      const preSelectedCards = selectBottomsFromScored(scored, bottomCount);
+      // Map card names back to hand indices for pendingBottoms keys
+      const usedIndices = new Set();
+      const preSelected = preSelectedCards.map(c => {
+        const idx = newHand.findIndex((hc, hi) => hc === c && !usedIndices.has(hi));
+        usedIndices.add(idx);
+        return `${c}:${idx}`;
+      });
+      setPendingBottoms(preSelected);
       setPhase2("bottoming");
       addLog(`Mulligan #${newCount} — drew 7, choose ${bottomCount} card${bottomCount > 1 ? "s" : ""} to bottom.`, COLORS.gold);
     }
@@ -10049,7 +10184,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             </div>
 
             {phase2 === "bottoming" && (
-              <div style={{ marginTop: "8px", marginBottom: "16px", padding: "12px 16px", background: "#1a1a0a", border: `1px solid ${COLORS.gold}`, borderRadius: "8px", fontSize: "12px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "16px", position: "relative", zIndex: 10 }}>
+              <div style={{ marginTop: "8px", marginBottom: "8px", padding: "12px 16px", background: "#1a1a0a", border: `1px solid ${COLORS.gold}`, borderRadius: "8px", fontSize: "12px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "16px", position: "relative", zIndex: 10 }}>
                 <span>{Math.max(0, mulliganCount - 1) - pendingBottoms.length > 0
                   ? `Choose ${Math.max(0, mulliganCount - 1) - pendingBottoms.length} more card${Math.max(0, mulliganCount - 1) - pendingBottoms.length !== 1 ? "s" : ""} to bottom.`
                   : "All cards selected."
@@ -10063,6 +10198,33 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 )}
               </div>
             )}
+
+            {phase2 === "bottoming" && (() => {
+              const bottomCount = Math.max(0, mulliganCount - 1);
+              const suggested = scoreMulliganHand(hand);
+              const suggestedBottoms = selectBottomsFromScored(suggested, bottomCount);
+              return (
+                <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#0d1a0a", border: `1px solid ${COLORS.green1}44`, borderRadius: "8px", fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>
+                  <span style={{ color: COLORS.green1, fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1.5px", marginRight: "10px" }}>SUGGESTION</span>
+                  {suggestedBottoms.length > 0
+                    ? <>Bottom: {suggestedBottoms.map((c, idx) => (
+                        <span key={c+idx}>
+                          <span
+                            onClick={() => {
+                              const handIdx = hand.findIndex((hc, hi) => hc === c && !pendingBottoms.includes(`${hc}:${hi}`));
+                              if (handIdx >= 0) toggleBottom(c, handIdx);
+                            }}
+                            style={{ color: COLORS.gold, cursor: "pointer", textDecoration: "underline dotted" }}
+                            title="Click to select"
+                          >{c}</span>
+                          {idx < suggestedBottoms.length - 1 ? ", " : ""}
+                        </span>
+                      ))}</>
+                    : <span>No suggestion — all cards look useful.</span>
+                  }
+                </div>
+              );
+            })()}
 
             {phase2 !== "bottoming" && (() => {
               // Run advisor on opening hand (empty battlefield, 0 mana) to enrich grade
@@ -10331,9 +10493,17 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 )}
               </div>
               <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
-                {(!analysis || (hand.length + battlefield.length === 0)) ? (
+                {(hand.length + battlefield.length === 0) ? (
                   <div style={{ color: COLORS.textDim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
                     Play some cards to see advice.
+                  </div>
+                ) : analysis?.error ? (
+                  <div style={{ color: COLORS.red, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
+                    ⚠ Advisor error: {analysis.error}
+                  </div>
+                ) : !analysis || analysis.results.length === 0 ? (
+                  <div style={{ color: COLORS.textDim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
+                    No recommendations yet — play a land or cast a spell.
                   </div>
                 ) : (
                   analysis.results.slice(0, 12).map((a, i) => (
