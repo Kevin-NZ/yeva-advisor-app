@@ -38,7 +38,7 @@ const CARDS = {
   "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft"] , devotion:1, greenPips:1},
   "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , devotion:2, greenPips:3},
   "Eternal Witness":       { type:"creature", cmc:3, tags:["combo","human","recursion","etb"] , devotion:2, greenPips:2},
-  "Disciple of Freyalise": { type:"creature", cmc:5, tags:["combo","draw","sacrifice"] , devotion:2, greenPips:2},
+  "Disciple of Freyalise": { type:"creature", cmc:6, tags:["combo","draw","sacrifice"] , devotion:3, greenPips:3},
   "Glademuse":             { type:"creature", cmc:3, tags:["combo","draw","flash-draw"] , devotion:1, greenPips:1},
   "Beast Whisperer":       { type:"creature", cmc:4, tags:["draw","engine"] , devotion:2, greenPips:1},
   "Regal Force":           { type:"creature", cmc:7, tags:["draw","finisher","etb"] , devotion:3, greenPips:3},
@@ -60,7 +60,7 @@ const CARDS = {
   "Shifting Woodland":     { type:"land", cmc:0, tags:["land","utility","green-mana"] , devotion:0},
   "Emergence Zone":        { type:"land", cmc:0, tags:["land","flash","utility"] , devotion:0},
   "Talon Gates of Madara": { type:"land", cmc:0, tags:["land","utility"] , devotion:0},
-  "Boseiju, Who Endures":  { type:"land", cmc:0, tags:["land","removal","utility"] , devotion:0},
+  "Boseiju, Who Endures":  { type:"land", cmc:0, tags:["land","removal","utility","green-mana"] , devotion:0},
   "War Room":              { type:"land", cmc:0, tags:["land","draw"] , devotion:0},
   "Urza's Cave":           { type:"land", cmc:0, tags:["land","tutor"] , devotion:0},
   "Forest":                { type:"land", cmc:0, tags:["land","basic","forest"] , devotion:0},
@@ -656,32 +656,12 @@ const COMBOS = [
       "Infinite mana established. Disciple of Freyalise + Temur Sabertooth on battlefield (Disciple is an Elf, not a Human — Kogla cannot bounce it).",
       "Disciple ETB: each opponent sacrifices a creature. Then you draw cards equal to creatures you control.",
       "Pay {1}{G}: Temur Sabertooth bounces Disciple to hand.",
-      "Recast Disciple ({4}{G}): ETB again — each opponent sacrifices another creature, you draw again.",
+      "Recast Disciple ({3}{G}{G}{G}): ETB again — each opponent sacrifices another creature, you draw again.",
       "Loop to clear all opposing creatures. Stop drawing once you find Duskwatch Recruiter or another win outlet.",
       "Win via Duskwatch Recruiter activation loop → Sanitarium mill.",
     ]
   },
 
-  // ── WIN CON: Elvish Archdruid + Eladamri + Yavimaya (Pump + Library-Cheat Win) ──
-  {
-    id: "archdruid_eladamri_pump",
-    name: "Elvish Archdruid Pump + Eladamri (Infinite Pump Combat Win)",
-    onBattlefield: ["Elvish Archdruid", "Eladamri, Korvecdal"],
-    mustPreExist: ["Elvish Archdruid"],
-    description: "With infinite mana: Elvish Archdruid's tap ability gives all elves +N/+N until end of turn (N = elves you control). Activate repeatedly (bouncing Archdruid with Temur Sabertooth) to stack infinite pump. Eladamri's library-casting engine helps assemble the board — activate his ability to cheat the top creature into play before attacking for lethal.",
-    requires: ["Elvish Archdruid", "Eladamri, Korvecdal"],
-    needsInfiniteMana: true,
-    priority: 10,
-    type: "win-combat",
-    lines: [
-      "Infinite mana active. Elvish Archdruid + Eladamri, Korvecdal on battlefield.",
-      "Tap Elvish Archdruid: all elves you control get +N/+N until end of turn (N = elves on board).",
-      "With Temur Sabertooth: pay {1}{G} to bounce Archdruid, recast, activate again — stack unlimited +N/+N on all elves.",
-      "Eladamri: {G}, {T}, tap two untapped creatures — put any creature from top of library or hand directly onto battlefield. Use to add more elves for greater pump.",
-      "Once elves are large enough: attack for lethal across all opponents.",
-      "TIP: You only need pump equal to your opponents' remaining life totals — no need to loop more than necessary.",
-    ]
-  },
 
   // ── ENGINE: Formidable Speaker + Ashaya (Infinite Tutor Loop) ─────────
   {
@@ -972,7 +952,7 @@ const COMBOS = [
       "SETUP: Infinite mana active. Disciple of Freyalise + Temur Sabertooth on battlefield (Disciple is an Elf, not a Human — Kogla cannot bounce it).",
       "Disciple ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control.",
       "Pay {1}{G}: Temur Sabertooth bounces Disciple to hand.",
-      "Recast Disciple ({4}{G}): ETB triggers again -- opponents sacrifice again, you draw again.",
+      "Recast Disciple ({3}{G}{G}{G}): ETB triggers again -- opponents sacrifice again, you draw again.",
       "Each loop clears one creature from each opponent's board AND draws you cards.",
       "After opponents have no creatures: draw your library via repeated Disciple ETBs, then win via standard pile.",
     ]
@@ -986,38 +966,20 @@ const COMBOS = [
     mustPreExist: ["Formidable Speaker"],
     description: "With Ashaya in play, Formidable Speaker is a Forest. Quirion Ranger returns Speaker to hand, untapping a dork, then you recast for the ETB. Speaker ETB: discard a card → search your entire library for any creature. Every iteration is a guaranteed tutor — costs only a discard and {2}{G} to recast. Net mana-positive when dork produces ≥3. Find Duskwatch Recruiter → guaranteed win.",
     requires: ["Formidable Speaker", "Ashaya, Soul of the Wild", "Quirion Ranger"],
-    needsBigDork: 4,
+    needsBigDork: 3,
     priority: 8,
     type: "engine",
     lines: [
-      "Formidable Speaker + Ashaya + Quirion Ranger + a dork (≥4 mana) on battlefield.",
+      "Formidable Speaker + Ashaya + Quirion Ranger + a dork (≥3 mana) on battlefield.",
       "Speaker is a Forest via Ashaya. Quirion Ranger returns it to hand, untapping the dork.",
       "Recast Formidable Speaker ({2}{G}): ETB — discard any card from your hand. Search your ENTIRE library for any creature card and put it into your hand, then shuffle.",
       "This is a FULL library search every time — not a look-at-top-X. Every loop is a guaranteed tutor for any creature in your deck.",
-      "WITHOUT infinite mana: net-positive when dork produces ≥4 ({2}{G} recast + {G} Quirion cost = 3 net). Use to fish for infinite mana pieces.",
+      "WITHOUT infinite mana: net-positive when dork produces ≥4 ({2}{G} recast + {G} Quirion cost = 3 net). At exactly 3 mana the loop is mana-neutral — use to fish for infinite mana pieces.",
       "WITH infinite mana: loop freely — fetch Duskwatch Recruiter, then activate Duskwatch repeatedly for the deterministic win pile.",
       "Key advantage over bouncer loops: no Temur Sabertooth or Kogla required.",
     ]
   },
 
-  // ── Elvish Archdruid pump combat win (infinite mana) ────────────────────────
-  {
-    id: "archdruid_pump_win",
-    name: "Elvish Archdruid Pump + Infinite Mana (Infinite Combat Win)",
-    onBattlefield: ["Elvish Archdruid"],
-    description: "With infinite mana and Temur Sabertooth: Elvish Archdruid's activated ability gives all elves +N/+N. Activate infinitely via bouncing Archdruid with Sabertooth to give your elves arbitrarily large stats. Attack for lethal.",
-    requires: ["Elvish Archdruid"],
-    needsInfiniteMana: true,
-    priority: 10,
-    type: "win-combat",
-    lines: [
-      "SETUP: Infinite mana active. Elvish Archdruid on battlefield.",
-      "Tap Elvish Archdruid: all elves you control get +N/+N until end of turn (N = elves on board).",
-      "With Temur Sabertooth: pay {1}{G} to bounce Archdruid, recast, activate again — stack unlimited pump.",
-      "Your elf army is now arbitrarily large. Attack for lethal across all opponents.",
-      "TIP: Add Yavimaya if opponents have blockers with protection from green (makes all lands Forests for forestwalk).",
-    ]
-  },
 
   // ── WIN CON: Destiny Spinner + Ashaya Trample + Finale of Devastation ────
   {
@@ -1628,8 +1590,8 @@ const SECRET_CARDS = {
 const CATEGORIES = {
   "1-Drop Dorks": ["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Quirion Ranger","Wirewood Symbiote","Elvish Reclaimer","Elvish Spirit Guide","Magus of the Candelabra","Allosaurus Shepherd"],
   "2-3 Drop Creatures": ["Scryb Ranger","Priest of Titania","Fanatic of Rhonas","Earthcraft","Elvish Archdruid","Circle of Dreams Druid","Eladamri, Korvecdal","Duskwatch Recruiter","Heartwood Storyteller","Hyrax Tower Scout","Eternal Witness","Fauna Shaman","Formidable Speaker","Destiny Spinner","Collector Ouphe","Glademuse","Delighted Halfling","Badgermole Cub","Chomping Changeling","Yisan, the Wanderer Bard","Elvish Harbinger","Fierce Empath","Tireless Provisioner","Endurance","Hope Tender"],
-  "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Argothian Elder","Seedborn Muse","Growing Rites of Itlimoc","Beast Whisperer","Yeva, Nature's Herald","Disciple of Freyalise","Sowing Mycospawn"],
-  "6+ Drop Creatures": ["Kogla, the Titan Ape","Woodland Bellower","Regal Force","Woodcaller Automaton"],
+  "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Argothian Elder","Seedborn Muse","Growing Rites of Itlimoc","Beast Whisperer","Yeva, Nature's Herald","Sowing Mycospawn"],
+  "6+ Drop Creatures": ["Kogla, the Titan Ape","Disciple of Freyalise","Woodland Bellower","Regal Force","Woodcaller Automaton"],
   "Rocks & Artifacts": ["Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal"],
   "Enchantments": ["Utopia Sprawl","Wild Growth","Survival of the Fittest","Elvish Guidance"],
   "Instants & Sorceries": ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons","Green Sun's Zenith","Natural Order","Eldritch Evolution","Crop Rotation","Sylvan Scrying","Archdruid's Charm","Beast Within","Force of Vigor","Infectious Bite","Legolas's Quick Reflexes"],
@@ -1706,7 +1668,7 @@ function buildBoardContext(battlefield, sickSet = null, attachments = null) {
   const landCount     = battlefield.filter(c => getCard(c)?.type === "land").length;
   const basicForests  = battlefield.filter(c => {
     const tags = getCard(c)?.tags ?? [];
-    return tags.includes("basic") || tags.includes("forest");
+    return tags.includes("basic"); // only truly basic lands (Forest) — fetch lands are not basic
   }).length;
 
   // landAuraBonuses: Map<landIndex, { green, colorless, hasElvishGuidance }>
@@ -1945,9 +1907,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const availColorless = colorlessMana;
 
   // canAfford(cmc, greenPips?) — true if the pool can pay the casting cost.
-  // greenPips defaults to 0 (purely colourless or generic spells like Sol Ring).
+  // Uses the HIGHER of the passed mana pool and the battlefield's theoretical maximum.
+  // This ensures advice fires correctly when the UI snapshot was captured mid-tap or
+  // before the player has tapped all sources (e.g. Utopia Sprawl on a Forest).
+  const _bfPool      = sumManaPool(battlefield);
+  const maxGreen     = Math.max(availGreen, _bfPool.green);
+  const maxColorless = Math.max(availColorless, _bfPool.colorless);
   const canAfford = (cmc, greenPips = 0) =>
-    availGreen >= greenPips && (availGreen + availColorless) >= cmc;
+    maxGreen >= greenPips && (maxGreen + maxColorless) >= cmc;
 
   // Legacy alias used in many string interpolations and simple threshold checks
   const mana = totalMana;
@@ -2232,7 +2199,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // For Hope Tender + Lodge we need ≥3 mana output — needsAuraLand3 flag.
     // When attachments are known, we check precisely whether an aura is on a Forest.
     if (combo.needsAlso) {
-      const hasNamedLand = combo.needsAlso.some(c => board.has(c) || inHand.has(c));
+      const hasNamedLand = combo.needsAlso.some(c => {
+        if (board.has(c)) return true;
+        // Lands in hand can only satisfy the requirement on our turn (play the land first).
+        // They cannot tap mid-combo from hand — don't count them as ready.
+        if (inHand.has(c) && getCard(c)?.type === "land") return false;
+        return inHand.has(c);
+      });
       // Precise check: use boardCtx.hasAuraOnForest when attachments are provided.
       // needsAuraLand3 requires ≥2 auras on Forests, or Elvish Guidance with ≥3 elves.
       const auraLandReady = combo.needsAuraLand && (() => {
@@ -2344,6 +2317,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       };
     }
 
+    // needsSpeakerDiscard: Speaker ETB says "you MAY discard — if you do, search your library."
+    // If hand is empty the ETB fizzles entirely. Require at least one card in hand,
+    // OR a Quirion/Scryb Ranger that can bounce a Forest from battlefield as a discard source.
+    if (combo.id === "speaker_ashaya_tutor") {
+      const hasCardInHand = hand.length > 0;
+      const hasBattlefieldForest = battlefield.some(c =>
+        c === "Forest" || getCard(c)?.tags?.includes("basic") || board.has("Yavimaya, Cradle of Growth")
+      );
+      const rangerCanBounce = (board.has("Quirion Ranger") || board.has("Scryb Ranger")) && hasBattlefieldForest;
+      if (!hasCardInHand && !rangerCanBounce) {
+        return { ok: false, missing: "a card in hand to discard for Formidable Speaker's ETB (or a Ranger that can bounce a Forest)" };
+      }
+    }
+
     return { ok: true };
   }
 
@@ -2414,7 +2401,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const cd = getCard(c);
     return cd?.tags?.includes("dork") && cd?.type === "creature";
   }).length;
-  if (creatureDorksOnBoard === 0 && mana <= 2) {
+  // No mana cap — with fast mana (Mox Diamond, Wild Growth) you can have 3+ mana and still want a 1-drop dork.
+  // Suppress only when: a creature dork is already on board, or infinite mana is active.
+  if (creatureDorksOnBoard === 0 && !infiniteManaActive) {
     const dorks1 = hand.filter(c => {
       const cd = getCard(c);
       return cd?.tags?.includes("1drop") && cd?.tags?.includes("dork") && canAfford(cd.cmc ?? 0, 1);
@@ -2579,40 +2568,72 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ---- UTOPIA SPRAWL / WILD GROWTH — STANDALONE ----
-  // Even without Arbor Elf, enchanting a Forest turns it into a 2-mana source immediately.
+  // ---- UTOPIA SPRAWL / WILD GROWTH / ELVISH GUIDANCE — STANDALONE ----
+  // Even without Arbor Elf, enchanting a Forest turns it into a multi-mana source immediately.
   // Always worth casting when affordable and a valid Forest target exists.
   if ((isMyTurn || yevaAvailable) && !infiniteManaActive) {
     const auraInHand = inHand.has("Utopia Sprawl") ? "Utopia Sprawl"
                      : inHand.has("Wild Growth")   ? "Wild Growth"
+                     : inHand.has("Elvish Guidance") ? "Elvish Guidance"
                      : null;
     const hasForestTarget = battlefield.some(c =>
       getCard(c)?.type === "land" && (c === "Forest" || getCard(c)?.tags?.includes("forest"))
     );
-    const auraAlreadyOnBoard = board.has("Utopia Sprawl") || board.has("Wild Growth");
+    const auraAlreadyOnBoard = auraInHand === "Elvish Guidance"
+      ? board.has("Elvish Guidance")                              // only suppress if Guidance itself is already on board
+      : board.has("Utopia Sprawl") || board.has("Wild Growth");   // Sprawl/Growth: one is enough
+    const auraCmc    = auraInHand === "Elvish Guidance" ? 3 : 1;
+    const auraGPips  = 1;
     // Only fire if aura not already played (one per Forest is the useful pattern)
-    if (auraInHand && hasForestTarget && canAfford(1, 1) && !auraAlreadyOnBoard
+    if (auraInHand && hasForestTarget && canAfford(auraCmc, auraGPips) && !auraAlreadyOnBoard
         // Suppress if Arbor Elf block already covers this (it fires at priority 9)
         && !board.has("Arbor Elf")) {
-      const hasArbor = inHand.has("Arbor Elf") || deckList?.has("Arbor Elf");
-      const arborHint = hasArbor
-        ? " If you find Arbor Elf, it untaps the enchanted Forest for 3 mana total per tap."
-        : "";
-      results.push({
-        priority: 7,
-        category: "🌱 RAMP",
-        combo: `cast_aura_${auraInHand.toLowerCase().replace(/\s/g, "_")}`,
-        headline: `Cast ${auraInHand} ({G}) — enchanted Forest taps for {G}{G}`,
-        detail: `${auraInHand} enchants a Forest and makes it tap for one extra {G} each time. Doubles your land's mana output immediately at the cost of only {G}.${arborHint}`,
-        steps: [
-          `Cast ${auraInHand} ({G}), enchanting a Forest. Choose green for the extra colour.`,
-          "Forest now taps for {G}{G} — double your previous output.",
-          ...(hasArbor && inHand.has("Arbor Elf")
-            ? [`Cast Arbor Elf ({G}) — activate to untap the enchanted Forest for a second tap: 3 mana total.`]
-            : arborHint ? ["Find Arbor Elf to unlock the 3-mana double-tap pattern."] : []),
-        ],
-        color: "#52be80",
-      });
+      if (auraInHand === "Elvish Guidance") {
+        // Elvish Guidance: Forest taps for {G} per elf you control.
+        // Even at 0 elves now it's a 1-mana land; each elf cast later adds 1 more {G}.
+        const curElves = elvesOnBoard; // elves already on board
+        const guidanceNow = Math.max(1, curElves); // taps for at least 1 even with 0 elves
+        const hasArbor = inHand.has("Arbor Elf") || deckList?.has("Arbor Elf");
+        results.push({
+          priority: 7,
+          category: "🌱 RAMP",
+          combo: "cast_aura_elvish_guidance",
+          headline: curElves > 0
+            ? `Cast Elvish Guidance ({2}{G}) — enchanted Forest taps for ${guidanceNow}{G} (${curElves} elves), scales with each new elf`
+            : `Cast Elvish Guidance ({2}{G}) — Forest taps for {G} now, +{G} for every elf you cast`,
+          detail: `Elvish Guidance enchants a Forest making it tap for {G} per elf you control. ${curElves > 0 ? `With ${curElves} elf${curElves > 1 ? "es" : ""} already on board the Forest taps for ${guidanceNow} immediately.` : "No elves yet — the Forest taps for {G} now and gains {G} per elf cast going forward."} Every mana dork or elf creature you play increases the output by {G}. With a full board of elves this becomes an enormous mana battery.`,
+          steps: [
+            `Cast Elvish Guidance ({2}{G}), enchanting a Forest.`,
+            curElves > 0
+              ? `Forest now taps for ${guidanceNow}{G} (one per elf). Each new elf adds {G} to its output.`
+              : `Forest taps for {G} now. Cast any elf next turn and it immediately taps for {G}{G}.`,
+            ...(hasArbor && inHand.has("Arbor Elf")
+              ? [`Cast Arbor Elf ({G}) — untap the enchanted Forest for a second activation: ${guidanceNow * 2} mana total.`]
+              : hasArbor ? [`Find Arbor Elf to double the Forest's output — ${Math.max(2, guidanceNow * 2)} mana per tap cycle.`] : []),
+          ],
+          color: "#52be80",
+        });
+      } else {
+        const hasArbor = inHand.has("Arbor Elf") || deckList?.has("Arbor Elf");
+        const arborHint = hasArbor
+          ? " If you find Arbor Elf, it untaps the enchanted Forest for 3 mana total per tap."
+          : "";
+        results.push({
+          priority: 7,
+          category: "🌱 RAMP",
+          combo: `cast_aura_${auraInHand.toLowerCase().replace(/\s/g, "_")}`,
+          headline: `Cast ${auraInHand} ({G}) — enchanted Forest taps for {G}{G}`,
+          detail: `${auraInHand} enchants a Forest and makes it tap for one extra {G} each time. Doubles your land's mana output immediately at the cost of only {G}.${arborHint}`,
+          steps: [
+            `Cast ${auraInHand} ({G}), enchanting a Forest. Choose green for the extra colour.`,
+            "Forest now taps for {G}{G} — double your previous output.",
+            ...(hasArbor && inHand.has("Arbor Elf")
+              ? [`Cast Arbor Elf ({G}) — activate to untap the enchanted Forest for a second tap: 3 mana total.`]
+              : arborHint ? ["Find Arbor Elf to unlock the 3-mana double-tap pattern."] : []),
+          ],
+          color: "#52be80",
+        });
+      }
     }
   }
 
@@ -3263,14 +3284,32 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     ].filter(t => !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 1 || infiniteManaActive));
     if (gsTargets.length > 0) {
       const best = gsTargets[0];
+
+      // Priority boost: GSZ X=0 → Dryad Arbor fetches a Forest that taps for {G},
+      // which can immediately unlock other plays this same turn (e.g. lets Arbor Elf untap it,
+      // or provides the mana needed to cast a ramp spell that was just out of reach).
+      // In this case GSZ should be ordered first even if other advice has equal priority.
+      const gszUnlocksThisTurn = best.name === "Dryad Arbor" && (() => {
+        // Does Dryad Arbor's {G} enable something else in hand?
+        const manaAfterGSZ = mana - 1; // paid {G} for X=0
+        const arborMana = manaAfterGSZ + 1; // Dryad Arbor enters and can tap for {G}
+        return hand.some(c => {
+          if (c === "Green Sun's Zenith") return false;
+          const cmc = getCard(c)?.cmc ?? 99;
+          const greenPips = getCard(c)?.greenPips ?? 0;
+          return cmc <= arborMana && greenPips <= arborMana;
+        });
+      })();
+
       results.push({
-        priority: 7,
+        priority: gszUnlocksThisTurn ? 8 : 7,
         category: "🎯 GREEN SUN'S ZENITH",
-        headline: `Green Sun's Zenith (X=${best.xCost}) → ${best.name}`,
+        headline: `Green Sun's Zenith (X=${best.xCost}) → ${best.name}${gszUnlocksThisTurn ? " — unlocks more plays this turn" : ""}`,
         detail: `Green Sun's Zenith finds ${best.name} and puts it directly onto the battlefield. Shuffles itself back into library — reusable if retrieved. Cost: {${best.xCost}}{G}.`,
         steps: [
           `Cast Green Sun's Zenith with X=${best.xCost}: pay {${best.xCost}}{G}, find ${best.name} → battlefield.`,
           `${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}.`,
+          ...(gszUnlocksThisTurn ? ["Dryad Arbor enters as a Forest — tap it for {G} to cast additional spells this turn."] : []),
           ...(gsTargets.length > 1 ? [`Other options: ${gsTargets.slice(1,3).map(t => `X=${t.xCost} → ${t.name}`).join(", ")}.`] : []),
           "Zenith shuffles back into library — retrievable via Eternal Witness for repeat use.",
         ],
@@ -3683,7 +3722,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Kogla, the Titan Ape", cmc: 6, reason: "destroys a non-land permanent on ETB, bounces Humans" },
       { name: "Regal Force",          cmc: 7, reason: "draw cards equal to creatures on board — often draws 6-10" },
       { name: "Woodcaller Automaton", cmc: 10, reason: "prototype {2}{G}{G} — untaps Cradle/Nykthos with haste. Always cast via prototype; full cost only matters for Yisan/Bellower (neither can fetch it)" },
-      { name: "Disciple of Freyalise",cmc: 5, reason: "ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control — board wipe + draw engine" },
+      { name: "Disciple of Freyalise",cmc: 6, reason: "ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control — board wipe + draw engine" },
     ].filter(t => !board.has(t.name) && !inHand.has(t.name));
     if (empathTargets.length > 0) {
       const castable = inHand.has("Fierce Empath") && (mana >= 3 || infiniteManaActive);
@@ -5120,6 +5159,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (combo.id === "seedborn_engine" &&
         results.some(r => r.combo === "seedborn_bespoke")) continue;
 
+    // Disciple loop: disciple_freyalise_loop and disciple_loop describe the same win line.
+    // The bespoke Disciple block (below) fires under the same conditions and is more context-aware.
+    // Suppress disciple_freyalise_loop if disciple_loop or the bespoke block has already fired.
+    if (combo.id === "disciple_freyalise_loop" &&
+        results.some(r => r.combo === "disciple_loop" || r.combo === "disciple_bespoke")) continue;
+
     if (missing.length === 0 && extras.ok) {
       // Type metadata: label, headline prefix, priority boost, color
       const typeMeta = {
@@ -6005,7 +6050,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const quirionOnBoard  = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const quirionName     = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
     const hasDuskwatch    = board.has("Duskwatch Recruiter") || accessible("Duskwatch Recruiter");
-    const bigDork         = findBigDork(battlefield, hand, infiniteManaActive, 2);
+    const bigDork         = findBigDork(2);
     const creatureCount   = battlefield.filter(c => getCard(c)?.type === "creature").length;
 
     // ── All pieces in hand: Yeva → Ashaya + Argothian Elder → infinite → Speaker → Duskwatch → WIN ──
@@ -6209,7 +6254,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         headline: "Disciple of Freyalise loop: wipe all opponent creatures, draw entire library",
         detail: `Each Disciple ETB forces each opponent to sacrifice a creature, then you draw ${crCount} cards. Loop with ${bouncer2} to clear boards and draw your library.`,
         steps: [
-          ...(inHand.has("Disciple of Freyalise") && !board.has("Disciple of Freyalise") ? ["Cast Disciple of Freyalise ({4}{G})."] : []),
+          ...(inHand.has("Disciple of Freyalise") && !board.has("Disciple of Freyalise") ? ["Cast Disciple of Freyalise ({3}{G}{G}{G})."] : []),
           `Disciple ETB: each opponent sacrifices a creature. You draw ${crCount} cards.`,
           bouncer2 === "Temur Sabertooth"
             ? "Pay {1}{G}: Temur Sabertooth bounces Disciple. Recast. ETB again."
@@ -12361,6 +12406,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       const cd = getCard(c);
       return cd?.tags?.includes("dork") && cd?.tags?.includes("1drop");
     }).length;
+    // Enchant-land ramp (Utopia Sprawl, Wild Growth): functionally equivalent to dorks for mulligan purposes —
+    // castable T1 on a Forest, immediately doubles that land's output next turn.
+    const enchantLandRamp = cards.filter(c => getCard(c)?.tags?.includes("enchant-land")).length;
+    // Combined ramp count used in grading rules
+    const rampCount = dorks + enchantLandRamp;
     const lands  = cards.filter(c => getCard(c)?.type === "land").length;
     // Cradle/Itlimoc produce 0 mana T1 with no creatures — exclude from "real" land count for T1 planning
     const realLands = cards.filter(c => {
@@ -12382,8 +12432,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     const hasCradleOnly = lands > 0 && realLands === 0; // only "lands" are Cradle(s)
     // T1 green mana: need a green-producing land. Colourless-only lands (Nykthos, Wirewood Lodge, etc.) don't enable T1 green plays.
     const canMakeT1Green = greenLands >= 1;
-    // Broader T1 mana (for "can cast something"): real land or 2 dorks
-    const canMakeT1Mana = realLands >= 1 || dorks >= 2;
+    // T1 mana: need at least one real land. Dorks in hand cannot produce mana before being cast —
+    // "2 dorks in hand" does NOT mean T1 mana is available, only lands do.
+    const canMakeT1Mana = realLands >= 1;
+    // All ramp is slow: dorks exist but none are 1-drops or enchant-land auras castable T1.
+    // These hands can't do anything until T2+ and are much weaker than hands with a T1 play.
+    const allRampIsSlow = rampCount >= 1 && dorks1 === 0 && enchantLandRamp === 0;
     let notes = [];
 
     // Hard gate: no green mana source at all → always MULLIGAN regardless of other factors.
@@ -12398,54 +12452,72 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
     }
 
-    // Rule 1: dork + tutor = keep (core game plan)
-    if (dorks >= 1 && tutors >= 1) {
+    // Rule 1: ramp (dork or enchant-land) + tutor = keep (core game plan)
+    if (rampCount >= 1 && tutors >= 1) {
       if (canMakeT1Mana) {
-        notes.push(`${dorks} dork${dorks > 1 ? "s" : ""} + ${tutors} tutor${tutors > 1 ? "s" : ""} ✓✓ — core game plan`);
+        const rampLabel = dorks >= 1 && enchantLandRamp >= 1 ? `${dorks} dork${dorks>1?"s":""} + ${enchantLandRamp} enchant-land`
+                        : enchantLandRamp >= 1 ? `${enchantLandRamp} enchant-land ramp` : `${dorks} dork${dorks>1?"s":""}`;
+        notes.push(`${rampLabel} + ${tutors} tutor${tutors > 1 ? "s" : ""} ✓✓ — core game plan`);
         if (dorks1 >= 1 && greenLands >= 1) notes.push(`1-drop dork T1 ✓ — can play ${cards.find(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork"))} turn 1`);
+        if (enchantLandRamp >= 1 && greenLands >= 1) notes.push(`Enchant-land ramp T1 ✓ — ${cards.find(c => getCard(c)?.tags?.includes("enchant-land"))} on a Forest`);
         if (realLands === 0 && lands === 0) notes.push("0 lands — dork must stick T1");
         if (hasCradleOnly) notes.push("⚠️ Gaea's Cradle only — no T1 mana without a dork first");
         if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} in hand`);
+        // Downgrade to BORDERLINE if all ramp is slow (no 1-drop dork, no enchant-land) —
+        // hand passes T1 with nothing happening and is a full turn behind fast openers.
+        if (allRampIsSlow) {
+          const slowDorkNames = cards.filter(c => {
+            const cd = getCard(c);
+            return cd?.tags?.includes("dork") && !cd?.tags?.includes("1drop");
+          }).map(c => `${c} (${getCard(c)?.cmc})`).join(", ");
+          notes.push(`⚠️ No 1-drop dork or T1 enchant-land — earliest ramp is T2 (${slowDorkNames})`);
+          notes.push("Keepable but one turn slower than ideal — consider mulliganing for a 1-drop dork");
+          return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+        }
         return enrichWithAnalysis({ grade: { label: "KEEP", color: COLORS.green2 }, notes }, advisorAnalysis);
       } else {
         if (hasCradleOnly) notes.push("⚠️ Gaea's Cradle is your only land — produces 0 mana T1 with no creatures");
-        notes.push("dork + tutor but no mana to cast them ✗");
+        notes.push("ramp + tutor but no mana to cast them ✗");
         return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
       }
     }
 
-    // Rule 2: no dork = can't execute game plan
-    if (dorks === 0) {
+    // Rule 2: no ramp at all = can't execute game plan
+    if (rampCount === 0) {
       if (tutors >= 1) {
-        notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no dork ✗ — can find one but can't cast it T1`);
+        notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no ramp ✗ — can find a dork but can't cast it T1`);
       } else {
-        notes.push("no dorks, no tutors ✗ — can't execute game plan");
+        notes.push("no ramp, no tutors ✗ — can't execute game plan");
         if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} with no way to find the rest`);
       }
       return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
     }
 
-    // Remaining: dork(s) but no tutor
+    // Remaining: ramp but no tutor
     let score = 0;
-    if (greenLands >= 2 && greenLands <= 4)     { score += 2; notes.push(`${greenLands} green lands ✓`); }
-    else if (greenLands === 1 && dorks >= 2)     { score += 2; notes.push("1 green land + 2+ dorks ✓"); }
-    else if (greenLands === 1 && dorks1 >= 1)    { score += 1; notes.push("1 green land + 1-drop dork ✓ — T1 play available"); }
-    else if (greenLands === 1)                   { score += 0; notes.push("1 green land, 1 dork — tight"); }
-    else if (greenLands === 0 && hasCradleOnly)  { score -= 2; notes.push("⚠️ Cradle only — no T1 mana without creatures"); }
-    else if (greenLands === 0)                   { score -= 2; notes.push("no green lands ✗"); }
-    else                                         { score += 1; notes.push(`${greenLands} green lands (mana-heavy)`); }
+    if (greenLands >= 2 && greenLands <= 4)          { score += 2; notes.push(`${greenLands} green lands ✓`); }
+    else if (greenLands === 1 && rampCount >= 2)      { score += 2; notes.push("1 green land + 2+ ramp ✓"); }
+    else if (greenLands === 1 && dorks1 >= 1)         { score += 1; notes.push("1 green land + 1-drop dork ✓ — T1 play available"); }
+    else if (greenLands === 1 && enchantLandRamp >= 1){ score += 1; notes.push("1 green land + enchant-land ramp ✓ — T1 play available"); }
+    else if (greenLands === 1)                        { score += 0; notes.push("1 green land, 1 dork — tight"); }
+    else if (greenLands === 0 && hasCradleOnly)       { score -= 2; notes.push("⚠️ Cradle only — no T1 mana without creatures"); }
+    else if (greenLands === 0)                        { score -= 2; notes.push("no green lands ✗"); }
+    else                                              { score += 1; notes.push(`${greenLands} green lands (mana-heavy)`); }
 
     // Note colourless-only lands separately (they're not useless, just can't cast green spells)
     const colourlessOnly = realLands - greenLands;
     if (colourlessOnly > 0) notes.push(`${colourlessOnly} colourless-only land${colourlessOnly > 1 ? "s" : ""} (Nykthos/Lodge etc.) — no T1 green`);
 
     // 1-drop dorks are much stronger than generic dorks: castable T1, unlock T2 plays immediately
-    if (dorks1 >= 2)      { score += 4; notes.push(`${dorks1} 1-drop dorks ✓✓ — explosive T1/T2`); }
-    else if (dorks1 >= 1) { score += 2; notes.push(`1-drop dork ✓ — T1 ${cards.find(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork")) ?? "dork"}`); }
-    else if (dorks >= 2)  { score += 2; notes.push(`${dorks} dorks ✓ — but no T1 play`); }
-    else                  { score += 1; notes.push("1 dork (not a 1-drop) — slow start"); }
+    if (dorks1 >= 2)           { score += 4; notes.push(`${dorks1} 1-drop dorks ✓✓ — explosive T1/T2`); }
+    else if (dorks1 >= 1)      { score += 2; notes.push(`1-drop dork ✓ — T1 ${cards.find(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork")) ?? "dork"}`); }
+    else if (enchantLandRamp >= 1 && dorks >= 1) { score += 2; notes.push(`${dorks} dork${dorks>1?"s":""} + enchant-land ramp ✓`); }
+    else if (enchantLandRamp >= 2) { score += 3; notes.push(`${enchantLandRamp} enchant-land ramp ✓✓ — T1 plays on Forest`); }
+    else if (enchantLandRamp >= 1) { score += 2; notes.push(`enchant-land ramp ✓ — T1 ${cards.find(c => getCard(c)?.tags?.includes("enchant-land")) ?? "enchantment"} on a Forest`); }
+    else if (dorks >= 2)       { score += 2; notes.push(`${dorks} dorks ✓ — but no T1 play`); }
+    else                       { score += 1; notes.push("1 dork (not a 1-drop) — slow start"); }
 
-    if (combo >= 1 && (dorks >= 1 || lands >= 2)) {
+    if (combo >= 1 && (rampCount >= 1 || lands >= 2)) {
       score += 1; notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} in hand`);
     }
     notes.push("no tutor — relying on draw steps");
