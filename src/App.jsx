@@ -52,10 +52,10 @@ const CARDS = {
   "Deserted Temple":       { type:"land", cmc:0, tags:["land","combo","untap-land"] , devotion:0},
   "Yavimaya, Cradle of Growth": { type:"land", cmc:0, tags:["land","combo","forestwalk","green-mana"] , devotion:0},
   "Ancient Tomb":          { type:"land", cmc:0, tags:["land","fast-mana"] , devotion:0},
-  "Misty Rainforest":      { type:"land", cmc:0, tags:["land","fetch","forest"] , devotion:0},
-  "Verdant Catacombs":     { type:"land", cmc:0, tags:["land","fetch","forest"] , devotion:0},
-  "Windswept Heath":       { type:"land", cmc:0, tags:["land","fetch","forest"] , devotion:0},
-  "Wooded Foothills":      { type:"land", cmc:0, tags:["land","fetch","forest"] , devotion:0},
+  "Misty Rainforest":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
+  "Verdant Catacombs":     { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
+  "Windswept Heath":       { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
+  "Wooded Foothills":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
   "Geier Reach Sanitarium":{ type:"land", cmc:0, tags:["land","combo","mill","sanitarium"] , devotion:0},
   "Shifting Woodland":     { type:"land", cmc:0, tags:["land","utility","green-mana"] , devotion:0},
   "Emergence Zone":        { type:"land", cmc:0, tags:["land","flash","utility"] , devotion:0},
@@ -78,7 +78,7 @@ const CARDS = {
   "Allosaurus Shepherd":   { type:"creature", cmc:1, tags:["protection","elf"] , devotion:1, greenPips:1},
   "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , devotion:2, greenPips:1},
   "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all"] , devotion:2, greenPips:2},
-  "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf"] , devotion:2, role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G, greenPips:1},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine."},
+  "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf"] , devotion:2, role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine.", greenPips:1},
   // TUTORS
   "Worldly Tutor":         { type:"instant", cmc:1, tags:["tutor","instant"] , devotion:0, greenPips:1},
   "Chord of Calling":      { type:"instant", cmc:3, tags:["tutor","instant","convoke"] , devotion:0, greenPips:3},
@@ -106,7 +106,7 @@ const CARDS = {
   "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , devotion:1, greenPips:1},
   "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , devotion:1, role:"ramp-combo", greenPips:1},
   "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , devotion:1, role:"haste-combo", greenPips:1},
-  "Woodcaller Automaton":  { type:"creature", cmc:10, tags:["combo","untap-land"] , devotion:2, greenPips:2},
+  "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land"] , devotion:2, greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
   "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor"] , devotion:1, greenPips:1},
   "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , devotion:1, greenPips:1},
   "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling"] , devotion:1, greenPips:1},
@@ -421,16 +421,19 @@ const COMBOS = [
     id: "sabertooth_woodcaller",
     name: "Temur Sabertooth + Woodcaller Automaton + Cradle/Nykthos (≥7 mana)",
     onBattlefield: ["Temur Sabertooth", "Woodcaller Automaton"],
-    description: "Infinite mana. Woodcaller Automaton's ETB (when cast) untaps a land and turns it into a haste creature-land. Bounce Automaton with Sabertooth and recast it targeting Cradle/Nykthos. Loop cost is the recast cost; net positive when Cradle/Nykthos taps for ≥7.",
+    description: "Infinite mana. Cast Woodcaller Automaton at prototype cost ({2}{G}{G}, CMC 4, enters as 3/3). ETB: untap one target land — it becomes a 3/3 Treefolk creature with haste (still a land). Bounce Automaton with Sabertooth ({1}{G}) and recast ({2}{G}{G}). Loop cost: 6 mana total. Net positive when the animated land taps for ≥7. With Ashaya, the animated land-creature is also a Forest, enabling Ranger loops.",
     requires: ["Temur Sabertooth", "Woodcaller Automaton"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx"],
     priority: 8,
     type: "infinite-mana",
     lines: [
-      "Temur Sabertooth + Woodcaller Automaton + Gaea's Cradle or Nykthos tapping for ≥7 on battlefield.",
+      "Temur Sabertooth + Woodcaller Automaton on battlefield. Gaea's Cradle or Nykthos tapping for ≥7.",
+      "Cast Woodcaller Automaton at prototype cost ({2}{G}{G}) — enters as a 3/3.",
+      "ETB triggers (cast only): untap one target land (Cradle or Nykthos). That land becomes a 3/3 Treefolk creature with haste. It is still a land.",
+      "Tap Cradle/Nykthos for ≥7 mana.",
       "Pay {1}{G}: Sabertooth bounces Woodcaller Automaton to hand.",
-      "Recast Automaton (prototype {2}{G}{G}): ETB untaps Cradle/Nykthos, which gains haste as a creature-land.",
-      "Tap Cradle/Nykthos for ≥7 mana. Net: positive mana per loop.",
+      "Recast Woodcaller Automaton at prototype ({2}{G}{G}): ETB untaps and re-animates Cradle/Nykthos again.",
+      "Total loop cost: {1}{G} bounce + {2}{G}{G} recast = 6 mana. Net: ≥+{G} when land taps for ≥7.",
       "Repeat for infinite mana.",
     ]
   },
@@ -442,14 +445,14 @@ const COMBOS = [
     name: "Fanatic of Rhonas + Ashaya + Quirion/Scryb Ranger",
     onBattlefield: ["Fanatic of Rhonas", "Ashaya, Soul of the Wild"],
     mustPreExist: ["Fanatic of Rhonas"],
-    description: "Infinite mana. Fanatic of Rhonas taps for {G} normally, or {G}{G}{G}{G} via Ferocious (needs a power-4+ creature). Via Ashaya, both Fanatic and rangers become 4/4 Forests — Ferocious is always active in the loop. Quirion Ranger returns itself to untap Fanatic (loop cost {G}), netting {3}. Scryb Ranger variant costs {1}{G} to recast, netting {2}. Both are clean infinite mana lines.",
+    description: "Infinite mana. Fanatic of Rhonas taps for {G} normally, or {G}{G}{G}{G} via Ferocious (needs a power-4+ creature). Ashaya's power equals the number of Forests you control — with Ashaya on board all your creatures are Forests, so her power scales with your board. Ferocious is active as long as Ashaya's power is ≥4 (i.e. you control ≥4 Forests/creatures). Quirion Ranger returns itself to untap Fanatic (loop cost {G}), netting {3}. Scryb Ranger variant costs {1}{G} to recast, netting {2}. Both are clean infinite mana lines.",
     requires: ["Fanatic of Rhonas", "Ashaya, Soul of the Wild"],
     needsRanger: true,
     priority: 9,
     type: "infinite-mana",
     lines: [
       "Fanatic of Rhonas + Ashaya, Soul of the Wild + Quirion or Scryb Ranger on battlefield.",
-      "Tap Fanatic of Rhonas as a Forest (via Ashaya) for {G}{G}{G}{G} — Ferocious is active because Ashaya's tokens are 4/4.",
+      "Tap Fanatic of Rhonas as a Forest (via Ashaya) for {G}{G}{G}{G} — Ferocious is active because Ashaya's power equals the number of Forests you control (all creatures are Forests via Ashaya), so with ≥4 creatures on board Ashaya is power 4+.",
       "Quirion Ranger: return itself to hand (it's a Forest via Ashaya), untapping Fanatic. Recast for {G}. Net: +{3} per loop.",
       "Scryb Ranger variant: return itself, untap Fanatic. Recast for {1}{G}. Net: +{2} per loop.",
       "Repeat for infinite green mana.",
@@ -497,22 +500,47 @@ const COMBOS = [
     ]
   },
 
+  // ── 10d-ii. Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid + 1-drop Elf (no Ashaya) ──
+  // Covers Spellbook #4 (Llanowar Elves) and #5 (Elvish Mystic) — no Ashaya required.
+  {
+    id: "sabertooth_symbiote_circle_no_ashaya",
+    name: "Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid + 1-drop Elf (no Ashaya)",
+    onBattlefield: ["Temur Sabertooth", "Wirewood Symbiote", "Circle of Dreams Druid"],
+    mustPreExist: ["Circle of Dreams Druid"],
+    description: "Infinite mana without Ashaya. Spellbook combos #4/#5. Circle of Dreams Druid taps for {G} per creature. Wirewood Symbiote returns a 1-drop elf to hand, untapping Circle. Temur Sabertooth bounces Symbiote (resetting once-per-turn), costing {1}{G}. Recast Symbiote ({G}) and the 1-drop ({G}). Net positive when Circle taps for ≥5 (i.e. you control ≥5 creatures).",
+    requires: ["Temur Sabertooth", "Wirewood Symbiote", "Circle of Dreams Druid"],
+    needsOneDrop: true,
+    needsBigDork: 5,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid + a 1-drop elf (e.g. Llanowar Elves or Elvish Mystic) all on battlefield. Control at least 5 creatures. Circle does NOT have summoning sickness.",
+      "Tap Circle of Dreams Druid for ≥5 {G} (one per creature you control).",
+      "Activate Wirewood Symbiote: return the 1-drop elf to hand, untapping Circle of Dreams Druid.",
+      "Pay {1}{G}: activate Temur Sabertooth, returning Wirewood Symbiote to hand (resets its once-per-turn restriction).",
+      "Cast Wirewood Symbiote ({G}). Cast the 1-drop elf ({G}). Total loop cost: {3}{G}.",
+      "Net mana per loop: (creatures controlled) − 4. With 5 creatures = +1 per loop. Repeat for infinite mana.",
+    ]
+  },
+
   // ── 10e. Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout loops ────
   {
     id: "woodcaller_ashaya_loop",
     name: "Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout",
     onBattlefield: ["Woodcaller Automaton", "Ashaya, Soul of the Wild"],
-    description: "Infinite mana. Woodcaller Automaton's ETB untaps a land AND turns it into a haste creature-land. With Ashaya in play, Automaton itself becomes a Forest. Bounce Automaton with Temur Sabertooth and recast targeting Cradle/Nykthos. Also goes infinite via Ashaya Ranger loops when Automaton's land-creature produces ≥2 mana.",
+    description: "Infinite mana. Cast Woodcaller Automaton at prototype ({2}{G}{G}, 3/3). ETB untaps one target land and animates it into a 3/3 Treefolk with haste (still a land). With Ashaya, Automaton itself becomes a Forest too. The animated haste land-creature can tap for mana immediately. Bounce Automaton with Temur Sabertooth and recast targeting Cradle/Nykthos. Also goes infinite via Ashaya Ranger loops — with the animated creature being a Forest via Ashaya, Ranger can bounce it.",
     requires: ["Woodcaller Automaton", "Ashaya, Soul of the Wild"],
     needsAlsoBouncer: true,
     priority: 8,
     type: "infinite-mana",
     lines: [
       "Woodcaller Automaton + Ashaya, Soul of the Wild + Temur Sabertooth on battlefield.",
-      "ETB: Automaton untaps target land and it becomes a 4/4 creature-land with haste (Ashaya makes it a Forest too).",
-      "Quirion/Scryb Ranger loop: Ranger bounces itself (now a Forest) to untap Automaton. With Cradle/Nykthos as the animated land, net mana per loop.",
-      "Sabertooth loop (standalone): bounce Automaton with Sabertooth, recast to untap Cradle/Nykthos. Net positive when Cradle/Nykthos taps for ≥7.",
-      "Wirewood Symbiote loop: Symbiote untaps Automaton, Sabertooth bounces Symbiote. Net positive when Automaton/Cradle produces ≥5.",
+      "Cast Automaton at prototype ({2}{G}{G}): ETB untaps one target land (e.g. Cradle or Nykthos). That land becomes a 3/3 Treefolk creature with haste. It is still a land.",
+      "With Ashaya, the animated land-creature is also a Forest — enabling Ranger loops on it directly.",
+      "The animated land has haste — tap it for mana immediately (Cradle counts all your creatures including the haste land).",
+      "Quirion/Scryb Ranger loop: Ranger bounces itself (a Forest via Ashaya) to untap Automaton. Net positive when total mana exceeds loop cost.",
+      "Sabertooth loop: bounce Automaton ({1}{G}), recast ({2}{G}{G}), re-untap and re-animate the land. Total loop cost: 6 mana. Net positive when land taps for ≥7.",
+      "Wirewood Symbiote loop: Symbiote untaps Automaton, Sabertooth bounces Symbiote. Net positive when animated land produces ≥5.",
     ]
   },
 
@@ -1167,6 +1195,28 @@ const COMBOS = [
   },
 
 
+  // ── Kogla + Karametra's Acolyte (no haste required, Spellbook #2) ────────
+  {
+    id: "kogla_karametra_loop",
+    name: "Kogla, the Titan Ape + Karametra's Acolyte (devotion ≥6)",
+    onBattlefield: ["Kogla, the Titan Ape", "Karametra's Acolyte"],
+    mustPreExist: ["Karametra's Acolyte"],
+    description: "Infinite mana — Spellbook combo #2. No haste enabler required. Karametra's Acolyte taps for {G} equal to your green devotion. Kogla bounces her for {1}{G} (Human subtype). Recast for {3}{G}. Net positive when devotion ≥6 (producing 6 mana to cover {1}{G}+{3}{G}=5 total cost). Each recast also destroys an artifact or enchantment via Kogla.",
+    requires: ["Kogla, the Titan Ape", "Karametra's Acolyte"],
+    needsMinElves: 0,  // devotion check handled via needsBigDork threshold
+    needsBigDork: 6,
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Kogla, the Titan Ape + Karametra's Acolyte on battlefield. Acolyte does NOT have summoning sickness. Your devotion to green is at least 6.",
+      "Activate Karametra's Acolyte ({T}): add {G} equal to your green devotion (≥6 mana).",
+      "Pay {1}{G}: activate Kogla, returning Karametra's Acolyte (a Human) to your hand.",
+      "Cast Karametra's Acolyte ({3}{G}): Kogla triggers, destroying target artifact or enchantment.",
+      "Total loop cost: {1}{G} bounce + {3}{G} recast = 5 mana. Net: devotion − 5 per loop.",
+      "Repeat for infinite green mana and incidental artifact/enchantment removal.",
+    ],
+  },
+
   // ── Ashaya + Scryb Ranger + Named Big Dork ───────────────────────────────
   // Covers Spellbook #3,7,11,14,21,26,27,41,49 — Scryb Ranger untaps dork (costs {1}{G})
   // Net positive when dork ≥3 mana. Named dorks: Priest, Circle, Selvala, Karametra,
@@ -1590,8 +1640,8 @@ const SECRET_CARDS = {
 const CATEGORIES = {
   "1-Drop Dorks": ["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Quirion Ranger","Wirewood Symbiote","Elvish Reclaimer","Elvish Spirit Guide","Magus of the Candelabra","Allosaurus Shepherd"],
   "2-3 Drop Creatures": ["Scryb Ranger","Priest of Titania","Fanatic of Rhonas","Earthcraft","Elvish Archdruid","Circle of Dreams Druid","Eladamri, Korvecdal","Duskwatch Recruiter","Heartwood Storyteller","Hyrax Tower Scout","Eternal Witness","Fauna Shaman","Formidable Speaker","Destiny Spinner","Collector Ouphe","Glademuse","Delighted Halfling","Badgermole Cub","Chomping Changeling","Yisan, the Wanderer Bard","Elvish Harbinger","Fierce Empath","Tireless Provisioner","Endurance","Hope Tender"],
-  "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Argothian Elder","Seedborn Muse","Growing Rites of Itlimoc","Beast Whisperer","Yeva, Nature's Herald","Sowing Mycospawn"],
-  "6+ Drop Creatures": ["Kogla, the Titan Ape","Disciple of Freyalise","Woodland Bellower","Regal Force","Woodcaller Automaton"],
+  "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Argothian Elder","Seedborn Muse","Growing Rites of Itlimoc","Beast Whisperer","Yeva, Nature's Herald","Sowing Mycospawn","Woodcaller Automaton"],
+  "6+ Drop Creatures": ["Kogla, the Titan Ape","Disciple of Freyalise","Woodland Bellower","Regal Force"],
   "Rocks & Artifacts": ["Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal"],
   "Enchantments": ["Utopia Sprawl","Wild Growth","Survival of the Fittest","Elvish Guidance"],
   "Instants & Sorceries": ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons","Green Sun's Zenith","Natural Order","Eldritch Evolution","Crop Rotation","Sylvan Scrying","Archdruid's Charm","Beast Within","Force of Vigor","Infectious Bite","Legolas's Quick Reflexes"],
@@ -1652,14 +1702,17 @@ function buildBoardContext(battlefield, sickSet = null, attachments = null) {
   // We track this via explicit "power4" tag or by checking known big creatures.
   // Fanatic of Rhonas itself is power 3 — it does NOT enable its own ferocious.
   const POWER4_TAGS = new Set(["power4","big-creature"]);
-  const POWER4_NAMES = new Set(["Ashaya, Soul of the Wild","Kogla, the Titan Ape","Temur Sabertooth","Selvala, Heart of the Wilds","Yorvo, Lord of Garenbrig","Vorinclex, Voice of Hunger","Craterhoof Behemoth","Primeval Titan","Nylea, God of the Hunt","Rhonas the Indomitable","Ghalta, Primal Hunger"]);
+  // Ashaya's power = number of Forests you control (all creatures are Forests with Ashaya out,
+  // so her power scales with creature count). Only treat her as power 4+ when there are ≥4 creatures.
+  const POWER4_NAMES = new Set(["Kogla, the Titan Ape","Temur Sabertooth","Selvala, Heart of the Wilds","Yorvo, Lord of Garenbrig","Vorinclex, Voice of Hunger","Craterhoof Behemoth","Primeval Titan","Nylea, God of the Hunt","Rhonas the Indomitable","Ghalta, Primal Hunger"]);
+  const ashayaOnBoard = battlefield.includes("Ashaya, Soul of the Wild");
   const hasFerocious = creatures.some(c => {
     const cd = getCard(c);
     if (!cd) return false;
     if (POWER4_NAMES.has(c)) return true;
     if (cd.tags?.some(t => POWER4_TAGS.has(t))) return true;
     return false;
-  });
+  }) || (ashayaOnBoard && creatures.length >= 4); // Ashaya is power 4+ when you control ≥4 creatures (all Forests)
   const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
   const hasYavimaya   = board.has("Yavimaya, Cradle of Growth");
   const hasAura       = board.has("Utopia Sprawl") || board.has("Wild Growth");
@@ -1747,7 +1800,13 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     if (typeof t === "number") {
       amt = t + (t > 0 ? badgermoleBonus : 0);
     } else if (t === "elves") {
-      amt = elves + badgermoleBonus;
+      // Joraga Treespeaker: tagged tapsFor:"elves" but only does so AFTER level-up (not simulated).
+      // Treat it as a plain {G} source in the sim to avoid overcounting.
+      if (card === "Joraga Treespeaker") {
+        amt = 1 + badgermoleBonus;
+      } else {
+        amt = elves + badgermoleBonus;
+      }
     } else if (t === "creatures") {
       amt = creatureCount + badgermoleBonus;
     } else if (t === "devotion") {
@@ -1944,15 +2003,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (t === "power") {
       // Selvala, Heart of the Wilds: {G},{T}: Add {G} equal to the greatest power among creatures you control.
       // We can't track exact power values, so we estimate:
-      //   - If a power-4+ creature is on board (hasFerocious check), use 4 as a conservative floor.
-      //   - Otherwise assume small creatures (power 1). Prevents wildly inflating output with 1/1 elves.
-      //   - Note: Selvala herself is 5/4 but she doesn't count herself ("creatures you control" = others).
-      // Check if any known power-4+ creature is on board
-      const bigOnBoard = ["Ashaya, Soul of the Wild","Kogla, the Titan Ape","Temur Sabertooth",
+      //   - If a known power-4+ creature is on board, use 4 as a conservative floor.
+      //   - Otherwise use creature count as a proxy floor (assumes roughly 1 power per creature).
+      //     This avoids severely under-counting Selvala when no explicit power-4 creature is tracked.
+      const bigOnBoard = ["Kogla, the Titan Ape","Temur Sabertooth",
         "Selvala, Heart of the Wilds","Yorvo, Lord of Garenbrig","Vorinclex, Voice of Hunger",
         "Craterhoof Behemoth","Primeval Titan","Nylea, God of the Hunt","Rhonas the Indomitable",
-        "Ghalta, Primal Hunger"].some(n => board.has(n));
-      const greatestPower = bigOnBoard ? 4 : (creaturesOnBoard > 0 ? 1 : 0);
+        "Ghalta, Primal Hunger"].some(n => board.has(n))
+        || (board.has("Ashaya, Soul of the Wild") && creaturesOnBoard >= 4); // Ashaya P/T = forests controlled
+      const greatestPower = bigOnBoard ? 4 : Math.max(1, creaturesOnBoard);
       return greatestPower + badgermoleBonus;
     }
     if (t === "arbor") {
@@ -2262,8 +2321,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // needsBattlefieldForest: requires at least one Forest land on the battlefield
     // (for Quirion Ranger to return to hand to untap a creature — no Ashaya needed)
     if (combo.needsBattlefieldForest) {
-      const hasForestOnBoard = battlefield.some(c => c === "Forest" || getCard(c)?.type === "land" && c.includes("Forest"))
-        || board.has("Yavimaya, Cradle of Growth"); // Yavimaya makes all lands Forests
+      const hasForestOnBoard = battlefield.some(c => {
+        const data = getCard(c);
+        if (!data || data.type !== "land") return false;
+        if (data.tags?.includes("fetch")) return false; // fetch lands sacrifice themselves — not a returnable Forest
+        return c === "Forest" || data.tags?.includes("forest") || data.tags?.includes("basic")
+          || c === "Yavimaya, Cradle of Growth"; // Yavimaya makes all lands Forests
+      })
       if (!hasForestOnBoard) {
         return { ok: false, missing: "at least one Forest on the battlefield (for Quirion Ranger to return and untap Speaker)" };
       }
@@ -2277,7 +2341,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // needsUntapLand: combo requires a way to repeatedly untap Geier Reach Sanitarium.
     // Valid methods:
-    //   1. Woodcaller Automaton (ETB untaps a land)
+    //   1. Woodcaller Automaton (ETB untaps one land, animates it with haste)
     //   2. Destiny Spinner + Hyrax Tower Scout (animate land, Scout untaps)
     //   3. Ashaya + Magus of the Candelabra (creatures are lands, Magus untaps X)
     //   4. Ashaya + Quirion Ranger (return Forest to hand = untap a land)
@@ -2295,7 +2359,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const hasLandAnimate = hasSpinner || hasBadgermole; // either animates lands
       const hasMagus       = board.has("Magus of the Candelabra") || (inHand.has("Magus of the Candelabra") && hasLandAnimate);
       const hasElder       = board.has("Argothian Elder") || (inHand.has("Argothian Elder") && hasLandAnimate);
-      const hasHyrax       = inHand.has("Hyrax Tower Scout");
+      const hasHyrax       = board.has("Hyrax Tower Scout") || inHand.has("Hyrax Tower Scout");
       const hasSymbiote    = board.has("Wirewood Symbiote") || inHand.has("Wirewood Symbiote");
       const hasWoodcaller  = board.has("Woodcaller Automaton") || inHand.has("Woodcaller Automaton");
 
@@ -2507,7 +2571,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const comboHint = enablesCombo.length > 0 ? ` Enables: ${enablesCombo.slice(0, 2).join(", ")}.` : "";
 
       const isFlash = !isMyTurn && yevaAvailable;
-      const priority = projectedOutput >= 4 ? 8 : 7;
+      // On my turn, casting a big dork is a concrete immediate action — prioritise it above
+      // "find a missing piece" advice (priority 8). Flash/EOT plays keep the lower scale
+      // because they require an opponent turn window and Yeva.
+      const priority = isFlash
+        ? (projectedOutput >= 4 ? 8 : 7)    // EOT flash: unchanged
+        : (projectedOutput >= 4 ? 10 : 9);  // My turn: castable now → always beats ONE PIECE AWAY / TUTOR (priority 8)
 
       results.push({
         priority,
@@ -2695,39 +2764,61 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- HOPE TENDER + BIG LAND ----
-  if (inHand.has("Hope Tender") && (mana >= 2 || infiniteManaActive)) {
+  if (inHand.has("Hope Tender") && !board.has("Hope Tender") && (mana >= 2 || infiniteManaActive) && !infiniteManaActive) {
     const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
     const hasBigLand  = board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx");
     const hasKogla    = board.has("Kogla, the Titan Ape");
-    const hasUntapper = hasKogla || board.has("Wirewood Lodge") || board.has("Quirion Ranger") || board.has("Scryb Ranger");
-    if (hasBigLand || hasYavimaya || hasUntapper) {
-      const target = board.has("Gaea's Cradle") ? "Gaea's Cradle"
-        : board.has("Nykthos, Shrine to Nyx") ? "Nykthos, Shrine to Nyx"
-        : "a key land";
-      results.push({
-        priority: hasBigLand ? 8 : 6,
-        category: "🌱 RAMP",
-        headline: hasKogla
-          ? `Cast Hope Tender — Kogla resets exert for repeatable ${target} untap`
-          : `Cast Hope Tender — exert to untap ${target}`,
-        detail: hasKogla
-          ? `Hope Tender is a Human — Kogla's {2} activated ability returns it to hand, resetting the exert. Cast, use exert ability to untap ${target}, tap ${target} for mana, Kogla bounces it back. Repeatable with infinite mana.`
-          : `Hope Tender can exert ({T}: untap target land) or tap for {G} — pick one per tap. With ${target} in play, using the exert ability to untap it each loop generates big mana.`,
-        steps: [
-          `Cast Hope Tender ({1}{G}).`,
+    const hasLodge    = board.has("Wirewood Lodge");
+    const hasRanger   = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const hasUntapper = hasKogla || hasLodge || hasRanger;
+    const hasSynergy  = hasBigLand || hasYavimaya || hasUntapper;
+
+    const target = board.has("Gaea's Cradle") ? "Gaea's Cradle"
+      : board.has("Nykthos, Shrine to Nyx") ? "Nykthos, Shrine to Nyx"
+      : hasBigLand ? "a key land" : null;
+
+    const priority = hasBigLand ? 8 : hasSynergy ? 7 : 7; // always at least 7 — concrete ramp play
+
+    const headline = hasKogla && target
+      ? `Cast Hope Tender — Kogla resets exert for repeatable ${target} untap`
+      : target
+      ? `Cast Hope Tender — exert to untap ${target}`
+      : `Cast Hope Tender ({1}{G}) — mana dork + exert engine`;
+
+    const detail = hasKogla && target
+      ? `Hope Tender is a Human — Kogla's {2} activated ability returns it to hand, resetting the exert. Cast, use exert ability to untap ${target}, tap ${target} for mana, Kogla bounces it back. Repeatable with infinite mana.`
+      : target
+      ? `Hope Tender can exert ({T}: untap target land) or tap for {G}. With ${target} in play, using the exert ability to untap it each loop generates big mana.`
+      : `Hope Tender taps for {G} like any dork, but its exert ability ({T}: untap a land or creature) unlocks powerful loops with Gaea's Cradle, Nykthos, Kogla, or Wirewood Lodge. Cast now to establish a mana presence and set up future combos.`;
+
+    const synergySuggestion = !hasSynergy
+      ? `Pairs with: Kogla (infinite loop via Human bounce), Wirewood Lodge (exert bypass), Gaea's Cradle or Nykthos (big mana untap target).`
+      : null;
+
+    results.push({
+      priority,
+      category: "🌱 RAMP",
+      headline,
+      detail,
+      steps: [
+        `Cast Hope Tender ({1}{G}).`,
+        ...(target ? [
           `Tap Hope Tender using the exert ability ({T}, exert): untap ${target}.`,
           `Tap ${target} for big mana.`,
-          ...(hasKogla ? [
-            "Pay {2}: Kogla returns Hope Tender (Human) to hand — exert fully resets.",
-            "Recast and repeat next turn (or immediately with infinite mana).",
-          ] : hasUntapper ? [
-            board.has("Wirewood Lodge") ? "Wirewood Lodge ({G}): untap Hope Tender — Lodge's forced untap bypasses the exert restriction." :
-            "Quirion Ranger: return itself to hand to untap Hope Tender — resets exert.",
-          ] : ["Add Kogla (best), Wirewood Lodge, or Quirion Ranger to reset the exert each turn."]),
-        ],
-        color: "#52be80",
-      });
-    }
+        ] : [
+          `Tap Hope Tender for {G} — or use exert ({T}): untap a land or creature.`,
+        ]),
+        ...(hasKogla ? [
+          "Pay {2}: Kogla returns Hope Tender (Human) to hand — exert fully resets.",
+          "Recast and repeat next turn (or immediately with infinite mana).",
+        ] : hasLodge ? [
+          "Wirewood Lodge ({G}): untap Hope Tender — Lodge's forced untap bypasses the exert restriction.",
+        ] : hasRanger ? [
+          "Quirion/Scryb Ranger: return a Forest to hand to untap Hope Tender — resets exert.",
+        ] : synergySuggestion ? [synergySuggestion] : []),
+      ],
+      color: "#52be80",
+    });
   }
 
   // ---- DUSKWATCH RECRUITER ACTIVATION ----
@@ -3518,26 +3609,25 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- SOWING MYCOSPAWN ----
-  if ((inHand.has("Sowing Mycospawn") || board.has("Sowing Mycospawn")) && isMyTurn) {
-    const mycospawnLands = [
-      { land: "Gaea's Cradle",           reason: "taps for {G} per creature — and Mycospawn adds to the count" },
-      { land: "Nykthos, Shrine to Nyx",  reason: `adds 1 green devotion and a 3/3 body — taps for ${devotionOnBoard+1}G with Mycospawn` },
-      { land: "Geier Reach Sanitarium",  reason: "mill win con" },
-      { land: "Wirewood Lodge",          reason: "untaps an elf — enables Argothian Elder loop" },
-    ].filter(l => !board.has(l.land) && !inHand.has(l.land));
-    if (mycospawnLands.length > 0) {
-      const castable = inHand.has("Sowing Mycospawn") && (mana >= 5 || infiniteManaActive);
-      const alreadyOnBoard = board.has("Sowing Mycospawn");
-      // Only show advice if we can actually cast it this turn, or it's already on the battlefield
-      if (castable || alreadyOnBoard) {
+  if (inHand.has("Sowing Mycospawn") && isMyTurn) {
+    // On-cast trigger only fires when cast — once it's on the battlefield the tutor has already resolved.
+    const castable = mana >= 5 || infiniteManaActive;
+    if (castable) {
+      const mycospawnLands = [
+        { land: "Gaea's Cradle",           reason: "taps for {G} per creature — and Mycospawn adds to the count" },
+        { land: "Nykthos, Shrine to Nyx",  reason: `adds 1 green devotion and a 3/3 body — taps for ${devotionOnBoard+1}G with Mycospawn` },
+        { land: "Geier Reach Sanitarium",  reason: "mill win con" },
+        { land: "Wirewood Lodge",          reason: "untaps an elf — enables Argothian Elder loop" },
+      ].filter(l => !board.has(l.land) && !inHand.has(l.land));
+      if (mycospawnLands.length > 0) {
         const best = mycospawnLands[0];
         results.push({
-          priority: castable ? 7 : 6,
+          priority: 7,
           category: "🏔️ LAND TUTOR",
           headline: `Sowing Mycospawn → ${best.land}`,
-          detail: `Sowing Mycospawn ({4}{G}): on-cast trigger fetches any land onto the battlefield. Also leaves a 3/3 body with 1 green devotion — fueling Nykthos and Gaea's Cradle simultaneously.`,
+          detail: `Sowing Mycospawn ({3}{G}): on-cast trigger fetches any land onto the battlefield. Also leaves a 3/3 body with 1 green devotion — fueling Nykthos and Gaea's Cradle simultaneously.`,
           steps: [
-            castable ? `Cast Sowing Mycospawn ({4}{G}): on-cast, search for ${best.land}.` : `Sowing Mycospawn is on the battlefield — its on-cast tutor already resolved when it entered.`,
+            `Cast Sowing Mycospawn ({3}{G}): on-cast, search for ${best.land}.`,
             best.reason.charAt(0).toUpperCase() + best.reason.slice(1) + ".",
             "3/3 body stays on battlefield, adding devotion and creature count.",
             ...(mycospawnLands.length > 1 ? [`Other targets: ${mycospawnLands.slice(1,2).map(l => l.land).join(", ")}.`] : []),
@@ -3721,7 +3811,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Woodland Bellower",    cmc: 6, reason: "ETB finds any CMC≤3 creature onto battlefield — 2-for-1 tutor" },
       { name: "Kogla, the Titan Ape", cmc: 6, reason: "destroys a non-land permanent on ETB, bounces Humans" },
       { name: "Regal Force",          cmc: 7, reason: "draw cards equal to creatures on board — often draws 6-10" },
-      { name: "Woodcaller Automaton", cmc: 10, reason: "prototype {2}{G}{G} — untaps Cradle/Nykthos with haste. Always cast via prototype; full cost only matters for Yisan/Bellower (neither can fetch it)" },
+      { name: "Woodcaller Automaton", cmc: 4, reason: "cast at prototype {2}{G}{G} (3/3, CMC 4) — ETB untaps one land and animates it into a 3/3 Treefolk with haste; with Ashaya or Sabertooth loops infinitely" },
       { name: "Disciple of Freyalise",cmc: 6, reason: "ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control — board wipe + draw engine" },
     ].filter(t => !board.has(t.name) && !inHand.has(t.name));
     if (empathTargets.length > 0) {
@@ -3907,7 +3997,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // verse 2 → CMC 2: Priest of Titania, Fanatic of Rhonas, Duskwatch Recruiter, Destiny Spinner, Earthcraft
     // verse 3 → CMC 3: Temur Sabertooth, Circle of Dreams Druid, Hyrax Tower Scout, Eladamri, Eternal Witness
     // verse 4 → CMC 4: Argothian Elder, Karametra's Acolyte
-    // verse 5+ → CMC 5+: Ashaya, Kogla, Woodcaller (prototype {2}{G}{G} but true CMC 10 — Yisan cannot fetch)
+    // verse 5+ → CMC 5+: Ashaya, Kogla. Woodcaller Automaton is CMC 4 at prototype — fetchable at verse 4.
     const yisanTargetsByVerse = {
       1: [
         { name: "Quirion Ranger",         reason: "infinite mana loop with Ashaya — the most powerful 1-drop" },
@@ -3934,6 +4024,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       4: [
         { name: "Argothian Elder",        reason: "2-card infinite mana with Wirewood Lodge (already 2 pieces)" },
         { name: "Karametra's Acolyte",    reason: "taps for devotion count — huge in a mono-green deck" },
+        { name: "Woodcaller Automaton",   reason: "prototype {2}{G}{G} — ETB untaps and animates a land as a haste creature; loops with Sabertooth or Ashaya" },
       ],
       5: [
         { name: "Ashaya, Soul of the Wild", reason: "turns all creatures into Forests — enables all infinite mana loops" },
@@ -6911,7 +7002,7 @@ function buildMillSequence(board, hand, pileNeeded = []) {
       "LOOP ITERATION (repeat until all opponents' libraries are empty):",
       `  1. Pay {2},{T} — activate Geier Reach Sanitarium: each player draws a card, then discards a card. Hold priority (do NOT pass until step 4 completes).`,
       `  2. Pay {1}{G} — activate Temur Sabertooth: return Woodcaller Automaton to hand. Pass priority.`,
-      `  3. Recast Woodcaller Automaton ({5}). ETB: untap target land — target Geier Reach Sanitarium. Sanitarium is now untapped.`,
+      `  3. Recast Woodcaller Automaton at prototype ({2}{G}{G}). ETB: untap target land — target Geier Reach Sanitarium. Sanitarium is now untapped.`,
       `  4. Repeat from step 1.`,
       "LIBRARY PROTECTION:",
       `  • When YOUR library runs low (e.g. < 5 cards): let the Endurance ETB resolve (target yourself) — graveyard shuffles back into library.`,
@@ -7574,8 +7665,13 @@ function deriveCardEntry(sf) {
   // Land subtypes
   if (type === "land") tags.push("land");
   if (typeLine.includes("basic")) tags.push("basic");
-  if (typeLine.includes("forest") || oracle.includes("add {g}") || oracle.includes("add one mana of any color")) {
+  // "forest" = printed Forest subtype (Quirion Ranger target, Arbor Elf target, etc.)
+  if (typeLine.includes("forest")) {
     if (!tags.includes("forest")) tags.push("forest");
+  }
+  // "fetch-forest" = land that can find/produce green but is NOT a Forest itself (fetchlands, green-mana sources)
+  if (!typeLine.includes("forest") && (oracle.includes("add {g}") || oracle.includes("add one mana of any color") || oracle.includes("search your library for a forest"))) {
+    if (!tags.includes("fetch-forest")) tags.push("fetch-forest");
   }
 
   // Creature subtypes
@@ -10575,6 +10671,14 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
     sickSet = new Set(); // all permanents untap and lose summoning sickness
+    // Consume one-shot mana sources (Lotus Petal) that were played last turn
+    if (simState.consumedAtEndOfTurn?.size > 0) {
+      for (const c of simState.consumedAtEndOfTurn) {
+        const idx = battlefield.indexOf(c);
+        if (idx >= 0) { battlefield.splice(idx, 1); graveyard.push(c); }
+      }
+      simState.consumedAtEndOfTurn.clear();
+    }
     if (turn > 1) {
       if (library.length > 0) { hand.push(library.shift()); }
     }
@@ -10602,6 +10706,26 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           }
           madePlay = true;
           continue;
+        }
+      }
+
+      // Elvish Spirit Guide: exile from hand → add {G} (no mana cost, not a cast).
+      // Do this eagerly when we need green mana for a 1-drop dork but have none from lands yet.
+      {
+        const esgIdx = hand.findIndex(c => c === "Elvish Spirit Guide");
+        if (esgIdx >= 0) {
+          const baseMana = calculateSimManaPool(battlefield, sickSet);
+          const hasDorkInHand = hand.some((c, i) => i !== esgIdx && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
+          const hasDorkOnBoard = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
+          if (hasDorkInHand && !hasDorkOnBoard && baseMana.green < 1) {
+            // Exile ESG to produce {G}, then cast the 1-drop
+            hand.splice(esgIdx, 1);
+            if (castLog) castLog.add("Elvish Spirit Guide");
+            const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
+            if (odIdx >= 0) { playCard(hand[odIdx], odIdx); t1Dork = true; }
+            madePlay = true;
+            continue;
+          }
         }
       }
 
@@ -10640,7 +10764,10 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       try {
         analysis = analyzeGameState({
           hand, battlefield: advisorBattlefield, graveyard,
-          manaAvailable: mana, isMyTurn: true,
+          // Pass color-split mana object so the advisor correctly distinguishes
+          // green from colorless (Sol Ring, Ancient Tomb, etc.)
+          manaAvailable: { green: manaPool.green, colorless: manaPool.colorless },
+          isMyTurn: true,
           deckList: deckSet,
         });
       } catch { break; }
@@ -10656,12 +10783,25 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         const activeCombo = comboName ? COMBOS.find(c => c.name === comboName) : null;
         let winValid = true;
 
-        if (activeCombo) {
-          // Simulate casting required pieces in order to verify green mana suffices
+        if (!activeCombo) {
+          // No identified combo — can't validate the win, treat as unachievable
+          winValid = false;
+        } else {
+          // Simulate casting required pieces in order to verify:
+          //   (a) each missing piece is actually in hand (not just theoretically reachable)
+          //   (b) green mana is sufficient to cast all missing pieces sequentially
+          //   (c) mustPreExist pieces were on the battlefield BEFORE this turn started
+          //       (they need summoning-sickness-free taps to loop — can't be cast and loop same turn)
           let remainingGreen = manaPool.green;
           let remainingColorless = manaPool.colorless;
+          const mustPre = new Set(activeCombo.mustPreExist ?? []);
           for (const req of activeCombo.requires) {
-            if (battlefield.includes(req)) continue; // already on board
+            if (battlefield.includes(req)) continue; // already on board ✓
+            // mustPreExist pieces must have been on board before this turn — casting them now means
+            // summoning sickness prevents them from tapping this turn → loop can't fire
+            if (mustPre.has(req)) { winValid = false; break; }
+            // Piece must actually be in hand — pass-2 may have flagged it as "reachable" from library
+            if (!hand.includes(req)) { winValid = false; break; }
             const data = getCard(req);
             if (!data || data.type === "land") continue;
             const cmc = data.cmc ?? 0;
@@ -10674,6 +10814,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
             if (remainingColorless < 0) { remainingGreen += remainingColorless; remainingColorless = 0; }
           }
         }
+
+        // Hard floor: T1/T2 wins are physically impossible in this deck.
+        // The cheapest real combo requires 3+ cards plus mana to cast them.
+        // Any T2 "win" is a simulator false positive — suppress it.
+        if (winValid && turn <= 2) winValid = false;
 
         if (winValid) {
           const winCard = extractPlayableCard(top, hand, battlefield);
@@ -11125,6 +11270,42 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         const j = Math.floor(Math.random() * (i + 1));
         [library[i], library[j]] = [library[j], library[i]];
       }
+    } else if (card === "Vitalize") {
+      // {G}: Untap all creatures you control. Key storm ritual — treated as a mana-neutral
+      // spell in the sim. Its real effect (untapping tapped dorks) isn't directly modelled
+      // in the mana pool (which already reads untapped creatures), but casting it is
+      // meaningful as a signal. Goes to graveyard.
+      graveyard.push(card);
+    } else if (card === "Archdruid's Charm") {
+      // {G}{G}{G}: choose one — search for a creature; search for a basic land onto battlefield;
+      // or destroy a nonland permanent. We always search for the best creature available.
+      graveyard.push(card);
+      const AC_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Temur Sabertooth", "Eternal Witness",
+        "Fierce Empath", "Elvish Harbinger", "Hyrax Tower Scout", "Hope Tender",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
+      ];
+      const boardSetAC = new Set(battlefield);
+      let acTarget = null;
+      for (const t of AC_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSetAC.has(t)) continue;
+        if (library.indexOf(t) !== -1) { acTarget = t; break; }
+      }
+      if (!acTarget) acTarget = library.find(c => getCard(c)?.type === "creature" && !boardSetAC.has(c)) ?? null;
+      if (acTarget) {
+        library.splice(library.indexOf(acTarget), 1);
+        hand.push(acTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
     } else {
       graveyard.push(card);
     }
@@ -11135,6 +11316,53 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     if (getCard(card)?.tags?.includes("enchant-land")) {
       const targetLand = battlefield.findIndex(c => getCard(c)?.type === "land");
       if (targetLand === -1) { graveyard.push(card); return; } // no land to attach to
+    }
+    // Lotus Petal: sacrifice immediately for {G}. Never enters the battlefield.
+    // We model it as an instant-speed mana boost: it produces {G} for the current turn
+    // by incrementing a one-shot mana counter, then goes to the graveyard.
+    // Since sumManaPool reads from battlefield, we instead add Lotus Petal to the
+    // battlefield briefly — it will be counted this turn — then mark it for consumption
+    // at the end of the turn. We handle this by NOT pushing to battlefield at all,
+    // and instead modelling its mana via a simState petal counter if present.
+    // Simplest correct model: treat it as an instant that adds {G} by marking a flag
+    // on simState so the mana calculation sees +1G for the rest of this turn.
+    // We implement this by adding a special "PETAL_MANA" phantom card to battlefield
+    // that sumManaPool will count as {G}, then removing after this turn.
+    if (card === "Lotus Petal") {
+      // Add a one-turn phantom: represented by adding to battlefield; we'll remove it
+      // at the start of the next turn via the sickSet trick — add it to sickSet so
+      // it looks like a creature that entered this turn, and on untap (sickSet reset) it vanishes.
+      // Actually simpler: add directly to battlefield tagged as a one-shot source and remove it
+      // by adding a cleanup entry. Since sickSet resets each turn, push to sickSet acts as
+      // "remove at next untap". We need a taps-for-1-green source that disappears.
+      // Best: just add 1 to a petals counter in simState and handle in mana calculation.
+      // Since we can't easily patch sumManaPool here, the cleanest fix is:
+      // push to battlefield NOW, and mark it for removal by appending to a consumedSet.
+      if (!simState.consumedAtEndOfTurn) simState.consumedAtEndOfTurn = new Set();
+      battlefield.push(card); // counted as {G} by sumManaPool this turn
+      simState.consumedAtEndOfTurn.add(card); // removed at next untap
+      return; // skip the normal battlefield.push below
+    }
+    // Chrome Mox: imprint a nonland green card from hand to produce {G} per turn.
+    // Only imprint if there's a "disposable" green card — never exile 1-drop dorks,
+    // and skip imprint entirely if no good target exists (Chrome Mox enters as {C} source).
+    if (card === "Chrome Mox") {
+      const imprintable = hand.reduce((acc, c, i) => {
+        const cd = getCard(c);
+        if (!cd || cd.type === "land") return acc;
+        if ((cd.greenPips ?? 0) < 1 && (cd.devotion ?? 0) < 1) return acc; // not green
+        // Never imprint 1-drop dorks — they're too valuable
+        if (cd.tags?.includes("dork") && (cd.cmc ?? 0) === 1) return acc;
+        acc.push({ c, i, cmc: cd.cmc ?? 0 });
+        return acc;
+      }, []);
+      // Sort: highest CMC first (imprint the card that costs most to find again)
+      imprintable.sort((a, b) => b.cmc - a.cmc);
+      if (imprintable.length > 0) {
+        hand.splice(imprintable[0].i, 1); // exile the imprinted card
+      }
+      // If nothing to imprint, Chrome Mox enters tapped and produces nothing useful;
+      // sumManaPool still counts it as {G} (slight overcount, acceptable approximation).
     }
     // Optimal play: discard a land already on the battlefield (already tapped this turn) so Mox
     // replaces it 1-for-1 as a permanent mana source. Only discard from hand if no spare
@@ -11222,6 +11450,43 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         const idx = battlefield.lastIndexOf(card);
         battlefield.splice(idx, 1);
         battlefield.push("Itlimoc, Cradle of the Sun");
+      }
+    } else if (card === "Woodland Bellower") {
+      // ETB: search for a nonlegendary green creature with CMC ≤ 3, put onto battlefield.
+      const WB_PRIORITY = [
+        "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
+        "Duskwatch Recruiter", "Formidable Speaker", "Hyrax Tower Scout",
+        "Elvish Archdruid", "Priest of Titania", "Circle of Dreams Druid",
+        "Wirewood Channeler", "Marwyn, the Nurturer", "Selvala, Heart of the Wilds",
+        "Eternal Witness", "Elvish Harbinger", "Fierce Empath",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
+      ];
+      const LEGENDARY = new Set(["Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Yeva, Nature's Herald", "Yisan, the Wanderer Bard", "Eladamri, Korvecdal",
+        "Nissa, Resurgent Animist", "Saryth, the Viper's Fang"]);
+      const boardSetWB = new Set(battlefield);
+      let wbTarget = null;
+      for (const t of WB_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (LEGENDARY.has(t)) continue; // can't fetch legendary
+        if ((cd.cmc ?? 0) > 3) continue; // CMC ≤ 3
+        if (boardSetWB.has(t)) continue;
+        if (library.indexOf(t) !== -1) { wbTarget = t; break; }
+      }
+      if (!wbTarget) wbTarget = library.find(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && (cd.cmc ?? 0) <= 3 &&
+          !boardSetWB.has(c) && !LEGENDARY.has(c);
+      }) ?? null;
+      if (wbTarget) {
+        library.splice(library.indexOf(wbTarget), 1);
+        battlefield.push(wbTarget);
+        sickSet.add(wbTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
       }
     }
 
@@ -12025,7 +12290,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [showTutor, setShowTutor] = useState(false);
   const [tutorQuery, setTutorQuery] = useState("");
   const [tutorMaxCmc, setTutorMaxCmc] = useState(null); // null = no filter; number = GSZ max X
-  const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor mode
+  const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor / Survival mode
+  const [tutorLandsOnly,     setTutorLandsOnly]     = useState(false); // Sylvan Scrying mode
+  const [tutorTreefolk,      setTutorTreefolk]      = useState(false); // Treefolk Harbinger mode
   const [tutorOnSelect, setTutorOnSelect] = useState(null); // callback after selection (for GSZ shuffle)
   const [tutorSelected, setTutorSelected] = useState(0); // keyboard-highlighted index
   const tutorInputRef = useRef(null);
@@ -12203,7 +12470,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   function keepHand() {
     openingHandRef.current = [...hand]; // snapshot kept hand
     setPhase("playing");
-    addLog(`Kept ${hand.length}-card hand. Turn 1 begins.`, COLORS.green1);
+    // Draw a card at the start of T1 (in Goldfish you always draw on your first turn)
+    const drawn = library[0];
+    if (drawn) {
+      setLibrary(prev => prev.slice(1));
+      setHand(prev => [...prev, drawn]);
+      addLog(`Kept ${hand.length}-card hand. Turn 1 begins — drew ${drawn}.`, COLORS.green1);
+    } else {
+      addLog(`Kept ${hand.length}-card hand. Turn 1 begins.`, COLORS.green1);
+    }
   }
 
   // Record a game milestone (first dork, infinite mana, win condition)
@@ -12701,6 +12976,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         setShowTutor(true); setTutorQuery("");
         setTimeout(() => tutorInputRef.current?.focus(), 50);
         addLog(`Cast Chord of Calling — search for a creature.`, COLORS.purple);
+      } else if (card === "Sylvan Scrying") {
+        // Search library for any land → hand; library shuffled.
+        setGraveyard(prev => [...prev, card]);
+        setTutorLandsOnly(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          setHand(prev => [...prev, chosen]);
+          addLog(`Sylvan Scrying → ${chosen} → hand. Library shuffled.`, COLORS.purple);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Cast Sylvan Scrying — choose a land to search for.`, COLORS.purple);
       } else {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
@@ -12708,6 +13004,47 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     } else if (type === "creature" || type === "enchantment" || type === "artifact" || type === "planeswalker" || type === "battle") {
       goldfishAddToBattlefield(card);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
+      // Sowing Mycospawn on-cast trigger: search library for any land → put onto battlefield. Library shuffled.
+      if (card === "Sowing Mycospawn") {
+        setTutorLandsOnly(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          setBattlefield(prev => [...prev, chosen]); // land goes directly onto battlefield
+          addLog(`Sowing Mycospawn on-cast → ${chosen} onto battlefield. Library shuffled.`, COLORS.purple);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Sowing Mycospawn cast — search for a land to put onto the battlefield.`, COLORS.purple);
+      }
+      // Treefolk Harbinger ETB: search for a Treefolk or Forest card, put on top of shuffled library.
+      if (card === "Treefolk Harbinger") {
+        setTutorTreefolk(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return [chosen, ...without]; // chosen goes on top
+          });
+          addLog(`Treefolk Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.purple);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Treefolk Harbinger ETB — search for a Treefolk or Forest card.`, COLORS.purple);
+      }
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
       goldfishAddToBattlefield(card);
@@ -12758,7 +13095,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     if (tutorOnSelect) {
       // GSZ mode: callback handles where the card goes
       tutorOnSelect(card);
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorOnSelect(null); setTutorSelected(0);
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorOnSelect(null); setTutorSelected(0);
       return;
     }
     const idx = library.indexOf(card);
@@ -12772,7 +13109,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       return without;
     });
     setHand(prev => [...prev, card]);
-    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorOnSelect(null); setTutorSelected(0);
+    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorOnSelect(null); setTutorSelected(0);
     addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
   }
 
@@ -12938,14 +13275,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     onClose();
   }
 
-  function runGames() {
+  function runGames(e) {
     if (!hasDeck || runNRunning) return;
+    const multiplier = e?.shiftKey ? 10 : 1;
+    const count = runNCount * multiplier;
     setRunNRunning(true);
     setRunNResults(null);
     // Defer to next tick so the UI can show the spinner before blocking
     setTimeout(() => {
       try {
-        const results = runNGames(deckCards, runNCount, runNMaxTurns);
+        const results = runNGames(deckCards, count, runNMaxTurns);
         setRunNResults(results);
       } catch (e) {
         console.error("runNGames error:", e);
@@ -13009,8 +13348,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     const greenLands = cards.filter(c => {
       const cd = getCard(c);
       if (cd?.type !== "land") return false;
-      // "forest" = actual Forest-typed land; "basic" = basic land; "green-mana" = non-Forest that taps for {G}
-      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || cd?.tags?.includes("green-mana") || c === "Forest";
+      // "forest" = printed Forest subtype; "basic" = basic land; "green-mana"/"fetch-forest" = produces/finds green
+      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || cd?.tags?.includes("green-mana") || cd?.tags?.includes("fetch-forest") || c === "Forest";
     }).length;
     const tutors = cards.filter(c => getCard(c)?.tags?.includes("tutor")).length;
     const combo  = cards.filter(c => getCard(c)?.tags?.some(t =>
@@ -13028,11 +13367,32 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
     // Hard gate: no green mana source at all → always MULLIGAN regardless of other factors.
     // Colourless lands (Nykthos, Wirewood Lodge, Ancient Tomb, etc.) cannot cast green spells.
+    // Exception: colourless fast mana (Lotus Petal, Chrome Mox, Mox Diamond) or Elvish Spirit Guide
+    // can produce {G} T1 to cast Birds of Paradise, which then becomes a green source from T2 onward.
+    // In that case grade as BORDERLINE rather than hard MULLIGAN.
     if (!canMakeT1Green) {
+      // Cards that can produce {G} T1 without a green land:
+      //   Lotus Petal / Chrome Mox / Mox Diamond → can tap/imprint for {G}
+      //   Elvish Spirit Guide → exile for {G} (free)
+      const greenFastMana = cards.filter(c => {
+        const cd = getCard(c);
+        return (cd?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide");
+      });
+      const hasBirds = cards.includes("Birds of Paradise");
       const colourlessLandNames = cards.filter(c => {
         const cd = getCard(c);
-        return cd?.type === "land" && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic") && !cd?.tags?.includes("green-mana") && c !== "Forest";
+        return cd?.type === "land" && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic") && !cd?.tags?.includes("green-mana") && !cd?.tags?.includes("fetch-forest") && c !== "Forest";
       });
+
+      if (hasBirds && greenFastMana.length > 0) {
+        // Can cast BoP T1 via fast mana → produces green from T2 onward (or sooner via its tap)
+        const fastNames = greenFastMana.join(", ");
+        notes.push(`⚠️ No green land — but ${fastNames} can produce {G} T1 to cast Birds of Paradise`);
+        notes.push("Birds of Paradise on T1 provides green mana from T2 — fragile but functional");
+        notes.push("One removal spell or missed drop ends your green production entirely");
+        return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+      }
+
       notes.push(`⚠️ No green mana source ✗ — ${colourlessLandNames.length > 0 ? colourlessLandNames.join(", ") + " produce" + (colourlessLandNames.length === 1 ? "s" : "") + " no green" : "0 lands that tap for {G}"}`);
       notes.push("Cannot cast any spell T1 or T2 without a green-producing land.");
       return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
@@ -13308,6 +13668,49 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             🌊 Crack Fetch → Forest
           </div>
         )}
+        {/* Survival of the Fittest / Fauna Shaman: tap to activate from battlefield */}
+        {isBF && (card === "Survival of the Fittest" || card === "Fauna Shaman") && (() => {
+          const handCreatures = hand.filter(c => getCard(c)?.type === "creature");
+          if (handCreatures.length === 0 || isCardTapped) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Activate — {isCardTapped ? "tapped" : "no creature in hand to discard"}
+            </div>
+          );
+          const discard = handCreatures[0];
+          return (
+            <div onClick={() => {
+              pushUndo();
+              const di = hand.indexOf(discard);
+              setHand(prev => [...prev.slice(0, di), ...prev.slice(di + 1)]);
+              setGraveyard(prev => [...prev, discard]);
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              addLog(`${card}: discarded ${discard}, paid {G} — choose a creature to fetch.`, COLORS.purple);
+              setTutorCreaturesOnly(true);
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => {
+                  const idx = prev.indexOf(chosen);
+                  if (idx === -1) return prev;
+                  const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+                  for (let i = without.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [without[i], without[j]] = [without[j], without[i]];
+                  }
+                  return without;
+                });
+                setHand(prev => [...prev, chosen]);
+                addLog(`${card} → ${chosen} → hand. Library shuffled.`, COLORS.green2);
+              });
+              setShowTutor(true); setTutorQuery("");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.purple, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Activate — discard {discard}
+            </div>
+          );
+        })()}
         {/* Zone moves */}
         {targets.map(t => (
           <div key={t} onClick={() => moveCard(card, zone, t, index)} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textMid, letterSpacing: "1px" }}
@@ -13335,7 +13738,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       if (e.key === "m" || e.key === "M") { e.preventDefault(); tapAllMana(); }
       if (e.key === "Escape") {
         const anyOpen = showUntapModal || showTutor || showScry || contextMenu;
-        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
+        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -13430,35 +13833,73 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── Tutor overlay ─────────────────────────────────────────────
   const TutorOverlay = () => {
     if (!showTutor) return null;
-    const isGSZ = tutorMaxCmc !== null;
-    const isWorldly = tutorCreaturesOnly && !isGSZ;
+    const isGSZ      = tutorMaxCmc !== null;
+    const isCreature = tutorCreaturesOnly && !isGSZ;
+    const isLand     = tutorLandsOnly;
+    const isTreefolk = tutorTreefolk;
     const q = tutorQuery.toLowerCase();
 
-    // GSZ mode: show affordable creatures sorted by CMC desc as default suggestions
-    const gszSuggestions = isGSZ ? [...new Set(library)].filter(c => {
-      const data = getCard(c);
-      return data?.type === "creature" && (data?.cmc ?? 99) <= tutorMaxCmc;
-    }).sort((a, b) => (getCard(b)?.cmc ?? 0) - (getCard(a)?.cmc ?? 0)).slice(0, 12) : [];
+    const passesMode = (c) => {
+      const d = getCard(c);
+      if (isGSZ || isCreature) return d?.type === "creature" && (!isGSZ || (d?.cmc ?? 99) <= tutorMaxCmc);
+      if (isLand)              return d?.type === "land";
+      if (isTreefolk)          return d?.tags?.includes("treefolk") || d?.tags?.includes("forest") || d?.tags?.includes("basic");
+      return true;
+    };
 
-    // Worldly Tutor mode: show all creatures as default suggestions
-    const worldlySuggestions = isWorldly ? [...new Set(library)].filter(c =>
-      getCard(c)?.type === "creature"
-    ).sort((a, b) => (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0)).slice(0, 12) : [];
+    const defaults = [...new Set(library)]
+      .filter(passesMode)
+      .sort((a, b) => isGSZ
+        ? (getCard(b)?.cmc ?? 0) - (getCard(a)?.cmc ?? 0)
+        : (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0))
+      .slice(0, 12);
 
-    const matches = q.length >= 1 ? [...new Set(library)].filter(c => {
-      const data = getCard(c);
-      const passesType = (isGSZ || isWorldly) ? data?.type === "creature" : true;
-      const passesCmc  = isGSZ ? (data?.cmc ?? 99) <= tutorMaxCmc : true;
-      return passesType && passesCmc && (
-        c.toLowerCase().includes(q)
-        || (data?.type ?? "").toLowerCase().includes(q)
-        || (data?.tags ?? []).some(t => t.toLowerCase().includes(q))
-        || (data?.role ?? "").toLowerCase().includes(q)
-      );
-    }).slice(0, 15) : (isGSZ ? gszSuggestions : isWorldly ? worldlySuggestions : []);
+    const matches = q.length >= 1
+      ? [...new Set(library)].filter(c => {
+          const d = getCard(c);
+          return passesMode(c) && (
+            c.toLowerCase().includes(q) ||
+            (d?.type ?? "").toLowerCase().includes(q) ||
+            (d?.tags ?? []).some(t => t.toLowerCase().includes(q)) ||
+            (d?.role ?? "").toLowerCase().includes(q)
+          );
+        }).slice(0, 15)
+      : defaults;
 
     const displayList = matches;
     const borderColor = isGSZ ? COLORS.green2 : COLORS.purple;
+
+    const header = isGSZ
+      ? `GREEN SUN'S ZENITH \u2014 X=${tutorMaxCmc} \u2014 CREATURES CMC \u2264 ${tutorMaxCmc}`
+      : isCreature ? `CREATURE TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`
+      : isLand     ? `LAND TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`
+      : isTreefolk ? `TREEFOLK HARBINGER \u2014 TREEFOLK OR FOREST (${library.length} cards)`
+      :              `TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`;
+
+    const hint = isGSZ      ? "AFFORDABLE TARGETS"
+      : isCreature           ? "CREATURES IN LIBRARY"
+      : isLand               ? "LANDS IN LIBRARY"
+      : isTreefolk           ? "TREEFOLK & FORESTS IN LIBRARY"
+      : null;
+
+    const emptyMsg = isGSZ  ? `No creatures with CMC \u2264 ${tutorMaxCmc} in library.`
+      : isCreature           ? "No creatures in library."
+      : isLand               ? "No lands in library."
+      : isTreefolk           ? "No Treefolk or Forest cards in library."
+      :                        "No matches in library.";
+
+    const placeholder = isGSZ ? `Search creatures (CMC \u2264 ${tutorMaxCmc})...`
+      : isCreature             ? "Search creatures..."
+      : isLand                 ? "Search lands..."
+      : isTreefolk             ? "Search Treefolk or Forests..."
+      :                          "Type card name...";
+
+    const closeTutor = () => {
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null);
+      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false);
+      setTutorOnSelect(null); setTutorSelected(0);
+    };
+
     return (
       <div style={{
         position: "fixed", left: "50%", top: "12px", transform: "translateX(-50%)",
@@ -13467,38 +13908,29 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         borderRadius: "8px", padding: "12px", boxShadow: "0 4px 24px rgba(0,0,0,0.9)",
       }}>
         <div style={{ fontSize: "10px", color: borderColor, letterSpacing: "2px", fontFamily: "'Cinzel', serif", marginBottom: "6px" }}>
-          {isGSZ
-            ? `GREEN SUN'S ZENITH — X=${tutorMaxCmc} — CREATURES CMC ≤ ${tutorMaxCmc}`
-            : isWorldly
-            ? `CREATURE TUTOR — SEARCH LIBRARY (${library.length} cards)`
-            : `TUTOR — SEARCH LIBRARY (${library.length} cards)`}
+          {header}
         </div>
-        {isGSZ && gszSuggestions.length > 0 && q.length === 0 && (
+        {hint && defaults.length > 0 && q.length === 0 && (
           <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "6px", letterSpacing: "1px" }}>
-            AFFORDABLE TARGETS
-          </div>
-        )}
-        {isWorldly && worldlySuggestions.length > 0 && q.length === 0 && (
-          <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "6px", letterSpacing: "1px" }}>
-            CREATURES IN LIBRARY
+            {hint}
           </div>
         )}
         <input ref={tutorInputRef} value={tutorQuery}
           onChange={e => { setTutorQuery(e.target.value); setTutorSelected(0); }}
           onKeyDown={e => {
-            if (e.key === "Escape") { e.stopPropagation(); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorOnSelect(null); setTutorSelected(0); }
+            if (e.key === "Escape") { e.stopPropagation(); closeTutor(); }
             if (e.key === "ArrowDown") { e.preventDefault(); setTutorSelected(i => Math.min(i + 1, displayList.length - 1)); }
             if (e.key === "ArrowUp")   { e.preventDefault(); setTutorSelected(i => Math.max(i - 1, 0)); }
             if (e.key === "Enter" && displayList.length > 0) tutorCard(displayList[tutorSelected]);
           }}
-          placeholder={isGSZ ? `Search creatures (CMC ≤ ${tutorMaxCmc})...` : isWorldly ? "Search creatures..." : "Type card name..."} style={{
+          placeholder={placeholder} style={{
             width: "100%", background: "#0a150a", border: `1px solid ${COLORS.border}`,
             borderRadius: "6px", padding: "6px 10px", color: COLORS.text,
             fontFamily: "'Crimson Text', serif", fontSize: "13px", outline: "none", marginBottom: "8px",
           }} />
-        {displayList.length === 0 && (q.length >= 1 || isGSZ || isWorldly) && (
+        {displayList.length === 0 && (q.length >= 1 || isGSZ || isCreature || isLand || isTreefolk) && (
           <div style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic", fontFamily: "'Crimson Text', serif" }}>
-            {isGSZ ? `No creatures with CMC ≤ ${tutorMaxCmc} in library.` : isWorldly ? "No creatures in library." : "No matches in library."}
+            {emptyMsg}
           </div>
         )}
         {displayList.map((card, i) => (
@@ -13512,20 +13944,21 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             {getCard(card) && (
               <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "8px" }}>
                 {isGSZ ? `CMC ${getCard(card).cmc ?? "?"}` : getCard(card).type}
-                {!isGSZ && getCard(card).tags?.includes("dork") ? " · dork" : ""}
-                {!isGSZ && getCard(card).tags?.includes("tutor") ? " · tutor" : ""}
-                {!isGSZ && getCard(card).tags?.includes("combo") ? " · combo" : ""}
-                {isGSZ && getCard(card).tags?.includes("dork") ? " · dork" : ""}
-                {isGSZ && getCard(card).role ? ` · ${getCard(card).role}` : ""}
+                {!isGSZ && getCard(card).tags?.includes("dork")     ? " \u00b7 dork"     : ""}
+                {!isGSZ && getCard(card).tags?.includes("tutor")    ? " \u00b7 tutor"    : ""}
+                {!isGSZ && getCard(card).tags?.includes("combo")    ? " \u00b7 combo"    : ""}
+                {!isGSZ && getCard(card).tags?.includes("treefolk") ? " \u00b7 treefolk" : ""}
+                {isGSZ  && getCard(card).tags?.includes("dork")     ? " \u00b7 dork"     : ""}
+                {isGSZ  && getCard(card).role ? ` \u00b7 ${getCard(card).role}` : ""}
               </span>
             )}
           </div>
         ))}
-        <button onClick={() => { setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorOnSelect(null); setTutorSelected(0); }} style={{
+        <button onClick={closeTutor} style={{
           marginTop: "8px", background: "none", border: `1px solid ${COLORS.border}`,
           borderRadius: "6px", padding: "4px 12px", color: COLORS.textDim, cursor: "pointer",
           fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px", width: "100%",
-        }}>✕ CANCEL (Esc)</button>
+        }}>\u2715 CANCEL (Esc)</button>
       </div>
     );
   };
@@ -14350,6 +14783,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     <button
                       onClick={runGames}
                       disabled={!hasDeck || runNRunning}
+                      title={`Click to run ${runNCount} games. Shift+Click to run ${runNCount * 10} games.`}
                       style={{
                         width: "100%", background: hasDeck ? "#0d1f3a" : "transparent",
                         border: `1px solid ${hasDeck ? COLORS.blue : COLORS.border}`,
@@ -14359,7 +14793,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                         fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
                         opacity: runNRunning ? 0.6 : 1,
                       }}
-                    >{runNRunning ? `⏳ Running ${runNCount} games…` : `▶ RUN ${runNCount} GAMES`}</button>
+                    >{runNRunning ? `⏳ Running ${runNCount} games…` : `▶ RUN ${runNCount} GAMES`}
+                    </button>
                     {!hasDeck && <div style={{ fontSize: "10px", color: COLORS.red, marginTop: "6px", fontFamily: "'Crimson Text', serif" }}>Load a deck first.</div>}
                     {nr && !runNRunning && (
                       <button
