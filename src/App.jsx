@@ -10335,14 +10335,37 @@ function isWinCategory(cat) {
 // e.g. "Cast Natural Order → ..." → "Natural Order"
 function extractPlayableCard(result, hand, battlefield) {
   if (!result) return null;
-  const text = (result.steps?.[0] ?? result.headline ?? "");
-  // Try to match any card in hand mentioned in the text
+  const text    = (result.steps?.[0] ?? result.headline ?? "");
+  const allText = [result.headline, ...(result.steps ?? []), result.category].filter(Boolean).join(" ");
+
+  // 1. Direct name match in first step or headline
   for (const card of hand) {
     if (text.includes(card)) return card;
   }
-  // Fallback: scan headline
+  // 2. Name match anywhere across all text
   for (const card of hand) {
-    if ((result.headline ?? "").includes(card)) return card;
+    if (allText.includes(card)) return card;
+  }
+  // 3. Category / keyword heuristics — pick the best matching hand card by tag
+  const cat = (result.category ?? "").toLowerCase();
+  const hl  = (result.headline ?? "").toLowerCase();
+  const combined = cat + " " + hl;
+
+  // Tutor advice → prefer tutor cards in hand
+  if (combined.includes("tutor") || combined.includes("search")) {
+    const tutor = hand.find(c => getCard(c)?.tags?.includes("tutor"));
+    if (tutor) return tutor;
+  }
+  // Ramp advice → prefer dorks or enchant-land in hand
+  if (combined.includes("ramp") || combined.includes("mana dork") || combined.includes("dork")) {
+    const dork = hand.find(c => getCard(c)?.tags?.includes("dork"));
+    if (dork) return dork;
+  }
+  // Combo / win advice → prefer combo-tagged cards not yet on battlefield
+  if (combined.includes("combo") || combined.includes("win") || combined.includes("infinite")) {
+    const boardSet = new Set(battlefield);
+    const combo = hand.find(c => getCard(c)?.tags?.includes("combo") && !boardSet.has(c));
+    if (combo) return combo;
   }
   return null;
 }
@@ -10395,11 +10418,29 @@ function selectBottomsFromScored(scored, bottomCount) {
 // calculateSimManaPool is now an alias for sumManaPool (defined in the Mana Engine above).
 // The two were identical except calculateSimManaPool was missing Utopia Sprawl and
 // Elvish Guidance bonuses, and had a Earthcraft sick-filter bug. Both are now fixed.
-function simCanCast(card, manaPool) {
+function simCanCast(card, manaPool, battlefield = []) {
   const data = getCard(card);
   if (!data) return false;
   const cmc = data.cmc ?? 0;
   const pips = data.greenPips ?? (data.type !== "land" ? Math.min(cmc, data.devotion ?? 0) : 0);
+  // Green Sun's Zenith: {X}{G}. cmc in DB is 1 (the {G}). Require total >= 2 so X >= 1
+  // (X=0 only fetches Dryad Arbor which is rarely worth it).
+  if (card === "Green Sun's Zenith") {
+    return manaPool.green >= 1 && manaPool.total >= 2;
+  }
+  // Mox Diamond requires discarding a land on entry — not castable without one.
+  // battlefield parameter here is the sim battlefield; we need the hand, but it's not passed.
+  // The caller (sim loop) checks this separately via the hand check in the affordable scorer.
+  // We mark it castable here (cmc 0) and let simPlayCard handle the discard; simCanCast
+  // is called before simPlayCard, so the affordable-scorer path must also check hand lands.
+  // See sim loop for the hand-land guard added alongside this.
+  if (card === "Chord of Calling") {
+    const convokeTappers = battlefield.filter(c => {
+      const cd = getCard(c);
+      return cd?.type === "creature"; // sickSet not available here; approximate — sim loop checks properly
+    }).length;
+    return manaPool.green >= pips && convokeTappers >= 1;
+  }
   // Need enough green for the pips, and total mana >= cmc
   return manaPool.green >= pips && manaPool.total >= cmc;
 }
@@ -10430,14 +10471,19 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     library = buildLibrary(deckCards);
     hand = library.slice(0, 7);
     library = library.slice(7);
-    const greenLands = hand.filter(c => GREEN_LANDS.has(c)).length;
-    const oneDrop    = hand.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
-    const dorks      = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
-    const tutors     = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
+    const greenLands  = hand.filter(c => GREEN_LANDS.has(c)).length;
+    const fastMana    = hand.filter(c => getCard(c)?.tags?.includes("fast-mana")).length;
+    const oneDrop     = hand.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
+    const dorks       = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
+    const tutors      = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
+    // Hard requirements: need a green mana source AND a 1-CMC dork.
+    // Fast mana (Chrome Mox, Mox Diamond, Lotus Petal) can sub for a green land when
+    // combined with a 1-drop dork — e.g. Chrome Mox imprinting a green card → T1 dork.
+    const hasGreen    = greenLands >= 1 || (fastMana >= 1 && oneDrop >= 1);
     // Hard requirements: need a green land AND a 1-CMC dork
-    const hasBase    = greenLands >= 1 && oneDrop >= 1;
+    const hasBase     = hasGreen && oneDrop >= 1;
     // Additional action: tutor, second dork, or a key combo piece
-    const hasAction  = tutors >= 1 || dorks >= 2;
+    const hasAction   = tutors >= 1 || dorks >= 2;
     const keep = hasBase && hasAction;
     if (keep || m === mullLimit) {
       // Bottom cards for mulligans
@@ -10449,6 +10495,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           const cmc  = getCard(c)?.cmc ?? 0;
           let score = 0;
           if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
+          if (tags.includes("fast-mana"))           score += 5; // chrome mox / sol ring — T1 acceleration
           if (tags.includes("tutor"))               score += 4;
           if (tags.includes("dork") && cmc > 1)    score += 3;
           if (tags.includes("combo") || tags.includes("key")) score += 3;
@@ -10479,9 +10526,13 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   // ── Smarter sequencing helpers ────────────────────────────
   // Should we hold a tutor this turn? Hold if mana after cast < target CMC.
   function shouldHoldTutor(card, mana) {
-    const TUTOR_MIN = { "Natural Order": 6, "Fierce Empath": 6, "Chord of Calling": 2,
-      "Eldritch Evolution": 2, "Worldly Tutor": 1, "Elvish Harbinger": 1,
-      "Shared Summons": 1, "Archdruid's Charm": 1 };
+    const TUTOR_MIN = {
+      "Natural Order": 4, "Eldritch Evolution": 3,
+      "Fierce Empath": 6, "Chord of Calling": 2,
+      "Worldly Tutor": 1, "Elvish Harbinger": 1,
+      "Green Sun's Zenith": 1,
+      "Shared Summons": 1, "Archdruid's Charm": 1,
+    };
     const min = TUTOR_MIN[card];
     if (!min) return false;
     const cmc = getCard(card)?.cmc ?? 0;
@@ -10499,13 +10550,15 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   let manaCurve   = [];
   let t1Dork      = false;
   let winBattlefield = null;
+  let winGraveyard   = null;
+  const castLog      = new Set(); // every non-land card cast this game
 
   // simState is a thin proxy so simPlayCard can mutate landPlayed via the object reference.
   // battlefield/graveyard/library/sickSet are arrays/sets mutated in place directly.
   const simState = { get hand() { return hand; }, battlefield, graveyard, library,
     get sickSet() { return sickSet; }, get landPlayed() { return landPlayed; },
-    set landPlayed(v) { landPlayed = v; } };
-  const playCard = (card, idx) => simPlayCard(card, idx, simState);
+    set landPlayed(v) { landPlayed = v; }, castLog };
+  const playCard = (card, idx, mp = null) => simPlayCard(card, idx, simState, mp);
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
@@ -10614,11 +10667,12 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           const winCard = extractPlayableCard(top, hand, battlefield);
           if (winCard) {
             const widx = hand.indexOf(winCard);
-            if (widx >= 0 && simCanCast(winCard, manaPool)) playCard(winCard, widx);
+            if (widx >= 0 && simCanCast(winCard, manaPool, battlefield)) playCard(winCard, widx, manaPool);
           }
           winTurn = turn;
           winCombo = extractComboLabel(top);
           winBattlefield = [...battlefield];
+          winGraveyard   = [...graveyard];
           break;
         }
         // Win not actually achievable this turn — fall through and keep playing
@@ -10640,11 +10694,16 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         const cardData = getCard(cardToPlay);
         const cardType = cardData?.type ?? "";
         const isTutor = cardData?.tags?.includes("tutor");
-        if (idx >= 0 && simCanCast(cardToPlay, manaPool) && cardType !== "land") {
+        const moxNeedsLand = cardToPlay === "Mox Diamond" &&
+          !hand.some((c, j) => j !== idx && getCard(c)?.type === "land") &&
+          battlefield.filter(c => getCard(c)?.type === "land").length < 2;
+        const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
+          !battlefield.some(c => getCard(c)?.type === "creature" && !sickSet.has(c));
+        if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature) {
           // Smarter: hold tutors on early turns if we can't act on the found card
           const holdIt = isTutor && turn <= 3 && shouldHoldTutor(cardToPlay, mana);
           if (!holdIt) {
-            playCard(cardToPlay, idx);
+            playCard(cardToPlay, idx, manaPool);
             played = true;
             madePlay = true;
             continue;
@@ -10654,22 +10713,36 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // Fallback: cast best affordable card by smarter scoring (dorks > combos > spells; hold tutors)
       if (!played) {
+        const hasLandInHand  = hand.some(c => getCard(c)?.type === "land");
+        const hasSpareBfLand = battlefield.filter(c => getCard(c)?.type === "land").length >= 2;
         const affordable = hand.map((c, i) => {
           const cd = getCard(c);
           const cmc  = cd?.cmc ?? 0;
           const type = cd?.type ?? "";
           const tags = cd?.tags ?? [];
-          if (type === "land" || !simCanCast(c, manaPool) || cmc === 0) return null;
+          if (type === "land") return null;
+          if (!simCanCast(c, manaPool, battlefield)) return null;
+          // CMC-0 cards: only fast-mana rocks are worth playing for free;
+          // skip other CMC-0 cards that have no sim effect
+          if (cmc === 0 && !tags.includes("fast-mana")) return null;
+          // Mox Diamond requires a land to discard (hand or spare battlefield land)
+          if (c === "Mox Diamond" && !hasLandInHand && !hasSpareBfLand) return null;
+          // Natural Order / Eldritch Evolution need a non-sick creature to sacrifice
+          if ((c === "Natural Order" || c === "Eldritch Evolution") &&
+              !battlefield.some(bf => getCard(bf)?.type === "creature" && !sickSet.has(bf))) return null;
           let score = cmc;
-          if (tags.includes("dork") && cmc === 1) score += 8;
-          else if (tags.includes("dork"))          score += 5;
+          if (tags.includes("fast-mana"))                score += 9; // play ASAP for acceleration
+          else if (tags.includes("enchant-land"))        score += 7; // Utopia Sprawl / Wild Growth — permanent ramp
+          else if (tags.includes("dork") && cmc === 1)   score += 8;
+          else if (tags.includes("dork"))                score += 5;
+          else if (tags.includes("sacrifice") && tags.includes("tutor")) score += 6; // Natural Order / EE
           else if (tags.includes("tutor") && !shouldHoldTutor(c, mana)) score += 4;
-          else if (tags.includes("combo"))         score += 3;
-          else if (tags.includes("tutor"))         score -= 3; // hold if can't act
+          else if (tags.includes("combo"))               score += 3;
+          else if (tags.includes("tutor"))               score -= 3; // hold if can't act
           return { c, i, score };
         }).filter(Boolean).sort((a, b) => b.score - a.score);
         if (affordable.length > 0) {
-          playCard(affordable[0].c, affordable[0].i);
+          playCard(affordable[0].c, affordable[0].i, manaPool);
           madePlay = true;
           continue;
         }
@@ -10682,26 +10755,294 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     if (winTurn !== null) break;
   }
 
-  return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork, winBattlefield };
+  return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork, winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog) : null };
 }
 
 // Derive a short combo label from an advisor result headline
 // ── Simulator: play a card from hand into the game state.
 // Takes a mutable simState object so this can be unit-tested independently.
-// simState: { hand, battlefield, graveyard, library, sickSet, landPlayed }
-function simPlayCard(card, idx, simState) {
-  const { hand, battlefield, graveyard, library, sickSet } = simState;
+// simState: { hand, battlefield, graveyard, library, sickSet, landPlayed, castLog }
+function simPlayCard(card, idx, simState, manaPool = null) {
+  const { hand, battlefield, graveyard, library, sickSet, castLog } = simState;
   hand.splice(idx, 1);
   const cardType = getCard(card)?.type ?? "";
   const cardData = getCard(card);
+  // Record cast (lands are played, not cast)
+  if (cardType !== "land" && castLog) castLog.add(card);
   if (cardType === "instant" || cardType === "sorcery") {
     if (card === "Green Sun's Zenith") {
+      // X = total mana available minus the {G} pip cost.
+      // manaPool.total includes the {G} already, so X = manaPool.total - 1.
+      const xBudget = manaPool ? Math.max(0, manaPool.total - 1) : 99; // 99 = unconstrained fallback
+      const GSZ_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
+        "Argothian Elder", "Wirewood Symbiote",
+        "Temur Sabertooth", "Kogla, the Titan Ape",
+        "Eternal Witness", "Fierce Empath",
+        "Hyrax Tower Scout", "Hope Tender",
+        "Elvish Reclaimer", "Destiny Spinner",
+        "Seedborn Muse",
+        "Dryad Arbor", // X=0 fallback
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
+        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
+      ];
+      // Shuffle GSZ back first (its rules text says shuffle into library)
       library.push(card);
-      for (let i = library.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [library[i], library[j]] = [library[j], library[i]]; }
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
+      // Pick best creature in library not already on battlefield
+      const boardSet = new Set(battlefield);
+      let target = null;
+      for (const t of GSZ_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSet.has(t)) continue;
+        if ((cd.cmc ?? 0) > xBudget) continue; // can't afford this X
+        if (library.indexOf(t) === -1) continue;
+        target = t;
+        break;
+      }
+      // Fallback: any creature in library within X budget
+      if (!target) {
+        target = library.find(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && !boardSet.has(c) && (cd.cmc ?? 0) <= xBudget;
+        }) ?? null;
+      }
+      if (target) {
+        const libIdx = library.indexOf(target);
+        library.splice(libIdx, 1);
+        battlefield.push(target);
+        sickSet.add(target);
+        // Shuffle again after removing the found card
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Chord of Calling") {
+      graveyard.push(card);
+      // Convoke: count untapped non-sick creatures available to tap (each reduces X by 1)
+      const convokeTappers = battlefield.filter(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && !sickSet.has(c);
+      }).length;
+      // X budget = convoke creatures + any leftover mana after paying the {G}{G}{G} base (cmc=3).
+      const leftoverMana = manaPool ? Math.max(0, manaPool.total - 3) : 0;
+      const xBudget = convokeTappers + leftoverMana;
+      // Priority-ordered list of creatures Chord should fetch
+      const CHORD_PRIORITY = [
+        // Win pieces first
+        "Duskwatch Recruiter", "Formidable Speaker",
+        // Infinite mana enablers
+        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
+        "Argothian Elder", "Wirewood Symbiote",
+        // Utility / ramp
+        "Temur Sabertooth", "Kogla, the Titan Ape",
+        "Eternal Witness", "Fierce Empath",
+        "Hyrax Tower Scout", "Hope Tender",
+        "Elvish Reclaimer", "Destiny Spinner",
+        "Seedborn Muse",
+        // Dorks (fallback ramp)
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
+        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
+      ];
+      const boardSet = new Set(battlefield);
+      let target = null;
+      for (const t of CHORD_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSet.has(t)) continue; // already on battlefield
+        const libIdx = library.indexOf(t);
+        if (libIdx === -1) continue;
+        if ((cd.cmc ?? 0) <= xBudget) { target = t; break; }
+      }
+      // Fallback: any creature in library within X budget
+      if (!target) {
+        target = library.find(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && (cd?.cmc ?? 0) <= xBudget && !boardSet.has(c);
+        }) ?? null;
+      }
+      if (target) {
+        const libIdx = library.indexOf(target);
+        library.splice(libIdx, 1);
+        battlefield.push(target);
+        sickSet.add(target);
+        // Shuffle remaining library
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Natural Order" || card === "Eldritch Evolution") {
+      graveyard.push(card);
+      // Sacrifice a non-sick creature, then tutor a creature from library onto battlefield.
+      // Natural Order: sacrifice any green creature → find any green creature.
+      // Eldritch Evolution: sacrifice any creature → find creature with CMC ≤ sacrificed CMC + 2.
+      const sacrificable = battlefield.filter(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && !sickSet.has(c);
+      });
+      if (sacrificable.length === 0) return; // can't cast without a sacrifice target
+      // Pick least-valuable creature to sacrifice (lowest CMC non-combo creature)
+      sacrificable.sort((a, b) => {
+        const aCombo = getCard(a)?.tags?.includes("combo") ? 1 : 0;
+        const bCombo = getCard(b)?.tags?.includes("combo") ? 1 : 0;
+        if (aCombo !== bCombo) return aCombo - bCombo; // non-combo first
+        return (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0); // then lowest CMC
+      });
+      const sacrificed = sacrificable[0];
+      const sacrificedCmc = getCard(sacrificed)?.cmc ?? 0;
+      const sacIdx = battlefield.indexOf(sacrificed);
+      battlefield.splice(sacIdx, 1);
+      graveyard.push(sacrificed);
+      // Determine CMC ceiling for fetched creature
+      const ceilCmc = card === "Natural Order" ? 99 : sacrificedCmc + 2;
+      // Shared priority list — prefer highest-impact finishers
+      const NO_EE_PRIORITY = [
+        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Kogla, the Titan Ape", "Temur Sabertooth",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Marwyn, the Nurturer",
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Quirion Ranger", "Scryb Ranger", "Argothian Elder",
+        "Wirewood Symbiote", "Eternal Witness", "Fierce Empath",
+        "Hyrax Tower Scout", "Hope Tender", "Elvish Harbinger",
+        "Seedborn Muse", "Destiny Spinner",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
+        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
+      ];
+      const boardSet2 = new Set(battlefield);
+      let noTarget = null;
+      for (const t of NO_EE_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSet2.has(t)) continue;
+        if ((cd.cmc ?? 0) > ceilCmc) continue;
+        if (library.indexOf(t) === -1) continue;
+        noTarget = t; break;
+      }
+      if (!noTarget) {
+        noTarget = library.find(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && !boardSet2.has(c) && (cd.cmc ?? 0) <= ceilCmc;
+        }) ?? null;
+      }
+      if (noTarget) {
+        library.splice(library.indexOf(noTarget), 1);
+        battlefield.push(noTarget);
+        sickSet.add(noTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Worldly Tutor") {
+      graveyard.push(card);
+      // Put a creature on top of library (no shuffle — it goes on top).
+      const WT_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
+        "Argothian Elder", "Wirewood Symbiote",
+        "Temur Sabertooth", "Kogla, the Titan Ape",
+        "Eternal Witness", "Fierce Empath",
+        "Hyrax Tower Scout", "Hope Tender",
+        "Elvish Reclaimer", "Destiny Spinner", "Elvish Harbinger",
+        "Seedborn Muse",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
+        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
+      ];
+      const boardSetWT = new Set(battlefield);
+      let wtTarget = null;
+      for (const t of WT_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSetWT.has(t)) continue;
+        if (library.indexOf(t) === -1) continue;
+        wtTarget = t; break;
+      }
+      if (!wtTarget) wtTarget = library.find(c => getCard(c)?.type === "creature" && !boardSetWT.has(c)) ?? null;
+      if (wtTarget) {
+        // Remove from library, put on top
+        library.splice(library.indexOf(wtTarget), 1);
+        library.unshift(wtTarget);
+        // No shuffle — the card is on top ready to draw
+      }
+    } else if (card === "Summoner's Pact") {
+      // Free instant tutor — puts a green creature directly into hand (the rules say hand,
+      // not battlefield, but the sim can treat it as a next-draw since the pact triggers upkeep.
+      // Simplification: put the best available green creature on top of library (drawn next turn).
+      // Ignore the upkeep payment — the deck wins before it matters.
+      graveyard.push(card);
+      const SP_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
+        "Argothian Elder", "Wirewood Symbiote",
+        "Temur Sabertooth", "Kogla, the Titan Ape",
+        "Eternal Witness", "Fierce Empath",
+        "Hyrax Tower Scout", "Hope Tender",
+        "Elvish Reclaimer", "Destiny Spinner", "Elvish Harbinger",
+        "Seedborn Muse",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
+        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
+      ];
+      const boardSetSP = new Set(battlefield);
+      let spTarget = null;
+      for (const t of SP_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSetSP.has(t)) continue;
+        if (library.indexOf(t) === -1) continue;
+        spTarget = t; break;
+      }
+      if (!spTarget) spTarget = library.find(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && !boardSetSP.has(c) &&
+          (cd.tags?.includes("elf") || cd.greenPips > 0 || (cd.devotion ?? 0) > 0);
+      }) ?? null;
+      if (spTarget) {
+        library.splice(library.indexOf(spTarget), 1);
+        hand.push(spTarget); // Summoner's Pact puts the card into hand immediately
+      }
     } else {
       graveyard.push(card);
     }
   } else {
+    // Mox Diamond requires discarding a land as it enters.
+    // Optimal play: discard a land already on the battlefield (already tapped this turn) so Mox
+    // replaces it 1-for-1 as a permanent mana source. Only discard from hand if no spare
+    // battlefield land exists (i.e. we need the hand land for our land drop this turn).
+    if (card === "Mox Diamond") {
+      const bfLands = battlefield.reduce((acc, c, i) => {
+        if (getCard(c)?.type === "land") acc.push(i); return acc;
+      }, []);
+      const handLands = hand.reduce((acc, c, i) => {
+        if (getCard(c)?.type === "land") acc.push(i); return acc;
+      }, []);
+      if (bfLands.length >= 2) {
+        // Discard a spare battlefield land (already tapped = net gain on Mox)
+        battlefield.splice(bfLands[bfLands.length - 1], 1);
+      } else if (handLands.length > 0) {
+        // Discard a spare hand land
+        hand.splice(handLands[handLands.length - 1], 1);
+      } else {
+        // No land to discard — can't cast Mox Diamond
+        graveyard.push(card);
+        return;
+      }
+    }
     battlefield.push(card);
     if (cardType === "creature") sickSet.add(card);
     if (cardData?.tags?.includes("fetch")) {
@@ -10815,7 +11156,11 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   const cardLossCount = {};
   const deckCardNames = [...new Set(nonCommanderCards)];
   for (const r of results) {
-    const bf = new Set(r.winBattlefield ?? []);
+    const bf = new Set([
+      ...(r.winCastLog    ?? []),   // primary: anything cast this game
+      ...(r.winBattlefield ?? []),  // fallback: permanent on board at win
+      ...(r.winGraveyard   ?? []),  // fallback: spell in graveyard at win
+    ]);
     for (const c of deckCardNames) {
       if (getCard(c)?.type === "land") continue; // skip lands
       if (r.winTurn !== null) {
@@ -11497,6 +11842,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [showTutor, setShowTutor] = useState(false);
   const [tutorQuery, setTutorQuery] = useState("");
   const [tutorMaxCmc, setTutorMaxCmc] = useState(null); // null = no filter; number = GSZ max X
+  const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor mode
   const [tutorOnSelect, setTutorOnSelect] = useState(null); // callback after selection (for GSZ shuffle)
   const [tutorSelected, setTutorSelected] = useState(0); // keyboard-highlighted index
   const tutorInputRef = useRef(null);
@@ -12125,6 +12471,53 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       } else if (card === "Nature's Rhythm") {
         setExile(prev => [...prev, card]);
         addLog(`Cast ${card} → exile (Harmonize available from graveyard).`, COLORS.textMid);
+      } else if (card === "Worldly Tutor") {
+        setGraveyard(prev => [...prev, card]);
+        // Open tutor modal filtered to creatures; on select, remove from library, shuffle, put on top
+        setTutorCreaturesOnly(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            // Remove the chosen card, shuffle the rest, put chosen on top
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return [chosen, ...without];
+          });
+          addLog(`Worldly Tutor → ${chosen} on top of library. Library shuffled.`, COLORS.purple);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Cast Worldly Tutor — search for a creature.`, COLORS.purple);
+      } else if (card === "Chord of Calling") {
+        setGraveyard(prev => [...prev, card]);
+        // Open tutor modal filtered to creatures; on select, put onto battlefield (convoke),
+        // shuffle library, and deduct the creature's CMC from the mana pool.
+        setTutorCreaturesOnly(true);
+        setTutorOnSelect(() => (chosen) => {
+          const chosenCmc = getCard(chosen)?.cmc ?? 0;
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          goldfishAddToBattlefield(chosen);
+          // Chord's X = creature's CMC; deduct that from the pool (castFromHand already deducted Chord's own cmc:3)
+          setManaPool(p => Math.max(0, p - chosenCmc));
+          flashMana(-chosenCmc);
+          addLog(`Chord of Calling → ${chosen} (CMC ${chosenCmc}) onto battlefield. −${chosenCmc} mana. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Cast Chord of Calling — search for a creature.`, COLORS.purple);
       } else {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
@@ -12182,14 +12575,21 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     if (tutorOnSelect) {
       // GSZ mode: callback handles where the card goes
       tutorOnSelect(card);
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorOnSelect(null); setTutorSelected(0);
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorOnSelect(null); setTutorSelected(0);
       return;
     }
     const idx = library.indexOf(card);
     if (idx === -1) { addLog(`${card} not found in library.`, COLORS.red); return; }
-    setLibrary(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
+    setLibrary(prev => {
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return without;
+    });
     setHand(prev => [...prev, card]);
-    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorOnSelect(null); setTutorSelected(0);
+    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorOnSelect(null); setTutorSelected(0);
     addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
   }
 
@@ -12409,8 +12809,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     // Enchant-land ramp (Utopia Sprawl, Wild Growth): functionally equivalent to dorks for mulligan purposes —
     // castable T1 on a Forest, immediately doubles that land's output next turn.
     const enchantLandRamp = cards.filter(c => getCard(c)?.tags?.includes("enchant-land")).length;
+    // Mana rocks (Sol Ring, Chrome Mox, Mox Diamond, Lotus Petal): all CMC 0–1, castable T1,
+    // immediately produce mana — count as ramp for mulligan purposes.
+    const rocks = cards.filter(c => getCard(c)?.tags?.includes("rock")).length;
     // Combined ramp count used in grading rules
-    const rampCount = dorks + enchantLandRamp;
+    const rampCount = dorks + enchantLandRamp + rocks;
     const lands  = cards.filter(c => getCard(c)?.type === "land").length;
     // Cradle/Itlimoc produce 0 mana T1 with no creatures — exclude from "real" land count for T1 planning
     const realLands = cards.filter(c => {
@@ -12437,7 +12840,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     const canMakeT1Mana = realLands >= 1;
     // All ramp is slow: dorks exist but none are 1-drops or enchant-land auras castable T1.
     // These hands can't do anything until T2+ and are much weaker than hands with a T1 play.
-    const allRampIsSlow = rampCount >= 1 && dorks1 === 0 && enchantLandRamp === 0;
+    const allRampIsSlow = rampCount >= 1 && dorks1 === 0 && enchantLandRamp === 0 && rocks === 0;
     let notes = [];
 
     // Hard gate: no green mana source at all → always MULLIGAN regardless of other factors.
@@ -12455,8 +12858,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     // Rule 1: ramp (dork or enchant-land) + tutor = keep (core game plan)
     if (rampCount >= 1 && tutors >= 1) {
       if (canMakeT1Mana) {
-        const rampLabel = dorks >= 1 && enchantLandRamp >= 1 ? `${dorks} dork${dorks>1?"s":""} + ${enchantLandRamp} enchant-land`
-                        : enchantLandRamp >= 1 ? `${enchantLandRamp} enchant-land ramp` : `${dorks} dork${dorks>1?"s":""}`;
+        const rampLabel = (() => {
+          const parts = [];
+          if (dorks >= 1) parts.push(`${dorks} dork${dorks>1?"s":""}`);
+          if (enchantLandRamp >= 1) parts.push(`${enchantLandRamp} enchant-land`);
+          if (rocks >= 1) parts.push(`${rocks} rock${rocks>1?"s":""}`);
+          return parts.join(" + ") || "ramp";
+        })();
         notes.push(`${rampLabel} + ${tutors} tutor${tutors > 1 ? "s" : ""} ✓✓ — core game plan`);
         if (dorks1 >= 1 && greenLands >= 1) notes.push(`1-drop dork T1 ✓ — can play ${cards.find(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork"))} turn 1`);
         if (enchantLandRamp >= 1 && greenLands >= 1) notes.push(`Enchant-land ramp T1 ✓ — ${cards.find(c => getCard(c)?.tags?.includes("enchant-land"))} on a Forest`);
@@ -12505,8 +12913,14 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     else                                              { score += 1; notes.push(`${greenLands} green lands (mana-heavy)`); }
 
     // Note colourless-only lands separately (they're not useless, just can't cast green spells)
-    const colourlessOnly = realLands - greenLands;
-    if (colourlessOnly > 0) notes.push(`${colourlessOnly} colourless-only land${colourlessOnly > 1 ? "s" : ""} (Nykthos/Lodge etc.) — no T1 green`);
+    const colourlessOnlyLands = cards.filter(c => {
+      const cd = getCard(c);
+      return cd?.type === "land"
+        && c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" // already excluded from realLands
+        && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic")
+        && !cd?.tags?.includes("green-mana") && c !== "Forest";
+    });
+    if (colourlessOnlyLands.length > 0) notes.push(`${colourlessOnlyLands.length} colourless-only land${colourlessOnlyLands.length > 1 ? "s" : ""} (${colourlessOnlyLands.join(", ")}) — no T1 green`);
 
     // 1-drop dorks are much stronger than generic dorks: castable T1, unlock T2 plays immediately
     if (dorks1 >= 2)           { score += 4; notes.push(`${dorks1} 1-drop dorks ✓✓ — explosive T1/T2`); }
@@ -12834,6 +13248,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const TutorOverlay = () => {
     if (!showTutor) return null;
     const isGSZ = tutorMaxCmc !== null;
+    const isWorldly = tutorCreaturesOnly && !isGSZ;
     const q = tutorQuery.toLowerCase();
 
     // GSZ mode: show affordable creatures sorted by CMC desc as default suggestions
@@ -12842,9 +13257,14 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       return data?.type === "creature" && (data?.cmc ?? 99) <= tutorMaxCmc;
     }).sort((a, b) => (getCard(b)?.cmc ?? 0) - (getCard(a)?.cmc ?? 0)).slice(0, 12) : [];
 
+    // Worldly Tutor mode: show all creatures as default suggestions
+    const worldlySuggestions = isWorldly ? [...new Set(library)].filter(c =>
+      getCard(c)?.type === "creature"
+    ).sort((a, b) => (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0)).slice(0, 12) : [];
+
     const matches = q.length >= 1 ? [...new Set(library)].filter(c => {
       const data = getCard(c);
-      const passesType = isGSZ ? data?.type === "creature" : true;
+      const passesType = (isGSZ || isWorldly) ? data?.type === "creature" : true;
       const passesCmc  = isGSZ ? (data?.cmc ?? 99) <= tutorMaxCmc : true;
       return passesType && passesCmc && (
         c.toLowerCase().includes(q)
@@ -12852,7 +13272,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         || (data?.tags ?? []).some(t => t.toLowerCase().includes(q))
         || (data?.role ?? "").toLowerCase().includes(q)
       );
-    }).slice(0, 15) : (isGSZ ? gszSuggestions : []);
+    }).slice(0, 15) : (isGSZ ? gszSuggestions : isWorldly ? worldlySuggestions : []);
 
     const displayList = matches;
     const borderColor = isGSZ ? COLORS.green2 : COLORS.purple;
@@ -12866,6 +13286,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         <div style={{ fontSize: "10px", color: borderColor, letterSpacing: "2px", fontFamily: "'Cinzel', serif", marginBottom: "6px" }}>
           {isGSZ
             ? `GREEN SUN'S ZENITH — X=${tutorMaxCmc} — CREATURES CMC ≤ ${tutorMaxCmc}`
+            : isWorldly
+            ? `CREATURE TUTOR — SEARCH LIBRARY (${library.length} cards)`
             : `TUTOR — SEARCH LIBRARY (${library.length} cards)`}
         </div>
         {isGSZ && gszSuggestions.length > 0 && q.length === 0 && (
@@ -12873,22 +13295,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             AFFORDABLE TARGETS
           </div>
         )}
+        {isWorldly && worldlySuggestions.length > 0 && q.length === 0 && (
+          <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "6px", letterSpacing: "1px" }}>
+            CREATURES IN LIBRARY
+          </div>
+        )}
         <input ref={tutorInputRef} value={tutorQuery}
           onChange={e => { setTutorQuery(e.target.value); setTutorSelected(0); }}
           onKeyDown={e => {
-            if (e.key === "Escape") { e.stopPropagation(); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorOnSelect(null); setTutorSelected(0); }
+            if (e.key === "Escape") { e.stopPropagation(); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorOnSelect(null); setTutorSelected(0); }
             if (e.key === "ArrowDown") { e.preventDefault(); setTutorSelected(i => Math.min(i + 1, displayList.length - 1)); }
             if (e.key === "ArrowUp")   { e.preventDefault(); setTutorSelected(i => Math.max(i - 1, 0)); }
             if (e.key === "Enter" && displayList.length > 0) tutorCard(displayList[tutorSelected]);
           }}
-          placeholder={isGSZ ? `Search creatures (CMC ≤ ${tutorMaxCmc})...` : "Type card name..."} style={{
+          placeholder={isGSZ ? `Search creatures (CMC ≤ ${tutorMaxCmc})...` : isWorldly ? "Search creatures..." : "Type card name..."} style={{
             width: "100%", background: "#0a150a", border: `1px solid ${COLORS.border}`,
             borderRadius: "6px", padding: "6px 10px", color: COLORS.text,
             fontFamily: "'Crimson Text', serif", fontSize: "13px", outline: "none", marginBottom: "8px",
           }} />
-        {displayList.length === 0 && (q.length >= 1 || isGSZ) && (
+        {displayList.length === 0 && (q.length >= 1 || isGSZ || isWorldly) && (
           <div style={{ fontSize: "11px", color: COLORS.textDim, fontStyle: "italic", fontFamily: "'Crimson Text', serif" }}>
-            {isGSZ ? `No creatures with CMC ≤ ${tutorMaxCmc} in library.` : "No matches in library."}
+            {isGSZ ? `No creatures with CMC ≤ ${tutorMaxCmc} in library.` : isWorldly ? "No creatures in library." : "No matches in library."}
           </div>
         )}
         {displayList.map((card, i) => (
@@ -15356,7 +15783,7 @@ function YevaAdvisor() {
                   <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.textDim, letterSpacing: "1px", whiteSpace: "nowrap", display: "block" }}>MANA AVAILABLE</label>
                   <span style={{ fontSize: "9px", color: COLORS.textDim, opacity: 0.6, fontFamily: "'Crimson Text', serif", fontStyle: "italic" }}>auto · override manually</span>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                <div style={{ display: "flex", flexDirection: "row", gap: "10px", alignItems: "center" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
                     <span style={{ fontSize: "13px", lineHeight: 1, filter: "drop-shadow(0 0 3px #00bb0066)" }} title="Green mana {G}">🌿</span>
                     <input
