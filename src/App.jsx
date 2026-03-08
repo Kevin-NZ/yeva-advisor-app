@@ -10441,6 +10441,16 @@ function simCanCast(card, manaPool, battlefield = []) {
     }).length;
     return manaPool.green >= pips && convokeTappers >= 1;
   }
+  // Enchant-land auras need a land on the battlefield to attach to
+  if (data.tags?.includes("enchant-land")) {
+    return manaPool.green >= pips && manaPool.total >= cmc &&
+      battlefield.some(c => getCard(c)?.type === "land");
+  }
+  // Crop Rotation needs a land to sacrifice
+  if (card === "Crop Rotation") {
+    return manaPool.green >= pips && manaPool.total >= cmc &&
+      battlefield.some(c => getCard(c)?.type === "land");
+  }
   // Need enough green for the pips, and total mana >= cmc
   return manaPool.green >= pips && manaPool.total >= cmc;
 }
@@ -10529,9 +10539,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     const TUTOR_MIN = {
       "Natural Order": 4, "Eldritch Evolution": 3,
       "Fierce Empath": 6, "Chord of Calling": 2,
+      "Finale of Devastation": 2, "Shared Summons": 5,
       "Worldly Tutor": 1, "Elvish Harbinger": 1,
       "Green Sun's Zenith": 1,
-      "Shared Summons": 1, "Archdruid's Charm": 1,
+      "Crop Rotation": 1, "Sylvan Scrying": 1,
+      "Archdruid's Charm": 1,
     };
     const min = TUTOR_MIN[card];
     if (!min) return false;
@@ -11016,11 +11028,114 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         library.splice(library.indexOf(spTarget), 1);
         hand.push(spTarget); // Summoner's Pact puts the card into hand immediately
       }
+    } else if (card === "Crop Rotation" || card === "Sylvan Scrying") {
+      // Sacrifice a land (Crop Rotation) or just search (Sylvan Scrying), then put a land onto battlefield/hand.
+      graveyard.push(card);
+      const LAND_PRIORITY = [
+        "Gaea's Cradle", "Nykthos, Shrine to Nyx", "Yavimaya, Cradle of Growth",
+        "Itlimoc, Cradle of the Sun", "Castle Garenbrig", "Wirewood Lodge",
+        "Boseiju, Who Endures", "Forest",
+      ];
+      // Crop Rotation: sacrifice a land first
+      if (card === "Crop Rotation") {
+        const landBf = battlefield.findIndex(c => getCard(c)?.type === "land");
+        if (landBf >= 0) battlefield.splice(landBf, 1);
+        else return; // no land to sacrifice
+      }
+      const boardLands = new Set(battlefield.filter(c => getCard(c)?.type === "land"));
+      let landTarget = null;
+      for (const t of LAND_PRIORITY) {
+        if (boardLands.has(t)) continue;
+        if (library.indexOf(t) !== -1) { landTarget = t; break; }
+      }
+      if (!landTarget) landTarget = library.find(c => getCard(c)?.type === "land" && !boardLands.has(c)) ?? null;
+      if (landTarget) {
+        library.splice(library.indexOf(landTarget), 1);
+        battlefield.push(landTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Finale of Devastation") {
+      // {X}{G}{G}: search for creature with CMC ≤ X, put onto battlefield. Uses same X budget as GSZ.
+      graveyard.push(card);
+      const xBudget = manaPool ? Math.max(0, manaPool.total - 2) : 99; // {G}{G} base cost
+      const FIN_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Quirion Ranger", "Scryb Ranger", "Argothian Elder",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Marwyn, the Nurturer",
+        "Wirewood Symbiote", "Temur Sabertooth", "Kogla, the Titan Ape",
+        "Eternal Witness", "Fierce Empath", "Elvish Harbinger",
+        "Hyrax Tower Scout", "Hope Tender", "Destiny Spinner",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
+        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
+      ];
+      const boardSetFin = new Set(battlefield);
+      let finTarget = null;
+      for (const t of FIN_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSetFin.has(t)) continue;
+        if ((cd.cmc ?? 0) > xBudget) continue;
+        if (library.indexOf(t) !== -1) { finTarget = t; break; }
+      }
+      if (!finTarget) finTarget = library.find(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && !boardSetFin.has(c) && (cd.cmc ?? 0) <= xBudget;
+      }) ?? null;
+      if (finTarget) {
+        library.splice(library.indexOf(finTarget), 1);
+        battlefield.push(finTarget);
+        sickSet.add(finTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Shared Summons") {
+      // {3}{G}{G}: search for up to 2 creatures. Find the top 2 from priority list, put in hand.
+      graveyard.push(card);
+      const SS_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Quirion Ranger", "Scryb Ranger", "Argothian Elder",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Wirewood Symbiote",
+        "Temur Sabertooth", "Eternal Witness", "Fierce Empath", "Elvish Harbinger",
+        "Hyrax Tower Scout", "Hope Tender",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
+      ];
+      const boardSetSS = new Set(battlefield);
+      const found = [];
+      for (const t of SS_PRIORITY) {
+        if (found.length >= 2) break;
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (boardSetSS.has(t)) continue;
+        const li = library.indexOf(t);
+        if (li === -1) continue;
+        library.splice(li, 1);
+        found.push(t);
+      }
+      hand.push(...found);
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
     } else {
       graveyard.push(card);
     }
   } else {
-    // Mox Diamond requires discarding a land as it enters.
+    // ── Permanents (creatures, artifacts, enchantments) ──────
+    // Enchant-land auras: only castable if there's a land on battlefield to attach to.
+    // If no land is available, skip (shouldn't reach here due to simCanCast, but guard anyway).
+    if (getCard(card)?.tags?.includes("enchant-land")) {
+      const targetLand = battlefield.findIndex(c => getCard(c)?.type === "land");
+      if (targetLand === -1) { graveyard.push(card); return; } // no land to attach to
+    }
     // Optimal play: discard a land already on the battlefield (already tapped this turn) so Mox
     // replaces it 1-for-1 as a permanent mana source. Only discard from hand if no spare
     // battlefield land exists (i.e. we need the hand land for our land drop this turn).
@@ -11045,13 +11160,81 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     }
     battlefield.push(card);
     if (cardType === "creature") sickSet.add(card);
+
+    // ── ETB effects ──────────────────────────────────────────
+    if (card === "Fierce Empath") {
+      // ETB: search for creature with CMC 6+, reveal it, put in hand
+      const ETB_PRIORITY = [
+        "Selvala, Heart of the Wilds", "Temur Sabertooth", "Kogla, the Titan Ape",
+        "Seedborn Muse", "Woodland Bellower",
+      ];
+      const boardSetFE = new Set(battlefield);
+      let feTarget = null;
+      for (const t of ETB_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if ((cd.cmc ?? 0) < 6) continue;
+        if (boardSetFE.has(t)) continue;
+        if (library.indexOf(t) !== -1) { feTarget = t; break; }
+      }
+      if (!feTarget) feTarget = library.find(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && (cd.cmc ?? 0) >= 6 && !boardSetFE.has(c);
+      }) ?? null;
+      if (feTarget) {
+        library.splice(library.indexOf(feTarget), 1);
+        hand.push(feTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Elvish Harbinger") {
+      // ETB: search for elf, reveal it, put on top of library
+      const EH_PRIORITY = [
+        "Duskwatch Recruiter", "Formidable Speaker",
+        "Elvish Archdruid", "Priest of Titania", "Circle of Dreams Druid",
+        "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
+        "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Marwyn, the Nurturer",
+        "Ashaya, Soul of the Wild",
+        "Eternal Witness", "Hyrax Tower Scout", "Hope Tender",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf", "Boreal Druid",
+      ];
+      const boardSetEH = new Set(battlefield);
+      let ehTarget = null;
+      for (const t of EH_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (!cd.tags?.includes("elf")) continue;
+        if (boardSetEH.has(t)) continue;
+        if (library.indexOf(t) !== -1) { ehTarget = t; break; }
+      }
+      if (ehTarget) {
+        library.splice(library.indexOf(ehTarget), 1);
+        library.unshift(ehTarget); // top of library, drawn next turn
+      }
+    } else if (card === "Growing Rites of Itlimoc") {
+      // ETB: look at top 4, reveal creature, put rest on bottom. Then at end of turn,
+      // if you control 4+ creatures, transform into Itlimoc.
+      // Sim simplification: if 4+ creatures on board, immediately transform.
+      const creatureCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
+      if (creatureCount >= 4) {
+        const idx = battlefield.lastIndexOf(card);
+        battlefield.splice(idx, 1);
+        battlefield.push("Itlimoc, Cradle of the Sun");
+      }
+    }
+
     if (cardData?.tags?.includes("fetch")) {
       const fetchIdx = battlefield.lastIndexOf(card);
       battlefield.splice(fetchIdx, 1);
       graveyard.push(card);
-      const forestIdx = library.findIndex(c => getCard(c)?.type === "land" && !getCard(c)?.tags?.includes("fetch"));
-      if (forestIdx >= 0) {
-        const found = library.splice(forestIdx, 1)[0];
+      // Prefer fetching a Forest; fall back to any non-fetch land
+      const forestIdx = library.findIndex(c => c === "Forest" || (getCard(c)?.tags?.includes("forest") && !getCard(c)?.tags?.includes("fetch")));
+      const anyLandIdx = library.findIndex(c => getCard(c)?.type === "land" && !getCard(c)?.tags?.includes("fetch"));
+      const targetIdx = forestIdx >= 0 ? forestIdx : anyLandIdx;
+      if (targetIdx >= 0) {
+        const found = library.splice(targetIdx, 1)[0];
         battlefield.push(found);
         for (let i = library.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [library[i], library[j]] = [library[j], library[i]]; }
         sickSet.add(found);
