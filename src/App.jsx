@@ -10874,6 +10874,33 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           if (cmc >= 7) score -= 2;
           return { c, score };
         }).sort((a, b) => a.score - b.score);
+
+        // Context-aware pair protection: Chrome Mox paired with a green card to imprint,
+        // and Mox Diamond paired with a land, are worth much more together than apart.
+        // Bump both members of the pair up so they aren't split when bottoming.
+        const hasMoxChrome  = hand.includes("Chrome Mox");
+        const hasMoxDiamond = hand.includes("Mox Diamond");
+        const hasGreenImprint = hand.some(c => c !== "Chrome Mox" && (getCard(c)?.greenPips ?? 0) >= 1
+          && !(getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 0) === 1));
+        const hasLandForDiamond = hand.some(c => getCard(c)?.type === "land");
+        if (hasMoxChrome && hasGreenImprint) {
+          // Protect Chrome Mox + its best imprint target (highest-CMC green non-1drop)
+          for (const entry of scored) {
+            if (entry.c === "Chrome Mox") { entry.score += 4; }
+            else if ((getCard(entry.c)?.greenPips ?? 0) >= 1 &&
+                     !(getCard(entry.c)?.tags?.includes("dork") && (getCard(entry.c)?.cmc ?? 0) === 1)) {
+              entry.score += 2; // protect imprint target
+            }
+          }
+          scored.sort((a, b) => a.score - b.score); // re-sort
+        }
+        if (hasMoxDiamond && hasLandForDiamond) {
+          for (const entry of scored) {
+            if (entry.c === "Mox Diamond") { entry.score += 4; }
+          }
+          scored.sort((a, b) => a.score - b.score);
+        }
+
         const bottomed = selectBottomsFromScored(scored, toBottom);
         hand = hand.filter(c => !bottomed.includes(c));
       }
@@ -10971,7 +10998,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       {
         const esgIdx = hand.findIndex(c => c === "Elvish Spirit Guide");
         if (esgIdx >= 0) {
-          const baseMana = calculateSimManaPool(battlefield, sickSet);
+          const baseMana = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
           const hasDorkInHand = hand.some((c, i) => i !== esgIdx && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
           const hasDorkOnBoard = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
           if (hasDorkInHand && !hasDorkOnBoard && baseMana.green < 1) {
@@ -10986,8 +11013,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         }
       }
 
-      // Calculate available mana (excluding summoning-sick creatures), split by color
-      const manaPool = calculateSimManaPool(battlefield, sickSet);
+      // Calculate available mana (excluding summoning-sick creatures), split by color.
+      // Pass simAttachments so Arbor Elf sees enchanted-Forest bonuses (Utopia Sprawl / Wild Growth).
+      const manaPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
       const mana = manaPool.total; // total for advisor call
       if (manaCurve.length < turn) manaCurve.push(mana);
 
@@ -11026,6 +11054,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           manaAvailable: { green: manaPool.green, colorless: manaPool.colorless },
           isMyTurn: true,
           deckList: deckSet,
+          attachments: simState.simAttachments ?? null,
         });
       } catch { break; }
 
@@ -11569,10 +11598,20 @@ function simPlayCard(card, idx, simState, manaPool = null) {
   } else {
     // ── Permanents (creatures, artifacts, enchantments) ──────
     // Enchant-land auras: only castable if there's a land on battlefield to attach to.
-    // If no land is available, skip (shouldn't reach here due to simCanCast, but guard anyway).
+    // Track the attachment in simState.simAttachments so calculateSimManaPool sees the bonus
+    // (e.g. Arbor Elf + Utopia Sprawl on Forest = 2 green per tap cycle instead of 1).
     if (getCard(card)?.tags?.includes("enchant-land")) {
-      const targetLand = battlefield.findIndex(c => getCard(c)?.type === "land");
-      if (targetLand === -1) { graveyard.push(card); return; } // no land to attach to
+      // Prefer attaching to a Forest (Arbor Elf can untap any Forest); fall back to any land.
+      const forestIdx = battlefield.findIndex(c => {
+        const tags = getCard(c)?.tags ?? [];
+        return getCard(c)?.type === "land" && (tags.includes("basic") || tags.includes("forest") || c === "Yavimaya, Cradle of Growth");
+      });
+      const anyLandIdx = battlefield.findIndex(c => getCard(c)?.type === "land");
+      const targetLandIdx = forestIdx >= 0 ? forestIdx : anyLandIdx;
+      if (targetLandIdx === -1) { graveyard.push(card); return; } // no land to attach to
+      // Record the attachment: aura will be at the next index (battlefield.length, before push)
+      if (!simState.simAttachments) simState.simAttachments = new Map();
+      simState.simAttachments.set(battlefield.length, targetLandIdx);
     }
     // Lotus Petal: sacrifice immediately for {G}. Never enters the battlefield.
     // We model it as an instant-speed mana boost: it produces {G} for the current turn
@@ -11708,8 +11747,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         battlefield.splice(idx, 1);
         battlefield.push("Itlimoc, Cradle of the Sun");
       }
-    } else if (card === "Woodland Bellower") {
-      // ETB: search for a nonlegendary green creature with CMC ≤ 3, put onto battlefield.
+    } else if (card === "Woodland Bellower") {      // ETB: search for a nonlegendary green creature with CMC ≤ 3, put onto battlefield.
       const WB_PRIORITY = [
         "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
         "Duskwatch Recruiter", "Formidable Speaker", "Hyrax Tower Scout",
@@ -11745,16 +11783,55 @@ function simPlayCard(card, idx, simState, manaPool = null) {
           [library[i], library[j]] = [library[j], library[i]];
         }
       }
+    } else if (card === "Regal Force") {
+      // ETB: draw cards equal to the number of green creatures you control.
+      // Count green creatures already on battlefield (Regal Force itself just entered, already pushed above).
+      const greenCreatureCount = battlefield.filter(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.devotion ?? 0) > 0);
+      }).length;
+      const draws = Math.max(1, greenCreatureCount); // draw at least 1
+      for (let d = 0; d < draws && library.length > 0; d++) {
+        hand.push(library.shift());
+      }
+    }
+
+    // Guardian Project: draw a card when a nontoken creature enters if it doesn't share a name
+    // with another creature you control or one in your hand. Fire for any non-sick creature ETB.
+    if (battlefield.includes("Guardian Project") && cardType === "creature") {
+      const namesOnBoard = new Set(battlefield.filter(c => getCard(c)?.type === "creature" && c !== card));
+      const namesInHand  = new Set(hand.filter(c => getCard(c)?.type === "creature"));
+      if (!namesOnBoard.has(card) && !namesInHand.has(card) && library.length > 0) {
+        hand.push(library.shift());
+      }
     }
 
     if (cardData?.tags?.includes("fetch")) {
       const fetchIdx = battlefield.lastIndexOf(card);
       battlefield.splice(fetchIdx, 1);
       graveyard.push(card);
-      // Prefer fetching a Forest; fall back to any non-fetch land
-      const forestIdx = library.findIndex(c => c === "Forest" || (getCard(c)?.tags?.includes("forest") && !getCard(c)?.tags?.includes("fetch")));
-      const anyLandIdx = library.findIndex(c => getCard(c)?.type === "land" && !getCard(c)?.tags?.includes("fetch"));
-      const targetIdx = forestIdx >= 0 ? forestIdx : anyLandIdx;
+      const hasYavimaya = battlefield.some(c => c === "Yavimaya, Cradle of Growth");
+      const boardLandSet = new Set(battlefield.filter(c => getCard(c)?.type === "land"));
+      // With Yavimaya in play all lands are already Forests — prefer fetching a utility land
+      // (Cradle, Nykthos) over a redundant basic Forest.
+      const FETCH_UTILITY_PRIORITY = [
+        "Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun",
+        "Castle Garenbrig", "Wirewood Lodge", "Deserted Temple",
+      ];
+      let targetIdx = -1;
+      if (hasYavimaya) {
+        for (const want of FETCH_UTILITY_PRIORITY) {
+          if (boardLandSet.has(want)) continue; // already have it
+          const li = library.findIndex(c => c === want);
+          if (li >= 0) { targetIdx = li; break; }
+        }
+      }
+      // Default (or no utility found): prefer Forest, fall back to any non-fetch land
+      if (targetIdx === -1) {
+        const forestIdx = library.findIndex(c => c === "Forest" || (getCard(c)?.tags?.includes("forest") && !getCard(c)?.tags?.includes("fetch")));
+        const anyLandIdx = library.findIndex(c => getCard(c)?.type === "land" && !getCard(c)?.tags?.includes("fetch"));
+        targetIdx = forestIdx >= 0 ? forestIdx : anyLandIdx;
+      }
       if (targetIdx >= 0) {
         const found = library.splice(targetIdx, 1)[0];
         battlefield.push(found);
@@ -11849,31 +11926,82 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
     .map(([label, count]) => ({ label, count, pct: Math.round(count / wins.length * 100) }));
 
   // ── Tutor efficiency heatmap ──────────────────────────────────
-  // For each winning game, check which tutors appear in the castLog alongside
-  // which win-relevant pieces also appear. This tells us: "when Worldly Tutor
-  // appeared in a win, what else was cast that game?" — a proxy for what it found.
-  const TUTOR_CARDS = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons",
-    "Green Sun's Zenith","Natural Order","Eldritch Evolution","Archdruid's Charm",
-    "Fierce Empath","Fauna Shaman","Woodland Bellower","Sylvan Scrying","Crop Rotation"];
-  const WIN_PIECES = ["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger",
-    "Priest of Titania","Argothian Elder","Duskwatch Recruiter","Temur Sabertooth",
-    "Kogla, the Titan Ape","Eternal Witness","Formidable Speaker","Regal Force",
-    "Endurance","Yisan, the Wanderer Bard","Eladamri, Korvecdal","Circle of Dreams Druid",
-    "Elvish Archdruid","Fanatic of Rhonas","Seedborn Muse"];
+  // For each tutor that appeared in winning games, counts how often each of its
+  // VALID targets also appeared in the same game's cast log — a proxy for
+  // what the tutor actually fetched. Each tutor only lists its legal targets.
+  //
+  // Valid-target rules:
+  //   Creature tutors (any creature):   Worldly Tutor, Chord of Calling,
+  //     Summoner's Pact, Shared Summons, Green Sun's Zenith,
+  //     Natural Order, Eldritch Evolution, Fauna Shaman
+  //   Woodland Bellower: non-legendary green creature CMC ≤ 3
+  //   Fierce Empath:     creature CMC ≥ 7
+  //   Land tutors:       Crop Rotation, Sylvan Scrying, Archdruid's Charm
+
+  // Key creatures by CMC for targeting rules
+  const CREATURE_PIECES = {
+    "Quirion Ranger":         { cmc: 1, legendary: false },
+    "Scryb Ranger":           { cmc: 2, legendary: false },
+    "Priest of Titania":      { cmc: 2, legendary: false },
+    "Fanatic of Rhonas":      { cmc: 2, legendary: false },
+    "Duskwatch Recruiter":    { cmc: 2, legendary: false },
+    "Elvish Archdruid":       { cmc: 3, legendary: false },
+    "Circle of Dreams Druid": { cmc: 3, legendary: false },
+    "Eternal Witness":        { cmc: 3, legendary: false },
+    "Endurance":              { cmc: 3, legendary: false },
+    "Formidable Speaker":     { cmc: 3, legendary: false },
+    "Yisan, the Wanderer Bard": { cmc: 3, legendary: true },
+    "Eladamri, Korvecdal":    { cmc: 3, legendary: true },
+    "Temur Sabertooth":       { cmc: 4, legendary: false },
+    "Argothian Elder":        { cmc: 4, legendary: false },
+    "Ashaya, Soul of the Wild": { cmc: 5, legendary: true },
+    "Seedborn Muse":          { cmc: 5, legendary: false },
+    "Kogla, the Titan Ape":   { cmc: 6, legendary: true },
+    "Regal Force":            { cmc: 7, legendary: false },
+  };
+  // Key lands for land tutors
+  const LAND_PIECES = [
+    "Gaea's Cradle","Nykthos, Shrine to Nyx","Yavimaya, Cradle of Growth",
+    "Deserted Temple","Itlimoc, Cradle of the Sun","War Room",
+  ];
+
+  // Valid targets per tutor — only pieces this tutor can legally find
+  const TUTOR_VALID_TARGETS = {
+    // Any creature
+    "Worldly Tutor":    Object.keys(CREATURE_PIECES),
+    "Chord of Calling": Object.keys(CREATURE_PIECES),
+    "Summoner's Pact":  Object.keys(CREATURE_PIECES),
+    "Shared Summons":   Object.keys(CREATURE_PIECES),
+    "Green Sun's Zenith": Object.keys(CREATURE_PIECES),
+    "Natural Order":    Object.keys(CREATURE_PIECES),
+    "Eldritch Evolution": Object.keys(CREATURE_PIECES),
+    "Fauna Shaman":     Object.keys(CREATURE_PIECES),
+    // Woodland Bellower: non-legendary green creature CMC ≤ 3
+    "Woodland Bellower": Object.entries(CREATURE_PIECES)
+      .filter(([, v]) => v.cmc <= 3 && !v.legendary).map(([k]) => k),
+    // Fierce Empath: creature CMC ≥ 7
+    "Fierce Empath": Object.entries(CREATURE_PIECES)
+      .filter(([, v]) => v.cmc >= 6).map(([k]) => k),
+    // Land tutors
+    "Crop Rotation":      LAND_PIECES,
+    "Sylvan Scrying":     LAND_PIECES,
+    "Archdruid's Charm":  LAND_PIECES,
+  };
+
   const tutorHeatmap = {};
   for (const r of wins) {
     const log = r.winCastLog || new Set();
-    for (const tutor of TUTOR_CARDS) {
+    for (const [tutor, validTargets] of Object.entries(TUTOR_VALID_TARGETS)) {
       if (!log.has(tutor)) continue;
       if (!tutorHeatmap[tutor]) tutorHeatmap[tutor] = {};
-      for (const piece of WIN_PIECES) {
+      for (const piece of validTargets) {
         if (log.has(piece)) {
           tutorHeatmap[tutor][piece] = (tutorHeatmap[tutor][piece] ?? 0) + 1;
         }
       }
     }
   }
-  // For each tutor: top 4 co-occurring win pieces (sorted by count)
+  // For each tutor: top 4 valid co-appearing targets (sorted by count)
   const tutorSummary = Object.entries(tutorHeatmap)
     .filter(([, map]) => Object.keys(map).length > 0)
     .map(([tutor, map]) => ({
@@ -11920,6 +12048,14 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
       const tags = cd.tags ?? [];
       // Skip obvious auto-includes
       if (tags.includes("dork") && (cd.cmc ?? 0) <= 1) return false;
+      // Skip protection / interaction / stax pieces — these are situational by design
+      // and will always appear rarely in winning games, giving misleading cut signals.
+      if (tags.includes("protection")) return false;
+      if (tags.includes("stax")) return false;
+      if (tags.includes("counter")) return false;
+      if (tags.includes("removal")) return false;
+      if (tags.includes("hate")) return false;
+      if (cd.type === "instant" && tags.includes("meta")) return false;
       return true;
     })
     .map(c => {
@@ -12566,6 +12702,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // attachments: Map<auraIndex, targetLandIndex> — which land each enchant-land aura enchants
   const [attachments, setAttachments] = useState(new Map());
   const [pendingAura, setPendingAura] = useState(null); // { name, lands } awaiting target pick
+  const [pendingNaturalOrder, setPendingNaturalOrder] = useState(null); // { card, maxCmc } awaiting sac pick
   const [exile, setExile] = useState([]);
   const [turnNumber, setTurnNumber] = useState(1);
   const turnRef = useRef(1);
@@ -12587,6 +12724,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor / Survival mode
   const [tutorLandsOnly,     setTutorLandsOnly]     = useState(false); // Sylvan Scrying mode
   const [tutorTreefolk,      setTutorTreefolk]      = useState(false); // Treefolk Harbinger mode
+  const [tutorNonLegendary,  setTutorNonLegendary]  = useState(false); // Woodland Bellower mode
   const [tutorOnSelect, setTutorOnSelect] = useState(null); // callback after selection (for GSZ shuffle)
   const [tutorSelected, setTutorSelected] = useState(0); // keyboard-highlighted index
   const tutorInputRef = useRef(null);
@@ -13291,6 +13429,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         setShowTutor(true); setTutorQuery("");
         setTimeout(() => tutorInputRef.current?.focus(), 50);
         addLog(`Cast Sylvan Scrying — choose a land to search for.`, COLORS.purple);
+      } else if (card === "Natural Order" || card === "Eldritch Evolution") {
+        // Step 1: pick a creature from the battlefield to sacrifice.
+        // Natural Order: sacrifice any green creature → fetch any creature.
+        // Eldritch Evolution: sacrifice any creature → fetch creature with CMC ≤ sacrificed CMC + 2.
+        const isNO = card === "Natural Order";
+        const sacrificeTargets = battlefield
+          .map((c, i) => ({ c, i }))
+          .filter(({ c }) => {
+            const cd = getCard(c);
+            if (cd?.type !== "creature") return false;
+            if (isNO && (cd.greenPips ?? 0) === 0 && (cd.devotion ?? 0) === 0) return false;
+            return true;
+          });
+        if (sacrificeTargets.length === 0) {
+          addLog(`${card} fizzled — no valid creature to sacrifice.`, COLORS.red);
+          setHand(prev => [...prev, card]);
+          setManaPool(p => p + (getCard(card)?.cmc ?? 0));
+          return;
+        }
+        setPendingNaturalOrder({ card, isNO });
+        addLog(`Cast ${card} — choose a creature to sacrifice.`, COLORS.purple);
       } else {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
@@ -13320,6 +13479,31 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         addLog(`Sowing Mycospawn cast — search for a land to put onto the battlefield.`, COLORS.purple);
       }
       // Treefolk Harbinger ETB: search for a Treefolk or Forest card, put on top of shuffled library.
+      if (card === "Woodland Bellower") {
+        // ETB: search for a non-legendary green creature with CMC ≤ 3, put onto battlefield. Library shuffled.
+        setTutorMaxCmc(3);
+        setTutorCreaturesOnly(true);
+        setTutorNonLegendary(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          setBattlefield(prev => [...prev, chosen]);
+          setSickCreatures(prev => new Set([...prev, chosen]));
+          addLog(`Woodland Bellower ETB → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Woodland Bellower ETB — search for a non-legendary creature with CMC ≤ 3.`, COLORS.green2);
+      }
+
       if (card === "Treefolk Harbinger") {
         setTutorTreefolk(true);
         setTutorOnSelect(() => (chosen) => {
@@ -13389,7 +13573,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     if (tutorOnSelect) {
       // GSZ mode: callback handles where the card goes
       tutorOnSelect(card);
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorOnSelect(null); setTutorSelected(0);
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorOnSelect(null); setTutorSelected(0);
       return;
     }
     const idx = library.indexOf(card);
@@ -13403,7 +13587,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       return without;
     });
     setHand(prev => [...prev, card]);
-    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorOnSelect(null); setTutorSelected(0);
+    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorOnSelect(null); setTutorSelected(0);
     addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
   }
 
@@ -13666,24 +13850,43 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     // In that case grade as BORDERLINE rather than hard MULLIGAN.
     if (!canMakeT1Green) {
       // Cards that can produce {G} T1 without a green land:
-      //   Lotus Petal / Chrome Mox / Mox Diamond → can tap/imprint for {G}
+      //   Lotus Petal → sacrifice for {G}
+      //   Chrome Mox / Mox Diamond → can imprint/discard for {G}
       //   Elvish Spirit Guide → exile for {G} (free)
       const greenFastMana = cards.filter(c => {
         const cd = getCard(c);
         return (cd?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide");
       });
       const hasBirds = cards.includes("Birds of Paradise");
+      const hasOneDrop = dorks1 >= 1;
+      const hasColourlessLand = cards.some(c => {
+        const cd = getCard(c);
+        return cd?.type === "land" && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic") && !cd?.tags?.includes("green-mana") && !cd?.tags?.includes("fetch-forest") && c !== "Forest";
+      });
       const colourlessLandNames = cards.filter(c => {
         const cd = getCard(c);
         return cd?.type === "land" && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic") && !cd?.tags?.includes("green-mana") && !cd?.tags?.includes("fetch-forest") && c !== "Forest";
       });
 
       if (hasBirds && greenFastMana.length > 0) {
-        // Can cast BoP T1 via fast mana → produces green from T2 onward (or sooner via its tap)
-        const fastNames = greenFastMana.join(", ");
+        // Can cast BoP T1 via fast mana → produces green from T2 onward
+        const fastNames = greenFastMana.map(c => c).join(", ");
         notes.push(`⚠️ No green land — but ${fastNames} can produce {G} T1 to cast Birds of Paradise`);
         notes.push("Birds of Paradise on T1 provides green mana from T2 — fragile but functional");
         notes.push("One removal spell or missed drop ends your green production entirely");
+        return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+      }
+
+      if (greenFastMana.length > 0 && hasOneDrop && hasColourlessLand) {
+        // Lotus Petal (or similar) + 1-drop dork + colourless land:
+        // Petal → {G} → cast dork T1. Colourless land untaps T2 and can cast further spells.
+        // The dork itself then produces green from T2 onward. Fragile but a real T1 play.
+        const petals = greenFastMana.map(c => c).join(", ");
+        const dorkName = cards.find(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.tags?.includes("1drop"));
+        const landName = colourlessLandNames[0];
+        notes.push(`⚠️ No green land — but ${petals} can produce {G} T1 to cast ${dorkName}`);
+        notes.push(`${landName} provides colourless mana from T2; ${dorkName} provides green once in play`);
+        notes.push("Fragile: if the dork is removed before T2, you lose your only green source");
         return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
       }
 
@@ -14032,7 +14235,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       if (e.key === "m" || e.key === "M") { e.preventDefault(); tapAllMana(); }
       if (e.key === "Escape") {
         const anyOpen = showUntapModal || showTutor || showScry || contextMenu;
-        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
+        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -14127,14 +14330,20 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── Tutor overlay ─────────────────────────────────────────────
   const TutorOverlay = () => {
     if (!showTutor) return null;
-    const isGSZ      = tutorMaxCmc !== null;
-    const isCreature = tutorCreaturesOnly && !isGSZ;
+    const isGSZ      = tutorMaxCmc !== null && !tutorNonLegendary;
+    const isBellower = tutorNonLegendary && tutorMaxCmc !== null;
+    const isCreature = tutorCreaturesOnly && !isGSZ && !isBellower;
     const isLand     = tutorLandsOnly;
     const isTreefolk = tutorTreefolk;
     const q = tutorQuery.toLowerCase();
 
+    const LEGENDARY_NAMES = new Set(["Ashaya, Soul of the Wild","Selvala, Heart of the Wilds",
+      "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Eladamri, Korvecdal",
+      "Nissa, Resurgent Animist","Saryth, the Viper's Fang","Kogla, the Titan Ape"]);
+
     const passesMode = (c) => {
       const d = getCard(c);
+      if (isBellower) return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc && !LEGENDARY_NAMES.has(c);
       if (isGSZ || isCreature) return d?.type === "creature" && (!isGSZ || (d?.cmc ?? 99) <= tutorMaxCmc);
       if (isLand)              return d?.type === "land";
       if (isTreefolk)          return d?.tags?.includes("treefolk") || d?.tags?.includes("forest") || d?.tags?.includes("basic");
@@ -14161,26 +14370,30 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       : defaults;
 
     const displayList = matches;
-    const borderColor = isGSZ ? COLORS.green2 : COLORS.purple;
+    const borderColor = isBellower ? COLORS.green2 : isGSZ ? COLORS.green2 : COLORS.purple;
 
-    const header = isGSZ
+    const header = isBellower
+      ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CREATURES CMC \u2264 3`
+      : isGSZ
       ? `GREEN SUN'S ZENITH \u2014 X=${tutorMaxCmc} \u2014 CREATURES CMC \u2264 ${tutorMaxCmc}`
       : isCreature ? `CREATURE TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`
       : isLand     ? `LAND TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`
       : isTreefolk ? `TREEFOLK HARBINGER \u2014 TREEFOLK OR FOREST (${library.length} cards)`
       :              `TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`;
 
-    const hint = isGSZ      ? "AFFORDABLE TARGETS"
-      : isCreature           ? "CREATURES IN LIBRARY"
-      : isLand               ? "LANDS IN LIBRARY"
-      : isTreefolk           ? "TREEFOLK & FORESTS IN LIBRARY"
+    const hint = isBellower      ? "NON-LEGENDARY CREATURES CMC ≤ 3"
+      : isGSZ                    ? "AFFORDABLE TARGETS"
+      : isCreature               ? "CREATURES IN LIBRARY"
+      : isLand                   ? "LANDS IN LIBRARY"
+      : isTreefolk                ? "TREEFOLK & FORESTS IN LIBRARY"
       : null;
 
-    const emptyMsg = isGSZ  ? `No creatures with CMC \u2264 ${tutorMaxCmc} in library.`
-      : isCreature           ? "No creatures in library."
-      : isLand               ? "No lands in library."
-      : isTreefolk           ? "No Treefolk or Forest cards in library."
-      :                        "No matches in library.";
+    const emptyMsg = isBellower  ? "No non-legendary creatures with CMC \u2264 3 in library."
+      : isGSZ                    ? `No creatures with CMC \u2264 ${tutorMaxCmc} in library.`
+      : isCreature               ? "No creatures in library."
+      : isLand                   ? "No lands in library."
+      : isTreefolk                ? "No Treefolk or Forest cards in library."
+      :                            "No matches in library.";
 
     const placeholder = isGSZ ? `Search creatures (CMC \u2264 ${tutorMaxCmc})...`
       : isCreature             ? "Search creatures..."
@@ -14190,7 +14403,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
     const closeTutor = () => {
       setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null);
-      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false);
+      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false);
       setTutorOnSelect(null); setTutorSelected(0);
     };
 
@@ -14252,7 +14465,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           marginTop: "8px", background: "none", border: `1px solid ${COLORS.border}`,
           borderRadius: "6px", padding: "4px 12px", color: COLORS.textDim, cursor: "pointer",
           fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px", width: "100%",
-        }}>\u2715 CANCEL (Esc)</button>
+        }}>✕ CANCEL (Esc)</button>
       </div>
     );
   };
@@ -14268,6 +14481,96 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         onSkip={() => { setBattlefield(prev => [...prev, pendingAura.name]); setPendingAura(null); }}
       />
     )}
+    {pendingNaturalOrder && (() => {
+      const { card: noCard, isNO } = pendingNaturalOrder;
+      const sacTargets = battlefield
+        .map((c, i) => ({ c, i }))
+        .filter(({ c }) => {
+          const cd = getCard(c);
+          if (cd?.type !== "creature") return false;
+          if (isNO && (cd.greenPips ?? 0) === 0 && (cd.devotion ?? 0) === 0) return false;
+          return true;
+        });
+      const confirmSacrifice = (sacCard, sacIdx) => {
+        const sacCmc = getCard(sacCard)?.cmc ?? 0;
+        // Remove sacrificed creature from battlefield
+        goldfishRemoveFromBattlefield(sacCard, sacIdx);
+        setGraveyard(prev => [...prev, sacCard]);
+        // Natural Order goes to graveyard
+        setGraveyard(prev => [...prev, noCard]);
+        setPendingNaturalOrder(null);
+        // Open tutor modal — creatures only, CMC filter for EE
+        setTutorCreaturesOnly(true);
+        if (!isNO) setTutorMaxCmc(sacCmc + 2);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          goldfishAddToBattlefield(chosen);
+          addLog(`${noCard} → sacrificed ${sacCard} → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`${noCard}: sacrificed ${sacCard}${!isNO ? ` (CMC ${sacCmc} → fetch CMC ≤ ${sacCmc + 2})` : ""} — choose a creature from library.`, COLORS.purple);
+      };
+      return (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9100,
+          background: "rgba(0,0,0,0.82)", display: "flex",
+          alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#0d1f0d", border: `1px solid ${COLORS.borderBright}`,
+            borderRadius: "10px", padding: "20px 24px", minWidth: "320px", maxWidth: "480px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.9)", fontFamily: "'Cinzel', serif",
+          }}>
+            <div style={{ color: COLORS.green3, fontSize: "11px", letterSpacing: "1.5px", marginBottom: "4px" }}>
+              {noCard.toUpperCase()}
+            </div>
+            <div style={{ color: COLORS.textMid, fontSize: "12px", marginBottom: "16px" }}>
+              {isNO
+                ? "Sacrifice a green creature:"
+                : "Sacrifice a creature (fetch CMC ≤ sacrificed CMC + 2):"}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              {sacTargets.map(({ c, i }) => {
+                const cd = getCard(c);
+                const cmc = cd?.cmc ?? 0;
+                return (
+                  <button key={`${c}:${i}`} onClick={() => confirmSacrifice(c, i)} style={{
+                    background: "#0a1a0a", border: `1px solid ${COLORS.border}`,
+                    borderRadius: "6px", padding: "8px 14px", cursor: "pointer",
+                    color: COLORS.green2, fontSize: "12px", fontFamily: "'Cinzel', serif",
+                    textAlign: "left", letterSpacing: "0.5px",
+                    transition: "border-color 0.1s, background 0.1s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green3; e.currentTarget.style.background = "#162616"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.background = "#0a1a0a"; }}>
+                    {c}
+                    <span style={{ color: COLORS.textDim, fontSize: "10px", marginLeft: "8px" }}>
+                      CMC {cmc}{!isNO ? ` → fetch ≤ CMC ${cmc + 2}` : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => { setPendingNaturalOrder(null); setHand(prev => [...prev, noCard]); setManaPool(p => p + (getCard(noCard)?.cmc ?? 0)); addLog(`${noCard} cancelled — returned to hand.`, COLORS.textDim); }} style={{
+              marginTop: "14px", width: "100%", background: "transparent",
+              border: `1px solid ${COLORS.border}`, borderRadius: "6px",
+              padding: "6px", cursor: "pointer", color: COLORS.textDim,
+              fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px",
+            }}>✕ CANCEL</button>
+          </div>
+        </div>
+      );
+    })()}
     <div style={{
       position: "fixed", inset: 0, zIndex: 1000,
       background: "rgba(0,0,0,0.85)", display: "flex",
@@ -14942,33 +15245,41 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             const n = games.filter(fn).length;
             return games.length ? `${Math.round(n / games.length * 100)}%` : "—";
           };
-          const statBox = (label, value, color) => (
-            <div style={{ background: "#0d1a0d", border: `1px solid ${color}44`, borderRadius: "8px", padding: "12px 16px", textAlign: "center", minWidth: "90px" }}>
-              <div style={{ fontSize: "20px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{value}</div>
-              <div style={{ fontSize: "9px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "4px", fontFamily: "'Cinzel', serif" }}>{label}</div>
+          // Compact pill-style stat for the header grid
+          const statPill = (label, value, color) => (
+            <div key={label} style={{
+              background: "#0d1a0d", border: `1px solid ${color}44`,
+              borderRadius: "8px", padding: "8px 10px", textAlign: "center",
+              flex: "1 1 70px", minWidth: 0,
+            }}>
+              <div style={{ fontSize: "16px", color, fontFamily: "'Cinzel', serif", fontWeight: "bold", lineHeight: 1 }}>{value}</div>
+              <div style={{ fontSize: "8px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "3px", fontFamily: "'Cinzel', serif", whiteSpace: "nowrap" }}>{label}</div>
             </div>
           );
           const nr = runNResults;
+          // On mobile the two panels stack; on desktop they sit side-by-side
+          const statsPanelRow = !isMobile;
           return (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: isMobile ? "auto" : "hidden" }}>
 
-              {/* ── Manual game stats header ── */}
-              <div style={{ padding: "16px 24px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px", marginRight: "6px", flexShrink: 0 }}>
-                  ★ MANUAL — {games.length} GAME{games.length !== 1 ? "S" : ""}
-                </div>
-                {statBox("AVG WIN TURN", avg(g => g.winCondition), COLORS.red)}
-                {statBox("AVG ∞ MANA",   avg(g => g.infiniteMana),  "#c084fc")}
-                {statBox("AVG 1ST DORK", avg(g => g.firstDork),     COLORS.green2)}
-                {statBox("AVG MULLS",    avg(g => g.mulligans),      COLORS.gold)}
-                {statBox("T1 DORK",      pct(g => g.firstDork === 1), COLORS.green2)}
-                {statBox("WIN ≤T4",      pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
-                {statBox("WIN ≤T5",      pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
-                <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
+              {/* ── LEFT column: header + game log (desktop) / full page (mobile) ── */}
+              <div style={{
+                flex: 1, display: "flex", flexDirection: "column", minWidth: 0,
+                overflow: statsPanelRow ? "hidden" : "visible",
+                borderRight: statsPanelRow ? `1px solid ${COLORS.border}` : "none",
+              }}>
+
+              {/* ── Header: title + summary stats + action buttons ── */}
+              <div style={{ padding: isMobile ? "10px 12px" : "14px 20px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
+                {/* Title row + buttons */}
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px", flexWrap: "wrap" }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px", flex: 1, minWidth: "120px" }}>
+                    ★ MANUAL — {games.length} GAME{games.length !== 1 ? "S" : ""}
+                  </div>
                   <button onClick={startGame} style={{
-                    background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
-                    padding: "8px 18px", color: COLORS.green2, cursor: "pointer",
-                    fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                    background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "7px",
+                    padding: "6px 14px", color: COLORS.green2, cursor: "pointer",
+                    fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px", flexShrink: 0,
                   }}>▶ NEW GAME</button>
                   {games.length > 0 && (
                     <button onClick={() => {
@@ -14976,55 +15287,111 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       setGameHistory([]); gameNumRef.current = 0;
                       storage.set(statsKey, JSON.stringify({ history: [], gameNum: 0 })).catch(() => {});
                     }} style={{
-                      background: "none", border: `1px solid ${COLORS.red}`, borderRadius: "8px",
-                      padding: "8px 14px", color: COLORS.red, cursor: "pointer",
-                      fontFamily: "'Cinzel', serif", fontSize: "11px",
+                      background: "none", border: `1px solid ${COLORS.red}`, borderRadius: "7px",
+                      padding: "6px 12px", color: COLORS.red, cursor: "pointer",
+                      fontFamily: "'Cinzel', serif", fontSize: "10px", flexShrink: 0,
                     }}>✕ CLEAR</button>
                   )}
                 </div>
+                {/* Stat pills — wrapping flex row */}
+                {games.length > 0 && (
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {statPill("AVG WIN T",   avg(g => g.winCondition), COLORS.red)}
+                    {statPill("AVG ∞ MANA",  avg(g => g.infiniteMana),  "#c084fc")}
+                    {statPill("AVG DORK T",  avg(g => g.firstDork),     COLORS.green2)}
+                    {statPill("AVG MULLS",   avg(g => g.mulligans),      COLORS.gold)}
+                    {statPill("T1 DORK",     pct(g => g.firstDork === 1), COLORS.green2)}
+                    {statPill("WIN ≤T4",     pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
+                    {statPill("WIN ≤T5",     pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
+                  </div>
+                )}
               </div>
 
-              <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-
-                {/* ── Left: manual game log table ── */}
-                <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", borderRight: `1px solid ${COLORS.border}` }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
-                        {["#","Mulls","Opening Hand","Dork","∞","Win T","Combo","Notes",""].map(h => (
-                          <th key={h} style={{ padding: "5px 6px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px", textAlign: "left", fontWeight: "normal" }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
+              {/* ── Game log ── */}
+              <div style={{
+                flex: statsPanelRow ? 1 : undefined, overflowY: statsPanelRow ? "auto" : "visible", minWidth: 0,
+                padding: isMobile ? "10px 10px" : "14px 20px",
+                borderBottom: statsPanelRow ? "none" : `1px solid ${COLORS.border}`,
+              }}>
+                  {/* Mobile: card-per-game layout; Desktop: full table */}
+                  {isMobile ? (
+                    <div>
+                      {games.length === 0 && (
+                        <div style={{ color: COLORS.textDim, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "24px 0", textAlign: "center" }}>
+                          No games yet. Play a game and tap ★ END GAME to record it.
+                        </div>
+                      )}
                       {[...games].reverse().map((g, idx) => (
-                        <tr key={g.gameNum} style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
-                          <td style={{ padding: "5px 6px", color: COLORS.textDim }}>{g.gameNum}</td>
-                          <td style={{ padding: "5px 6px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "—" : `${g.mulligans}×`}</td>
-                          <OpeningHandCell hand={g.openingHand} />
-                          <td style={{ padding: "5px 6px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>{g.firstDork ? `T${g.firstDork}` : "—"}</td>
-                          <td style={{ padding: "5px 6px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>{g.infiniteMana ? `T${g.infiniteMana}` : "—"}</td>
-                          <td style={{ padding: "5px 6px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>{g.winCondition ? `T${g.winCondition}` : "—"}</td>
-                          <td style={{ padding: "5px 6px", color: COLORS.textMid, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.winCombo}>
-                            {g.winCombo || "—"}
-                          </td>
-                          <td style={{ padding: "5px 6px", maxWidth: "120px" }} title={g.notes || ""}>
-                            {g.notes ? (
-                              <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                💬 {g.notes}
-                              </span>
-                            ) : null}
-                          </td>
-                          <td style={{ padding: "5px 6px" }}>
-                            {g.replay?.length > 0 && (
-                              <button onClick={() => setReplayGame(g)} title="View replay" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "2px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px" }}>📼</button>
-                            )}
-                          </td>
-                        </tr>
+                        <div key={g.gameNum} style={{
+                          marginBottom: "8px", padding: "8px 10px",
+                          background: idx % 2 === 0 ? "transparent" : "#0a150a",
+                          border: `1px solid ${COLORS.border}`,
+                          borderLeft: `3px solid ${g.winCondition ? COLORS.red : COLORS.border}`,
+                          borderRadius: "6px",
+                        }}>
+                          {/* Row 1: game # + key outcomes */}
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "4px", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", minWidth: "22px" }}>#{g.gameNum}</span>
+                            {g.mulligans > 0 && <span style={{ fontSize: "10px", color: COLORS.gold, fontFamily: "'Cinzel', serif" }}>{g.mulligans}× mull</span>}
+                            {g.firstDork && <span style={{ fontSize: "10px", color: COLORS.green2, fontFamily: "'Cinzel', serif" }}>🌿 T{g.firstDork}</span>}
+                            {g.infiniteMana && <span style={{ fontSize: "10px", color: "#c084fc", fontFamily: "'Cinzel', serif" }}>∞ T{g.infiniteMana}</span>}
+                            {g.winCondition
+                              ? <span style={{ fontSize: "11px", color: COLORS.red, fontFamily: "'Cinzel', serif", fontWeight: "bold", marginLeft: "auto" }}>WIN T{g.winCondition}</span>
+                              : <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginLeft: "auto" }}>no win</span>
+                            }
+                          </div>
+                          {/* Row 2: combo label + replay */}
+                          {(g.winCombo || g.notes || g.replay?.length > 0) && (
+                            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                              {g.winCombo && <span style={{ fontSize: "9px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.winCombo}</span>}
+                              {g.notes && <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>💬 {g.notes}</span>}
+                              {g.replay?.length > 0 && (
+                                <button onClick={() => setReplayGame(g)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "1px 5px", color: COLORS.textDim, cursor: "pointer", fontSize: "9px", flexShrink: 0 }}>📼</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
-                  {games.length === 0 && (
+                    </div>
+                  ) : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                          {["#","Mulls","Opening Hand","Dork","∞","Win T","Combo","Notes",""].map(h => (
+                            <th key={h} style={{ padding: "5px 6px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px", textAlign: "left", fontWeight: "normal" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...games].reverse().map((g, idx) => (
+                          <tr key={g.gameNum} style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
+                            <td style={{ padding: "5px 6px", color: COLORS.textDim }}>{g.gameNum}</td>
+                            <td style={{ padding: "5px 6px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "—" : `${g.mulligans}×`}</td>
+                            <OpeningHandCell hand={g.openingHand} />
+                            <td style={{ padding: "5px 6px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>{g.firstDork ? `T${g.firstDork}` : "—"}</td>
+                            <td style={{ padding: "5px 6px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>{g.infiniteMana ? `T${g.infiniteMana}` : "—"}</td>
+                            <td style={{ padding: "5px 6px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>{g.winCondition ? `T${g.winCondition}` : "—"}</td>
+                            <td style={{ padding: "5px 6px", color: COLORS.textMid, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.winCombo}>
+                              {g.winCombo || "—"}
+                            </td>
+                            <td style={{ padding: "5px 6px", maxWidth: "120px" }} title={g.notes || ""}>
+                              {g.notes ? (
+                                <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  💬 {g.notes}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: "5px 6px" }}>
+                              {g.replay?.length > 0 && (
+                                <button onClick={() => setReplayGame(g)} title="View replay" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "2px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px" }}>📼</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {games.length === 0 && !isMobile && (
                     <div style={{ color: COLORS.textDim, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "30px", textAlign: "center" }}>
                       No games recorded yet. Play a game and click ★ END GAME to record it.
                     </div>
@@ -15056,42 +15423,57 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       </div>
                     );
                   })()}
-                </div>
+              </div>
 
-                {/* ── Right: Run N panel ── */}
-                <div style={{ width: "340px", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              </div>{/* end left column */}
 
-                  {/* Run N controls */}
-                  <div style={{ padding: "14px 18px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
-                    <div style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.blue, letterSpacing: "2px", marginBottom: "10px" }}>
+              {/* ── Auto-Sim panel (full right column on desktop) ── */}
+              <div style={{
+                width: statsPanelRow ? "340px" : "100%",
+                flexShrink: 0, display: "flex", flexDirection: "column",
+                overflow: statsPanelRow ? "hidden" : "visible",
+                maxHeight: statsPanelRow ? undefined : "none",
+              }}>
+
+                  {/* Controls */}
+                  <div style={{ padding: isMobile ? "12px 12px" : "14px 18px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
+                    <div style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.blue, letterSpacing: "2px", marginBottom: "8px" }}>
                       ⚡ AUTO-SIMULATE
                     </div>
-                    <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginBottom: "10px", lineHeight: 1.5 }}>
-                      Plays N games fully automatically using the advisor's top recommendation each turn.
+                    {!isMobile && (
+                      <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginBottom: "10px", lineHeight: 1.5 }}>
+                        Plays N games fully automatically using the advisor's top recommendation each turn.
+                      </div>
+                    )}
+                    {/* GAMES row — wraps on narrow screens */}
+                    <div style={{ marginBottom: "8px" }}>
+                      <div style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "5px" }}>GAMES</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {[50, 100, 250, 500].map(n => (
+                          <button key={n} onClick={() => setRunNCount(n)} style={{
+                            background: runNCount === n ? "#1a3a1a" : "none",
+                            border: `1px solid ${runNCount === n ? COLORS.green1 : COLORS.border}`,
+                            borderRadius: "6px", padding: "5px 12px",
+                            color: runNCount === n ? COLORS.green2 : COLORS.textDim,
+                            cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px",
+                          }}>{n}</button>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
-                      <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>GAMES:</span>
-                      {[50, 100, 250, 500].map(n => (
-                        <button key={n} onClick={() => setRunNCount(n)} style={{
-                          background: runNCount === n ? "#1a3a1a" : "none",
-                          border: `1px solid ${runNCount === n ? COLORS.green1 : COLORS.border}`,
-                          borderRadius: "6px", padding: "4px 10px",
-                          color: runNCount === n ? COLORS.green2 : COLORS.textDim,
-                          cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px",
-                        }}>{n}</button>
-                      ))}
-                    </div>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
-                      <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>MAX TURNS:</span>
-                      {[6, 8, 10, 15, 20].map(t => (
-                        <button key={t} onClick={() => setRunNMaxTurns(t)} style={{
-                          background: runNMaxTurns === t ? "#1a1a3a" : "none",
-                          border: `1px solid ${runNMaxTurns === t ? COLORS.blue : COLORS.border}`,
-                          borderRadius: "6px", padding: "4px 10px",
-                          color: runNMaxTurns === t ? COLORS.blue : COLORS.textDim,
-                          cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px",
-                        }}>{t}</button>
-                      ))}
+                    {/* MAX TURNS row — wraps on narrow screens */}
+                    <div style={{ marginBottom: "10px" }}>
+                      <div style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "5px" }}>MAX TURNS</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {[6, 8, 10, 15, 20].map(t => (
+                          <button key={t} onClick={() => setRunNMaxTurns(t)} style={{
+                            background: runNMaxTurns === t ? "#1a1a3a" : "none",
+                            border: `1px solid ${runNMaxTurns === t ? COLORS.blue : COLORS.border}`,
+                            borderRadius: "6px", padding: "5px 12px",
+                            color: runNMaxTurns === t ? COLORS.blue : COLORS.textDim,
+                            cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px",
+                          }}>{t}</button>
+                        ))}
+                      </div>
                     </div>
                     <button
                       onClick={runGames}
@@ -15175,7 +15557,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   </div>
 
                   {/* Run N results */}
-                  <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px" }}>
+                  <div style={{ flex: statsPanelRow ? 1 : undefined, overflowY: statsPanelRow ? "auto" : "visible", padding: isMobile ? "12px 12px" : "14px 18px" }}>
                     {runNRunning && (
                       <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
                         <div style={{ width: 28, height: 28, border: `2px solid ${COLORS.border}`, borderTopColor: COLORS.blue, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
@@ -15433,7 +15815,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       </div>
                     )}
                   </div>
-                </div>
               </div>
             </div>
           );
@@ -16882,6 +17263,7 @@ function YevaAdvisor() {
               onDropCard={(name, _from, to) => addTo(to)(name)}
               onPlay={card => {
                 const type = getCard(card)?.type;
+                removeFrom(setHand)(card);
                 if (type === "instant" || type === "sorcery") addTo("graveyard")(card);
                 else addTo("battlefield")(card);
               }} />
