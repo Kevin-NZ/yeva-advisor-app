@@ -12832,8 +12832,18 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const turnRef = useRef(1);
   const [isMyTurn, setIsMyTurn] = useState(true);
   const [landPlayed, setLandPlayed] = useState(false);
-  // sickCreatures: Set of creature names that entered this turn (have summoning sickness)
+  // sickCreatures: Set of "card:index" keys for creatures that entered this turn (summoning sickness)
+  // We store keys (not names) so bouncing+recasting a creature correctly gets sickness again.
   const [sickCreatures, setSickCreatures] = useState(new Set());
+  // Derived name set for passing to calculateBattlefieldMana (which uses card names)
+  const sickCreatureNames = React.useMemo(() => {
+    const names = new Set();
+    for (const key of sickCreatures) {
+      const name = key.split(":").slice(0, -1).join(":");
+      names.add(name);
+    }
+    return names;
+  }, [sickCreatures]);
   const [log, setLog] = useState([]);
   const [expandedSteps, setExpandedSteps] = useState(new Set());
   const [expandedSuppressed, setExpandedSuppressed] = useState(new Set());
@@ -12865,6 +12875,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [manaPoolDelta, setManaPoolDelta] = useState(null); // {value, id} for flash animation
   const [showUntapModal, setShowUntapModal] = useState(null); // {card, i} for Wirewood Lodge etc
   const undoStack = useRef([]); // snapshots for undo
+  const logScrollRef = useRef(null); // auto-scroll log to top on new entries
+  // Auto-scroll log to top when new entries arrive (log is newest-first)
+  useEffect(() => {
+    if (logScrollRef.current) logScrollRef.current.scrollTop = 0;
+  }, [log.length]);
   // ── Statistics (persisted via window.storage) ────────────────
   const [gameHistory, setGameHistory] = useState([]);
   const replaySnapshotsRef = useRef([]); // accumulates per-turn snapshots for current game
@@ -12939,7 +12954,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     }
     return m;
   })();
-  const currentManaPool = calculateBattlefieldMana(untappedBattlefield, sickCreatures, untappedAttachments);
+  const currentManaPool = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
   const currentMana = currentManaPool.total; // flat number for Goldfish mana display
   const analysis = React.useMemo(() => {
     if (hand.length + battlefield.length === 0) return null;
@@ -12972,6 +12987,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       { hand: [...hand], battlefield: [...battlefield], graveyard: [...graveyard],
         library: [...library], exile: [...exile], tapped: new Set(tapped),
         counters: { ...counters }, manaPool, landPlayed, turnNumber: turnRef.current,
+        sickCreatures: new Set(sickCreatures), attachments: new Map(attachments),
+        yevaTax,
         log: [...log] },
       ...undoStack.current.slice(0, 19), // keep max 20
     ];
@@ -12992,6 +13009,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setLandPlayed(snap.landPlayed);
     setTurnNumber(snap.turnNumber);
     turnRef.current = snap.turnNumber;
+    setSickCreatures(snap.sickCreatures ?? new Set());
+    setAttachments(snap.attachments ?? new Map());
+    setYevaTax(snap.yevaTax ?? 0);
     setLog(snap.log);
   }
 
@@ -13275,9 +13295,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       }
     }
     setBattlefield(prev => [...prev, card]);
-    // Mark creatures as sick — they can't tap for mana until next turn
+    // Mark creatures as sick using their new index key (so bounce+recast gets sickness again)
     if (getCard(card)?.type === "creature") {
-      setSickCreatures(prev => new Set([...prev, card]));
+      setBattlefield(prev2 => {
+        const newIdx = prev2.length - 1; // card was just appended
+        setSickCreatures(prev => new Set([...prev, `${card}:${newIdx}`]));
+        return prev2;
+      });
     }
   }
 
@@ -13290,17 +13314,31 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
   // Remove a card from the battlefield and remap attachment indices.
   function goldfishRemoveFromBattlefield(card, idx) {
+    const removeIdx = idx ?? battlefield.indexOf(card);
     setBattlefield(prev => {
-      const i = idx ?? prev.indexOf(card);
+      const i = removeIdx === -1 ? prev.indexOf(card) : removeIdx;
       if (i === -1) return prev;
       return [...prev.slice(0, i), ...prev.slice(i + 1)];
     });
-    setSickCreatures(prev => { const s = new Set(prev); s.delete(card); return s; });
+    // Remap sickCreatures keys: remove the card's key, shift indices above it down by 1
+    setSickCreatures(prev => {
+      const next = new Set();
+      for (const key of prev) {
+        const lastColon = key.lastIndexOf(":");
+        const keyIdx = parseInt(key.slice(lastColon + 1), 10);
+        if (keyIdx === removeIdx) continue; // this is the removed card — drop it
+        if (keyIdx > removeIdx) {
+          next.add(key.slice(0, lastColon + 1) + (keyIdx - 1)); // shift down
+        } else {
+          next.add(key);
+        }
+      }
+      return next;
+    });
     setAttachments(att => {
-      const removeIdx = idx ?? battlefield.indexOf(card);
       const m = new Map();
       for (const [auraI, landI] of att) {
-        if (auraI === removeIdx || landI === removeIdx) continue; // this card removed
+        if (auraI === removeIdx || landI === removeIdx) continue;
         const newAuraI = auraI > removeIdx ? auraI - 1 : auraI;
         const newLandI = landI > removeIdx ? landI - 1 : landI;
         m.set(newAuraI, newLandI);
@@ -13315,8 +13353,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   function cardManaAt(card, idx) {
     const data = getCard(card);
     if (!data) return 0;
-    const ctx = buildBoardContext(battlefield, sickCreatures, attachments);
-    const base = cardManaContribution(card, data, ctx, sickCreatures);
+    const ctx = buildBoardContext(battlefield, sickCreatureNames, attachments);
+    const base = cardManaContribution(card, data, ctx, sickCreatureNames);
     let total = base.green + base.colorless;
     // Add any aura bonus attached to this land
     if (data.type === "land" && ctx.landAuraBonuses.has(idx)) {
@@ -13476,8 +13514,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             const idx = library.indexOf(chosen);
             if (idx !== -1) {
               setLibrary(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
-              setBattlefield(prev => [...prev, chosen]);
-              if (getCard(chosen)?.type === "creature") setSickCreatures(prev => new Set([...prev, chosen]));
+              setBattlefield(prev => {
+                const newIdx = prev.length;
+                if (getCard(chosen)?.type === "creature") setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
+                return [...prev, chosen];
+              });
             }
             shuffleGSZBack();
             addLog(`Green Sun's Zenith (X=${gszX}) → ${chosen} onto battlefield. GSZ shuffled back.`, COLORS.green2);
@@ -13486,8 +13527,28 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           setTimeout(() => tutorInputRef.current?.focus(), 50);
         }
       } else if (card === "Nature's Rhythm") {
-        setExile(prev => [...prev, card]);
-        addLog(`Cast ${card} → exile (Harmonize available from graveyard).`, COLORS.textMid);
+        // {X}{G}{G}: search library for a creature with CMC ≤ X → battlefield. Then goes to graveyard (Harmonize available).
+        const rhythmX = Math.max(0, manaPool); // manaPool after {G}{G} base already deducted
+        setGraveyard(prev => [...prev, card]);
+        setTutorCreaturesOnly(true);
+        setTutorMaxCmc(rhythmX);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          goldfishAddToBattlefield(chosen);
+          addLog(`Nature's Rhythm (X=${rhythmX}) → ${chosen} onto battlefield. Library shuffled. (Harmonize now available from graveyard.)`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Cast Nature's Rhythm (X=${rhythmX}) — search for a creature with CMC ≤ ${rhythmX}.`, COLORS.purple);
       } else if (card === "Worldly Tutor") {
         setGraveyard(prev => [...prev, card]);
         // Open tutor modal filtered to creatures; on select, remove from library, shuffle, put on top
@@ -13626,6 +13687,39 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           addLog(`Chrome Mox ETB — no non-land cards in hand to imprint. Mox produces no mana.`, COLORS.textDim);
         }
       }
+      // ── Lotus Petal: sacrifice for {G} ──
+      if (card === "Lotus Petal") {
+        // Lotus Petal enters then immediately sacrifices for 1 mana
+        setBattlefield(prev => prev.filter(c => c !== "Lotus Petal"));
+        setGraveyard(prev => [...prev, "Lotus Petal"]);
+        setManaPool(p => p + 1); flashMana(1);
+        addLog(`Lotus Petal: sacrificed for {G} (+1 mana).`, COLORS.green1);
+      }
+      // ── Mox Diamond: discard a land from hand, or exile if no land ──
+      if (card === "Mox Diamond") {
+        const landInHand = hand.find(c => getCard(c)?.type === "land");
+        if (landInHand) {
+          setPendingPicker({ label: "MOX DIAMOND — DISCARD A LAND (or Mox goes to graveyard)", color: COLORS.gold,
+            items: hand.filter(c => getCard(c)?.type === "land").map(c => ({ label: c, sub: "land · discard", key: c, c })),
+            onSelect: ({ c: discardCard }) => {
+              setHand(prev => { const i = prev.indexOf(discardCard); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
+              setGraveyard(prev => [...prev, discardCard]);
+              addLog(`Mox Diamond: discarded ${discardCard} — Mox stays in play, taps for {G}.`, COLORS.gold);
+            },
+            onSkip: () => {
+              setBattlefield(prev => prev.filter(c => c !== "Mox Diamond"));
+              setGraveyard(prev => [...prev, "Mox Diamond"]);
+              addLog(`Mox Diamond: no land to discard — Mox goes to graveyard.`, COLORS.textDim);
+            },
+          });
+          setPickerSelected([]);
+        } else {
+          // No land in hand — Mox goes to graveyard
+          setBattlefield(prev => prev.filter(c => c !== "Mox Diamond"));
+          setGraveyard(prev => [...prev, "Mox Diamond"]);
+          addLog(`Mox Diamond: no land in hand to discard — Mox goes to graveyard.`, COLORS.textDim);
+        }
+      }
       // Sowing Mycospawn on-cast trigger: search library for any land → put onto battlefield. Library shuffled.
       if (card === "Sowing Mycospawn") {
         setTutorLandsOnly(true);
@@ -13664,8 +13758,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             }
             return without;
           });
-          setBattlefield(prev => [...prev, chosen]);
-          setSickCreatures(prev => new Set([...prev, chosen]));
+          setBattlefield(prev => {
+            const newIdx = prev.length;
+            setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
+            return [...prev, chosen];
+          });
           addLog(`Woodland Bellower ETB → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
         });
         setShowTutor(true); setTutorQuery("");
@@ -13780,21 +13877,37 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
       // ── Genesis Hydra: reveal top X cards, put a non-land permanent with CMC ≤ X onto battlefield ──
       if (card === "Genesis Hydra") {
-        const hydraCmc = getCard(card)?.cmc ?? 2;
-        const hydraX = Math.max(0, manaPool + hydraCmc); // mana already deducted; X ≈ what was available
-        // Reveal top X cards from library
+        // After castFromHand deducted the full cost (2 + X), manaPool = 0 (or close to it).
+        // We can't recover X from manaPool here. Instead, estimate X as what was available
+        // before casting minus the base cost of 2. We use the pre-cast manaPool snapshot.
+        // Since we can't easily snapshot pre-cast, use a reasonable approximation:
+        // X = total mana available at cast time - 2. Stored as hydraX via a pre-cast read.
+        // NOTE: hydraX is computed in the line that calls castFromHand in the UI via totalMana.
+        // For now, derive X as: whatever was in manaPool before auto-tap ran + currentMana - 2,
+        // but since we're inside the handler after deduction, use: X = manaPool (remaining after {G}{G} base paid).
+        const hydraX = Math.max(0, manaPool); // manaPool after full deduction = remaining = X
         const revealed = library.slice(0, hydraX);
         if (revealed.length > 0) {
           setPendingGenesisHydra({ x: hydraX, revealed });
           addLog(`Genesis Hydra (X=${hydraX}) ETB — reveal top ${revealed.length} cards. Choose a non-land permanent with CMC ≤ ${hydraX}.`, COLORS.green2);
         } else {
-          addLog(`Genesis Hydra ETB — library empty, nothing to reveal.`, COLORS.textDim);
+          addLog(`Genesis Hydra ETB — library empty or X=0, nothing to reveal.`, COLORS.textDim);
         }
       }
 
       // ── Nissa, Resurgent Animist: landfall — add elf/elemental tutor button in log ──
       if (card === "Nissa, Resurgent Animist") {
         addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a Forest enters, search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
+      }
+
+      // ── Tireless Provisioner: landfall — when a land enters, create a Food or Treasure (+1 mana) ──
+      if (card === "Tireless Provisioner") {
+        addLog(`Tireless Provisioner ETB — landfall active: when a land enters the battlefield, create a Food or Treasure token (use + MANA button to add +1 mana each time you play a land).`, COLORS.green2);
+      }
+
+      // ── Kogla, the Titan Ape: ETB — destroy target Human or Ape ──
+      if (card === "Kogla, the Titan Ape") {
+        addLog(`Kogla ETB — destroy target Human or Ape an opponent controls.`, COLORS.green1);
       }
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
@@ -14481,6 +14594,76 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             </div>
           );
         })()}
+        {/* ── Yisan, the Wanderer Bard: {2}{G} tap — add verse counter, tutor creature of CMC = verse ── */}
+        {isBF && card === "Yisan, the Wanderer Bard" && (() => {
+          const cost = 3; const canPay = manaPool >= cost;
+          const currentVerse = curCounters; // verse counters tracked via generic counter system
+          const nextVerse = currentVerse + 1;
+          if (isCardTapped || !canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Activate verse {nextVerse} ({'{2}{G}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              adjustCounter(card, index, +1);
+              setTutorCreaturesOnly(true);
+              setTutorMaxCmc(nextVerse);
+              setTutorMinCmc(nextVerse);
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => {
+                  const idx2 = prev.indexOf(chosen); if (idx2 === -1) return prev;
+                  const without = [...prev.slice(0, idx2), ...prev.slice(idx2 + 1)];
+                  for (let i2 = without.length - 1; i2 > 0; i2--) { const j = Math.floor(Math.random() * (i2 + 1)); [without[i2], without[j]] = [without[j], without[i2]]; }
+                  return without;
+                });
+                goldfishAddToBattlefield(chosen);
+                addLog(`Yisan verse ${nextVerse} → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+              });
+              setShowTutor(true); setTutorQuery("");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+              addLog(`Yisan: paid {2}{G}, tapped — verse ${nextVerse}. Search for a creature with CMC ${nextVerse}.`, COLORS.purple);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.purple, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Verse {nextVerse} — CMC {nextVerse} tutor ({'{2}{G}'}, tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Wirewood Lodge: tap — untap target Elf (also triggered by toggleTap, but right-click gives explicit control) ── */}
+        {isBF && card === "Wirewood Lodge" && (() => {
+          const elfTargets = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.tags?.includes("elf"));
+          if (isCardTapped || elfTargets.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Elf — {isCardTapped ? "tapped" : "no Elves on battlefield"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setPendingPicker({ label: "WIREWOOD LODGE — UNTAP AN ELF", color: COLORS.green2,
+                items: elfTargets.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                  addLog(`Wirewood Lodge: tapped, untapped ${tc}.`, COLORS.green2);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap an Elf
+            </div>
+          );
+        })()}
+
         {/* ── Elvish Reclaimer: {2}{T}, sacrifice a land — search library for a land → battlefield tapped ── */}
         {isBF && card === "Elvish Reclaimer" && (() => {
           const cost = 2; const canPay = manaPool >= cost;
@@ -15046,6 +15229,82 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           );
         })()}
 
+        {/* ── Nature's Rhythm HARMONIZE: cast from graveyard for {X}{G}{G}{G}{G}, tap creatures to reduce generic cost ── */}
+        {zone === "graveyard" && card === "Nature's Rhythm" && (() => {
+          const harmonizeBase = 4; // {G}{G}{G}{G} = 4 coloured pips (paid separately); generic = X
+          const untappedCreatures = battlefield
+            .map((c, i) => ({ c, i }))
+            .filter(({ c, i }) => getCard(c)?.type === "creature" && !tapped.has(cardKey(c, i)) && !sickCreatures.has(cardKey(c, i)));
+          const canAfford = manaPool >= harmonizeBase; // need at least 4 for the green pips
+          if (!canAfford) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              🎵 Harmonize — need ≥4 mana ({'{X}{G}{G}{G}{G}'})
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              // Step 1: offer to tap creatures to reduce generic (X) cost
+              const creatureItems = untappedCreatures.map(({ c, i }) => {
+                const pwr = counters[cardKey(c, i)] ?? (CARDS[c]?.cmc ?? 1); // rough power proxy
+                return { label: c, sub: `power ~${pwr} → reduce X by ${pwr}`, key: `${c}:${i}`, c, i, pwr };
+              });
+              const poolAtCast = manaPool; // capture now — closure would go stale
+              const resolveHarmonize = (tappedCreatures) => {
+                // Tap chosen creatures, reduce X by their total power
+                let powerReduction = 0;
+                tappedCreatures.forEach(({ c, i, pwr }) => {
+                  const k = cardKey(c, i);
+                  setTapped(prev => { const next = new Set(prev); next.add(k); return next; });
+                  powerReduction += pwr;
+                  addLog(`Harmonize: tapped ${c} (power ~${pwr}) — reduces generic cost by ${pwr}.`, COLORS.textDim);
+                });
+                // Deduct the 4 green pips from pool
+                setManaPool(p => Math.max(0, p - harmonizeBase)); flashMana(-harmonizeBase);
+                const harmonizeX = Math.max(0, poolAtCast - harmonizeBase + powerReduction);
+                // Remove from graveyard now, will go to exile after resolution
+                setGraveyard(prev => prev.filter((c, gi) => !(c === "Nature's Rhythm" && gi === index)));
+                // Open creature tutor CMC ≤ X → battlefield
+                setTutorCreaturesOnly(true);
+                setTutorMaxCmc(harmonizeX);
+                setTutorOnSelect(() => (chosen) => {
+                  setLibrary(prev => {
+                    const idx2 = prev.indexOf(chosen); if (idx2 === -1) return prev;
+                    const without = [...prev.slice(0, idx2), ...prev.slice(idx2 + 1)];
+                    for (let ii = without.length - 1; ii > 0; ii--) { const j = Math.floor(Math.random() * (ii + 1)); [without[ii], without[j]] = [without[j], without[ii]]; }
+                    return without;
+                  });
+                  goldfishAddToBattlefield(chosen);
+                  setExile(prev => [...prev, "Nature's Rhythm"]);
+                  addLog(`Harmonize (X=${harmonizeX}) → ${chosen} onto battlefield. Nature's Rhythm exiled. Library shuffled.`, COLORS.green2);
+                });
+                setShowTutor(true); setTutorQuery("");
+                setTimeout(() => tutorInputRef.current?.focus(), 50);
+                addLog(`Cast Nature's Rhythm via Harmonize (X=${harmonizeX}) — search for a creature with CMC ≤ ${harmonizeX}.`, COLORS.purple);
+              };
+
+              if (creatureItems.length > 0) {
+                setPendingPicker({
+                  label: "HARMONIZE — TAP CREATURES TO REDUCE X (optional)",
+                  color: COLORS.purple,
+                  items: creatureItems,
+                  multi: -1, // open-ended: select any number of creatures to tap
+                  onSelect: (selected) => resolveHarmonize(Array.isArray(selected) ? selected : [selected]),
+                  onSkip: () => resolveHarmonize([]),
+                });
+                setPickerSelected([]);
+              } else {
+                resolveHarmonize([]);
+              }
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.purple, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🎵 Harmonize ({'{X}{G}{G}{G}{G}'}) — cast from graveyard
+            </div>
+          );
+        })()}
+
         {/* Zone moves */}
         {targets.map(t => (
           <div key={t} onClick={() => moveCard(card, zone, t, index)} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textMid, letterSpacing: "1px" }}
@@ -15557,7 +15816,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     {/* ── Generic picker modal ── */}
     {pendingPicker && (() => {
       const { label, color, items, onSelect, onSkip, multi } = pendingPicker;
-      const isMulti = multi > 1;
+      const isMulti = multi > 1 || multi === -1; // -1 = open-ended multi with manual confirm
       const confirmMulti = () => {
         if (pickerSelected.length === 0) { onSkip?.(); setPendingPicker(null); setPickerSelected([]); return; }
         onSelect(pickerSelected);
@@ -15569,20 +15828,22 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             <div style={{ color, fontSize:"10px", letterSpacing:"1.5px", marginBottom: isMulti ? "4px" : "12px" }}>{label}</div>
             {isMulti && (
               <div style={{ color:COLORS.textDim, fontSize:"11px", fontFamily:"'Crimson Text', serif", marginBottom:"12px" }}>
-                Select {multi} cards. ({pickerSelected.length}/{multi} chosen)
+                {multi === -1
+                  ? `Select any number. (${pickerSelected.length} chosen)`
+                  : `Select ${multi} cards. (${pickerSelected.length}/${multi} chosen)`}
               </div>
             )}
             <div style={{ display:"flex", flexDirection:"column", gap:"5px" }}>
               {items.map((item, i) => {
                 const isChosen = isMulti && pickerSelected.some(s => s.key === item.key);
-                const isDisabled = item.disabled || (isMulti && pickerSelected.length >= multi && !isChosen);
+                const isDisabled = item.disabled || (isMulti && multi > 1 && pickerSelected.length >= multi && !isChosen);
                 return (
                   <button key={item.key ?? i} disabled={isDisabled} onClick={() => {
                     if (isMulti) {
                       if (isChosen) { setPickerSelected(prev => prev.filter(s => s.key !== item.key)); return; }
                       const next = [...pickerSelected, item];
                       setPickerSelected(next);
-                      if (next.length === multi) { onSelect(next); setPendingPicker(null); setPickerSelected([]); }
+                      if (multi > 1 && next.length === multi) { onSelect(next); setPendingPicker(null); setPickerSelected([]); }
                     } else {
                       if (!item.disabled) { onSelect(item); setPendingPicker(null); setPickerSelected([]); }
                     }
@@ -15605,7 +15866,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             </div>
             {isMulti && (
               <button onClick={confirmMulti} style={{ marginTop:"10px", width:"100%", background: pickerSelected.length > 0 ? "#162616" : "transparent", border:`1px solid ${pickerSelected.length > 0 ? color : COLORS.border}`, borderRadius:"6px", padding:"7px", cursor:"pointer", color: pickerSelected.length > 0 ? color : COLORS.textDim, fontSize:"10px", fontFamily:"'Cinzel', serif", letterSpacing:"1px" }}>
-                ✓ CONFIRM ({pickerSelected.length}/{multi})
+                {multi === -1
+                  ? `✓ CONFIRM${pickerSelected.length > 0 ? ` (${pickerSelected.length} selected)` : " (none)"}`
+                  : `✓ CONFIRM (${pickerSelected.length}/${multi})`}
               </button>
             )}
             <button onClick={() => { onSkip?.(); setPendingPicker(null); setPickerSelected([]); }} style={{ marginTop:"8px", width:"100%", background:"transparent", border:`1px solid ${COLORS.border}`, borderRadius:"6px", padding:"6px", cursor:"pointer", color:COLORS.textDim, fontSize:"10px", fontFamily:"'Cinzel', serif", letterSpacing:"1px" }}>✕ SKIP</button>
@@ -15950,19 +16213,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 <button onClick={openTutor} style={btnStyle(COLORS.purple)} title="Search your library by card name, type, or tag — e.g. type 'dork' to find mana creatures (T)">🔍 TUTOR</button>
                 <button onClick={() => openScry(3)} style={btnStyle(COLORS.blue)} title="Look at the top 3 cards of your library. Choose which to keep on top and which to send to the bottom.">👁 SCRY 3</button>
                 <button onClick={() => openScry(1)} style={btnStyle(COLORS.border)} title="Look at the top card of your library and keep or bottom it.">👁 1</button>
-                {/* Contextual library peek buttons — shown only when relevant cards are on board */}
-                {battlefield.includes("Duskwatch Recruiter") && (
-                  <button onClick={() => openScry(3)} style={{ ...btnStyle(COLORS.gold), background: "#1a1400" }}
-                    title="Duskwatch Recruiter: look at top 3 cards and reveal a creature. Uses the scry overlay — in the real game you'd only reveal a creature (not freely arrange), but this lets you see and plan.">
-                    🐺 DUSK PEEK 3
-                  </button>
-                )}
-                {battlefield.includes("Eladamri, Korvecdal") && (
-                  <button onClick={() => openScry(1)} style={{ ...btnStyle(COLORS.purple), background: "#1a0a2a" }}
-                    title="Eladamri lets you look at the top card of your library at any time, and cast creatures from it. Use SCRY 1 to peek — if it's a creature you can cast it directly.">
-                    👁 ELADAMRI TOP
-                  </button>
-                )}
                 {battlefield.includes("Nissa, Resurgent Animist") && (
                   <button onClick={() => {
                     // Nissa landfall: search for an Elf or Elemental → hand
@@ -16020,12 +16270,28 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   <button onClick={() => setLandPlayed(false)} style={{ ...btnStyle(COLORS.border), padding: "1px 7px", fontSize: "9px" }}>reset</button>
                 )}
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>MANA</span>
+                  {/* Untapped sources mana */}
+                  <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }} title="Mana available from untapped sources">UNTAPPED</span>
                   <span style={{
-                    fontFamily: "'Cinzel', serif", fontSize: "15px", fontWeight: "bold", minWidth: "24px", textAlign: "center",
+                    fontFamily: "'Cinzel', serif", fontSize: "13px", fontWeight: "bold", minWidth: "18px", textAlign: "center",
                     color: currentMana === 0 ? COLORS.textDim : currentMana >= 7 ? "#c084fc" : currentMana >= 4 ? COLORS.green2 : COLORS.green1,
-                    transition: "color 0.2s",
                   }}>{currentMana}</span>
+                  {/* Floating mana pool */}
+                  {manaPool > 0 && (<>
+                    <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>+</span>
+                    <span style={{
+                      fontFamily: "'Cinzel', serif", fontSize: "13px", fontWeight: "bold", minWidth: "18px", textAlign: "center",
+                      color: "#c084fc", position: "relative",
+                    }} title="Floating mana already in pool">{manaPool}
+                      {manaPoolDelta && (
+                        <span style={{ position: "absolute", top: "-10px", right: "-6px", fontSize: "9px", color: manaPoolDelta.value > 0 ? COLORS.green2 : COLORS.red, fontFamily: "'Cinzel', serif", pointerEvents: "none" }}>
+                          {manaPoolDelta.value > 0 ? `+${manaPoolDelta.value}` : manaPoolDelta.value}
+                        </span>
+                      )}
+                    </span>
+                    <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>= {manaPool + currentMana}</span>
+                    <button onClick={() => { setManaPool(0); addLog("Mana pool cleared.", COLORS.textDim); }} style={{ ...btnStyle(COLORS.border), padding: "0px 5px", fontSize: "9px" }} title="Clear floating mana pool">✕</button>
+                  </>)}
                 </div>
               </div>
 
@@ -16136,7 +16402,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                         const groups = [
                           { label: "LANDS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "land"), color: "#3a7a2a" },
                           { label: "CREATURES", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature"), color: COLORS.green3 },
-                          { label: "OTHER", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => !["land","creature"].includes(getCard(c)?.type)), color: COLORS.textDim },
+                          { label: "ENCHANTMENTS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "enchantment"), color: COLORS.purple },
+                          { label: "ARTIFACTS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "artifact"), color: COLORS.gold },
+                          { label: "PLANESWALKERS", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "planeswalker"), color: "#e87040" },
+                          { label: "OTHER", cards: battlefield.map((c,i) => ({c,i})).filter(({c}) => !["land","creature","enchantment","artifact","planeswalker"].includes(getCard(c)?.type)), color: COLORS.textDim },
                         ].filter(g => g.cards.length > 0);
                         return (
                           <div {...dropZoneProps("battlefield")} style={{ borderRadius: "4px", border: dragOver === "battlefield" ? `1px dashed ${COLORS.green3}` : "1px solid transparent", padding: "2px" }}>
@@ -16283,12 +16552,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               display: isMobile && mobileTab !== "log" ? "none" : "flex",
               flexDirection: "column", overflow: "hidden",
             }}>
-              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px", fontFamily: "'Cinzel', serif", flexShrink: 0 }}>
-                GAME LOG
+              <div style={{ padding: "10px 14px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px", fontFamily: "'Cinzel', serif", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>GAME LOG ({log.length})</span>
+                {log.length > 0 && <button onClick={() => setLog([])} style={{ background: "none", border: "none", color: COLORS.textDim, cursor: "pointer", fontSize: "9px", fontFamily: "'Cinzel', serif", letterSpacing: "1px", padding: "0" }} title="Clear log">✕ CLEAR</button>}
               </div>
-              <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
+              <div ref={logScrollRef} style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
                 {log.map((entry, i) => (
-                  <div key={i} style={{ fontSize: "11px", color: entry.color, fontFamily: "'Crimson Text', serif", marginBottom: "5px", lineHeight: 1.4, opacity: i > 20 ? Math.max(0.3, 1 - (i - 20) * 0.03) : 1 }}>
+                  <div key={i} style={{ fontSize: "11px", color: entry.color, fontFamily: "'Crimson Text', serif", marginBottom: "5px", lineHeight: 1.4 }}>
                     {entry.turn && <span style={{ color: COLORS.textDim, fontSize: "9px", marginRight: "4px" }}>T{entry.turn}</span>}
                     {entry.msg}
                   </div>
