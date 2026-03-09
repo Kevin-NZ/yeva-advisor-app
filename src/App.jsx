@@ -18929,7 +18929,7 @@ function YevaAdvisor() {
           {/* GOLDFISH MODAL */}
           {showGoldfish && (
             <GoldfishModal
-              activeDeck={activeDeck}
+              activeDeck={activeDeck ?? PRESET_DECKS.find(d => d.name === "Competitive")}
               onClose={() => setShowGoldfish(false)}
               onLoadState={(s) => {
                 if (s.hand)        setHand(s.hand);
