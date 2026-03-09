@@ -15003,6 +15003,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 {(() => {
                   const elves = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
                   const dorks = battlefield.filter(c => getCard(c)?.tags?.includes("dork")).length;
+                  const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
                   const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
                   const comboPieces = [...hand, ...battlefield].filter(c =>
                     getCard(c)?.tags?.some(t => ["ashaya","earthcraft","quirion","wirewood","duskwatch"].includes(t))
@@ -15012,6 +15013,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     { label: `${currentMana}◆`, color: currentMana >= 6 ? "#c084fc" : currentMana >= 3 ? COLORS.green2 : COLORS.green1 },
                     elves > 0 && { label: `${elves} elf${elves !== 1 ? "s" : ""}`, color: COLORS.green3 },
                     dorks > 0 && { label: `${dorks} dork${dorks !== 1 ? "s" : ""}`, color: COLORS.green2 },
+                    devotion > 0 && { label: `${devotion}🌿`, color: devotion >= 5 ? COLORS.green3 : COLORS.textMid },
                     tutors > 0 && { label: `${tutors} tutor${tutors !== 1 ? "s" : ""}`, color: COLORS.purple },
                     comboPieces > 0 && { label: `${comboPieces} combo`, color: COLORS.red },
                     hand.length === 0 && { label: "empty hand", color: COLORS.textDim },
