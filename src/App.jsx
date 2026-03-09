@@ -7817,6 +7817,163 @@ function TourOverlay({ active, step, next, prev, skip, total }) {
   );
 }
 
+// ── Goldfish tour steps ──────────────────────────────────────
+const GOLDFISH_TOUR_STEPS = [
+  {
+    target: "gtour-header",
+    title: "Welcome to Goldfish Mode",
+    body: "Goldfish mode lets you pilot the deck hand-by-hand, turn-by-turn. Cast spells, tap lands, track mana — and the live advisor watches every move and tells you when a win is available.",
+    placement: "bottom",
+    icon: "🐟",
+  },
+  {
+    target: "gtour-controls",
+    title: "Turn Controls",
+    body: "▶ NEXT TURN untaps everything and draws a card. + DRAW 1 draws without advancing. ↺ UNTAP untaps without drawing. ⚡ TAP ALL taps every untapped mana source and fills your pool in one click. Keyboard shortcuts: N (next turn), D (draw), U (untap), M (tap all).",
+    placement: "bottom",
+    icon: "⏱",
+  },
+  {
+    target: "gtour-mana",
+    title: "Mana Pool",
+    body: "Your current floating mana is shown here. TAP ALL fills it automatically. You can also tap individual lands and dorks by clicking them, or use − / + to adjust manually. The number updates in real time as you tap permanents.",
+    placement: "bottom",
+    icon: "💎",
+  },
+  {
+    target: "gtour-hand",
+    title: "Your Hand",
+    body: "Cards here are drawn from your shuffled library. Click a card to cast it — lands drop onto the battlefield, spells resolve with their ETB effects (draw triggers, tutor windows, mana boosts). Dimmed cards are unaffordable this turn.",
+    placement: "right",
+    icon: "🃏",
+  },
+  {
+    target: "gtour-battlefield",
+    title: "Battlefield — Click to Tap",
+    body: "Click any permanent to tap or untap it. Right-click for activated abilities: Yisan verse counters, Nykthos devotion mana, Selvala draw, Magus untap X lands, and much more. Drag cards between zones to move them manually.",
+    placement: "right",
+    icon: "⚔️",
+  },
+  {
+    target: "gtour-advisor",
+    title: "Live Advisor",
+    body: "The advisor re-evaluates your position after every action. 🔥 WIN NOW means a line is available right now with your current mana and board. Click any result to expand step-by-step instructions. It knows about summoning sickness, what's tapped, and your floating mana.",
+    placement: "left",
+    icon: "📋",
+  },
+  {
+    target: "gtour-log",
+    title: "Game Log",
+    body: "Every action is recorded here — casts, ETBs, mana gained, tutor choices. Use it to trace your line or review what happened. Ctrl+Z (or the ↩ UNDO button) walks back any mistake up to 20 steps.",
+    placement: "left",
+    icon: "📜",
+  },
+];
+
+function useGoldfishTour() {
+  const [active, setActive] = useState(false);
+  const [step, setStep]     = useState(0);
+
+  const finish = () => {
+    setActive(false);
+    try { localStorage.setItem("yeva-goldfish-tour-seen", "1"); } catch {}
+  };
+
+  const next  = () => { if (step >= GOLDFISH_TOUR_STEPS.length - 1) { finish(); return; } setStep(s => s + 1); };
+  const prev  = () => setStep(s => Math.max(0, s - 1));
+  const start = () => { setStep(0); setActive(true); };
+  const skip  = () => finish();
+
+  return { active, step, next, prev, start, skip, total: GOLDFISH_TOUR_STEPS.length };
+}
+
+function GoldfishTourOverlay({ active, step, next, prev, skip, total }) {
+  const [targetRect, setTargetRect] = useState(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!active) { setVisible(false); setTargetRect(null); return; }
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-gtour="${GOLDFISH_TOUR_STEPS[step].target}"]`);
+      if (el) setTargetRect(el.getBoundingClientRect());
+      else setTargetRect(null);
+      setVisible(true);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [active, step]);
+
+  const handleNext = () => { setVisible(false); setTimeout(next, 160); };
+  const handlePrev = () => { setVisible(false); setTimeout(prev, 160); };
+
+  if (!active) return null;
+
+  const tourStep = GOLDFISH_TOUR_STEPS[step];
+  const PAD = 8;
+  const spot = targetRect ? { x: targetRect.left - PAD, y: targetRect.top - PAD, w: targetRect.width + PAD * 2, h: targetRect.height + PAD * 2 } : null;
+  const tooltipW = 300; const tooltipH = 210;
+  const vw = window.innerWidth; const vh = window.innerHeight;
+  let tipX = vw / 2 - tooltipW / 2, tipY = vh / 2 - tooltipH / 2;
+  if (spot) {
+    const p = tourStep.placement;
+    if (p === "right")       { tipX = spot.x + spot.w + 16; tipY = spot.y + spot.h / 2 - tooltipH / 2; }
+    else if (p === "left")   { tipX = spot.x - tooltipW - 16; tipY = spot.y + spot.h / 2 - tooltipH / 2; }
+    else if (p === "bottom") { tipX = spot.x + spot.w / 2 - tooltipW / 2; tipY = spot.y + spot.h + 16; }
+    else                     { tipX = spot.x + spot.w / 2 - tooltipW / 2; tipY = spot.y - tooltipH - 16; }
+    tipX = Math.max(12, Math.min(vw - tooltipW - 12, tipX));
+    tipY = Math.max(12, Math.min(vh - tooltipH - 12, tipY));
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9500, pointerEvents: "all" }}>
+      <svg width={vw} height={vh} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        <defs>
+          <mask id="gtour-mask">
+            <rect width={vw} height={vh} fill="white" />
+            {spot && <rect x={spot.x} y={spot.y} width={spot.w} height={spot.h} rx={8} fill="black" />}
+          </mask>
+        </defs>
+        <rect width={vw} height={vh} fill="rgba(0,0,0,0.78)" mask="url(#gtour-mask)" />
+        {spot && <rect x={spot.x} y={spot.y} width={spot.w} height={spot.h} rx={8} fill="none" stroke="#4a9e4a" strokeWidth={2} style={{ opacity: visible ? 1 : 0, transition: "opacity 0.2s" }} />}
+      </svg>
+      {/* Backdrop click advances */}
+      <div style={{ position: "absolute", inset: 0 }} onClick={handleNext} />
+      {/* Tooltip */}
+      <div style={{
+        position: "absolute", left: tipX, top: tipY, width: tooltipW,
+        background: "linear-gradient(135deg, #0f1e0f 0%, #0a160a 100%)",
+        border: "1px solid #4a9e4a", borderRadius: 12,
+        boxShadow: "0 0 0 1px #4a9e4a22, 0 24px 60px rgba(0,0,0,0.95), 0 0 40px #4a9e4a18",
+        padding: "18px 20px", pointerEvents: "all",
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0) scale(1)" : "translateY(6px) scale(0.97)",
+        transition: "opacity 0.2s ease, transform 0.2s ease",
+      }}>
+        {/* Progress dots */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 14, alignItems: "center" }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i <= step ? "#4a9e4a" : "#1e3a1e", transition: "background 0.3s" }} />
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 20, lineHeight: 1 }}>{tourStep.icon}</span>
+          <div style={{ fontFamily: "'Cinzel', serif", fontSize: 12, fontWeight: 600, color: "#c8e6c8", letterSpacing: "0.5px" }}>{tourStep.title}</div>
+        </div>
+        <p style={{ fontFamily: "'Crimson Text', serif", fontSize: 13, lineHeight: 1.6, color: "#a0cda0", margin: "0 0 16px" }}>{tourStep.body}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {step > 0 && (
+            <button onClick={e => { e.stopPropagation(); handlePrev(); }} style={{ background: "none", border: "1px solid #1e3a1e", borderRadius: 6, padding: "5px 12px", color: "#7aad7a", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px" }}>← BACK</button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={e => { e.stopPropagation(); skip(); }} style={{ background: "none", border: "none", color: "#4a6a4a", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px", padding: "5px 8px" }}>SKIP</button>
+          <button onClick={e => { e.stopPropagation(); handleNext(); }} style={{ background: "linear-gradient(135deg, #2d5a2d, #1e3a1e)", border: "1px solid #4a9e4a", borderRadius: 6, padding: "6px 16px", color: "#c8e6c8", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 11, letterSpacing: "1px", fontWeight: 600, boxShadow: "0 0 12px #4a9e4a22" }}>
+            {step === total - 1 ? "DONE ✓" : "NEXT →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================
 // UI COMPONENTS
 // ============================================================
@@ -12797,6 +12954,7 @@ function ScryRow({ card, i, toBottom, onMoveUp, onMoveDown, onToggleBottom, move
 
 function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
+  const goldfishTour = useGoldfishTour();
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
   // ── responsive layout ──────────────────────────────────────
   const [containerWidth, setContainerWidth] = useState(1024); // safe SSR default, updated after mount
@@ -12847,6 +13005,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [log, setLog] = useState([]);
   const [expandedSteps, setExpandedSteps] = useState(new Set());
   const [expandedSuppressed, setExpandedSuppressed] = useState(new Set());
+  const [showAllResults, setShowAllResults] = useState(false);
   const [gameNotes, setGameNotes] = useState(""); // scratchpad for current game
   const [mulliganCount, setMulliganCount] = useState(0);
   const [contextMenu, setContextMenu] = useState(null);
@@ -12961,7 +13120,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     try {
       const result = analyzeGameState({
         hand, battlefield, graveyard,
-        manaAvailable: calculateBattlefieldMana(untappedBattlefield, null, untappedAttachments),
+        manaAvailable: calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments),
         isMyTurn, deckList: activeDeck ? new Set(deckCards) : null,
         attachments: untappedAttachments,
       });
@@ -13078,7 +13237,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       hand: [...hand],
       battlefield: [...battlefield],
       graveyard: [...graveyard],
-      mana: calculateBattlefieldMana(battlefield).total,
+      mana: calculateBattlefieldMana(battlefield, sickCreatureNames).total,
     }];
     const entry = {
       gameNum: gameNumRef.current,
@@ -13248,7 +13407,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       hand: [...hand],
       battlefield: [...battlefield],
       graveyard: [...graveyard],
-      mana: calculateBattlefieldMana(battlefield).total,
+      mana: calculateBattlefieldMana(battlefield, sickCreatureNames).total,
     });
     turnRef.current = next;
     setTurnNumber(next);
@@ -13258,6 +13417,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     setLandPlayed(false);
     setSickCreatures(new Set()); // new turn clears summoning sickness
     setExpandedSteps(new Set());
+    setShowAllResults(false);
     // Compute draw synchronously from current library snapshot — never nest setHand inside setLibrary
     if (library.length === 0) {
       setLog(l => [{ msg: `── Turn ${next} — untap, upkeep (library empty) ──`, color: COLORS.green3, turn: next }, ...l].slice(0, 100));
@@ -13670,6 +13830,95 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         setShowTutor(true); setTutorQuery("");
         setTimeout(() => tutorInputRef.current?.focus(), 50);
         addLog(`Cast Finale of Devastation (X=${finaleX}) — search library or graveyard for a creature (CMC ≤ ${finaleX}).`, COLORS.purple);
+      } else if (card === "Noxious Revival") {
+        // Free instant: put any card from a graveyard on top of its owner's library.
+        // In goldfish, return a card from your own graveyard to the top of your library.
+        if (graveyard.length > 0) {
+          setPendingPicker({
+            label: "NOXIOUS REVIVAL — PUT A CARD FROM GRAVEYARD ON TOP OF LIBRARY",
+            color: COLORS.green2,
+            items: graveyard.map((c, gi) => ({ label: c, sub: getCard(c)?.type ?? "card", key: `${c}:${gi}`, c, gi })),
+            onSelect: ({ c: chosen, gi }) => {
+              setGraveyard(prev => prev.filter((_, i) => i !== gi));
+              setLibrary(prev => [chosen, ...prev]);
+              addLog(`Noxious Revival: ${chosen} → top of library.`, COLORS.green2);
+            },
+            onSkip: () => addLog(`Noxious Revival: no target chosen.`, COLORS.textDim),
+          });
+          setPickerSelected([]);
+        } else {
+          addLog(`Noxious Revival — graveyard is empty.`, COLORS.textDim);
+        }
+        setGraveyard(prev => [...prev, card]);
+      } else if (card === "Veil of Summer") {
+        // Draw a card if an opponent has cast a blue or black spell this turn (log reminder).
+        // In goldfish assume it cantrips (we can't track opponent spells).
+        setGraveyard(prev => [...prev, card]);
+        if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+        addLog(`Veil of Summer: drew a card (cantrip assumed). Your spells can't be countered this turn.`, COLORS.green2);
+      } else if (card === "Autumn's Veil") {
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Autumn's Veil: your green spells can't be countered and can't be targeted by blue/black this turn.`, COLORS.green2);
+      } else if (card === "Emerald Charm") {
+        // Three modes: (A) untap a permanent, (B) destroy a non-basic land enchantment, (C) give flying.
+        // Offer mode choice via picker.
+        setGraveyard(prev => [...prev, card]);
+        const untapTargets = battlefield.map((c, i) => ({ c, i }));
+        setPendingPicker({
+          label: "EMERALD CHARM — CHOOSE A MODE",
+          color: COLORS.green2,
+          items: [
+            { label: "Untap a permanent", sub: "choose target", key: "untap" },
+            { label: "Destroy non-basic land enchantment", sub: "opponent's enchantment (logged only)", key: "destroy" },
+            { label: "Target creature gains flying until end of turn", sub: "utility", key: "flying" },
+          ],
+          onSelect: ({ key: mode }) => {
+            if (mode === "untap") {
+              setPendingPicker({
+                label: "EMERALD CHARM — UNTAP A PERMANENT",
+                color: COLORS.green2,
+                items: untapTargets.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  addLog(`Emerald Charm (untap) → untapped ${tc}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]);
+            } else if (mode === "destroy") {
+              addLog(`Emerald Charm: destroyed target non-basic land enchantment.`, COLORS.green1);
+            } else {
+              addLog(`Emerald Charm: target creature gains flying until end of turn.`, COLORS.green2);
+            }
+          },
+        });
+        setPickerSelected([]);
+      } else if (card === "Warping Wail") {
+        // Three modes: exile CMC-1 creature, counter sorcery, create 1/1 Eldrazi Scion.
+        setGraveyard(prev => [...prev, card]);
+        setPendingPicker({
+          label: "WARPING WAIL — CHOOSE A MODE",
+          color: COLORS.textDim,
+          items: [
+            { label: "Exile target creature with CMC 1", sub: "removal", key: "exile" },
+            { label: "Counter target sorcery", sub: "interaction", key: "counter" },
+            { label: "Create 1/1 Eldrazi Scion token", sub: "sacrifice for {C}", key: "scion" },
+          ],
+          onSelect: ({ key: mode }) => {
+            if (mode === "exile") {
+              addLog(`Warping Wail: exiled a CMC-1 creature.`, COLORS.green1);
+            } else if (mode === "counter") {
+              addLog(`Warping Wail: countered target sorcery.`, COLORS.blue);
+            } else {
+              // Create a Scion token (represented as +1 mana since it sacs for {C})
+              setManaPool(p => p + 1); flashMana(1);
+              addLog(`Warping Wail: created 1/1 Eldrazi Scion token (sacrificed immediately for {C}).`, COLORS.textDim);
+            }
+          },
+        });
+        setPickerSelected([]);
       } else {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
@@ -13857,15 +14106,19 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         addLog(`Fierce Empath ETB — search for a creature with CMC ≥ 6.`, COLORS.purple);
       }
 
-      // ── Disciple of Freyalise: draw cards equal to number of creatures you control ──
+      // ── Disciple of Freyalise: draw cards equal to number of non-Human creatures you control (including itself) ──
       if (card === "Disciple of Freyalise") {
-        const creatureCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
-        // +1 for Disciple itself just added
-        const drawCount = creatureCount + 1;
+        // Disciple draws for each non-Human creature you control including itself
+        const nonHumanCount = battlefield.filter(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && !cd.tags?.includes("human");
+        }).length;
+        // +1 for Disciple itself (it just entered and is not a Human)
+        const drawCount = nonHumanCount + 1;
         if (drawCount > 0 && library.length >= drawCount) {
           setHand(prev => [...prev, ...library.slice(0, drawCount)]);
           setLibrary(prev => prev.slice(drawCount));
-          addLog(`Disciple of Freyalise ETB — drew ${drawCount} cards (${creatureCount} creatures + itself).`, COLORS.blue);
+          addLog(`Disciple of Freyalise ETB — drew ${drawCount} cards (${nonHumanCount} non-Human creatures + itself).`, COLORS.blue);
         } else if (library.length > 0) {
           setHand(prev => [...prev, ...library]);
           setLibrary([]);
@@ -13875,7 +14128,26 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         }
       }
 
-      // ── Genesis Hydra: reveal top X cards, put a non-land permanent with CMC ≤ X onto battlefield ──
+      // ── Regal Force: draw cards equal to the number of green creatures you control ──
+      if (card === "Regal Force") {
+        // Count green creatures (devotion > 0 or greenPips > 0) on battlefield including Regal Force itself
+        const greenCreatures = battlefield.filter(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.devotion ?? 0) > 0);
+        }).length;
+        const drawCount = greenCreatures; // Regal Force itself was just added and has greenPips:3
+        if (drawCount > 0 && library.length >= drawCount) {
+          setHand(prev => [...prev, ...library.slice(0, drawCount)]);
+          setLibrary(prev => prev.slice(drawCount));
+          addLog(`Regal Force ETB — drew ${drawCount} cards (${drawCount} green creatures).`, COLORS.blue);
+        } else if (library.length > 0) {
+          setHand(prev => [...prev, ...library]);
+          setLibrary([]);
+          addLog(`Regal Force ETB — drew ${library.length} cards (library exhausted).`, COLORS.blue);
+        } else {
+          addLog(`Regal Force ETB — library empty, no cards drawn.`, COLORS.textDim);
+        }
+      }
       if (card === "Genesis Hydra") {
         // After castFromHand deducted the full cost (2 + X), manaPool = 0 (or close to it).
         // We can't recover X from manaPool here. Instead, estimate X as what was available
@@ -13895,7 +14167,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         }
       }
 
-      // ── Nissa, Resurgent Animist: landfall — add elf/elemental tutor button in log ──
+      // ── Invasion of Ikoria: ETB — search for a non-Human creature and put it into your hand ──
+      if (card === "Invasion of Ikoria") {
+        setTutorCreaturesOnly(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          setHand(prev => [...prev, chosen]);
+          addLog(`Invasion of Ikoria ETB → ${chosen} → hand. Library shuffled.`, COLORS.purple);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Invasion of Ikoria ETB — search for a non-Human creature card.`, COLORS.purple);
+      }
       if (card === "Nissa, Resurgent Animist") {
         addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a Forest enters, search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
       }
@@ -14942,10 +15234,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         {/* ── Selvala, Heart of the Wilds: {G} tap — draw + add mana = biggest power ── */}
         {isBF && card === "Selvala, Heart of the Wilds" && (() => {
           const cost = 1; const canPay = manaPool >= cost;
-          const biggestPower = Math.max(0, ...battlefield.map(c => {
+          // Estimate power: use +1/+1 counters on top of a base power value
+          const BASE_POWER = { "Kogla, the Titan Ape": 7, "Temur Sabertooth": 4, "Selvala, Heart of the Wilds": 2,
+            "Craterhoof Behemoth": 5, "Ghalta, Primal Hunger": 12, "Woodland Bellower": 6,
+            "Regal Force": 5, "Great Oak Guardian": 4, "Formidable Speaker": 3, "Ley Weaver": 2 };
+          const biggestPower = Math.max(0, ...battlefield.map((c, ci) => {
             const cd = getCard(c); if (cd?.type !== "creature") return 0;
-            if (cd.tags?.includes("big-creature") || ["Kogla, the Titan Ape","Temur Sabertooth","Selvala, Heart of the Wilds","Craterhoof Behemoth","Ghalta, Primal Hunger"].includes(c)) return 6;
-            return cd.cmc ?? 0; // approximate with CMC
+            const base = BASE_POWER[c] ?? (cd.cmc ?? 0); // fallback: CMC ≈ power
+            const bonus = counters[cardKey(c, ci)] ?? 0;
+            return base + bonus;
           }));
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -15229,6 +15526,325 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           );
         })()}
 
+        {/* ── Nykthos, Shrine to Nyx: {2} tap — add mana equal to devotion to green ── */}
+        {isBF && card === "Nykthos, Shrine to Nyx" && (() => {
+          const cost = 2;
+          const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
+          const netMana = Math.max(0, devotion - cost); // net after paying {2}
+          if (isCardTapped || manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Nykthos ({'{2}'}tap) — {isCardTapped ? "tapped" : `need ${cost} mana`} · Devotion: {devotion}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost) + devotion); flashMana(devotion - cost);
+              addLog(`Nykthos: paid {2}, tapped — devotion ${devotion}, added {G}×${devotion} (net +${netMana}).`, COLORS.green3);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green3, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — +{devotion} mana (devotion {devotion}, net +{netMana}) ({'{2}'}tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Magus of the Candelabra: {X} tap — untap X target lands ── */}
+        {isBF && card === "Magus of the Candelabra" && (() => {
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          const maxX = Math.min(manaPool, lands.length);
+          if (isCardTapped || sickCreatures.has(key) || lands.length === 0 || manaPool < 1) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap X Lands — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need mana" : "no lands"}
+            </div>
+          );
+          // Offer to pick how many lands to untap (up to min(manaPool, landCount))
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - maxX)); flashMana(-maxX);
+              setPendingPicker({
+                label: `MAGUS OF THE CANDELABRA — UNTAP ${maxX} LAND${maxX !== 1 ? "S" : ""} (X=${maxX})`,
+                color: COLORS.green2, multi: maxX,
+                items: lands.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: (chosen) => {
+                  const arr = Array.isArray(chosen) ? chosen : [chosen];
+                  setTapped(prev => { const next = new Set(prev); arr.forEach(({ c: lc, i: li }) => next.delete(cardKey(lc, li))); return next; });
+                  addLog(`Magus of the Candelabra (X=${maxX}): untapped ${arr.map(x => x.c).join(", ")}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap {maxX} land{maxX !== 1 ? "s" : ""} ({'{X}'}tap, X={maxX})
+            </div>
+          );
+        })()}
+
+        {/* ── Ley Weaver: tap — untap two target lands ── */}
+        {isBF && card === "Ley Weaver" && (() => {
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          if (isCardTapped || sickCreatures.has(key) || lands.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap 2 Lands — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : "no lands"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setPendingPicker({
+                label: "LEY WEAVER — UNTAP TWO LANDS", color: COLORS.green2, multi: Math.min(2, lands.length),
+                items: lands.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: (chosen) => {
+                  const arr = Array.isArray(chosen) ? chosen : [chosen];
+                  setTapped(prev => { const next = new Set(prev); arr.forEach(({ c: lc, i: li }) => next.delete(cardKey(lc, li))); return next; });
+                  addLog(`Ley Weaver: untapped ${arr.map(x => x.c).join(" and ")}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap 2 lands
+            </div>
+          );
+        })()}
+
+        {/* ── Woodcaller Automaton: tap — untap target land ── */}
+        {isBF && card === "Woodcaller Automaton" && (() => {
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          if (isCardTapped || sickCreatures.has(key) || lands.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : "no lands"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setPendingPicker({
+                label: "WOODCALLER AUTOMATON — UNTAP A LAND", color: COLORS.green2,
+                items: lands.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: lc, i: li }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(lc, li)); return next; });
+                  addLog(`Woodcaller Automaton: tapped, untapped ${lc}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap a land
+            </div>
+          );
+        })()}
+
+        {/* ── Thousand-Year Elixir: {1} tap — untap target creature ── */}
+        {isBF && card === "Thousand-Year Elixir" && (() => {
+          const cost = 1;
+          const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+          if (isCardTapped || manaPool < cost || creatures.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Creature ({'{1}'}tap) — {isCardTapped ? "tapped" : manaPool < cost ? `need ${cost} mana` : "no creatures"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              setPendingPicker({
+                label: "THOUSAND-YEAR ELIXIR — UNTAP A CREATURE", color: COLORS.gold,
+                items: creatures.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  // Also remove summoning sickness (Elixir gives haste-like effect for activated abilities)
+                  setSickCreatures(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  addLog(`Thousand-Year Elixir: paid {1}, tapped — untapped ${tc} (sickness cleared).`, COLORS.gold);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1400"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{1}'}tap — untap a creature (clear sickness)
+            </div>
+          );
+        })()}
+
+        {/* ── Agatha's Soul Cauldron: {1} tap — exile a card from a graveyard ── */}
+        {isBF && card === "Agatha's Soul Cauldron" && (() => {
+          const cost = 1;
+          const gyCards = [...graveyard.map((c, gi) => ({ c, gi, zone: "own" }))];
+          if (isCardTapped || manaPool < cost || gyCards.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Exile from Graveyard ({'{1}'}tap) — {isCardTapped ? "tapped" : manaPool < cost ? `need ${cost} mana` : "graveyard empty"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              setPendingPicker({
+                label: "AGATHA'S SOUL CAULDRON — EXILE FROM GRAVEYARD", color: COLORS.purple,
+                items: gyCards.map(({ c, gi }) => ({
+                  label: c, sub: getCard(c)?.type ?? "card", key: `${c}:${gi}`, c, gi,
+                })),
+                onSelect: ({ c: chosen, gi }) => {
+                  setGraveyard(prev => prev.filter((_, i) => i !== gi));
+                  setExile(prev => [...prev, chosen]);
+                  addLog(`Agatha's Soul Cauldron: paid {1}, tapped — exiled ${chosen} from graveyard.`, COLORS.purple);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.purple, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{1}'}tap — exile a card from graveyard
+            </div>
+          );
+        })()}
+
+        {/* ── Nylea, Keen-Eyed: {3}{G} — put a creature from hand onto battlefield ── */}
+        {isBF && card === "Nylea, Keen-Eyed" && (() => {
+          const cost = 4;
+          const creaturesInHand = hand.filter(c => getCard(c)?.type === "creature");
+          if (manaPool < cost || creaturesInHand.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Put Creature onto BF ({'{3}{G}'}) — {manaPool < cost ? `need ${cost} mana` : "no creatures in hand"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              setPendingPicker({
+                label: "NYLEA, KEEN-EYED — PUT A CREATURE FROM HAND ONTO BATTLEFIELD", color: COLORS.green3,
+                items: creaturesInHand.map(c => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? "?"}`, key: c, c })),
+                onSelect: ({ c: chosen }) => {
+                  setHand(prev => { const i = prev.indexOf(chosen); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+                  goldfishAddToBattlefield(chosen);
+                  addLog(`Nylea, Keen-Eyed: paid {3}{G} — ${chosen} onto battlefield.`, COLORS.green3);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green3, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{3}{G}'} — put a creature from hand onto battlefield
+            </div>
+          );
+        })()}
+
+        {/* ── Beastrider Vanguard: mana sink — activated ability ── */}
+        {isBF && card === "Beastrider Vanguard" && (() => {
+          const cd = getCard(card);
+          const cost = cd?.cmc ?? 2;
+          if (manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Activate — need {cost} mana
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              addLog(`Beastrider Vanguard: activated (−${cost} mana).`, COLORS.green2);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Activate (−{cost} mana)
+            </div>
+          );
+        })()}
+
+        {/* ── Outland Liberator: {G} sacrifice — destroy target artifact or enchantment ── */}
+        {isBF && card === "Outland Liberator" && (() => {
+          const cost = 1;
+          if (manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Destroy artifact/enchantment ({'{G}'}sac) — need 1 mana
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              goldfishRemoveFromBattlefield(card, index);
+              setGraveyard(prev => [...prev, card]);
+              addLog(`Outland Liberator: paid {G}, sacrificed — destroyed target artifact or enchantment.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{G}'}sac — destroy artifact or enchantment
+            </div>
+          );
+        })()}
+
+        {/* ── Sylvan Library: draw 2 extra cards in draw step, pay 4 life per extra card kept ── */}
+        {isBF && card === "Sylvan Library" && (
+          <div onClick={() => {
+            pushUndo();
+            // Draw 2 extra cards; player must manually decide to pay 4 life each or put back
+            if (library.length >= 2) {
+              setHand(prev => [...prev, library[0], library[1]]);
+              setLibrary(prev => prev.slice(2));
+              addLog(`Sylvan Library: drew 2 extra cards. Pay 4 life for each you keep (or put back to top of library via undo/drag). Normal draw already happened this turn.`, COLORS.blue);
+            } else if (library.length === 1) {
+              setHand(prev => [...prev, library[0]]);
+              setLibrary([]);
+              addLog(`Sylvan Library: drew 1 extra card (library almost empty). Pay 4 life to keep it or put it back.`, COLORS.blue);
+            } else {
+              addLog(`Sylvan Library: library empty — no extra cards to draw.`, COLORS.textDim);
+            }
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            📚 Draw 2 extra (pay 4 life each to keep)
+          </div>
+        )}
+
+        {/* ── Lotus Cobra: landfall — when a land enters, add 1 mana ── */}
+        {isBF && card === "Lotus Cobra" && (
+          <div onClick={() => {
+            pushUndo();
+            setManaPool(p => p + 1); flashMana(1);
+            addLog(`Lotus Cobra landfall — +1 mana (land entered the battlefield).`, COLORS.green1);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+          🐍 Landfall — +1 mana
+          </div>
+        )}
+
         {/* ── Nature's Rhythm HARMONIZE: cast from graveyard for {X}{G}{G}{G}{G}, tap creatures to reduce generic cost ── */}
         {zone === "graveyard" && card === "Nature's Rhythm" && (() => {
           const harmonizeBase = 4; // {G}{G}{G}{G} = 4 coloured pips (paid separately); generic = X
@@ -15325,6 +15941,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       const inInput = tag === "INPUT" || tag === "TEXTAREA";
       if (inInput) return;
       if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyUndo(); return; }
+      if (e.key === "?") { e.preventDefault(); goldfishTour.start(); return; }
       if (e.key === "n" || e.key === "N") { e.preventDefault(); nextTurn(); }
       if (e.key === "u" || e.key === "U") { e.preventDefault(); untapAll(); }
       if (e.key === "t" || e.key === "T") { e.preventDefault(); openTutor(); }
@@ -15337,7 +15954,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [phase, hand, battlefield, graveyard, library, tapped, manaPool, landPlayed, log, showUntapModal, showTutor, showScry, contextMenu]);
+  }, [phase, hand, battlefield, graveyard, library, tapped, manaPool, landPlayed, log, showUntapModal, showTutor, showScry, contextMenu, goldfishTour]);
 
   // ── Untap target modal (Wirewood Lodge etc) ──────────────────
   const UntapModal = () => {
@@ -15890,7 +16507,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       }} onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div style={{
+        <div data-gtour="gtour-header" style={{
           display: "flex", alignItems: isMobile ? "flex-start" : "center",
           justifyContent: "space-between",
           padding: isMobile ? "10px 44px 10px 12px" : "14px 52px 14px 20px",
@@ -15996,6 +16613,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
               >↺ {isMobile ? "" : "NEW GAME"}{isMobile && "NEW"}</button>
             )}
+            <button onClick={() => goldfishTour.start()} title="Start guided tour (? key)"
+              style={{
+                background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
+                padding: "4px 8px", color: COLORS.textDim, cursor: "pointer",
+                fontFamily: "'Cinzel', serif", fontSize: "12px", lineHeight: 1,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green1; e.currentTarget.style.color = COLORS.green1; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; }}
+            >?</button>
             <button onClick={onClose} style={{
               position: "absolute", top: "10px", right: "12px",
               background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
@@ -16202,7 +16828,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               position: "relative",
             }}>
               {/* Controls strip */}
-              <div style={{ padding: "8px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "5px", flexWrap: "wrap", alignItems: "center" }}>
+              <div data-gtour="gtour-controls" style={{ padding: "8px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "5px", flexWrap: "wrap", alignItems: "center" }}>
                 <button onClick={nextTurn} style={{ ...btnStyle(COLORS.green2), background: "#1a3a1a" }}
                   onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
                   onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
@@ -16256,7 +16882,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
 
               {/* Land drop indicator + mana pool */}
-              <div style={{ padding: "5px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "8px", alignItems: "center" }}>
+              <div data-gtour="gtour-mana" style={{ padding: "5px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "8px", alignItems: "center" }}>
                 {(() => {
                   const hasLandInHand = hand.some(c => getCard(c)?.type === "land");
                   const landAvailColor = landPlayed ? COLORS.textDim : hasLandInHand ? COLORS.green1 : "#3a5a2a";
@@ -16360,7 +16986,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 })()}
 
                 {/* HAND — click to cast, drag to move */}
-                <div style={{ marginBottom: "16px" }}>
+                <div data-gtour="gtour-hand" style={{ marginBottom: "16px" }}>
                   {zoneLabel("HAND — click to cast", hand.length, COLORS.green2)}
                   <div {...dropZoneProps("hand")} style={{ minHeight: "32px", borderRadius: "4px", border: dragOver === "hand" ? `1px dashed ${COLORS.green2}` : "1px solid transparent", padding: "2px", transition: "border 0.1s" }}>
                     {hand.length === 0
@@ -16392,7 +17018,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 </div>
 
                 {/* BATTLEFIELD — grouped by type */}
-                <div style={{ marginBottom: "16px" }}>
+                <div data-gtour="gtour-battlefield" style={{ marginBottom: "16px" }}>
                   {zoneLabel("BATTLEFIELD — click to tap", battlefield.length, COLORS.green3)}
                   {battlefield.length === 0
                     ? <div {...dropZoneProps("battlefield")} style={{ minHeight: "32px", borderRadius: "4px", border: dragOver === "battlefield" ? `1px dashed ${COLORS.green3}` : "1px solid transparent", padding: "2px" }}>
@@ -16471,7 +17097,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               </div>
             </div>
             {/* MIDDLE: advisor */}
-            <div style={{ flex: 1, display: isMobile && mobileTab !== "advisor" ? "none" : "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, width: isMobile ? "100%" : undefined }}>
+            <div data-gtour="gtour-advisor" style={{ flex: 1, display: isMobile && mobileTab !== "advisor" ? "none" : "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, width: isMobile ? "100%" : undefined }}>
               <div style={{
                 padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}`,
                 fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px",
@@ -16497,7 +17123,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     No recommendations yet — play a land or cast a spell.
                   </div>
                 ) : (
-                  analysis.results.slice(0, 12).map((a, i) => (
+                  <div>
+                  {(showAllResults ? analysis.results : analysis.results.slice(0, 12)).map((a, i) => (
                     <div key={i} style={{
                       background: a.isSuppressed ? "#0d0d0d" : COLORS.bgCard,
                       border: `1px solid ${a.isSuppressed ? "#2a2a2a" : a.color ? a.color + "44" : COLORS.border}`,
@@ -16542,12 +17169,19 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       )}
                     </div>
                   ))
+                  }
+                  {analysis.results.length > 12 && (
+                    <div onClick={() => setShowAllResults(v => !v)} style={{ fontSize: "10px", color: COLORS.green1, textAlign: "center", padding: "8px", cursor: "pointer", opacity: 0.8, userSelect: "none", letterSpacing: "1px", fontFamily: "'Cinzel', serif" }}>
+                      {showAllResults ? `▲ show fewer` : `▼ +${analysis.results.length - 12} more results…`}
+                    </div>
+                  )}
+                  </div>
                 )}
               </div>
             </div>
 
             {/* RIGHT: log */}
-            <div style={{
+            <div data-gtour="gtour-log" style={{
               width: isMobile ? "100%" : "240px", flexShrink: 0, borderLeft: isMobile ? "none" : `1px solid ${COLORS.border}`,
               display: isMobile && mobileTab !== "log" ? "none" : "flex",
               flexDirection: "column", overflow: "hidden",
@@ -17189,6 +17823,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           </div>
         )}
         {ContextMenuPopup()}
+        <GoldfishTourOverlay active={goldfishTour.active} step={goldfishTour.step} next={goldfishTour.next} prev={goldfishTour.prev} skip={goldfishTour.skip} total={goldfishTour.total} />
 
       </div>
     </div>
@@ -17923,6 +18558,11 @@ function YevaAdvisor() {
         e.preventDefault();
         setShowSavedStates(true);
       }
+      // ? = start tour directly (not when goldfish is open — it has its own tour)
+      if (e.key === "?" && !inInput && !showGoldfish) {
+        e.preventDefault();
+        tour.start();
+      }
       // Escape = close any open modal
       if (e.key === "Escape") {
         setShowSavedStates(false);
@@ -17947,13 +18587,18 @@ function YevaAdvisor() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [showGoldfish]);
   const [linkCopied, setLinkCopied] = useState(false);
   const [jsonCopied, setJsonCopied] = useState(false);
 
   // Load state from ?s= URL param on first mount
+  // Also auto-open goldfish modal if ?goldfish param is present (e.g. bookmark or shortcut link)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.has("goldfish")) {
+      setShowGoldfish(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     const encoded = params.get("s");
     if (!encoded) return;
     decompressState(encoded).then(state => {
