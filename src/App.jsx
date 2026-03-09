@@ -1899,7 +1899,7 @@ function calculateCardManaForPool(card, battlefield) {
   return green + colorless;
 }
 
-function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null }) {
+function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false }) {
   // deckList: Set of card names in the player's deck. When set, ONE PIECE AWAY advice and
   // combo suggestions are filtered to only show cards that are actually in the deck.
   // null = no filter (all cards valid, legacy behaviour).
@@ -4847,7 +4847,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- REMOVAL SPELLS (contextual — when opponents have threats) ----
   {
-    const hasThreats = opponentThreats && opponentThreats.length > 0;
+    const hasThreats = (opponentThreats && opponentThreats.length > 0) || threatLevel === "high" || threatLevel === "critical";
     const removalSpells = [
       { name: "Nature's Claim", cmc: 1, desc: "Destroy target artifact or enchantment. They gain 4 life. Instant speed.", category: "🗑️ REMOVAL" },
       { name: "Ram Through", cmc: 2, desc: "Target creature you control deals damage equal to its power to target creature. Trample means excess bleeds through.", category: "🗑️ REMOVAL" },
@@ -4867,7 +4867,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const castableNow = canCast && (isInstant ? true : isMyTurn || yevaAvailable);
         if (castableNow && (hasThreats || isInstant)) {
           results.push({
-            priority: hasThreats ? 7 : 4,
+            priority: threatLevel === "critical" ? 11 : threatLevel === "high" ? 9 : hasThreats ? 7 : 4,
             category: spell.category,
             headline: `${spell.name}${isInstant ? " (instant)" : ""}${!isMyTurn && isInstant ? " — can cast NOW on opponent's turn" : ""}`,
             detail: spell.desc,
@@ -5067,7 +5067,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ---- BOSEIJU, WHO ENDURES ----
+  // ---- OPEN MANA WARNING ----
+  // When opponents have open mana and we lack protection, warn before going for the win.
+  if (opponentOpenMana) {
+    const hasProtection = board.has("Allosaurus Shepherd") || board.has("Destiny Spinner")
+      || board.has("Delighted Halfling") || inHand.has("Allosaurus Shepherd") || inHand.has("Destiny Spinner");
+    const hasWarpingWail = inHand.has("Warping Wail");
+    if (!hasProtection) {
+      results.push({
+        priority: 13,
+        category: "⚠️ OPEN MANA — DANGER",
+        headline: "Opponents have open mana — no protection on board",
+        detail: "Opponents are holding up mana, likely for counterspells (Force of Will, Fierce Guardianship) or interaction. Without Allosaurus Shepherd or Destiny Spinner, your key pieces can be countered. Consider passing the turn or going for it only on opponent's end step with Yeva.",
+        steps: [
+          "Do NOT attempt to win into open blue/black mana without protection.",
+          ...(hasWarpingWail ? ["Warping Wail in hand — hold it to counter a key sorcery if needed."] : []),
+          "Best option: flash in key pieces at opponent's end step when they have to commit first.",
+          "Look for Allosaurus Shepherd or Destiny Spinner in your library to protect your lines.",
+        ],
+        color: "#e74c3c",
+      });
+    } else {
+      // Has protection — note it's deployed/available
+      const protName = board.has("Allosaurus Shepherd") ? "Allosaurus Shepherd" : board.has("Destiny Spinner") ? "Destiny Spinner" : board.has("Delighted Halfling") ? "Delighted Halfling" : "protection piece";
+      results.push({
+        priority: 8,
+        category: "🛡️ OPEN MANA — PROTECTED",
+        headline: `Open mana detected — ${protName} provides coverage`,
+        detail: `Opponents have open mana but you have ${protName} in play. Your green creatures/spells are uncounterable. You can safely execute your combo this turn.`,
+        steps: [
+          `${protName} is active — your key spells cannot be countered.`,
+          "Proceed with your combo line as planned.",
+          "Warping Wail is still worth holding to counter any sorcery or remove a small creature they might use.",
+        ].filter(Boolean),
+        color: "#1abc9c",
+      });
+    }
+  }
+
+    // ---- BOSEIJU, WHO ENDURES ----
   if (board.has("Boseiju, Who Endures")) {
     // Identify what opponents might have that Boseiju can hit:
     // artifacts, enchantments, nonbasic lands. We can't know opponent boards,
@@ -5093,20 +5131,176 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   }
 
-  // ---- PROTECTION PIECES ----
+  // ---- STAX DEPLOYMENT ADVICE (context-aware) ----
+  // Root Maze, Null Rod, Thorn of Amethyst, Trinisphere, etc.
+  // These only get advice when it's worth deploying them NOW.
+  {
+    const isCritical = threatLevel === "critical";
+    const isHighThreat = threatLevel === "high" || isCritical;
+    const hasSelfArtifacts = board.has("Sol Ring") || board.has("Chrome Mox") || board.has("Mox Diamond") || board.has("Lotus Petal");
+
+    // Root Maze — slows opponents entering tapped but hurts you too if you need untapped lands
+    if (inHand.has("Root Maze") && (isHighThreat || isCritical) && (mana >= 2 || infiniteManaActive)) {
+      const selfNote = board.has("Gaea's Cradle") || board.has("Nykthos, Shrine to Nyx")
+        ? "You have big mana lands — Root Maze makes them enter tapped for opponents but won't slow your existing untapped sources."
+        : "Root Maze affects YOUR lands too — don't cast it if you still need to play lands this turn.";
+      results.push({
+        priority: isCritical ? 12 : 9,
+        category: "🔒 STAX",
+        headline: `Cast Root Maze — all lands and artifacts enter tapped`,
+        detail: `Root Maze forces all lands and artifacts to enter the battlefield tapped. Devastates fast-mana decks (Dockside, mana rocks), slows artifact combo setups, and punishes fetching. At threat level ${threatLevel} this is worth deploying.`,
+        steps: [
+          "Cast Root Maze ({1}{G}) — all permanents enter tapped until it's removed.",
+          "Best targets: decks that rely on Mana Crypt, Sol Ring, fetch lands, or Dockside Extortionist.",
+          selfNote,
+          isHighThreat ? "Deploy ASAP — opponents are assembling quickly." : "Hold until you see a key fetch or rock being played.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+
+    // Null Rod — shuts down all artifact activations (hits opponents' rocks/Dockside)
+    if (inHand.has("Null Rod") && (mana >= 2 || infiniteManaActive)) {
+      const selfHurt = hasSelfArtifacts ? ` ⚠️ Your own ${["Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal"].filter(c => board.has(c)).join(", ")} will also be shut down.` : "";
+      results.push({
+        priority: isHighThreat ? 11 : 7,
+        category: "🔒 STAX",
+        headline: `Cast Null Rod — shuts down all artifact activated abilities`,
+        detail: `Null Rod prevents ALL artifact activated abilities. This stops Dockside Extortionist, Isochron Scepter, Mana Crypt, Sol Ring, Arcane Signet — the entire fast-mana suite of most cEDH decks.${selfHurt}`,
+        steps: [
+          "Cast Null Rod ({2}) — artifact activated abilities stop working immediately.",
+          "Most impactful against: Dockside Extortionist (can't tap), Mana Crypt, Mana Vault, Arcane Signet, Isochron Scepter.",
+          ...(hasSelfArtifacts ? [`Your own artifacts are also shut down — plan your mana needs BEFORE casting Null Rod.`] : []),
+          isHighThreat ? "High threat — deploy immediately before opponents accelerate further." : "Medium threat — deploy proactively to slow opponents' ramp.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+
+    // Thorn of Amethyst — taxes non-creature spells by {1}
+    if (inHand.has("Thorn of Amethyst") && (mana >= 2 || infiniteManaActive)) {
+      results.push({
+        priority: isHighThreat ? 9 : 6,
+        category: "🔒 STAX",
+        headline: `Cast Thorn of Amethyst — all non-creature spells cost {1} more`,
+        detail: "Thorn of Amethyst taxes non-creature spells by 1. Hits fast sorceries (Demonic Tutor, Wheel of Fortune), counterspells, and rituals. Your deck is creature-heavy so you're relatively immune — most of your spells ARE creatures.",
+        steps: [
+          "Cast Thorn of Amethyst ({2}) — non-creature spells cost {1} more for everyone.",
+          "Your deck: most key pieces are creatures, so the tax barely affects your lines.",
+          "Their deck: tutors, counterspells, instant/sorcery combos all get taxed.",
+          isHighThreat ? "Deploy now — the tempo hit compounds quickly." : "Hold for a turn if you need to cast non-creatures yourself this turn.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+
+    // Trinisphere — everything costs at least 3
+    if (inHand.has("Trinisphere") && (mana >= 3 || infiniteManaActive)) {
+      results.push({
+        priority: isCritical ? 13 : isHighThreat ? 10 : 6,
+        category: "🔒 STAX",
+        headline: `Cast Trinisphere — every spell costs at least {3}`,
+        detail: "Trinisphere is one of the most oppressive stax pieces in cEDH. It forces every spell to cost at least 3 mana, completely shutting down 0-1-2 CMC combos (Consultation, Demonic Tutor, Dark Ritual, 1-drop dorks). Your deck can still function since your dorks mostly cost {G}-{1}{G}{G}.",
+        steps: [
+          "Cast Trinisphere ({3}) — every spell now costs a minimum of {3}.",
+          "Devastates: 0-CMC free spells (Force of Will, Mana Drain), cheap rituals, 1-drop tutors.",
+          "Affected: Demonic Tutor ({2}{B}→already 3 OK), Dark Ritual ({B}→now {3}), Consultation ({B}→now {3}).",
+          "Your dorks (1-drop Elves) now cost {3} — plan your curve accordingly before casting.",
+          isCritical ? "⚠️ Critical threat — this may be your only way to slow opponents enough to win." : "",
+        ].filter(Boolean),
+        color: isCritical ? "#ff4500" : "#e74c3c",
+      });
+    }
+
+    // Vexing Bauble — opponent can't cast free spells without paying life
+    if (inHand.has("Vexing Bauble") && (mana >= 1 || infiniteManaActive)) {
+      results.push({
+        priority: isHighThreat ? 9 : 6,
+        category: "🔒 STAX",
+        headline: `Cast Vexing Bauble — taxes free/zero-cost spells`,
+        detail: "Vexing Bauble forces opponents to pay 1 life each time they cast a spell without paying its mana cost (Force of Will, Mana Drain, Fierce Guardianship, Force of Negation, Drown in the Loch via phyrexian). Also acts as a cantrip (sacrifice to draw) when no longer needed.",
+        steps: [
+          "Cast Vexing Bauble ({1}) — opponents pay 1 life per 'free' spell.",
+          "Key spells hit: Force of Will, Force of Negation, Fierce Guardianship, Mana Drain (if cast without mana).",
+          "Life loss adds up: at 40 life in cEDH, 5-10 forced life payments is significant.",
+          "When no longer needed: sacrifice to draw a card.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+
+    // Heartwood Storyteller — punishes non-creature spells with card draw for you
+    if (inHand.has("Heartwood Storyteller") && (mana >= 3 || infiniteManaActive)) {
+      results.push({
+        priority: isHighThreat ? 8 : 6,
+        category: "🔒 STAX",
+        headline: `Cast Heartwood Storyteller — draw cards when opponents cast non-creature spells`,
+        detail: "Heartwood Storyteller draws you a card whenever an opponent casts a non-creature spell (unless you also cast one). Your creature-heavy deck means you almost never trigger the drawback. In non-creature-heavy pods (blue or black combo), this generates massive card advantage.",
+        steps: [
+          "Cast Heartwood Storyteller ({1}{G}{G}) — draw on each opponent's non-creature spell.",
+          "Your creature-heavy lines rarely trigger the 'they draw too' clause.",
+          "Most effective against: tutors-heavy decks (Demonic Tutor, Vampiric Tutor), counterspell-heavy control, storm/ritual decks.",
+          "Each draw helps you find combo pieces faster. Deploy early to generate advantage.",
+        ],
+        color: "#27ae60",
+      });
+    }
+
+    // Titania's Song — converts opponent artifacts to vanilla creatures
+    if (inHand.has("Titania's Song") && isHighThreat && (mana >= 4 || infiniteManaActive)) {
+      results.push({
+        priority: isCritical ? 11 : 8,
+        category: "🔒 STAX",
+        headline: `Cast Titania's Song — opponent artifacts become vanilla creatures`,
+        detail: "Titania's Song makes each non-token artifact into a creature with power/toughness equal to its CMC, losing all abilities. Mana Crypt becomes a 0/0 (dies), Isochron Scepter becomes a 2/2 vanilla, fast mana rocks are useless. Devastating in artifact-heavy pods.",
+        steps: [
+          "Cast Titania's Song ({3}{G}) — artifacts become P/T=CMC vanilla creatures.",
+          "0 CMC artifacts (Mana Crypt, Mox Diamond) become 0/0 and die immediately.",
+          "Isochron Scepter (CMC 2) becomes a 2/2 with no abilities.",
+          "Your Null Rod/Chrome Mox are also affected — do NOT cast alongside Null Rod (both shut them down redundantly).",
+        ],
+        color: "#e74c3c",
+      });
+    }
+
+    // Orb of Dreams — permanents enter tapped (enchantment version)
+    if (inHand.has("Orb of Dreams") && isHighThreat && (mana >= 3 || infiniteManaActive)) {
+      results.push({
+        priority: 8,
+        category: "🔒 STAX",
+        headline: `Cast Orb of Dreams — all permanents enter tapped`,
+        detail: "Orb of Dreams makes all permanents enter tapped. Slows every creature, land, and artifact your opponents play. More symmetrical than Root Maze but hits creatures too. Works well when you have an already-established board.",
+        steps: [
+          "Cast Orb of Dreams ({3}) — all permanents enter tapped.",
+          "Best deployed when you're ahead on board — opponents are effectively set back a full turn.",
+          "Your own creatures enter tapped too, so cast it AFTER your key creatures are in play.",
+          "Combine with Seedborn Muse (untap all your permanents on opponents' turns) to negate the downside.",
+        ],
+        color: "#e74c3c",
+      });
+    }
+  }
+
+    // ---- PROTECTION PIECES ----
   if (inHand.has("Allosaurus Shepherd") || inHand.has("Destiny Spinner")) {
     const protector = inHand.has("Allosaurus Shepherd") ? "Allosaurus Shepherd" : "Destiny Spinner";
+    const protectPriority = opponentOpenMana ? 14 : 6;
+    const openManaNote = opponentOpenMana ? "⚠️ Opponents have open mana — DEPLOY THIS BEFORE executing your combo to protect key pieces." : "Save it for the turn you go for the win.";
     results.push({
-      priority: 6,
-      category: "🛡️ PROTECTION",
-      headline: `Hold ${protector} — deploy when executing your combo`,
-      detail: `${protector} makes your green spells/creatures uncounterable. Save it for the turn you go for the win to protect your key pieces from counterspells.`,
+      priority: protectPriority,
+      category: opponentOpenMana ? "🛡️ PROTECTION — DEPLOY NOW" : "🛡️ PROTECTION",
+      headline: opponentOpenMana
+        ? `⚠️ Open mana detected — lead with ${protector} before combo`
+        : `Hold ${protector} — deploy when executing your combo`,
+      detail: `${protector} makes your green spells/creatures uncounterable. ${openManaNote}`,
       steps: [
-        `Do NOT play ${protector} early — save it as a trump card.`,
+        opponentOpenMana
+          ? `Opponents have open mana — cast ${protector} FIRST before any combo piece to ensure your spells resolve.`
+          : `Do NOT play ${protector} early — save it as a trump card.`,
         "When you're ready to execute your combo, cast it first.",
         "Now your Ashaya, Temur Sabertooth, and other key pieces resolve safely."
       ],
-      color: "#1abc9c",
+      color: opponentOpenMana ? "#ff6b35" : "#1abc9c",
     });
   }
 
@@ -8666,6 +8860,34 @@ function AdviceCard({ advice, index, activeCards, collapseKey }) {
           }}>
             <HighlightedText text={advice.detail} activeCards={activeCards} color={advice.color} />
           </p>
+          {/* Prerequisite chain — shown when combo has requires list */}
+          {(() => {
+            if (!advice.combo) return null;
+            const comboData = COMBOS.find(c => c.id === advice.combo);
+            if (!comboData) return null;
+            const pieces = [...new Set([...(comboData.onBattlefield||[]), ...(comboData.requires||[])])].slice(0, 8);
+            if (pieces.length < 2) return null;
+            return (
+              <div style={{ marginBottom: "10px" }}>
+                <div style={{ fontSize: "9px", letterSpacing: "2px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "6px" }}>REQUIRES</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center" }}>
+                  {pieces.map((p, i) => (
+                    <span key={i} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                      <span style={{
+                        fontSize: "10px", fontFamily: "'Crimson Text', serif",
+                        color: activeCards?.has(p) ? advice.color : COLORS.textMid,
+                        background: activeCards?.has(p) ? advice.color + "22" : COLORS.bgCard,
+                        border: `1px solid ${activeCards?.has(p) ? advice.color + "66" : COLORS.border}`,
+                        borderRadius: "4px", padding: "1px 6px",
+                        transition: "all 0.15s",
+                      }}>{p}</span>
+                      {i < pieces.length - 1 && <span style={{ color: COLORS.textDim, fontSize: "10px" }}>+</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           {advice.steps && advice.steps.length > 0 && (
             <div>
               <div style={{
@@ -8697,6 +8919,41 @@ function AdviceCard({ advice, index, activeCards, collapseKey }) {
               ))}
             </div>
           )}
+        {/* Combo deep-dive — shows COMBOS description when available */}
+          {(() => {
+            if (!advice.combo) return null;
+            const comboData = COMBOS.find(c => c.id === advice.combo);
+            if (!comboData?.description) return null;
+            return (
+              <details style={{ marginTop: "8px" }}>
+                <summary style={{
+                  fontSize: "9px", letterSpacing: "1.5px", color: COLORS.textDim,
+                  fontFamily: "'Cinzel', serif", cursor: "pointer", userSelect: "none",
+                  listStyle: "none", display: "flex", alignItems: "center", gap: "6px",
+                }}>
+                  <span style={{ fontSize: "11px" }}>🔬</span> EXPLAIN COMBO MECHANICS
+                </summary>
+                <div style={{
+                  marginTop: "8px", padding: "10px 12px",
+                  background: "#0a0a14", border: `1px solid ${advice.color}33`,
+                  borderRadius: "6px", borderLeft: `3px solid ${advice.color}55`,
+                }}>
+                  <p style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
+                    {comboData.description}
+                  </p>
+                  {comboData.lines?.length > 0 && (
+                    <div style={{ marginTop: "8px" }}>
+                      {comboData.lines.map((line, i) => (
+                        <div key={i} style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", lineHeight: 1.5, marginBottom: "2px", paddingLeft: "8px", borderLeft: `2px solid ${advice.color}33` }}>
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -11541,7 +11798,8 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   const deckSet = new Set(nonCommanderCards);
   const results = [];
   for (let i = 0; i < n; i++) {
-    results.push(simulateOneGame(nonCommanderCards, deckSet, 2, maxTurns));
+    const g = simulateOneGame(nonCommanderCards, deckSet, 2, maxTurns);
+    results.push(g);
   }
 
   const wins        = results.filter(r => r.winTurn !== null);
@@ -11576,7 +11834,7 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   // Win turn distribution — full T1–T8+ for bar chart
   const distribution = {};
   for (const t of winTurns) {
-    const key = t <= 8 ? `T${t}` : "T9+";
+    const key = t <= 7 ? `T${t}` : "T8+";
     distribution[key] = (distribution[key] ?? 0) + 1;
   }
 
@@ -11589,6 +11847,42 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   const winCombos = Object.entries(winComboCounts)
     .sort((a, b) => b[1] - a[1])
     .map(([label, count]) => ({ label, count, pct: Math.round(count / wins.length * 100) }));
+
+  // ── Tutor efficiency heatmap ──────────────────────────────────
+  // For each winning game, check which tutors appear in the castLog alongside
+  // which win-relevant pieces also appear. This tells us: "when Worldly Tutor
+  // appeared in a win, what else was cast that game?" — a proxy for what it found.
+  const TUTOR_CARDS = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons",
+    "Green Sun's Zenith","Natural Order","Eldritch Evolution","Archdruid's Charm",
+    "Fierce Empath","Fauna Shaman","Woodland Bellower","Sylvan Scrying","Crop Rotation"];
+  const WIN_PIECES = ["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger",
+    "Priest of Titania","Argothian Elder","Duskwatch Recruiter","Temur Sabertooth",
+    "Kogla, the Titan Ape","Eternal Witness","Formidable Speaker","Regal Force",
+    "Endurance","Yisan, the Wanderer Bard","Eladamri, Korvecdal","Circle of Dreams Druid",
+    "Elvish Archdruid","Fanatic of Rhonas","Seedborn Muse"];
+  const tutorHeatmap = {};
+  for (const r of wins) {
+    const log = r.winCastLog || new Set();
+    for (const tutor of TUTOR_CARDS) {
+      if (!log.has(tutor)) continue;
+      if (!tutorHeatmap[tutor]) tutorHeatmap[tutor] = {};
+      for (const piece of WIN_PIECES) {
+        if (log.has(piece)) {
+          tutorHeatmap[tutor][piece] = (tutorHeatmap[tutor][piece] ?? 0) + 1;
+        }
+      }
+    }
+  }
+  // For each tutor: top 4 co-occurring win pieces (sorted by count)
+  const tutorSummary = Object.entries(tutorHeatmap)
+    .filter(([, map]) => Object.keys(map).length > 0)
+    .map(([tutor, map]) => ({
+      tutor,
+      total: Object.values(map).reduce((a, b) => a + b, 0),
+      top: Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 4)
+        .map(([piece, count]) => ({ piece, count, pct: Math.round(count / wins.length * 100) })),
+    }))
+    .sort((a, b) => b.total - a.total);
 
   // Average mana curve across all games (by turn index)
   const manaCurveAvg = [];
@@ -11644,7 +11938,7 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
     n, wins: wins.length, winRate, avgWinTurn, avgMulligans,
     t3Rate, t4Rate, t5Rate, t1DorkRate,
     topBottlenecks, distribution, winCombos, manaCurveAvg, results, maxTurns,
-    cutCandidates,
+    cutCandidates, tutorSummary,
   };
 }
 
@@ -14310,6 +14604,25 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                 <button onClick={openTutor} style={btnStyle(COLORS.purple)} title="Search your library by card name, type, or tag — e.g. type 'dork' to find mana creatures (T)">🔍 TUTOR</button>
                 <button onClick={() => openScry(3)} style={btnStyle(COLORS.blue)} title="Look at the top 3 cards of your library. Choose which to keep on top and which to send to the bottom.">👁 SCRY 3</button>
                 <button onClick={() => openScry(1)} style={btnStyle(COLORS.border)} title="Look at the top card of your library and keep or bottom it.">👁 1</button>
+                {/* Contextual library peek buttons — shown only when relevant cards are on board */}
+                {battlefield.includes("Duskwatch Recruiter") && (
+                  <button onClick={() => openScry(3)} style={{ ...btnStyle(COLORS.gold), background: "#1a1400" }}
+                    title="Duskwatch Recruiter: look at top 3 cards and reveal a creature. Uses the scry overlay — in the real game you'd only reveal a creature (not freely arrange), but this lets you see and plan.">
+                    🐺 DUSK PEEK 3
+                  </button>
+                )}
+                {battlefield.includes("Eladamri, Korvecdal") && (
+                  <button onClick={() => openScry(1)} style={{ ...btnStyle(COLORS.purple), background: "#1a0a2a" }}
+                    title="Eladamri lets you look at the top card of your library at any time, and cast creatures from it. Use SCRY 1 to peek — if it's a creature you can cast it directly.">
+                    👁 ELADAMRI TOP
+                  </button>
+                )}
+                {battlefield.includes("Yisan, the Wanderer Bard") && (
+                  <button onClick={() => openScry(yisanCounters + 1 <= 3 ? 3 : 5)} style={{ ...btnStyle("#9b59b6"), background: "#1a0a2a" }}
+                    title="Yisan searches for a creature of CMC equal to his verse counter + 1. Use this peek to see if your target is near the top.">
+                    🎵 YISAN PEEK
+                  </button>
+                )}
                 <button
                   onClick={() => setViewMode(v => v === "list" ? "image" : "list")}
                   title={viewMode === "list" ? "Switch to card image playfield view" : "Switch to text list view"}
@@ -14770,7 +15083,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     </div>
                     <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
                       <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>MAX TURNS:</span>
-                      {[8, 10, 15, 20].map(t => (
+                      {[6, 8, 10, 15, 20].map(t => (
                         <button key={t} onClick={() => setRunNMaxTurns(t)} style={{
                           background: runNMaxTurns === t ? "#1a1a3a" : "none",
                           border: `1px solid ${runNMaxTurns === t ? COLORS.blue : COLORS.border}`,
@@ -14797,33 +15110,67 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     </button>
                     {!hasDeck && <div style={{ fontSize: "10px", color: COLORS.red, marginTop: "6px", fontFamily: "'Crimson Text', serif" }}>Load a deck first.</div>}
                     {nr && !runNRunning && (
-                      <button
-                        onClick={() => {
-                          const wins = nr.results.filter(r => r.winTurn !== null);
-                          const rows = [
-                            ["Game","Win Turn","Mulligans","Combo","Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
-                            ...wins.map((r, i) => [
-                              i + 1,
-                              r.winTurn,
-                              r.mulligans,
-                              `"${(r.winCombo||"Unknown").replace(/"/g,'""')}"`,
-                              ...(r.openingHand||[]).map(c => `"${c.replace(/"/g,'""')}"`)
-                            ].join(","))
-                          ].join("\n");
-                          const blob = new Blob([rows], { type: "text/csv" });
-                          const a = document.createElement("a");
-                          a.href = URL.createObjectURL(blob);
-                          a.download = `yeva-winning-hands-${nr.n}games.csv`;
-                          a.click();
-                        }}
-                        style={{
-                          width: "100%", marginTop: "6px", background: "none",
-                          border: `1px solid ${COLORS.green1}`,
-                          borderRadius: "8px", padding: "7px",
-                          color: COLORS.green1, cursor: "pointer",
-                          fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px",
-                        }}
-                      >⬇ EXPORT WINNING HANDS CSV ({nr.results.filter(r => r.winTurn !== null).length} wins)</button>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "6px" }}>
+                        {/* Export all games */}
+                        <button
+                          onClick={() => {
+                            const maxMC = Math.max(...nr.results.map(r => r.manaCurve?.length ?? 0), 0);
+                            const mcHeaders = Array.from({length: maxMC}, (_, i) => `Mana T${i+1}`);
+                            const rows = [
+                              ["Game","Win Turn","Mulligans","Combo","T1 Dork",...mcHeaders,"Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
+                              ...nr.results.map((r, i) => [
+                                i + 1,
+                                r.winTurn ?? "",
+                                r.mulligans,
+                                `"${(r.winCombo||"").replace(/"/g,'""')}"`,
+                                r.t1Dork ? 1 : 0,
+                                ...Array.from({length: maxMC}, (_, t) => r.manaCurve?.[t]?.toFixed(1) ?? ""),
+                                ...(r.openingHand||[]).map(c => `"${c.replace(/"/g,'""')}"`)
+                              ].join(","))
+                            ].join("\n");
+                            const blob = new Blob([rows], { type: "text/csv" });
+                            const a = document.createElement("a");
+                            a.href = URL.createObjectURL(blob);
+                            a.download = `yeva-all-games-${nr.n}.csv`;
+                            a.click();
+                          }}
+                          style={{
+                            width: "100%", background: "none",
+                            border: `1px solid ${COLORS.blue}`,
+                            borderRadius: "8px", padding: "7px",
+                            color: COLORS.blue, cursor: "pointer",
+                            fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px",
+                          }}
+                        >⬇ EXPORT ALL {nr.n} GAMES (with mana curve)</button>
+                        {/* Export wins only */}
+                        <button
+                          onClick={() => {
+                            const wins = nr.results.filter(r => r.winTurn !== null);
+                            const rows = [
+                              ["Game","Win Turn","Mulligans","Combo","Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
+                              ...wins.map((r, i) => [
+                                i + 1,
+                                r.winTurn,
+                                r.mulligans,
+                                `"${(r.winCombo||"Unknown").replace(/"/g,'""')}"`,
+                                ...(r.openingHand||[]).map(c => `"${c.replace(/"/g,'""')}"`)
+                              ].join(","))
+                            ].join("\n");
+                            const blob = new Blob([rows], { type: "text/csv" });
+                            const a = document.createElement("a");
+                            a.href = URL.createObjectURL(blob);
+                            a.download = `yeva-winning-hands-${nr.n}games.csv`;
+                            a.click();
+                          }}
+                          style={{
+                            width: "100%", background: "none",
+                            border: `1px solid ${COLORS.green1}`,
+                            borderRadius: "8px", padding: "7px",
+                            color: COLORS.green1, cursor: "pointer",
+                            fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px",
+                          }}
+                        >⬇ WINNING HANDS ONLY ({nr.results.filter(r => r.winTurn !== null).length} wins)</button>
+                      </div>
                     )}
                   </div>
 
@@ -14981,6 +15328,32 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                                   <div style={{ height: "2px", background: COLORS.border, borderRadius: "1px", overflow: "hidden" }}>
                                     <div style={{ height: "100%", width: `${c.winPct}%`, background: c.winPct === 0 ? COLORS.red : COLORS.gold, borderRadius: "1px", opacity: 0.6 }} />
                                   </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {/* ── Tutor Efficiency Heatmap ── */}
+                          {nr.tutorSummary?.length > 0 && (
+                            <div style={{ marginTop: "10px" }}>
+                              <Tip id="tutor-heatmap-header" text="For each tutor that appeared in winning games, shows which win pieces most frequently co-appeared in the same game's cast log. This is a proxy for what the tutor was used to find. Tutors with narrow targets may be candidates for more flexible alternatives.">
+                                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: "#9b59b6", letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>
+                                  🔍 TUTOR EFFICIENCY (?)
+                                </div>
+                              </Tip>
+                              {nr.tutorSummary.map((t, i) => (
+                                <div key={i} style={{ marginBottom: "8px", padding: "6px 8px", background: "#0d0d18", borderRadius: "5px", border: "1px solid #2a1a3a" }}>
+                                  <div style={{ fontSize: "10px", color: "#c084fc", fontFamily: "'Cinzel', serif", marginBottom: "4px", letterSpacing: "0.5px" }}>
+                                    {t.tutor}
+                                  </div>
+                                  {t.top.map((e, j) => (
+                                    <div key={j} style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                                      <div style={{ height: "2px", background: "#2a1a3a", borderRadius: "1px", flex: 1, overflow: "hidden" }}>
+                                        <div style={{ height: "100%", width: `${Math.min(100, e.pct * 3)}%`, background: "#9b59b6", borderRadius: "1px", opacity: 0.7 }} />
+                                      </div>
+                                      <span style={{ fontSize: "9px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", flex: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.piece}</span>
+                                      <span style={{ fontSize: "8px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", flexShrink: 0 }}>{e.pct}%</span>
+                                    </div>
+                                  ))}
                                 </div>
                               ))}
                             </div>
@@ -15784,6 +16157,8 @@ function YevaAdvisor() {
   const [greenMana, setGreenMana] = useState("3");
   const [colorlessMana, setColorlessMana] = useState("0");
   const [isMyTurn, setIsMyTurn] = useState(false);
+  const [threatLevel, setThreatLevel] = useState("low");   // "low" | "medium" | "high" | "critical"
+  const [opponentOpenMana, setOpponentOpenMana] = useState(false); // opponents have open blue/interaction mana
   const [yisanCounters, setYisanCounters] = useState(0);
   const [advice, setAdvice] = useState([]);
   const [infiniteMana, setInfiniteMana] = useState(false);
@@ -15971,7 +16346,7 @@ function YevaAdvisor() {
     if (hand.length + battlefield.length > 0) {
       try {
         const manaAvailable = { green: parseInt(greenMana) || 0, colorless: parseInt(colorlessMana) || 0 };
-        const { results, infiniteManaActive, activeComboName: comboName } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments });
+        const { results, infiniteManaActive, activeComboName: comboName } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana });
         setAdvice(results);
         setInfiniteMana(infiniteManaActive);
         setActiveComboName(comboName);
@@ -15980,7 +16355,7 @@ function YevaAdvisor() {
         setAdvice([{ priority: 0, category: "⚠️ ERROR", headline: err.message, detail: err.stack, steps: [], color: "#e74c3c" }]);
       }
     }
-  }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, yisanCounters]);
+  }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, yisanCounters, threatLevel, opponentOpenMana]);
 
   const elvesOnBoard     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
@@ -16395,6 +16770,40 @@ function YevaAdvisor() {
                     }}>{label.toUpperCase()}</button>
                   );
                 })}
+              </div>
+              {/* Threat level */}
+              <div style={{ marginBottom: "12px" }}>
+                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: COLORS.textDim, letterSpacing: "1px", marginBottom: "6px" }}>POD THREAT</div>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  {[["low","🟢","Low"],["medium","🟡","Med"],["high","🟠","High"],["critical","🔴","Crit"]].map(([val,icon,lbl]) => (
+                    <button key={val} onClick={() => setThreatLevel(val)} style={{
+                      flex: 1, padding: "5px 4px",
+                      background: threatLevel === val ? (val === "critical" ? "#3a0a0a" : val === "high" ? "#3a1a0a" : val === "medium" ? "#2a2a0a" : "#0a1a0a") : "transparent",
+                      border: `1px solid ${threatLevel === val ? (val === "critical" ? "#ff4500" : val === "high" ? "#e67e22" : val === "medium" ? "#f1c40f" : COLORS.green1) : COLORS.border}`,
+                      borderRadius: "5px", cursor: "pointer",
+                      color: threatLevel === val ? COLORS.text : COLORS.textDim,
+                      fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "0.5px",
+                      transition: "all 0.15s",
+                    }} title={`Threat level: ${val}. Affects stax deployment priority and removal advice.`}>
+                      {icon} {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Open mana toggle */}
+              <div style={{ marginBottom: "12px" }}>
+                <button onClick={() => setOpponentOpenMana(v => !v)} style={{
+                  width: "100%", padding: "6px",
+                  background: opponentOpenMana ? "#1a0a0a" : "transparent",
+                  border: `1px solid ${opponentOpenMana ? "#e74c3c" : COLORS.border}`,
+                  borderRadius: "6px", cursor: "pointer",
+                  color: opponentOpenMana ? "#e74c3c" : COLORS.textDim,
+                  fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px",
+                  transition: "all 0.15s", textAlign: "left", display: "flex", alignItems: "center", gap: "6px",
+                }} title="Toggle when opponents are holding up open mana (likely counterspells or instant-speed interaction)">
+                  <span style={{ fontSize: "12px" }}>{opponentOpenMana ? "⚡" : "○"}</span>
+                  <span>OPEN MANA{opponentOpenMana ? " — OPPONENTS HOLDING UP" : " — none"}</span>
+                </button>
               </div>
               <div style={{ display: "flex", gap: "10px", alignItems: "center" }} data-tour="tour-mana">
                 <div>
