@@ -4037,8 +4037,27 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       .filter(t => !board.has(t.name) && !inHand.has(t.name));
     const bestTarget  = targets[0];
 
-    // Build a look-ahead chain: how many activations until we hit win pieces?
+    // ---- Hold / skip-verse detection ----
+    // If ALL desirable targets at nextVerse are already in hand or on board,
+    // there is no point activating now — better to hold and skip to a higher verse.
+    const allVerseTargetsHave = (yisanTargetsByVerse[nextVerse] || [])
+      .every(t => board.has(t.name) || inHand.has(t.name));
+    // Find the next verse that actually has a missing target
+    let skipToVerse = null;
+    for (let v = nextVerse + 1; v <= 5; v++) {
+      const vt = (yisanTargetsByVerse[v] || []).filter(t => !board.has(t.name) && !inHand.has(t.name));
+      if (vt.length > 0) { skipToVerse = v; break; }
+    }
+    // Also flag if bestTarget is a low-value ramp piece when a win piece is 1 verse away
     const WIN_PIECES = new Set(["Ashaya, Soul of the Wild","Duskwatch Recruiter","Temur Sabertooth","Kogla, the Titan Ape","Eternal Witness"]);
+    const nextVerseIsWin = bestTarget && WIN_PIECES.has(bestTarget.name);
+    const skipVerseIsWin = skipToVerse && (yisanTargetsByVerse[skipToVerse] || [])
+      .some(t => WIN_PIECES.has(t.name) && !board.has(t.name) && !inHand.has(t.name));
+    // Holding is worth flagging if all verse targets already covered, or if the next verse
+    // target is a redundant piece while a win piece is just one activation further.
+    const shouldHoldYisan = allVerseTargetsHave && skipToVerse !== null;
+
+    // Build a look-ahead chain: how many activations until we hit win pieces?
     const chainAhead = [];
     for (let v = nextVerse; v <= 5; v++) {
       const vtargets = (yisanTargetsByVerse[v] || []).filter(t => !board.has(t.name) && !inHand.has(t.name));
@@ -4048,7 +4067,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const winChainEntry = activationsToWin >= 0 ? chainAhead[activationsToWin] : null;
     const chainSummary = chainAhead.slice(0, 4).map(c => `V${c.verse}→${c.name.split(",")[0]}`).join(" · ");
 
-    if (canActivate && canAfford && bestTarget) {
+    if (shouldHoldYisan) {
+      const skipTarget = skipToVerse ? (yisanTargetsByVerse[skipToVerse] || []).find(t => !board.has(t.name) && !inHand.has(t.name)) : null;
+      results.push({
+        priority: 7,
+        category: "🎯 YISAN — HOLD ACTIVATION",
+        headline: `Hold Yisan at verse ${yisanCounters} — skip to verse ${skipToVerse ?? "?"}`,
+        detail: `All CMC ${nextVerse} targets at verse ${nextVerse} are already in hand or on the battlefield. Activating now wastes a counter. Hold Yisan${skipToVerse ? ` until verse ${skipToVerse} to fetch ${skipTarget?.name ?? "the next needed piece"}` : " and wait for the right activation window"}.`,
+        steps: [
+          `Verse ${nextVerse} targets already covered: ${(yisanTargetsByVerse[nextVerse] || []).map(t => t.name).join(", ")}.`,
+          skipToVerse && skipTarget ? `Next useful activation: verse ${skipToVerse} → ${skipTarget.name} (${skipTarget.reason}).` : "No immediately useful higher-verse target found — hold until board state changes.",
+          skipVerseIsWin ? `⚡ Verse ${skipToVerse} is a WIN PIECE — prioritise reaching it as fast as possible.` : "",
+          canAfford && hasRanger ? `With ${rangerName} you can activate twice per turn when ready — save the mana.` : "",
+        ].filter(Boolean),
+        color: "#f39c12",
+      });
+    } else if (canActivate && canAfford && bestTarget) {
       const doubleActivate = hasRanger && mana >= 6 && isMyTurn;
       const activationsNote = winChainEntry
         ? activationsToWin === 0
@@ -5349,15 +5383,48 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const keyLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Geier Reach Sanitarium","Wirewood Lodge","Deserted Temple"];
     const missingKeyLands = keyLands.filter(l => !board.has(l));
 
-    // Check if Sanitarium is the only thing standing between us and a win-mill line
-    // Sanitarium is the only thing needed to execute the mill win:
-    // infinite mana active + Endurance available. The untap method is implicit
-    // in whichever infinite-mana combo is already running.
     const sanitariumWinsNow = (
       !board.has("Geier Reach Sanitarium") &&
       infiniteManaActive &&
       (board.has("Endurance") || inHand.has("Endurance"))
     );
+
+    // ---- Compute what Cradle/Nykthos would produce AFTER fetching ----
+    // Crop Rotation sacrifices a land but creatures stay — Cradle mana = creaturesOnBoard
+    const cradleManaAfterFetch = creaturesOnBoard; // one land exits, creatures unchanged
+    // Nykthos net = devotionOnBoard - 2 (the {2} activation cost)
+    const nykthosNetAfterFetch = Math.max(0, devotionOnBoard - 2);
+
+    // Can fetching Cradle immediately enable a key cast?
+    // Key castables by mana requirement (after current mana + cradle tap - 1 for Crop Rotation)
+    const manaAfterCradle = (mana - 1) + cradleManaAfterFetch; // sacrifice a land costs 0 extra; CR costs {G}=1
+    const manaAfterNykthos = (mana - 1) + nykthosNetAfterFetch;
+
+    // Identify the most expensive castable combo piece not yet on board
+    const COMBO_PIECE_COSTS = [
+      { name: "Natural Order",          cmc: 4 },
+      { name: "Craterhoof Behemoth",    cmc: 8 },
+      { name: "Woodland Bellower",      cmc: 6 },
+      { name: "Ashaya, Soul of the Wild", cmc: 5 },
+      { name: "Kogla, the Titan Ape",   cmc: 6 },
+      { name: "Temur Sabertooth",       cmc: 3 },
+      { name: "Circle of Dreams Druid", cmc: 3 },
+      { name: "Priest of Titania",      cmc: 2 },
+    ];
+    const reachablePieces = COMBO_PIECE_COSTS.filter(p =>
+      (inHand.has(p.name) || !board.has(p.name)) &&
+      manaAfterCradle >= p.cmc &&
+      !board.has(p.name)
+    );
+    const cradleWinNote = reachablePieces.length > 0
+      ? ` Cradle taps for ${cradleManaAfterFetch} mana — enough to cast ${reachablePieces[0].name} (CMC ${reachablePieces[0].cmc}) this turn.`
+      : cradleManaAfterFetch >= 4
+      ? ` Cradle taps for ${cradleManaAfterFetch} mana (${creaturesOnBoard} creatures) — immediately useful.`
+      : "";
+
+    const nykthosWinNote = nykthosNetAfterFetch >= 3
+      ? ` Nykthos nets ${nykthosNetAfterFetch} mana (devotion ${devotionOnBoard} − 2 cost).`
+      : "";
 
     if (sanitariumWinsNow && (mana >= 1 || infiniteManaActive)) {
       results.push({
@@ -5374,18 +5441,33 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         color: "#ff6b35",
       });
     } else if (missingKeyLands.length > 0 && (mana >= 1 || infiniteManaActive)) {
+      const target = missingKeyLands[0];
+      const targetNote =
+        target === "Gaea's Cradle"
+          ? `With ${creaturesOnBoard} creature${creaturesOnBoard !== 1 ? "s" : ""} in play, Cradle taps for ${cradleManaAfterFetch} mana immediately.${cradleWinNote}`
+          : target === "Nykthos, Shrine to Nyx"
+          ? `With devotion ${devotionOnBoard}, Nykthos nets ${nykthosNetAfterFetch} mana (spend {2}, produce ${devotionOnBoard}).${nykthosWinNote}`
+          : target === "Itlimoc, Cradle of the Sun"
+          ? `With ${creaturesOnBoard} creature${creaturesOnBoard !== 1 ? "s" : ""}, Itlimoc taps for ${cradleManaAfterFetch} mana immediately (already transformed).`
+          : target === "Geier Reach Sanitarium"
+          ? "Sanitarium is your mill win condition — fetch it when infinite mana and Endurance are ready."
+          : target === "Wirewood Lodge"
+          ? "Lodge untaps an Elf — key for Arbor Elf loops and Wirewood Channeler activation chaining."
+          : target === "Deserted Temple"
+          ? "Temple untaps a land — doubles Cradle/Nykthos output and enables loops with Hope Tender."
+          : "This land is key to your next combo line.";
+
       results.push({
         priority: 7,
         category: "🏔️ LAND TUTOR",
-        headline: `Crop Rotation → ${missingKeyLands[0]}`,
-        detail: `Crop Rotation is instant speed — use it at the perfect moment. ${missingKeyLands[0]} is your highest-priority missing land.`,
+        headline: `Crop Rotation → ${target}${target === "Gaea's Cradle" && cradleManaAfterFetch >= 4 ? ` (+${cradleManaAfterFetch} mana)` : target === "Nykthos, Shrine to Nyx" && nykthosNetAfterFetch >= 3 ? ` (+${nykthosNetAfterFetch} net)` : ""}`,
+        detail: `Crop Rotation sacrifices a land at instant speed to fetch ${target}. ${targetNote}`,
         steps: [
-          `Sacrifice a tapped land. Search for ${missingKeyLands[0]}.`,
-          missingKeyLands[0] === "Gaea's Cradle" ? "Cradle immediately taps for mana equal to your creatures — often 4-6+ mana in one shot." :
-          missingKeyLands[0] === "Nykthos, Shrine to Nyx" ? "Nykthos: spend {2}, tap for green mana equal to your green devotion. Often produces 8-12+ mana." :
-          missingKeyLands[0] === "Geier Reach Sanitarium" ? "Sanitarium is your mill win condition — fetch it when infinite mana and Endurance are ready." :
-          "This land is key to your next combo line."
-        ],
+          `Sacrifice a tapped land. Search for ${target} and put it onto the battlefield.`,
+          targetNote,
+          ...(reachablePieces.length > 0 && target === "Gaea's Cradle" ? [`With ${manaAfterCradle} mana total, you can immediately cast: ${reachablePieces.map(p => `${p.name} (${p.cmc})`).join(", ")}.`] : []),
+          ...(missingKeyLands.length > 1 ? [`Other available fetch targets: ${missingKeyLands.slice(1, 3).join(", ")}.`] : []),
+        ].filter(Boolean),
         color: "#5dade2",
       });
     }
@@ -12677,6 +12759,42 @@ function PlayfieldImageView({
   );
 }
 
+// ── ScryRow — single row in the scry modal with hover image tooltip ───────────
+function ScryRow({ card, i, toBottom, onMoveUp, onMoveDown, onToggleBottom, moveDownDisabled, COLORS, btnStyle }) {
+  const [hoverAnchor, setHoverAnchor] = React.useState(null);
+  const cd = getCard(card);
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px",
+        padding: "7px 10px", borderRadius: "6px",
+        background: toBottom ? "#1a0a0a" : "#0f1e0f",
+        border: `1px solid ${toBottom ? COLORS.red + "88" : COLORS.border}`,
+        opacity: toBottom ? 0.5 : 1, position: "relative",
+      }}
+    >
+      <span
+        style={{ flex: 1, fontSize: "12px", color: toBottom ? COLORS.textDim : COLORS.text, fontFamily: "'Crimson Text', serif", textDecoration: toBottom ? "line-through" : "none", cursor: "default" }}
+        onMouseEnter={e => setHoverAnchor(e.currentTarget.getBoundingClientRect())}
+        onMouseLeave={() => setHoverAnchor(null)}
+      >
+        {i + 1}. {card}
+        {cd && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "6px" }}>{cd.type}</span>}
+      </span>
+      {hoverAnchor && <CardTooltip name={card} anchorRect={hoverAnchor} />}
+      {!toBottom && (
+        <>
+          <button onClick={onMoveUp} disabled={i === 0} style={{ ...btnStyle(COLORS.textDim), padding: "1px 6px", opacity: i === 0 ? 0.3 : 1 }}>↑</button>
+          <button onClick={onMoveDown} disabled={moveDownDisabled} style={{ ...btnStyle(COLORS.textDim), padding: "1px 6px", opacity: moveDownDisabled ? 0.3 : 1 }}>↓</button>
+        </>
+      )}
+      <button onClick={onToggleBottom} style={{ ...btnStyle(toBottom ? COLORS.green1 : COLORS.red), padding: "1px 6px" }}>
+        {toBottom ? "↑" : "✕"}
+      </button>
+    </div>
+  );
+}
+
 function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── state ──────────────────────────────────────────────────
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
@@ -12703,6 +12821,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [attachments, setAttachments] = useState(new Map());
   const [pendingAura, setPendingAura] = useState(null); // { name, lands } awaiting target pick
   const [pendingNaturalOrder, setPendingNaturalOrder] = useState(null); // { card, maxCmc } awaiting sac pick
+  const [pendingGraveyardPick, setPendingGraveyardPick] = useState(null); // { card, mode:"hand"|"battlefield", filter, label }
+  const [pendingHyraxUntap, setPendingHyraxUntap] = useState(false); // untap a creature on ETB
+  const [pendingImprint, setPendingImprint] = useState(null); // { moxCard } Chrome Mox imprint picker
+  const [pendingGenesisHydra, setPendingGenesisHydra] = useState(null); // { x } reveal top X, pick permanent ≤ CMC X
+  const [pendingPicker, setPendingPicker] = useState(null); // generic picker: { label, color, items:[{label,key}], onSelect, onSkip, multi, selected }
+  const [pickerSelected, setPickerSelected] = useState([]); // for multi-select pickers
   const [exile, setExile] = useState([]);
   const [turnNumber, setTurnNumber] = useState(1);
   const turnRef = useRef(1);
@@ -12712,6 +12836,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [sickCreatures, setSickCreatures] = useState(new Set());
   const [log, setLog] = useState([]);
   const [expandedSteps, setExpandedSteps] = useState(new Set());
+  const [expandedSuppressed, setExpandedSuppressed] = useState(new Set());
   const [gameNotes, setGameNotes] = useState(""); // scratchpad for current game
   const [mulliganCount, setMulliganCount] = useState(0);
   const [contextMenu, setContextMenu] = useState(null);
@@ -12721,10 +12846,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   const [showTutor, setShowTutor] = useState(false);
   const [tutorQuery, setTutorQuery] = useState("");
   const [tutorMaxCmc, setTutorMaxCmc] = useState(null); // null = no filter; number = GSZ max X
+  const [tutorMinCmc, setTutorMinCmc] = useState(null); // null = no filter; number = Fierce Empath min CMC
   const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor / Survival mode
   const [tutorLandsOnly,     setTutorLandsOnly]     = useState(false); // Sylvan Scrying mode
   const [tutorTreefolk,      setTutorTreefolk]      = useState(false); // Treefolk Harbinger mode
   const [tutorNonLegendary,  setTutorNonLegendary]  = useState(false); // Woodland Bellower mode
+  const [tutorFromGraveyard, setTutorFromGraveyard] = useState(false); // Finale of Devastation — search graveyard instead
   const [tutorOnSelect, setTutorOnSelect] = useState(null); // callback after selection (for GSZ shuffle)
   const [tutorSelected, setTutorSelected] = useState(0); // keyboard-highlighted index
   const tutorInputRef = useRef(null);
@@ -13450,6 +13577,38 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         }
         setPendingNaturalOrder({ card, isNO });
         addLog(`Cast ${card} — choose a creature to sacrifice.`, COLORS.purple);
+      } else if (card === "Finale of Devastation") {
+        // X = manaPool remaining after deducting CMC(2). Open tutor for creature from library or graveyard.
+        // If X ≥ 10, all creatures get haste and +X/+X (just log it).
+        const finaleX = Math.max(0, manaPool); // mana already deducted
+        const hasGraveCreatures = graveyard.some(c => getCard(c)?.type === "creature");
+        setGraveyard(prev => [...prev, card]);
+        // Offer library first; if no match, fall through to graveyard
+        setTutorCreaturesOnly(true);
+        setTutorMaxCmc(finaleX);
+        setTutorOnSelect(() => (chosen) => {
+          const inLib = library.includes(chosen);
+          if (inLib) {
+            setLibrary(prev => {
+              const idx = prev.indexOf(chosen);
+              if (idx === -1) return prev;
+              const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+              for (let i = without.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [without[i], without[j]] = [without[j], without[i]];
+              }
+              return without;
+            });
+          } else {
+            setGraveyard(prev => prev.filter(c => c !== chosen));
+          }
+          goldfishAddToBattlefield(chosen);
+          if (finaleX >= 10) addLog(`Finale of Devastation (X=${finaleX}) → ${chosen} onto battlefield. X≥10: all your creatures get haste and +${finaleX}/+${finaleX} this turn!`, COLORS.green3);
+          else addLog(`Finale of Devastation (X=${finaleX}) → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Cast Finale of Devastation (X=${finaleX}) — search library or graveyard for a creature (CMC ≤ ${finaleX}).`, COLORS.purple);
       } else {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
@@ -13457,6 +13616,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     } else if (type === "creature" || type === "enchantment" || type === "artifact" || type === "planeswalker" || type === "battle") {
       goldfishAddToBattlefield(card);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
+      // ── Chrome Mox: imprint a non-land card from hand ──
+      if (card === "Chrome Mox") {
+        const imprintTargets = hand.filter(c => getCard(c)?.type !== "land");
+        if (imprintTargets.length > 0) {
+          setPendingImprint({ moxCard: card });
+          addLog(`Chrome Mox ETB — choose a card to imprint (exile from hand for {G}).`, COLORS.gold);
+        } else {
+          addLog(`Chrome Mox ETB — no non-land cards in hand to imprint. Mox produces no mana.`, COLORS.textDim);
+        }
+      }
       // Sowing Mycospawn on-cast trigger: search library for any land → put onto battlefield. Library shuffled.
       if (card === "Sowing Mycospawn") {
         setTutorLandsOnly(true);
@@ -13523,6 +13692,110 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         setTimeout(() => tutorInputRef.current?.focus(), 50);
         addLog(`Treefolk Harbinger ETB — search for a Treefolk or Forest card.`, COLORS.purple);
       }
+
+      // ── Eternal Witness: return any card from graveyard to hand ──
+      if (card === "Eternal Witness") {
+        if (graveyard.length > 0) {
+          setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "ETERNAL WITNESS — RETURN A CARD FROM GRAVEYARD TO HAND" });
+        } else {
+          addLog(`Eternal Witness ETB — graveyard is empty, no card to return.`, COLORS.textDim);
+        }
+      }
+
+      // ── Skullwinder: return any card from graveyard to hand ──
+      if (card === "Skullwinder") {
+        if (graveyard.length > 0) {
+          setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "SKULLWINDER — RETURN A CARD FROM GRAVEYARD TO HAND" });
+        } else {
+          addLog(`Skullwinder ETB — graveyard is empty.`, COLORS.textDim);
+        }
+      }
+
+      // ── Reclamation Sage: destroy target artifact or enchantment (opponent's — just log) ──
+      if (card === "Reclamation Sage") {
+        addLog(`Reclamation Sage ETB — destroy target artifact or enchantment.`, COLORS.green1);
+      }
+
+      // ── Manglehorn: destroy target artifact ──
+      if (card === "Manglehorn") {
+        addLog(`Manglehorn ETB — destroy target artifact. Also: artifacts enter tapped.`, COLORS.green1);
+      }
+
+      // ── King of the Coldblood Curse: destroy target commander ──
+      if (card === "King of the Coldblood Curse") {
+        addLog(`King of the Coldblood Curse ETB — destroy target commander.`, COLORS.green1);
+      }
+
+      // ── Hyrax Tower Scout: untap target creature ──
+      if (card === "Hyrax Tower Scout") {
+        const untapTargets = battlefield.filter(c => getCard(c)?.type === "creature");
+        if (untapTargets.length > 0) {
+          setPendingHyraxUntap(true);
+          addLog(`Hyrax Tower Scout ETB — choose a creature to untap.`, COLORS.green1);
+        } else {
+          addLog(`Hyrax Tower Scout ETB — no creatures to untap.`, COLORS.textDim);
+        }
+      }
+
+      // ── Fierce Empath: search library for creature with CMC ≥ 6 → hand ──
+      if (card === "Fierce Empath") {
+        setTutorCreaturesOnly(true);
+        setTutorMinCmc(6);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return without;
+          });
+          setHand(prev => [...prev, chosen]);
+          addLog(`Fierce Empath ETB → ${chosen} → hand. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Fierce Empath ETB — search for a creature with CMC ≥ 6.`, COLORS.purple);
+      }
+
+      // ── Disciple of Freyalise: draw cards equal to number of creatures you control ──
+      if (card === "Disciple of Freyalise") {
+        const creatureCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
+        // +1 for Disciple itself just added
+        const drawCount = creatureCount + 1;
+        if (drawCount > 0 && library.length >= drawCount) {
+          setHand(prev => [...prev, ...library.slice(0, drawCount)]);
+          setLibrary(prev => prev.slice(drawCount));
+          addLog(`Disciple of Freyalise ETB — drew ${drawCount} cards (${creatureCount} creatures + itself).`, COLORS.blue);
+        } else if (library.length > 0) {
+          setHand(prev => [...prev, ...library]);
+          setLibrary([]);
+          addLog(`Disciple of Freyalise ETB — drew ${library.length} cards (library exhausted).`, COLORS.blue);
+        } else {
+          addLog(`Disciple of Freyalise ETB — library empty, no cards drawn.`, COLORS.textDim);
+        }
+      }
+
+      // ── Genesis Hydra: reveal top X cards, put a non-land permanent with CMC ≤ X onto battlefield ──
+      if (card === "Genesis Hydra") {
+        const hydraCmc = getCard(card)?.cmc ?? 2;
+        const hydraX = Math.max(0, manaPool + hydraCmc); // mana already deducted; X ≈ what was available
+        // Reveal top X cards from library
+        const revealed = library.slice(0, hydraX);
+        if (revealed.length > 0) {
+          setPendingGenesisHydra({ x: hydraX, revealed });
+          addLog(`Genesis Hydra (X=${hydraX}) ETB — reveal top ${revealed.length} cards. Choose a non-land permanent with CMC ≤ ${hydraX}.`, COLORS.green2);
+        } else {
+          addLog(`Genesis Hydra ETB — library empty, nothing to reveal.`, COLORS.textDim);
+        }
+      }
+
+      // ── Nissa, Resurgent Animist: landfall — add elf/elemental tutor button in log ──
+      if (card === "Nissa, Resurgent Animist") {
+        addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a Forest enters, search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
+      }
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
       goldfishAddToBattlefield(card);
@@ -13573,7 +13846,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     if (tutorOnSelect) {
       // GSZ mode: callback handles where the card goes
       tutorOnSelect(card);
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorOnSelect(null); setTutorSelected(0);
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
       return;
     }
     const idx = library.indexOf(card);
@@ -13587,7 +13860,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       return without;
     });
     setHand(prev => [...prev, card]);
-    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorOnSelect(null); setTutorSelected(0);
+    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
     addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
   }
 
@@ -14208,6 +14481,571 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             </div>
           );
         })()}
+        {/* ── Elvish Reclaimer: {2}{T}, sacrifice a land — search library for a land → battlefield tapped ── */}
+        {isBF && card === "Elvish Reclaimer" && (() => {
+          const cost = 2; const canPay = manaPool >= cost;
+          const lands = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "land");
+          if (isCardTapped || !canPay || lands.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Reclaim ({'{2}'}, tap, sac land) — {isCardTapped ? "tapped" : !canPay ? `need ${cost} mana` : "no lands to sacrifice"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              // Step 1: pick a land to sacrifice
+              setPendingPicker({ label: "ELVISH RECLAIMER — SACRIFICE A LAND", color: COLORS.green2,
+                items: lands.map(({c,i}) => ({ label: c, sub: "land · sacrifice", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: sacCard, i: sacIdx }) => {
+                  setBattlefield(prev => { const a = [...prev]; a.splice(sacIdx, 1); return a; });
+                  setGraveyard(prev => [...prev, sacCard]);
+                  addLog(`Elvish Reclaimer: sacrificed ${sacCard}. Searching library for a land…`, COLORS.green2);
+                  // Step 2: tutor a land from library → battlefield tapped
+                  setTutorLandsOnly(true);
+                  setTutorOnSelect(() => (chosen) => {
+                    setLibrary(prev => {
+                      const idx2 = prev.indexOf(chosen); if (idx2 === -1) return prev;
+                      const without = [...prev.slice(0, idx2), ...prev.slice(idx2 + 1)];
+                      for (let i2 = without.length - 1; i2 > 0; i2--) { const j = Math.floor(Math.random() * (i2 + 1)); [without[i2], without[j]] = [without[j], without[i2]]; }
+                      return without;
+                    });
+                    setBattlefield(prev => [...prev, chosen]);
+                    // Enter tapped: find the new index and tap it
+                    setTapped(prev => {
+                      const newBF = [...battlefield.filter((_,bi) => bi !== sacIdx), chosen];
+                      const newIdx = newBF.lastIndexOf(chosen);
+                      return new Set([...prev, cardKey(chosen, newIdx)]);
+                    });
+                    addLog(`Elvish Reclaimer → ${chosen} onto battlefield tapped. Library shuffled.`, COLORS.green2);
+                  });
+                  setShowTutor(true); setTutorQuery("");
+                  setTimeout(() => tutorInputRef.current?.focus(), 50);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Reclaim land ({'{2}'}, tap, sac land)
+            </div>
+          );
+        })()}
+
+        {/* ── Temur Sabertooth: {1}{G} — bounce a creature to hand ── */}
+        {isBF && card === "Temur Sabertooth" && (() => {
+          const cost = 2; const canPay = manaPool >= cost;
+          const targets = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature" && c !== "Temur Sabertooth");
+          if (!canPay || targets.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Bounce ({'{1}{G}'}) — {!canPay ? `need ${cost} mana` : "no other creatures"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setPendingPicker({ label: "TEMUR SABERTOOTH — BOUNCE A CREATURE TO HAND", color: COLORS.green2,
+                items: targets.map(({c,i}) => ({ label: c, sub: getCard(c)?.type, key: `${c}:${i}`, c, i })),
+                onSelect: ({ c, i }) => {
+                  setBattlefield(prev => { const a=[...prev]; a.splice(i,1); return a; });
+                  setHand(prev => [...prev, c]);
+                  setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+                  addLog(`Temur Sabertooth: bounced ${c} to hand. −${cost} mana.`, COLORS.green2);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Bounce creature ({'{1}{G}'})
+            </div>
+          );
+        })()}
+
+        {/* ── Kogla, the Titan Ape: {1}{G} — bounce a Human to hand ── */}
+        {isBF && card === "Kogla, the Titan Ape" && (() => {
+          const cost = 2; const canPay = manaPool >= cost;
+          const targets = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.tags?.includes("human") && c !== "Kogla, the Titan Ape");
+          if (!canPay || targets.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Bounce Human ({'{1}{G}'}) — {!canPay ? `need ${cost} mana` : "no Humans on battlefield"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setPendingPicker({ label: "KOGLA — BOUNCE A HUMAN TO HAND", color: COLORS.green2,
+                items: targets.map(({c,i}) => ({ label: c, sub: "human", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c, i }) => {
+                  setBattlefield(prev => { const a=[...prev]; a.splice(i,1); return a; });
+                  setHand(prev => [...prev, c]);
+                  setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+                  addLog(`Kogla: bounced ${c} to hand. −${cost} mana.`, COLORS.green2);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Bounce Human ({'{1}{G}'})
+            </div>
+          );
+        })()}
+
+        {/* ── Quirion Ranger / Scryb Ranger: bounce a Forest to hand → untap a creature ── */}
+        {isBF && (card === "Quirion Ranger" || card === "Scryb Ranger") && (() => {
+          const forests = battlefield.map((c,i) => ({c,i})).filter(({c}) => {
+            const cd = getCard(c); return cd?.type === "land" && (cd?.tags?.includes("basic") || cd?.tags?.includes("forest"));
+          });
+          const creatures = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature");
+          if (forests.length === 0 || creatures.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Bounce Forest — {forests.length === 0 ? "no Forest to bounce" : "no creatures to untap"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              // Step 1: pick a Forest to bounce
+              setPendingPicker({ label: `${card.toUpperCase()} — BOUNCE A FOREST TO HAND`, color: COLORS.green3,
+                items: forests.map(({c,i}) => ({ label: c, sub: "land · bounce to hand", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: forestCard, i: forestIdx }) => {
+                  setBattlefield(prev => { const a=[...prev]; a.splice(forestIdx,1); return a; });
+                  setHand(prev => [...prev, forestCard]);
+                  addLog(`${card}: bounced ${forestCard} to hand. Now choose a creature to untap.`, COLORS.green3);
+                  // Step 2: pick a creature to untap (battlefield has changed so recalc)
+                  setPendingPicker({ label: `${card.toUpperCase()} — UNTAP A CREATURE`, color: COLORS.green3,
+                    items: battlefield
+                      .map((bc,bi) => ({c:bc,i:bi}))
+                      .filter(({c:bc}) => getCard(bc)?.type === "creature")
+                      .map(({c:bc,i:bi}) => ({ label: bc, sub: tapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
+                    onSelect: ({ c: tc, i: ti }) => {
+                      setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                      addLog(`${card}: untapped ${tc}.`, COLORS.green3);
+                    },
+                    onSkip: () => addLog(`${card}: no creature untap chosen.`, COLORS.textDim),
+                  });
+                  setPickerSelected([]);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green3, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Bounce Forest → untap creature
+            </div>
+          );
+        })()}
+
+        {/* ── Wirewood Symbiote: bounce an Elf to hand → untap a creature ── */}
+        {isBF && card === "Wirewood Symbiote" && (() => {
+          const elves = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote");
+          const creatures = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature");
+          if (elves.length === 0 || creatures.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Bounce Elf — {elves.length === 0 ? "no other Elf to bounce" : "no creatures to untap"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setPendingPicker({ label: "WIREWOOD SYMBIOTE — BOUNCE AN ELF TO HAND", color: COLORS.green3,
+                items: elves.map(({c,i}) => ({ label: c, sub: "elf · bounce to hand", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: elfCard, i: elfIdx }) => {
+                  setBattlefield(prev => { const a=[...prev]; a.splice(elfIdx,1); return a; });
+                  setHand(prev => [...prev, elfCard]);
+                  addLog(`Wirewood Symbiote: bounced ${elfCard} to hand. Now choose a creature to untap.`, COLORS.green3);
+                  setPendingPicker({ label: "WIREWOOD SYMBIOTE — UNTAP A CREATURE", color: COLORS.green3,
+                    items: battlefield
+                      .map((bc,bi) => ({c:bc,i:bi}))
+                      .filter(({c:bc}) => getCard(bc)?.type === "creature")
+                      .map(({c:bc,i:bi}) => ({ label: bc, sub: tapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
+                    onSelect: ({ c: tc, i: ti }) => {
+                      setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                      addLog(`Wirewood Symbiote: untapped ${tc}.`, COLORS.green3);
+                    },
+                    onSkip: () => addLog(`Wirewood Symbiote: no untap chosen.`, COLORS.textDim),
+                  });
+                  setPickerSelected([]);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green3, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Bounce Elf → untap creature
+            </div>
+          );
+        })()}
+
+        {/* ── Duskwatch Recruiter: {3} — look at top 3, put a creature into hand ── */}
+        {isBF && card === "Duskwatch Recruiter" && (() => {
+          const cost = 3; const canPay = manaPool >= cost; const top3 = library.slice(0,3);
+          const creaturesInTop3 = top3.filter(c => getCard(c)?.type === "creature");
+          if (!canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Recruit ({'{3}'}) — need {cost} mana
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              if (creaturesInTop3.length === 0) {
+                addLog(`Duskwatch Recruiter: paid {3} — no creatures in top ${top3.length} cards. All go back.`, COLORS.textDim);
+                closeContextMenu(); return;
+              }
+              setPendingPicker({ label: `DUSKWATCH RECRUITER — TOP ${top3.length} CARDS (PICK A CREATURE → HAND)`, color: COLORS.gold,
+                items: top3.map((c,idx) => ({ label: c, sub: `${getCard(c)?.type ?? "?"} · CMC ${getCard(c)?.cmc ?? "?"}` + (getCard(c)?.type !== "creature" ? " · not a creature" : ""), key: `${c}:${idx}`, c, idx, disabled: getCard(c)?.type !== "creature" })),
+                onSelect: ({ c: chosen, idx }) => {
+                  setLibrary(prev => prev.filter((_,li) => li !== idx));
+                  setHand(prev => [...prev, chosen]);
+                  addLog(`Duskwatch Recruiter: ${chosen} → hand. Other top cards remain.`, COLORS.gold);
+                },
+                onSkip: () => addLog(`Duskwatch Recruiter: no creature found / skipped. Top cards remain.`, COLORS.textDim),
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1a0a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Recruit — look at top 3 ({'{3}'})
+            </div>
+          );
+        })()}
+
+        {/* ── Skyshroud Poacher: {3}{G} tap — search for an Elf → battlefield ── */}
+        {isBF && card === "Skyshroud Poacher" && (() => {
+          const cost = 4; const canPay = manaPool >= cost;
+          if (isCardTapped || !canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Poach Elf ({'{3}{G}'}) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              setTutorCreaturesOnly(true);
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => {
+                  const idx2 = prev.indexOf(chosen); if (idx2 === -1) return prev;
+                  const without = [...prev.slice(0,idx2), ...prev.slice(idx2+1)];
+                  for (let i = without.length-1; i>0; i--) { const j=Math.floor(Math.random()*(i+1)); [without[i],without[j]]=[without[j],without[i]]; }
+                  return without;
+                });
+                goldfishAddToBattlefield(chosen);
+                addLog(`Skyshroud Poacher → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+              });
+              setShowTutor(true); setTutorQuery("elf");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+              addLog(`Skyshroud Poacher: paid {3}{G}, tapped — search for an Elf.`, COLORS.purple);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Poach Elf ({'{3}{G}'}, tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Selvala, Heart of the Wilds: {G} tap — draw + add mana = biggest power ── */}
+        {isBF && card === "Selvala, Heart of the Wilds" && (() => {
+          const cost = 1; const canPay = manaPool >= cost;
+          const biggestPower = Math.max(0, ...battlefield.map(c => {
+            const cd = getCard(c); if (cd?.type !== "creature") return 0;
+            if (cd.tags?.includes("big-creature") || ["Kogla, the Titan Ape","Temur Sabertooth","Selvala, Heart of the Wilds","Craterhoof Behemoth","Ghalta, Primal Hunger"].includes(c)) return 6;
+            return cd.cmc ?? 0; // approximate with CMC
+          }));
+          if (isCardTapped || !canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Selvala Tap ({'{G}'}) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0,p-cost) + biggestPower); flashMana(biggestPower - cost);
+              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+              addLog(`Selvala: paid {G}, tapped — drew a card, added {G}×${biggestPower} (biggest power ${biggestPower}).`, COLORS.green3);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green3, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — draw + +{biggestPower} mana ({'{G}'})
+            </div>
+          );
+        })()}
+
+        {/* ── Argothian Elder: tap — untap two target lands ── */}
+        {isBF && card === "Argothian Elder" && (() => {
+          const lands = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "land");
+          if (isCardTapped || lands.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap 2 Lands — {isCardTapped ? "tapped" : "no lands"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setPendingPicker({ label: "ARGOTHIAN ELDER — UNTAP TWO LANDS", color: COLORS.green2, multi: 2,
+                items: lands.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+                onSelect: (chosen) => {
+                  // chosen is array of 2 when multi:2
+                  const arr = Array.isArray(chosen) ? chosen : [chosen];
+                  setTapped(prev => { const next = new Set(prev); arr.forEach(({c:lc,i:li}) => next.delete(cardKey(lc,li))); return next; });
+                  addLog(`Argothian Elder: untapped ${arr.map(x=>x.c).join(" and ")}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap 2 lands
+            </div>
+          );
+        })()}
+
+        {/* ── Scavenging Ooze: {G} — exile card from graveyard, +1/+1 ── */}
+        {isBF && card === "Scavenging Ooze" && (() => {
+          const cost = 1; const canPay = manaPool >= cost;
+          const anyGrave = graveyard.length > 0;
+          if (!canPay || !anyGrave) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Devour ({'{G}'}) — {!canPay ? "need 1 mana" : "graveyard empty"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              setPendingPicker({ label: "SCAVENGING OOZE — EXILE A CARD FROM GRAVEYARD", color: COLORS.green1,
+                items: [...new Set(graveyard)].map(c => ({ label: c, sub: getCard(c)?.type ?? "?", key: c, c })),
+                onSelect: ({ c: chosen }) => {
+                  setGraveyard(prev => { const idx2 = prev.indexOf(chosen); return idx2 === -1 ? prev : [...prev.slice(0,idx2), ...prev.slice(idx2+1)]; });
+                  setExile(prev => [...prev, chosen]);
+                  adjustCounter(card, index, +1);
+                  addLog(`Scavenging Ooze: exiled ${chosen} from graveyard → +1/+1 counter.`, COLORS.green1);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Devour graveyard card ({'{G}'})
+            </div>
+          );
+        })()}
+
+        {/* ── Saryth, the Viper's Fang: tap — untap target creature ── */}
+        {isBF && card === "Saryth, the Viper's Fang" && (() => {
+          const creatures = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature" && c !== "Saryth, the Viper's Fang");
+          if (isCardTapped || creatures.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Creature — {isCardTapped ? "tapped" : "no other creatures"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setPendingPicker({ label: "SARYTH — UNTAP A CREATURE", color: COLORS.green2,
+                items: creatures.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                  addLog(`Saryth: tapped, untapped ${tc}.`, COLORS.green2);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap a creature
+            </div>
+          );
+        })()}
+
+        {/* ── Eladamri, Korvecdal: {G},{T}, tap two untapped creatures → put creature from top of library onto battlefield ── */}
+        {isBF && card === "Eladamri, Korvecdal" && (() => {
+          const cost = 1;
+          const untappedCreatures = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.type === "creature" && !tapped.has(cardKey(c,i)) && c !== "Eladamri, Korvecdal");
+          const canPay = manaPool >= cost && !isCardTapped && untappedCreatures.length >= 2;
+          if (!canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Library Cheat ({'{G}'}, tap 2) — {isCardTapped ? "tapped" : manaPool < cost ? "need 1 mana" : "need 2 untapped creatures"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              toggleTap(card, index);
+              // Choose 2 creatures to tap
+              setPendingPicker({ label: "ELADAMRI — TAP TWO CREATURES (CHOOSE 2)", color: COLORS.gold, multi: 2,
+                items: untappedCreatures.map(({c,i}) => ({ label: c, sub: "untapped creature", key: `${c}:${i}`, c, i })),
+                onSelect: (chosen) => {
+                  const arr = Array.isArray(chosen) ? chosen : [chosen];
+                  setTapped(prev => { const next = new Set(prev); arr.forEach(({c:tc,i:ti}) => next.add(cardKey(tc,ti))); return next; });
+                  // Put creature from top of library onto battlefield
+                  const topCard = library[0];
+                  if (topCard && getCard(topCard)?.type === "creature") {
+                    setLibrary(prev => prev.slice(1));
+                    goldfishAddToBattlefield(topCard);
+                    addLog(`Eladamri: tapped ${arr.map(x=>x.c).join(" & ")} + paid {G} — ${topCard} from top of library onto battlefield.`, COLORS.gold);
+                  } else {
+                    addLog(`Eladamri: tapped ${arr.map(x=>x.c).join(" & ")} + paid {G} — top card is ${topCard ?? "nothing"} (not a creature), nothing entered.`, COLORS.textDim);
+                  }
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1a0a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Library cheat ({'{G}'}, tap 2 creatures)
+            </div>
+          );
+        })()}
+
+        {/* ── War Room: {3} tap — draw a card ── */}
+        {isBF && card === "War Room" && (() => {
+          const cost = 3; const canPay = manaPool >= cost;
+          if (isCardTapped || !canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Draw ({'{3}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); addLog(`War Room: paid {3}, tapped — drew ${library[0]}.`, COLORS.blue); }
+              else addLog(`War Room: paid {3}, tapped — library empty.`, COLORS.textDim);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#0a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Draw a card ({'{3}'}, tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Geier Reach Sanitarium: {3} tap — each player draws then discards ── */}
+        {isBF && card === "Geier Reach Sanitarium" && (() => {
+          const cost = 3; const canPay = manaPool >= cost;
+          if (isCardTapped || !canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Loot ({'{3}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          const drawn = library[0];
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              if (drawn) { setHand(prev => [...prev, drawn]); setLibrary(prev => prev.slice(1)); }
+              addLog(`Geier Reach Sanitarium: paid {3}, tapped — drew ${drawn ?? "(empty library)"}, then discard a card (move manually from hand to graveyard).`, COLORS.blue);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#0a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Loot ({'{3}'}, tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Bonders' Enclave: {4} tap — draw a card if you control a power 4+ creature ── */}
+        {isBF && card === "Bonders' Enclave" && (() => {
+          const cost = 4; const canPay = manaPool >= cost;
+          const POWER4_NAMES = new Set(["Kogla, the Titan Ape","Temur Sabertooth","Selvala, Heart of the Wilds","Craterhoof Behemoth","Ghalta, Primal Hunger","Yorvo, Lord of Garenbrig","Rhonas the Indomitable","Nylea, God of the Hunt"]);
+          const hasPower4 = battlefield.some(c => POWER4_NAMES.has(c) || getCard(c)?.tags?.includes("power4") || getCard(c)?.tags?.includes("big-creature"));
+          if (isCardTapped || !canPay || !hasPower4) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Draw ({'{4}'}, tap) — {isCardTapped ? "tapped" : !canPay ? `need ${cost} mana` : "need power 4+ creature"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
+              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); addLog(`Bonders' Enclave: paid {4}, tapped — drew ${library[0]}.`, COLORS.blue); }
+              else addLog(`Bonders' Enclave: paid {4}, tapped — library empty.`, COLORS.textDim);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#0a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Draw a card ({'{4}'}, tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Castle Garenbrig: {2}{G}{G} tap — add {G}{G}{G}{G}{G}{G} ── */}
+        {isBF && card === "Castle Garenbrig" && (() => {
+          const cost = 4; const canPay = manaPool >= cost;
+          if (isCardTapped || !canPay) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Big Mana ({'{2}{G}{G}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0,p-cost) + 6); flashMana(6 - cost);
+              addLog(`Castle Garenbrig: paid {2}{G}{G}, tapped — added {G}{G}{G}{G}{G}{G} (+6 mana, net +${6-cost}).`, COLORS.green3);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green3, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Add {'{G}'}×6 ({'{2}{G}{G}'}, tap)
+            </div>
+          );
+        })()}
+
+        {/* ── Deserted Temple: tap — untap target land ── */}
+        {isBF && card === "Deserted Temple" && (() => {
+          const lands = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.type === "land" && c !== "Deserted Temple");
+          if (isCardTapped || lands.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Land — {isCardTapped ? "tapped" : "no other lands"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              toggleTap(card, index);
+              setPendingPicker({ label: "DESERTED TEMPLE — UNTAP A LAND", color: COLORS.green2,
+                items: lands.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: lc, i: li }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(lc,li)); return next; });
+                  addLog(`Deserted Temple: tapped, untapped ${lc}.`, COLORS.green2);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap a land
+            </div>
+          );
+        })()}
+
         {/* Zone moves */}
         {targets.map(t => (
           <div key={t} onClick={() => moveCard(card, zone, t, index)} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textMid, letterSpacing: "1px" }}
@@ -14235,7 +15073,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       if (e.key === "m" || e.key === "M") { e.preventDefault(); tapAllMana(); }
       if (e.key === "Escape") {
         const anyOpen = showUntapModal || showTutor || showScry || contextMenu;
-        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
+        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -14284,32 +15122,18 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             LOOK AT TOP {scryN} — REORDER OR BOTTOM
           </div>
           <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginBottom: "12px" }}>
-            Click ✕ to bottom a card. Use ↑↓ to reorder top cards.
+            Click ✕ to bottom a card. Use ↑↓ to reorder top cards. Hover a card to preview.
           </div>
           {scryOrder.map((card, i) => {
             const toBottom = scryBottom.has(i);
             return (
-              <div key={i} style={{
-                display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px",
-                padding: "7px 10px", borderRadius: "6px",
-                background: toBottom ? "#1a0a0a" : "#0f1e0f",
-                border: `1px solid ${toBottom ? COLORS.red + "88" : COLORS.border}`,
-                opacity: toBottom ? 0.5 : 1,
-              }}>
-                <span style={{ flex: 1, fontSize: "12px", color: toBottom ? COLORS.textDim : COLORS.text, fontFamily: "'Crimson Text', serif", textDecoration: toBottom ? "line-through" : "none" }}>
-                  {i + 1}. {card}
-                  {getCard(card) && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "6px" }}>{getCard(card).type}</span>}
-                </span>
-                {!toBottom && (
-                  <>
-                    <button onClick={() => scryMoveUp(i)} disabled={i === 0} style={{ ...btnStyle(COLORS.textDim), padding: "1px 6px", opacity: i === 0 ? 0.3 : 1 }}>↑</button>
-                    <button onClick={() => scryMoveDown(i)} disabled={i === scryOrder.filter((_,j) => !scryBottom.has(j)).length - 1} style={{ ...btnStyle(COLORS.textDim), padding: "1px 6px" }}>↓</button>
-                  </>
-                )}
-                <button onClick={() => scryToggleBottom(i)} style={{ ...btnStyle(toBottom ? COLORS.green1 : COLORS.red), padding: "1px 6px" }}>
-                  {toBottom ? "↑" : "✕"}
-                </button>
-              </div>
+              <ScryRow key={i} card={card} i={i} toBottom={toBottom}
+                onMoveUp={() => scryMoveUp(i)}
+                onMoveDown={() => scryMoveDown(i)}
+                onToggleBottom={() => scryToggleBottom(i)}
+                moveDownDisabled={i === scryOrder.filter((_,j) => !scryBottom.has(j)).length - 1}
+                COLORS={COLORS} btnStyle={btnStyle}
+              />
             );
           })}
           <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
@@ -14330,35 +15154,44 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
   // ── Tutor overlay ─────────────────────────────────────────────
   const TutorOverlay = () => {
     if (!showTutor) return null;
-    const isGSZ      = tutorMaxCmc !== null && !tutorNonLegendary;
-    const isBellower = tutorNonLegendary && tutorMaxCmc !== null;
-    const isCreature = tutorCreaturesOnly && !isGSZ && !isBellower;
-    const isLand     = tutorLandsOnly;
-    const isTreefolk = tutorTreefolk;
+    const isGSZ         = tutorMaxCmc !== null && !tutorNonLegendary && !tutorMinCmc;
+    const isBellower    = tutorNonLegendary && tutorMaxCmc !== null;
+    const isFierceEmpath = tutorMinCmc !== null;
+    const isCreature    = tutorCreaturesOnly && !isGSZ && !isBellower && !isFierceEmpath;
+    const isLand        = tutorLandsOnly;
+    const isTreefolk    = tutorTreefolk;
+    const isFinale      = tutorFromGraveyard;
     const q = tutorQuery.toLowerCase();
 
     const LEGENDARY_NAMES = new Set(["Ashaya, Soul of the Wild","Selvala, Heart of the Wilds",
       "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Eladamri, Korvecdal",
       "Nissa, Resurgent Animist","Saryth, the Viper's Fang","Kogla, the Titan Ape"]);
 
+    // Finale searches graveyard; everything else searches library
+    const pool = isFinale ? graveyard : library;
+
     const passesMode = (c) => {
       const d = getCard(c);
-      if (isBellower) return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc && !LEGENDARY_NAMES.has(c);
-      if (isGSZ || isCreature) return d?.type === "creature" && (!isGSZ || (d?.cmc ?? 99) <= tutorMaxCmc);
-      if (isLand)              return d?.type === "land";
-      if (isTreefolk)          return d?.tags?.includes("treefolk") || d?.tags?.includes("forest") || d?.tags?.includes("basic");
+      if (isBellower)    return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc && !LEGENDARY_NAMES.has(c);
+      if (isGSZ)         return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc;
+      if (isFierceEmpath) return d?.type === "creature" && (d?.cmc ?? 0) >= tutorMinCmc;
+      if (isCreature)    return d?.type === "creature" && (tutorMaxCmc === null || (d?.cmc ?? 99) <= tutorMaxCmc);
+      if (isLand)        return d?.type === "land";
+      if (isTreefolk)    return d?.tags?.includes("treefolk") || d?.tags?.includes("forest") || d?.tags?.includes("basic");
       return true;
     };
 
-    const defaults = [...new Set(library)]
+    const defaults = [...new Set(pool)]
       .filter(passesMode)
       .sort((a, b) => isGSZ
+        ? (getCard(b)?.cmc ?? 0) - (getCard(a)?.cmc ?? 0)
+        : isFierceEmpath
         ? (getCard(b)?.cmc ?? 0) - (getCard(a)?.cmc ?? 0)
         : (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0))
       .slice(0, 12);
 
     const matches = q.length >= 1
-      ? [...new Set(library)].filter(c => {
+      ? [...new Set(pool)].filter(c => {
           const d = getCard(c);
           return passesMode(c) && (
             c.toLowerCase().includes(q) ||
@@ -14370,41 +15203,48 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       : defaults;
 
     const displayList = matches;
-    const borderColor = isBellower ? COLORS.green2 : isGSZ ? COLORS.green2 : COLORS.purple;
+    const borderColor = isBellower ? COLORS.green2 : isGSZ ? COLORS.green2 : isFierceEmpath ? COLORS.gold : COLORS.purple;
 
     const header = isBellower
-      ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CREATURES CMC \u2264 3`
+      ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CMC \u2264 3`
       : isGSZ
-      ? `GREEN SUN'S ZENITH \u2014 X=${tutorMaxCmc} \u2014 CREATURES CMC \u2264 ${tutorMaxCmc}`
-      : isCreature ? `CREATURE TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`
-      : isLand     ? `LAND TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`
-      : isTreefolk ? `TREEFOLK HARBINGER \u2014 TREEFOLK OR FOREST (${library.length} cards)`
-      :              `TUTOR \u2014 SEARCH LIBRARY (${library.length} cards)`;
+      ? `GREEN SUN'S ZENITH \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
+      : isFierceEmpath ? `FIERCE EMPATH \u2014 CREATURES CMC \u2265 6 (${pool.length} cards)`
+      : isFinale       ? `FINALE OF DEVASTATION \u2014 GRAVEYARD (${pool.length} cards)`
+      : isCreature ? `CREATURE TUTOR \u2014 LIBRARY (${pool.length} cards)`
+      : isLand     ? `LAND TUTOR \u2014 LIBRARY (${pool.length} cards)`
+      : isTreefolk ? `TREEFOLK HARBINGER \u2014 TREEFOLK OR FOREST (${pool.length} cards)`
+      :              `TUTOR \u2014 LIBRARY (${pool.length} cards)`;
 
     const hint = isBellower      ? "NON-LEGENDARY CREATURES CMC ≤ 3"
       : isGSZ                    ? "AFFORDABLE TARGETS"
+      : isFierceEmpath           ? "CREATURES CMC ≥ 6"
+      : isFinale                 ? "CREATURES IN GRAVEYARD"
       : isCreature               ? "CREATURES IN LIBRARY"
       : isLand                   ? "LANDS IN LIBRARY"
-      : isTreefolk                ? "TREEFOLK & FORESTS IN LIBRARY"
+      : isTreefolk               ? "TREEFOLK & FORESTS IN LIBRARY"
       : null;
 
-    const emptyMsg = isBellower  ? "No non-legendary creatures with CMC \u2264 3 in library."
-      : isGSZ                    ? `No creatures with CMC \u2264 ${tutorMaxCmc} in library.`
+    const emptyMsg = isBellower  ? "No non-legendary creatures with CMC ≤ 3 in library."
+      : isGSZ                    ? `No creatures with CMC ≤ ${tutorMaxCmc} in library.`
+      : isFierceEmpath           ? "No creatures with CMC ≥ 6 in library."
+      : isFinale                 ? "No matching creatures in graveyard."
       : isCreature               ? "No creatures in library."
       : isLand                   ? "No lands in library."
-      : isTreefolk                ? "No Treefolk or Forest cards in library."
+      : isTreefolk               ? "No Treefolk or Forest cards in library."
       :                            "No matches in library.";
 
-    const placeholder = isGSZ ? `Search creatures (CMC \u2264 ${tutorMaxCmc})...`
-      : isCreature             ? "Search creatures..."
-      : isLand                 ? "Search lands..."
-      : isTreefolk             ? "Search Treefolk or Forests..."
-      :                          "Type card name...";
+    const placeholder = isGSZ          ? `Search creatures (CMC ≤ ${tutorMaxCmc})...`
+      : isFierceEmpath                  ? "Search creatures (CMC ≥ 6)..."
+      : isFinale                        ? "Search graveyard creatures..."
+      : isCreature                      ? "Search creatures..."
+      : isLand                          ? "Search lands..."
+      : isTreefolk                      ? "Search Treefolk or Forests..."
+      :                                   "Type card name...";
 
     const closeTutor = () => {
       setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null);
-      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false);
-      setTutorOnSelect(null); setTutorSelected(0);
+      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
     };
 
     return (
@@ -14571,6 +15411,209 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         </div>
       );
     })()}
+
+    {/* ── Graveyard picker modal (Eternal Witness, Skullwinder) ── */}
+    {pendingGraveyardPick && (() => {
+      const { card: pgCard, mode, filter, label } = pendingGraveyardPick;
+      const targets = filter ? graveyard.filter(filter) : graveyard;
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.green2}`, borderRadius: "10px", padding: "20px 24px", minWidth: "320px", maxWidth: "480px", boxShadow: "0 8px 32px rgba(0,0,0,0.9)", fontFamily: "'Cinzel', serif" }}>
+            <div style={{ color: COLORS.green3, fontSize: "10px", letterSpacing: "1.5px", marginBottom: "12px" }}>{label}</div>
+            {targets.length === 0 ? (
+              <div style={{ color: COLORS.textDim, fontSize: "12px", fontFamily: "'Crimson Text', serif" }}>Graveyard is empty.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "5px", maxHeight: "300px", overflowY: "auto" }}>
+                {[...new Set(targets)].map((c, i) => (
+                  <button key={i} onClick={() => {
+                    if (mode === "hand") {
+                      setGraveyard(prev => { const idx = prev.indexOf(c); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
+                      setHand(prev => [...prev, c]);
+                      addLog(`${pgCard} ETB → ${c} returned from graveyard to hand.`, COLORS.green2);
+                    } else {
+                      setGraveyard(prev => { const idx = prev.indexOf(c); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
+                      goldfishAddToBattlefield(c);
+                      addLog(`${pgCard} ETB → ${c} from graveyard to battlefield.`, COLORS.green2);
+                    }
+                    setPendingGraveyardPick(null);
+                  }} style={{ background: "#0a1a0a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: COLORS.green2, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left", letterSpacing: "0.5px" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green3; e.currentTarget.style.background = "#162616"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.background = "#0a1a0a"; }}>
+                    {c} <span style={{ color: COLORS.textDim, fontSize: "10px" }}>{getCard(c)?.type}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button onClick={() => { setPendingGraveyardPick(null); addLog(`${pgCard} ETB — no card chosen.`, COLORS.textDim); }} style={{ marginTop: "12px", width: "100%", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "6px", cursor: "pointer", color: COLORS.textDim, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✕ SKIP</button>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* ── Hyrax Tower Scout untap picker ── */}
+    {pendingHyraxUntap && (() => {
+      const targets = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.green2}`, borderRadius: "10px", padding: "20px 24px", minWidth: "300px", maxWidth: "440px", boxShadow: "0 8px 32px rgba(0,0,0,0.9)", fontFamily: "'Cinzel', serif" }}>
+            <div style={{ color: COLORS.green3, fontSize: "10px", letterSpacing: "1.5px", marginBottom: "12px" }}>HYRAX TOWER SCOUT — UNTAP A CREATURE</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px", maxHeight: "280px", overflowY: "auto" }}>
+              {targets.map(({ c, i }) => {
+                const key = cardKey(c, i);
+                const isTapped = tapped.has(key);
+                return (
+                  <button key={`${c}:${i}`} onClick={() => {
+                    setTapped(prev => { const next = new Set(prev); next.delete(key); return next; });
+                    addLog(`Hyrax Tower Scout ETB → untapped ${c}.`, COLORS.green2);
+                    setPendingHyraxUntap(false);
+                  }} style={{ background: "#0a1a0a", border: `1px solid ${isTapped ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: isTapped ? COLORS.green2 : COLORS.textMid, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "#0a1a0a"; }}>
+                    {c} {isTapped ? <span style={{ color: COLORS.green1, fontSize: "10px" }}>● tapped</span> : <span style={{ color: COLORS.textDim, fontSize: "10px" }}>○ untapped</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => { setPendingHyraxUntap(false); addLog("Hyrax Tower Scout ETB — no untap target chosen.", COLORS.textDim); }} style={{ marginTop: "12px", width: "100%", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "6px", cursor: "pointer", color: COLORS.textDim, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✕ SKIP</button>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* ── Chrome Mox imprint picker ── */}
+    {pendingImprint && (() => {
+      const targets = hand.filter(c => getCard(c)?.type !== "land");
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.gold}`, borderRadius: "10px", padding: "20px 24px", minWidth: "300px", maxWidth: "440px", boxShadow: "0 8px 32px rgba(0,0,0,0.9)", fontFamily: "'Cinzel', serif" }}>
+            <div style={{ color: COLORS.gold, fontSize: "10px", letterSpacing: "1.5px", marginBottom: "4px" }}>CHROME MOX — IMPRINT</div>
+            <div style={{ color: COLORS.textDim, fontSize: "11px", fontFamily: "'Crimson Text', serif", marginBottom: "12px" }}>Exile a non-land card from hand. Chrome Mox taps for one mana of that card's color.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              {targets.map((c, i) => {
+                const cd = getCard(c);
+                return (
+                  <button key={i} onClick={() => {
+                    setHand(prev => { const idx = prev.indexOf(c); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
+                    setExile(prev => [...prev, c]);
+                    addLog(`Chrome Mox: imprinted ${c} → exiled. Mox now taps for {G}.`, COLORS.gold);
+                    setPendingImprint(null);
+                  }} style={{ background: "#1a1400", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: COLORS.gold, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.gold; e.currentTarget.style.background = "#241e00"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.background = "#1a1400"; }}>
+                    {c} <span style={{ color: COLORS.textDim, fontSize: "10px" }}>{cd?.type} · CMC {cd?.cmc ?? "?"}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => { setPendingImprint(null); addLog("Chrome Mox: no imprint — Mox produces no mana.", COLORS.textDim); }} style={{ marginTop: "12px", width: "100%", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "6px", cursor: "pointer", color: COLORS.textDim, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✕ NO IMPRINT</button>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* ── Genesis Hydra reveal modal ── */}
+    {pendingGenesisHydra && (() => {
+      const { x, revealed } = pendingGenesisHydra;
+      const eligible = revealed.filter(c => { const cd = getCard(c); return cd?.type !== "land" && (cd?.cmc ?? 0) <= x; });
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.82)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.green3}`, borderRadius: "10px", padding: "20px 24px", minWidth: "320px", maxWidth: "500px", maxHeight: "80vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.9)", fontFamily: "'Cinzel', serif" }}>
+            <div style={{ color: COLORS.green3, fontSize: "10px", letterSpacing: "1.5px", marginBottom: "4px" }}>GENESIS HYDRA (X={x}) — CHOOSE A PERMANENT</div>
+            <div style={{ color: COLORS.textDim, fontSize: "11px", fontFamily: "'Crimson Text', serif", marginBottom: "12px" }}>Revealed top {revealed.length} cards. Choose a non-land permanent with CMC ≤ {x} to put onto the battlefield. The rest go to the bottom.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+              {eligible.length === 0 ? (
+                <div style={{ color: COLORS.textDim, fontSize: "12px", fontFamily: "'Crimson Text', serif" }}>No eligible permanents revealed (no non-land permanents with CMC ≤ {x}).</div>
+              ) : eligible.map((c, i) => {
+                const cd = getCard(c);
+                return (
+                  <button key={i} onClick={() => {
+                    // Remove chosen from library, put rest of revealed on bottom
+                    setLibrary(prev => {
+                      const withoutRevealed = prev.slice(revealed.length);
+                      const bottomCards = revealed.filter(r => r !== c);
+                      return [...withoutRevealed, ...bottomCards];
+                    });
+                    goldfishAddToBattlefield(c);
+                    addLog(`Genesis Hydra (X=${x}) → ${c} onto battlefield. Remaining ${revealed.length - 1} revealed cards go to bottom.`, COLORS.green2);
+                    setPendingGenesisHydra(null);
+                  }} style={{ background: "#0a1a0a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: COLORS.green2, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green3; e.currentTarget.style.background = "#162616"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.background = "#0a1a0a"; }}>
+                    {c} <span style={{ color: COLORS.textDim, fontSize: "10px" }}>{cd?.type} · CMC {cd?.cmc ?? "?"}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => {
+              setLibrary(prev => [...prev.slice(revealed.length), ...revealed]);
+              addLog(`Genesis Hydra (X=${x}) — no permanent chosen. Revealed cards go to bottom.`, COLORS.textDim);
+              setPendingGenesisHydra(null);
+            }} style={{ marginTop: "12px", width: "100%", background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "6px", cursor: "pointer", color: COLORS.textDim, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>✕ TAKE NOTHING</button>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* ── Generic picker modal ── */}
+    {pendingPicker && (() => {
+      const { label, color, items, onSelect, onSkip, multi } = pendingPicker;
+      const isMulti = multi > 1;
+      const confirmMulti = () => {
+        if (pickerSelected.length === 0) { onSkip?.(); setPendingPicker(null); setPickerSelected([]); return; }
+        onSelect(pickerSelected);
+        setPendingPicker(null); setPickerSelected([]);
+      };
+      return (
+        <div style={{ position:"fixed", inset:0, zIndex:9100, background:"rgba(0,0,0,0.82)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#0d1f0d", border:`1px solid ${color}`, borderRadius:"10px", padding:"20px 24px", minWidth:"320px", maxWidth:"480px", maxHeight:"80vh", overflowY:"auto", boxShadow:"0 8px 32px rgba(0,0,0,0.9)", fontFamily:"'Cinzel', serif" }}>
+            <div style={{ color, fontSize:"10px", letterSpacing:"1.5px", marginBottom: isMulti ? "4px" : "12px" }}>{label}</div>
+            {isMulti && (
+              <div style={{ color:COLORS.textDim, fontSize:"11px", fontFamily:"'Crimson Text', serif", marginBottom:"12px" }}>
+                Select {multi} cards. ({pickerSelected.length}/{multi} chosen)
+              </div>
+            )}
+            <div style={{ display:"flex", flexDirection:"column", gap:"5px" }}>
+              {items.map((item, i) => {
+                const isChosen = isMulti && pickerSelected.some(s => s.key === item.key);
+                const isDisabled = item.disabled || (isMulti && pickerSelected.length >= multi && !isChosen);
+                return (
+                  <button key={item.key ?? i} disabled={isDisabled} onClick={() => {
+                    if (isMulti) {
+                      if (isChosen) { setPickerSelected(prev => prev.filter(s => s.key !== item.key)); return; }
+                      const next = [...pickerSelected, item];
+                      setPickerSelected(next);
+                      if (next.length === multi) { onSelect(next); setPendingPicker(null); setPickerSelected([]); }
+                    } else {
+                      if (!item.disabled) { onSelect(item); setPendingPicker(null); setPickerSelected([]); }
+                    }
+                  }} style={{
+                    background: isChosen ? "#1e3a1e" : "#0a1a0a",
+                    border: `1px solid ${isChosen ? color : isDisabled ? "#222" : COLORS.border}`,
+                    borderRadius:"6px", padding:"7px 12px", cursor: isDisabled ? "not-allowed" : "pointer",
+                    color: item.disabled ? COLORS.textDim : isChosen ? color : COLORS.green2,
+                    fontSize:"12px", fontFamily:"'Cinzel', serif", textAlign:"left", letterSpacing:"0.5px",
+                    opacity: isDisabled && !isChosen ? 0.4 : 1,
+                  }}
+                  onMouseEnter={e => { if (!isDisabled) { e.currentTarget.style.borderColor = color; e.currentTarget.style.background = "#162616"; }}}
+                  onMouseLeave={e => { if (!isDisabled) { e.currentTarget.style.borderColor = isChosen ? color : COLORS.border; e.currentTarget.style.background = isChosen ? "#1e3a1e" : "#0a1a0a"; }}}>
+                    {item.label}
+                    {item.sub && <span style={{ color:COLORS.textDim, fontSize:"10px", marginLeft:"8px" }}>{item.sub}</span>}
+                    {isChosen && <span style={{ color, fontSize:"10px", marginLeft:"8px" }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {isMulti && (
+              <button onClick={confirmMulti} style={{ marginTop:"10px", width:"100%", background: pickerSelected.length > 0 ? "#162616" : "transparent", border:`1px solid ${pickerSelected.length > 0 ? color : COLORS.border}`, borderRadius:"6px", padding:"7px", cursor:"pointer", color: pickerSelected.length > 0 ? color : COLORS.textDim, fontSize:"10px", fontFamily:"'Cinzel', serif", letterSpacing:"1px" }}>
+                ✓ CONFIRM ({pickerSelected.length}/{multi})
+              </button>
+            )}
+            <button onClick={() => { onSkip?.(); setPendingPicker(null); setPickerSelected([]); }} style={{ marginTop:"8px", width:"100%", background:"transparent", border:`1px solid ${COLORS.border}`, borderRadius:"6px", padding:"6px", cursor:"pointer", color:COLORS.textDim, fontSize:"10px", fontFamily:"'Cinzel', serif", letterSpacing:"1px" }}>✕ SKIP</button>
+          </div>
+        </div>
+      );
+    })()}
+
     <div style={{
       position: "fixed", inset: 0, zIndex: 1000,
       background: "rgba(0,0,0,0.85)", display: "flex",
@@ -14920,10 +15963,30 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     👁 ELADAMRI TOP
                   </button>
                 )}
-                {battlefield.includes("Yisan, the Wanderer Bard") && (
-                  <button onClick={() => openScry(yisanCounters + 1 <= 3 ? 3 : 5)} style={{ ...btnStyle("#9b59b6"), background: "#1a0a2a" }}
-                    title="Yisan searches for a creature of CMC equal to his verse counter + 1. Use this peek to see if your target is near the top.">
-                    🎵 YISAN PEEK
+                {battlefield.includes("Nissa, Resurgent Animist") && (
+                  <button onClick={() => {
+                    // Nissa landfall: search for an Elf or Elemental → hand
+                    setTutorCreaturesOnly(true);
+                    setTutorOnSelect(() => (chosen) => {
+                      setLibrary(prev => {
+                        const idx = prev.indexOf(chosen);
+                        if (idx === -1) return prev;
+                        const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+                        for (let i = without.length - 1; i > 0; i--) {
+                          const j = Math.floor(Math.random() * (i + 1));
+                          [without[i], without[j]] = [without[j], without[i]];
+                        }
+                        return without;
+                      });
+                      setHand(prev => [...prev, chosen]);
+                      addLog(`Nissa, Resurgent Animist landfall → ${chosen} → hand. Library shuffled.`, COLORS.green3);
+                    });
+                    setShowTutor(true); setTutorQuery("elf");
+                    setTimeout(() => tutorInputRef.current?.focus(), 50);
+                    addLog(`Nissa landfall triggered — search for an Elf or Elemental.`, COLORS.green3);
+                  }} style={{ ...btnStyle(COLORS.green3), background: "#0a1e0a" }}
+                    title="Nissa, Resurgent Animist landfall: when a Forest enters, search your library for an Elf or Elemental → hand.">
+                    🌿 NISSA TUTOR
                   </button>
                 )}
                 <button
@@ -14940,6 +16003,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     opacity: battlefield.includes("Yeva, Nature's Herald") ? 0.4 : 1,
                   }}>🌿 YEVA{yevaTax > 0 ? ` (+${yevaTax})` : ""}</button>
               </div>
+
 
               {/* Land drop indicator + mana pool */}
               <div style={{ padding: "5px 12px", borderBottom: `1px solid ${COLORS.border}`, display: "flex", gap: "8px", alignItems: "center" }}>
@@ -15172,16 +16236,29 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                       borderRadius: "6px", padding: "10px 12px", marginBottom: "8px",
                       opacity: a.isSuppressed ? 0.7 : 1,
                     }}>
-                      <div style={{ fontSize: "10px", color: a.isSuppressed ? "#555" : a.color || COLORS.green1, letterSpacing: "1.5px", fontFamily: "'Cinzel', serif", marginBottom: "4px" }}>
-                        {a.category}
+                      <div style={{ fontSize: "10px", color: a.isSuppressed ? "#555" : a.color || COLORS.green1, letterSpacing: "1.5px", fontFamily: "'Cinzel', serif", marginBottom: "4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>{a.category}</span>
+                        {a.isSuppressed && (
+                          <span
+                            onClick={() => setExpandedSuppressed(prev => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; })}
+                            style={{ fontSize: "9px", color: "#666", cursor: "pointer", letterSpacing: "0.5px", userSelect: "none", padding: "1px 5px", border: "1px solid #333", borderRadius: "3px" }}
+                          >{expandedSuppressed.has(i) ? "▲ hide" : "▼ why?"}</span>
+                        )}
                       </div>
                       <div style={{ fontSize: "12px", color: a.isSuppressed ? "#555" : COLORS.text, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>
                         <HighlightWithPopups text={a.headline} />
                       </div>
-                      {a.steps && a.steps.length > 0 && (
+                      {a.isSuppressed && expandedSuppressed.has(i) && a.detail && (
+                        <div style={{ marginTop: "8px", padding: "8px 10px", background: "#111", borderRadius: "4px", borderLeft: `2px solid #444` }}>
+                          <div style={{ fontSize: "10px", color: "#777", fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>
+                            {a.detail}
+                          </div>
+                        </div>
+                      )}
+                      {!a.isSuppressed && a.steps && a.steps.length > 0 && (
                         <div style={{ marginTop: "8px", borderTop: `1px solid ${COLORS.border}`, paddingTop: "8px" }}>
                           {(expandedSteps.has(i) ? a.steps : a.steps.slice(0, 4)).map((s, j) => (
-                            <div key={j} style={{ fontSize: "11px", color: a.isSuppressed ? "#4a4a4a" : COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${a.isSuppressed ? "#1e1e1e" : COLORS.border}` }}>
+                            <div key={j} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${COLORS.border}` }}>
                               {j + 1}. <HighlightWithPopups text={s} />
                             </div>
                           ))}
