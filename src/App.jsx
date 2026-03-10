@@ -16,7 +16,7 @@ const CARDS = {
   "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop","snow"], tapsFor:1 , devotion:0, greenPips:1, note:"{T}: Add {C}. Produces colorless mana, not green. Counts as an Elf for Elf synergies. Green pip in mana cost counts toward devotion to green." },
   "Birds of Paradise":     { type:"creature", cmc:1, tags:["dork","1drop"], tapsFor:1 , devotion:1, greenPips:1},
   "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , devotion:1, role:"dork-combo", greenPips:1},
-  "Elvish Spirit Guide":   { type:"creature", cmc:2, tags:["dork","elf","free-mana"], tapsFor:1 , devotion:1, role:"fast-mana", greenPips:1},
+  "Elvish Spirit Guide":   { type:"creature", cmc:3, tags:["dork","elf","free-mana"], tapsFor:1 , devotion:1, role:"fast-mana", greenPips:1},
   "Dryad Arbor":           { type:"land",    cmc:0, tags:["dork","land","forest"], tapsFor:1 , devotion:0},
   // MANA DORKS (2-drop)
   "Quirion Ranger":        { type:"creature", cmc:1, tags:["combo","elf","untap","ranger"], tapsFor:0 , devotion:1, greenPips:1},
@@ -25,7 +25,7 @@ const CARDS = {
   // BIG MANA DORKS
   "Priest of Titania":     { type:"creature", cmc:2, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves" , devotion:1, greenPips:1},
   "Elvish Archdruid":      { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","pump"], tapsFor:"elves" , devotion:2, greenPips:2},
-  "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , devotion:2, greenPips:2},
+  "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , devotion:3, greenPips:3},
   "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork","human"], tapsFor:"devotion" , devotion:1, greenPips:1},
   "Fanatic of Rhonas":     { type:"creature", cmc:2, tags:["dork","big-dork"], tapsFor:"ferocious", devotion:1, role:"big-dork-combo", note:"{T}: Add {G}. Ferocious — {T}: Add {G}{G}{G}{G} if you control a creature with power 4+. NOT an elf — Wirewood Lodge cannot untap it. Goes infinite with Ashaya+Quirion Ranger (nets {3}) or Ashaya+Scryb Ranger (nets {2}). CMC 2 — Yisan V2."},
   "Hope Tender":           { type:"creature", cmc:2, tags:["human","untap-lands","exert"], devotion:1, role:"untap-combo", note:"{1},{T}: Untap target land. {1},{T}, Exert: Untap two target lands (Hope Tender won't untap during your next untap step). Does NOT tap for mana. Human subtype — Kogla's {1}{G} returns it to hand, resetting the exert restriction. Best loop: Hope Tender exert + Kogla bounce + big land (producing ≥5). Note: Wirewood Lodge only untaps Elves; Hope Tender is Human and cannot be targeted by Lodge."},
@@ -36,13 +36,13 @@ const CARDS = {
   "Argothian Elder":       { type:"creature", cmc:4, tags:["combo","elf","untap-lands"] , devotion:1, greenPips:1},
   "Wirewood Lodge":        { type:"land",    cmc:0, tags:["combo","land","untap-elf"] , devotion:0},
   "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft"] , devotion:1, greenPips:1},
-  "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , devotion:2, greenPips:3},
+  "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , devotion:3, greenPips:3},
   "Eternal Witness":       { type:"creature", cmc:3, tags:["combo","human","recursion","etb"] , devotion:2, greenPips:2},
   "Disciple of Freyalise": { type:"creature", cmc:6, tags:["combo","draw","sacrifice"] , devotion:3, greenPips:3},
   "Glademuse":             { type:"creature", cmc:3, tags:["combo","draw","flash-draw"] , devotion:1, greenPips:1},
   "Beast Whisperer":       { type:"creature", cmc:4, tags:["draw","engine"] , devotion:2, greenPips:1},
   "Regal Force":           { type:"creature", cmc:7, tags:["draw","finisher","etb"] , devotion:3, greenPips:3},
-  "Duskwatch Recruiter":   { type:"creature", cmc:2, tags:["combo","tutor","draw"] , devotion:2, greenPips:1},
+  "Duskwatch Recruiter":   { type:"creature", cmc:2, tags:["combo","tutor","draw"] , devotion:1, greenPips:1},
   "Woodland Bellower":     { type:"creature", cmc:6, tags:["tutor","finisher","etb"] , devotion:2, greenPips:2},
   // LANDS
   "Gaea's Cradle":         { type:"land", cmc:0, tags:["land","combo","key","cradle"] , devotion:0},
@@ -76,7 +76,7 @@ const CARDS = {
   "Collector Ouphe":       { type:"creature", cmc:2, tags:["stax","hate"] , devotion:1, greenPips:1},
   "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax"] , devotion:1, role:"haste-protection", greenPips:1},
   "Allosaurus Shepherd":   { type:"creature", cmc:1, tags:["protection","elf"] , devotion:1, greenPips:1},
-  "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , devotion:2, greenPips:1},
+  "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , devotion:2, greenPips:2},
   "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all"] , devotion:2, greenPips:2},
   "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf"] , devotion:2, role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine.", greenPips:1},
   // TUTORS
@@ -97,7 +97,7 @@ const CARDS = {
   // INTERACTION / UTILITY
   "Beast Within":          { type:"instant", cmc:3, tags:["removal","instant"] , devotion:0, greenPips:1},
   "Force of Vigor":        { type:"instant", cmc:4, tags:["removal","instant","free"] , devotion:0, greenPips:2},
-  "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , devotion:1, greenPips:1},
+  "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , devotion:2, greenPips:2},
   "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , devotion:0, greenPips:1},
   "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","split-second","untap","removal"] , devotion:0, greenPips:1},
   "Nature's Rhythm":       { type:"sorcery", cmc:2, tags:["tutor","sorcery","harmonize"] , devotion:0, role:"creature-tutor", note:"Sorcery {X, greenPips:2}{G}{G}: search your library for a creature with MV ≤ X, put it onto the battlefield. Harmonize {X}{G}{G}{G}{G}: cast from graveyard (tap creatures to reduce generic cost by their power), then exile. Effectively two creature tutors — cast normally then Harmonize once from the graveyard."},
@@ -120,13 +120,13 @@ const CARDS = {
   "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"elves", devotion:1, role:"big-dork-combo", greenPips:1},
   "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork","human"], tapsFor:"power", devotion:2, role:"big-dork-combo", greenPips:1},
   "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"big-dork-combo", greenPips:1},
-  "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], devotion:4, role:"storm-engine", greenPips:2},
+  "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], devotion:2, role:"storm-engine", greenPips:2},
   // Untap & haste combo pieces
   "Ley Weaver":            { type:"creature", cmc:4, tags:["combo","human","untap-lands"], devotion:1, role:"untap-combo", greenPips:1},
   "Cloudstone Curio":      { type:"artifact", cmc:3, tags:["combo","bounce","sabertooth"], devotion:0, role:"bounce-combo", greenPips:0},
   "Thousand-Year Elixir":  { type:"artifact", cmc:3, tags:["combo","haste","untap"], devotion:0, role:"haste-combo", greenPips:0},
   "Concordant Crossroads": { type:"enchantment", cmc:1, tags:["combo","haste","enchantment"], devotion:1, role:"haste-enabler", greenPips:1},
-  "Surrak and Goreclaw":   { type:"creature", cmc:5, tags:["combo","haste","pump"], devotion:2, role:"haste-enabler", greenPips:1},
+  "Surrak and Goreclaw":   { type:"creature", cmc:6, tags:["combo","haste","pump"], devotion:2, role:"haste-enabler", greenPips:2},
   "Touch of Vitae":        { type:"instant", cmc:3, tags:["combo","haste","untap","instant"], devotion:0, role:"haste-combo", greenPips:1},
   "Ulvenwald Oddity":      { type:"creature", cmc:4, tags:["combo","haste","mana-sink"], devotion:2, role:"haste-enabler", greenPips:1},
   "Vitalize":              { type:"instant", cmc:1, tags:["combo","untap","storm","instant"], devotion:0, role:"storm-ritual", greenPips:1},
@@ -134,13 +134,13 @@ const CARDS = {
   "Great Oak Guardian":    { type:"creature", cmc:6, tags:["combo","flash","pump","untap"], devotion:2, role:"flash-combo", greenPips:2},
   "Genesis Hydra":         { type:"creature", cmc:2, tags:["combo","outlet","etb"], devotion:1, role:"infinite-outlet", greenPips:1},
   "Agatha's Soul Cauldron":{ type:"artifact", cmc:2, tags:["combo","graveyard","recursion"], devotion:0, role:"graveyard-engine"},
-  "Beastrider Vanguard":   { type:"creature", cmc:3, tags:["combo","outlet","mana-sink"], devotion:1, role:"infinite-outlet"},
-  "Lotus Cobra":           { type:"creature", cmc:2, tags:["combo","landfall","ramp"], devotion:1, role:"ramp-combo"},
-  "Nissa, Resurgent Animist": { type:"creature", cmc:3, tags:["combo","elf","landfall","tutor"], devotion:2, role:"ramp-combo"},
+  "Beastrider Vanguard":   { type:"creature", cmc:2, tags:["combo","outlet","mana-sink"], devotion:1, role:"infinite-outlet", greenPips:1},
+  "Lotus Cobra":           { type:"creature", cmc:2, tags:["combo","landfall","ramp"], devotion:1, role:"ramp-combo", greenPips:1},
+  "Nissa, Resurgent Animist": { type:"creature", cmc:3, tags:["combo","elf","landfall","tutor"], devotion:1, role:"ramp-combo", greenPips:1},
   // Tutors
   "Finale of Devastation": { type:"sorcery", cmc:2, tags:["tutor","finisher","sorcery"], devotion:0, role:"tutor-finisher"},
-  "Invasion of Ikoria":    { type:"battle", cmc:4, tags:["tutor","recursion"], devotion:0, role:"tutor"},
-  "Skyshroud Poacher":     { type:"creature", cmc:4, tags:["tutor","elf","engine"], devotion:1, role:"elf-tutor"},
+  "Invasion of Ikoria":    { type:"battle", cmc:2, tags:["tutor","recursion"], devotion:0, role:"tutor", greenPips:2},
+  "Skyshroud Poacher":     { type:"creature", cmc:4, tags:["tutor","elf","engine"], devotion:2, role:"elf-tutor", greenPips:2},
   "Treefolk Harbinger":    { type:"creature", cmc:1, tags:["tutor","treefolk","1drop"], devotion:1, role:"tutor"},
   "Lignify":               { type:"enchantment", cmc:2, tags:["removal","aura","treefolk"], devotion:1, role:"removal"},
   // Ramp & utility lands
@@ -157,9 +157,9 @@ const CARDS = {
   // Draw engines
   "Sylvan Library":        { type:"enchantment", cmc:2, tags:["draw","engine","enchantment"], devotion:1, role:"draw-engine"},
   "Guardian Project":      { type:"enchantment", cmc:4, tags:["draw","engine","enchantment"], devotion:1, role:"draw-engine"},
-  "Runic Armasaur":        { type:"creature", cmc:3, tags:["draw","engine","meta"], devotion:1, role:"draw-engine"},
+  "Runic Armasaur":        { type:"creature", cmc:3, tags:["draw","engine","meta"], devotion:2, role:"draw-engine", greenPips:2},
   "Compost":               { type:"enchantment", cmc:2, tags:["draw","engine","meta","enchantment"], devotion:1, role:"meta-draw"},
-  "Viridian Revel":        { type:"enchantment", cmc:3, tags:["draw","engine","meta","enchantment"], devotion:1, role:"meta-draw"},
+  "Viridian Revel":        { type:"enchantment", cmc:3, tags:["draw","engine","meta","enchantment"], devotion:2, role:"meta-draw", greenPips:2},
   // Interaction & removal
   "Reclamation Sage":      { type:"creature", cmc:3, tags:["removal","elf","etb"], devotion:1, role:"removal"},
   "Outland Liberator":     { type:"creature", cmc:2, tags:["removal","werewolf"], devotion:1, role:"removal"},
@@ -1632,7 +1632,7 @@ const SECRET_CARDS = {
 // CARD CATEGORIES for display
 // ============================================================
 const CATEGORIES = {
-  "1-Drop Dorks": ["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Quirion Ranger","Wirewood Symbiote","Elvish Reclaimer","Elvish Spirit Guide","Magus of the Candelabra","Allosaurus Shepherd"],
+  "1-Drop Dorks": ["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Quirion Ranger","Wirewood Symbiote","Elvish Reclaimer","Magus of the Candelabra","Allosaurus Shepherd"],
   "2-3 Drop Creatures": ["Scryb Ranger","Priest of Titania","Fanatic of Rhonas","Earthcraft","Elvish Archdruid","Circle of Dreams Druid","Eladamri, Korvecdal","Duskwatch Recruiter","Heartwood Storyteller","Hyrax Tower Scout","Eternal Witness","Fauna Shaman","Formidable Speaker","Destiny Spinner","Collector Ouphe","Glademuse","Delighted Halfling","Badgermole Cub","Chomping Changeling","Yisan, the Wanderer Bard","Elvish Harbinger","Fierce Empath","Tireless Provisioner","Endurance","Hope Tender"],
   "4-5 Drop Creatures": ["Ashaya, Soul of the Wild","Temur Sabertooth","Karametra's Acolyte","Argothian Elder","Seedborn Muse","Growing Rites of Itlimoc","Beast Whisperer","Yeva, Nature's Herald","Sowing Mycospawn","Woodcaller Automaton"],
   "6+ Drop Creatures": ["Kogla, the Titan Ape","Disciple of Freyalise","Woodland Bellower","Regal Force"],
