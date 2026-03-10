@@ -14040,14 +14040,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           addLog(`Touch of Vitae: no creatures to target.`, COLORS.textDim);
         }
       } else if (card === "Great Oak Guardian") {
-        // Flash creature: ETB — creatures TARGET PLAYER controls get +2/+2 until EOT and untap (all of them)
+        // Flash creature: ETB handled in goldfishAddToBattlefield (untap all creatures, +2/+2 log)
         setGraveyard(prev => [...prev, card]);
         goldfishAddToBattlefield(card);
-        // In goldfish you target yourself — untap ALL your creatures and note +2/+2
-        const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
-        setTapped(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
-        setSickCreatures(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
-        addLog(`Great Oak Guardian ETB — all ${creatures.length} creatures get +2/+2 until EOT and untap. (Target: yourself)`, COLORS.green2);
       } else if (card === "Turntimber Symbiosis") {
         // Spell side {4}{G}{G}{G}: look at top 7, put a creature onto battlefield, rest on bottom
         setGraveyard(prev => [...prev, card]);
@@ -14522,6 +14517,80 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       // ── Kogla, the Titan Ape: ETB — fights up to one target creature you don't control ──
       if (card === "Kogla, the Titan Ape") {
         addLog(`Kogla ETB — fights up to one target creature you don't control (each deals damage equal to its power to the other).`, COLORS.green1);
+      }
+
+      // ── Great Oak Guardian: ETB — creatures you control get +2/+2 until EOT and untap ──
+      if (card === "Great Oak Guardian") {
+        const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+        setTapped(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+        setSickCreatures(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+        addLog(`Great Oak Guardian ETB — all ${creatures.length} creature${creatures.length !== 1 ? "s" : ""} get +2/+2 until EOT and untap.`, COLORS.green2);
+      }
+
+      // ── Formidable Speaker: ETB — may discard a card; if you do, search library for any creature → hand ──
+      if (card === "Formidable Speaker") {
+        if (hand.length > 0) {
+          setPendingPicker({
+            label: "FORMIDABLE SPEAKER — DISCARD A CARD TO SEARCH FOR A CREATURE (or skip)",
+            color: COLORS.green2,
+            items: hand.filter(c => c !== "Formidable Speaker").map(c => ({ label: c, sub: `${getCard(c)?.type ?? ""} · CMC ${getCard(c)?.cmc ?? "?"}`, key: c })),
+            onSkip: () => addLog(`Formidable Speaker ETB — no discard. No tutor.`, COLORS.textDim),
+            onSelect: ({ key: discarded }) => {
+              setHand(prev => { const i = prev.indexOf(discarded); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+              addLog(`Formidable Speaker ETB — discarded ${discarded}. Searching for a creature...`, COLORS.green2);
+              setTutorCreaturesOnly(true);
+              setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false);
+              setTutorNonLegendary(false); setTutorMinCmc(null); setTutorMaxCmc(null); setTutorFromGraveyard(false);
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => {
+                  const idx = prev.indexOf(chosen); if (idx === -1) return prev;
+                  const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+                  for (let ii = without.length - 1; ii > 0; ii--) { const j = Math.floor(Math.random() * (ii + 1)); [without[ii], without[j]] = [without[j], without[ii]]; }
+                  return without;
+                });
+                setHand(prev => [...prev, chosen]);
+                addLog(`Formidable Speaker ETB → ${chosen} to hand. Library shuffled.`, COLORS.green2);
+              });
+              setShowTutor(true); setTutorQuery("");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+            },
+          });
+          setPickerSelected([]);
+        } else {
+          addLog(`Formidable Speaker ETB — no cards in hand to discard.`, COLORS.textDim);
+        }
+      }
+
+      // ── Ley Weaver: Partner with Lore Weaver — target player may search for Lore Weaver ──
+      // Lore Weaver is not in this deck, so just log the trigger.
+      if (card === "Ley Weaver") {
+        addLog(`Ley Weaver ETB — partner trigger: target player may search library for Lore Weaver. (Lore Weaver not in deck — no effect.)`, COLORS.textDim);
+      }
+
+      // ── Woodcaller Automaton: ETB (if cast) — untap target land; it becomes a Treefolk with haste ──
+      if (card === "Woodcaller Automaton") {
+        const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+        if (lands.length > 0) {
+          setPendingPicker({
+            label: "WOODCALLER AUTOMATON — UNTAP TARGET LAND (becomes Treefolk with haste)",
+            color: COLORS.green2,
+            items: lands.map(({ c, i }) => ({ label: c, sub: "land", key: `${c}:${i}`, c, i })),
+            onSkip: () => addLog(`Woodcaller Automaton ETB — no land untapped.`, COLORS.textDim),
+            onSelect: ({ c, i }) => {
+              const k = cardKey(c, i);
+              setTapped(prev => { const next = new Set(prev); next.delete(k); return next; });
+              addLog(`Woodcaller Automaton ETB — untapped ${c}. It becomes a Treefolk creature with haste (base P/T = Automaton's P/T). Still a land.`, COLORS.green2);
+            },
+          });
+          setPickerSelected([]);
+        } else {
+          addLog(`Woodcaller Automaton ETB — no lands to untap.`, COLORS.textDim);
+        }
+      }
+
+      // ── Talon Gates of Madara: land ETB — up to one target creature phases out ──
+      if (card === "Talon Gates of Madara") {
+        addLog(`Talon Gates of Madara ETB — up to one target creature phases out until your next untap step. (In goldfish: no opponent creatures to phase out — use context menu to phase out one of your own if needed.)`, COLORS.textDim);
       }
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
