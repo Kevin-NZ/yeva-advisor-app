@@ -10,184 +10,184 @@ const EFFECTIVELY_INFINITE_MANA = 20;
 // ============================================================
 const CARDS = {
   // MANA DORKS (1-drop)
-  "Llanowar Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
-  "Elvish Mystic":         { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
-  "Fyndhorn Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
-  "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop","snow"], tapsFor:1 , devotion:0, greenPips:1, note:"{T}: Add {C}. Produces colorless mana, not green. Counts as an Elf for Elf synergies. Green pip in mana cost counts toward devotion to green." },
-  "Birds of Paradise":     { type:"creature", cmc:1, tags:["dork","1drop"], tapsFor:1 , devotion:1, greenPips:1},
-  "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , devotion:1, role:"dork-combo", greenPips:1},
-  "Elvish Spirit Guide":   { type:"creature", cmc:3, tags:["dork","elf","free-mana"], tapsFor:1 , devotion:1, role:"fast-mana", greenPips:1},
-  "Dryad Arbor":           { type:"land",    cmc:0, tags:["dork","land","forest"], tapsFor:1 , devotion:0},
+  "Llanowar Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , greenPips:1},
+  "Elvish Mystic":         { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , greenPips:1},
+  "Fyndhorn Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , greenPips:1},
+  "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop","snow"], tapsFor:1 , greenPips:1, note:"{T}: Add {C}. Produces colorless mana, but {G} in its mana cost still contributes 1 to your devotion to green." },
+  "Birds of Paradise":     { type:"creature", cmc:1, tags:["dork","1drop"], tapsFor:1 , greenPips:1},
+  "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , role:"dork-combo", greenPips:1},
+  "Elvish Spirit Guide":   { type:"creature", cmc:3, tags:["dork","elf","free-mana"], tapsFor:1 , role:"fast-mana", greenPips:1},
+  "Dryad Arbor":           { type:"land",    cmc:0, tags:["dork","land","forest"], tapsFor:1 },
   // MANA DORKS (2-drop)
-  "Quirion Ranger":        { type:"creature", cmc:1, tags:["combo","elf","untap","ranger"], tapsFor:0 , devotion:1, greenPips:1},
-  "Scryb Ranger":          { type:"creature", cmc:2, tags:["combo","elf","untap","ranger","flash"], tapsFor:0 , devotion:1, greenPips:1},
-  "Wirewood Symbiote":     { type:"creature", cmc:1, tags:["combo","elf","untap","symbiote"], tapsFor:0 , devotion:1, greenPips:1},
+  "Quirion Ranger":        { type:"creature", cmc:1, tags:["combo","elf","untap","ranger"], tapsFor:0 , greenPips:1},
+  "Scryb Ranger":          { type:"creature", cmc:2, tags:["combo","elf","untap","ranger","flash"], tapsFor:0 , greenPips:1},
+  "Wirewood Symbiote":     { type:"creature", cmc:1, tags:["combo","elf","untap","symbiote"], tapsFor:0 , greenPips:1},
   // BIG MANA DORKS
-  "Priest of Titania":     { type:"creature", cmc:2, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves" , devotion:1, greenPips:1},
-  "Elvish Archdruid":      { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","pump"], tapsFor:"elves" , devotion:2, greenPips:2},
-  "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , devotion:3, greenPips:3},
-  "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork","human"], tapsFor:"devotion" , devotion:1, greenPips:1},
-  "Fanatic of Rhonas":     { type:"creature", cmc:2, tags:["dork","big-dork"], tapsFor:"ferocious", devotion:1, role:"big-dork-combo", note:"{T}: Add {G}. Ferocious — {T}: Add {G}{G}{G}{G} if you control a creature with power 4+. NOT an elf — Wirewood Lodge cannot untap it. Goes infinite with Ashaya+Quirion Ranger (nets {3}) or Ashaya+Scryb Ranger (nets {2}). CMC 2 — Yisan V2."},
-  "Hope Tender":           { type:"creature", cmc:2, tags:["human","untap-lands","exert"], devotion:1, role:"untap-combo", note:"{1},{T}: Untap target land. {1},{T}, Exert: Untap two target lands (Hope Tender won't untap during your next untap step). Does NOT tap for mana. Human subtype — Kogla's {1}{G} returns it to hand, resetting the exert restriction. Best loop: Hope Tender exert + Kogla bounce + big land (producing ≥5). Note: Wirewood Lodge only untaps Elves; Hope Tender is Human and cannot be targeted by Lodge."},
+  "Priest of Titania":     { type:"creature", cmc:2, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves" , greenPips:1},
+  "Elvish Archdruid":      { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","pump"], tapsFor:"elves" , greenPips:2},
+  "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , greenPips:3},
+  "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork","human"], tapsFor:"devotion" , greenPips:1},
+  "Fanatic of Rhonas":     { type:"creature", cmc:2, tags:["dork","big-dork"], tapsFor:"ferocious", role:"big-dork-combo", greenPips:1, note:"{T}: Add {G}. Ferocious — {T}: Add {G}{G}{G}{G} if you control a creature with power 4+. NOT an elf — Wirewood Lodge cannot untap it. Goes infinite with Ashaya+Quirion Ranger (nets {3}) or Ashaya+Scryb Ranger (nets {2}). CMC 2 — Yisan V2."},
+  "Hope Tender":           { type:"creature", cmc:2, tags:["human","untap-lands","exert"], role:"untap-combo", greenPips:1, note:"{1},{T}: Untap target land. {1},{T}, Exert: Untap two target lands (Hope Tender won't untap during your next untap step). Does NOT tap for mana. Human subtype — Kogla's {1}{G} returns it to hand, resetting the exert restriction. Best loop: Hope Tender exert + Kogla bounce + big land (producing ≥5). Note: Wirewood Lodge only untaps Elves; Hope Tender is Human and cannot be targeted by Lodge."},
   // COMBO PIECES
-  "Ashaya, Soul of the Wild": { type:"creature", cmc:5, tags:["combo","key","ashaya"], tapsFor:0 , devotion:2, greenPips:2},
-  "Temur Sabertooth":      { type:"creature", cmc:4, tags:["combo","sabertooth","bounce","protection"] , devotion:2, greenPips:2},
-  "Hyrax Tower Scout":     { type:"creature", cmc:3, tags:["combo","scout","untap","human"] , devotion:1, greenPips:1},
-  "Argothian Elder":       { type:"creature", cmc:4, tags:["combo","elf","untap-lands"] , devotion:1, greenPips:1},
-  "Wirewood Lodge":        { type:"land",    cmc:0, tags:["combo","land","untap-elf"] , devotion:0},
-  "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft"] , devotion:1, greenPips:1},
-  "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , devotion:3, greenPips:3},
-  "Eternal Witness":       { type:"creature", cmc:3, tags:["combo","human","recursion","etb"] , devotion:2, greenPips:2},
-  "Disciple of Freyalise": { type:"creature", cmc:6, tags:["combo","draw","sacrifice"] , devotion:3, greenPips:3},
-  "Glademuse":             { type:"creature", cmc:3, tags:["combo","draw","flash-draw"] , devotion:1, greenPips:1},
-  "Beast Whisperer":       { type:"creature", cmc:4, tags:["draw","engine"] , devotion:2, greenPips:1},
-  "Regal Force":           { type:"creature", cmc:7, tags:["draw","finisher","etb"] , devotion:3, greenPips:3},
-  "Duskwatch Recruiter":   { type:"creature", cmc:2, tags:["combo","tutor","draw"] , devotion:1, greenPips:1},
-  "Woodland Bellower":     { type:"creature", cmc:6, tags:["tutor","finisher","etb"] , devotion:2, greenPips:2},
+  "Ashaya, Soul of the Wild": { type:"creature", cmc:5, tags:["combo","key","ashaya"], tapsFor:0 , greenPips:2},
+  "Temur Sabertooth":      { type:"creature", cmc:4, tags:["combo","sabertooth","bounce","protection"] , greenPips:2},
+  "Hyrax Tower Scout":     { type:"creature", cmc:3, tags:["combo","scout","untap","human"] , greenPips:1},
+  "Argothian Elder":       { type:"creature", cmc:4, tags:["combo","elf","untap-lands"] , greenPips:1},
+  "Wirewood Lodge":        { type:"land",    cmc:0, tags:["combo","land","untap-elf"] },
+  "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft"] , greenPips:1},
+  "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , greenPips:3},
+  "Eternal Witness":       { type:"creature", cmc:3, tags:["combo","human","recursion","etb"] , greenPips:2},
+  "Disciple of Freyalise": { type:"creature", cmc:6, tags:["combo","draw","sacrifice"] , greenPips:3},
+  "Glademuse":             { type:"creature", cmc:3, tags:["combo","draw","flash-draw"] , greenPips:1},
+  "Beast Whisperer":       { type:"creature", cmc:4, tags:["draw","engine"] , greenPips:2},
+  "Regal Force":           { type:"creature", cmc:7, tags:["draw","finisher","etb"] , greenPips:3},
+  "Duskwatch Recruiter":   { type:"creature", cmc:2, tags:["combo","tutor","draw"] , greenPips:1},
+  "Woodland Bellower":     { type:"creature", cmc:6, tags:["tutor","finisher","etb"] , greenPips:2},
   // LANDS
-  "Gaea's Cradle":         { type:"land", cmc:0, tags:["land","combo","key","cradle"] , devotion:0},
-  "Nykthos, Shrine to Nyx":{ type:"land", cmc:0, tags:["land","combo","nykthos"] , devotion:0},
-  "Itlimoc, Cradle of the Sun": { type:"land", cmc:0, tags:["land","combo","itlimoc"] , devotion:0},
-  "Growing Rites of Itlimoc":   { type:"enchantment", cmc:3, tags:["land","combo","itlimoc","draw"] , devotion:1, transformsTo:"Itlimoc, Cradle of the Sun", greenPips:1},
-  "Deserted Temple":       { type:"land", cmc:0, tags:["land","combo","untap-land"] , devotion:0},
-  "Yavimaya, Cradle of Growth": { type:"land", cmc:0, tags:["land","combo","forestwalk","green-mana"] , devotion:0},
-  "Ancient Tomb":          { type:"land", cmc:0, tags:["land","fast-mana"] , devotion:0},
-  "Misty Rainforest":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
-  "Verdant Catacombs":     { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
-  "Windswept Heath":       { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
-  "Wooded Foothills":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] , devotion:0},
-  "Geier Reach Sanitarium":{ type:"land", cmc:0, tags:["land","combo","mill","sanitarium"] , devotion:0},
-  "Shifting Woodland":     { type:"land", cmc:0, tags:["land","utility","green-mana"] , devotion:0},
-  "Emergence Zone":        { type:"land", cmc:0, tags:["land","flash","utility"] , devotion:0},
-  "Talon Gates of Madara": { type:"land", cmc:0, tags:["land","utility"] , devotion:0},
-  "Boseiju, Who Endures":  { type:"land", cmc:0, tags:["land","removal","utility","green-mana"] , devotion:0},
-  "War Room":              { type:"land", cmc:0, tags:["land","draw"] , devotion:0},
-  "Urza's Cave":           { type:"land", cmc:0, tags:["land","tutor"] , devotion:0},
-  "Forest":                { type:"land", cmc:0, tags:["land","basic","forest"] , devotion:0},
+  "Gaea's Cradle":         { type:"land", cmc:0, tags:["land","combo","key","cradle"] },
+  "Nykthos, Shrine to Nyx":{ type:"land", cmc:0, tags:["land","combo","nykthos"] },
+  "Itlimoc, Cradle of the Sun": { type:"land", cmc:0, tags:["land","combo","itlimoc"] },
+  "Growing Rites of Itlimoc":   { type:"enchantment", cmc:3, tags:["land","combo","itlimoc","draw"] , transformsTo:"Itlimoc, Cradle of the Sun", greenPips:1},
+  "Deserted Temple":       { type:"land", cmc:0, tags:["land","combo","untap-land"] },
+  "Yavimaya, Cradle of Growth": { type:"land", cmc:0, tags:["land","combo","forestwalk","green-mana"] },
+  "Ancient Tomb":          { type:"land", cmc:0, tags:["land","fast-mana"] },
+  "Misty Rainforest":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
+  "Verdant Catacombs":     { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
+  "Windswept Heath":       { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
+  "Wooded Foothills":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
+  "Geier Reach Sanitarium":{ type:"land", cmc:0, tags:["land","combo","mill","sanitarium"] },
+  "Shifting Woodland":     { type:"land", cmc:0, tags:["land","utility","green-mana"] },
+  "Emergence Zone":        { type:"land", cmc:0, tags:["land","flash","utility"] },
+  "Talon Gates of Madara": { type:"land", cmc:0, tags:["land","utility"] },
+  "Boseiju, Who Endures":  { type:"land", cmc:0, tags:["land","removal","utility","green-mana"] },
+  "War Room":              { type:"land", cmc:0, tags:["land","draw"] },
+  "Urza's Cave":           { type:"land", cmc:0, tags:["land","tutor"] },
+  "Forest":                { type:"land", cmc:0, tags:["land","basic","forest"] },
   // ACCELERANTS
-  "Sol Ring":              { type:"artifact", cmc:1, tags:["rock","fast-mana"] , devotion:0, greenPips:0},
-  "Chrome Mox":            { type:"artifact", cmc:0, tags:["rock","fast-mana","mox"] , devotion:0, greenPips:0},
-  "Mox Diamond":           { type:"artifact", cmc:0, tags:["rock","fast-mana","mox"] , devotion:0, greenPips:0},
-  "Lotus Petal":           { type:"artifact", cmc:0, tags:["rock","fast-mana"] , devotion:0, greenPips:0},
-  "Utopia Sprawl":         { type:"enchantment", cmc:1, tags:["enchant-land","ramp","aura"] , devotion:1, greenPips:1},
-  "Wild Growth":           { type:"enchantment", cmc:1, tags:["enchant-land","ramp","aura"] , devotion:1, greenPips:1},
-  "Elvish Guidance":       { type:"enchantment", cmc:3, tags:["enchant-land","ramp","aura","elf-synergy"], devotion:1, role:"elf-mana", greenPips:1},
+  "Sol Ring":              { type:"artifact", cmc:1, tags:["rock","fast-mana"] , greenPips:0},
+  "Chrome Mox":            { type:"artifact", cmc:0, tags:["rock","fast-mana","mox"] , greenPips:0},
+  "Mox Diamond":           { type:"artifact", cmc:0, tags:["rock","fast-mana","mox"] , greenPips:0},
+  "Lotus Petal":           { type:"artifact", cmc:0, tags:["rock","fast-mana"] , greenPips:0},
+  "Utopia Sprawl":         { type:"enchantment", cmc:1, tags:["enchant-land","ramp","aura"] , greenPips:1},
+  "Wild Growth":           { type:"enchantment", cmc:1, tags:["enchant-land","ramp","aura"] , greenPips:1},
+  "Elvish Guidance":       { type:"enchantment", cmc:3, tags:["enchant-land","ramp","aura","elf-synergy"], role:"elf-mana", greenPips:1},
   // STAX / INTERACTION
-  "Collector Ouphe":       { type:"creature", cmc:2, tags:["stax","hate"] , devotion:1, greenPips:1},
-  "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax"] , devotion:1, role:"haste-protection", greenPips:1},
-  "Allosaurus Shepherd":   { type:"creature", cmc:1, tags:["protection","elf"] , devotion:1, greenPips:1},
-  "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , devotion:2, greenPips:2},
-  "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all"] , devotion:2, greenPips:2},
-  "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf"] , devotion:2, role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine.", greenPips:1},
+  "Collector Ouphe":       { type:"creature", cmc:2, tags:["stax","hate"] , greenPips:1},
+  "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax"] , role:"haste-protection", greenPips:1},
+  "Allosaurus Shepherd":   { type:"creature", cmc:1, tags:["protection","elf"] , greenPips:1},
+  "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , greenPips:2},
+  "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all"] , greenPips:2},
+  "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf"] , role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine.", greenPips:2},
   // TUTORS
-  "Worldly Tutor":         { type:"instant", cmc:1, tags:["tutor","instant"] , devotion:0, greenPips:1},
-  "Chord of Calling":      { type:"instant", cmc:3, tags:["tutor","instant","convoke"] , devotion:0, greenPips:3},
-  "Summoner's Pact":       { type:"instant", cmc:0, tags:["tutor","instant","free"] , devotion:0, greenPips:0},
-  "Shared Summons":        { type:"instant", cmc:5, tags:["tutor","instant","two-creatures"] , devotion:0, greenPips:2},
-  "Green Sun's Zenith":    { type:"sorcery", cmc:1, tags:["tutor","sorcery"] , devotion:0, greenPips:1},
-  "Natural Order":         { type:"sorcery", cmc:4, tags:["tutor","sorcery","sacrifice"] , devotion:0, greenPips:2},
-  "Eldritch Evolution":    { type:"sorcery", cmc:3, tags:["tutor","sorcery","sacrifice"] , devotion:0, greenPips:1},
-  "Fierce Empath":         { type:"creature", cmc:3, tags:["tutor","elf","etb"] , devotion:1, greenPips:1},
-  "Elvish Harbinger":      { type:"creature", cmc:3, tags:["tutor","elf","dork"] , devotion:1, greenPips:1},
-  "Fauna Shaman":          { type:"creature", cmc:2, tags:["tutor","elf","engine"] , devotion:1, greenPips:1},
-  "Survival of the Fittest":{ type:"enchantment", cmc:2, tags:["tutor","engine","survival"] , devotion:1, greenPips:1},
-  "Crop Rotation":         { type:"instant", cmc:1, tags:["tutor","land","instant"] , devotion:0, greenPips:1},
-  "Sylvan Scrying":        { type:"sorcery", cmc:2, tags:["tutor","land"] , devotion:0, greenPips:1},
-  "Archdruid's Charm":     { type:"instant", cmc:3, tags:["tutor","land","removal","instant"] , devotion:0, greenPips:1},
+  "Worldly Tutor":         { type:"instant", cmc:1, tags:["tutor","instant"] , greenPips:1},
+  "Chord of Calling":      { type:"instant", cmc:3, tags:["tutor","instant","convoke"] , greenPips:3},
+  "Summoner's Pact":       { type:"instant", cmc:0, tags:["tutor","instant","free"] , greenPips:0},
+  "Shared Summons":        { type:"instant", cmc:5, tags:["tutor","instant","two-creatures"] , greenPips:2},
+  "Green Sun's Zenith":    { type:"sorcery", cmc:1, tags:["tutor","sorcery"] , greenPips:1},
+  "Natural Order":         { type:"sorcery", cmc:4, tags:["tutor","sorcery","sacrifice"] , greenPips:2},
+  "Eldritch Evolution":    { type:"sorcery", cmc:3, tags:["tutor","sorcery","sacrifice"] , greenPips:2},
+  "Fierce Empath":         { type:"creature", cmc:3, tags:["tutor","elf","etb"] , greenPips:1},
+  "Elvish Harbinger":      { type:"creature", cmc:3, tags:["tutor","elf","dork"] , greenPips:1},
+  "Fauna Shaman":          { type:"creature", cmc:2, tags:["tutor","elf","engine"] , greenPips:1},
+  "Survival of the Fittest":{ type:"enchantment", cmc:2, tags:["tutor","engine","survival"] , greenPips:1},
+  "Crop Rotation":         { type:"instant", cmc:1, tags:["tutor","land","instant"] , greenPips:1},
+  "Sylvan Scrying":        { type:"sorcery", cmc:2, tags:["tutor","land"] , greenPips:1},
+  "Archdruid's Charm":     { type:"instant", cmc:3, tags:["tutor","land","removal","instant"] , greenPips:3},
   // INTERACTION / UTILITY
-  "Beast Within":          { type:"instant", cmc:3, tags:["removal","instant"] , devotion:0, greenPips:1},
-  "Force of Vigor":        { type:"instant", cmc:4, tags:["removal","instant","free"] , devotion:0, greenPips:2},
-  "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , devotion:2, greenPips:2},
-  "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , devotion:0, greenPips:1},
-  "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","split-second","untap","removal"] , devotion:0, greenPips:1},
-  "Nature's Rhythm":       { type:"sorcery", cmc:2, tags:["tutor","sorcery","harmonize"] , devotion:0, role:"creature-tutor", note:"Sorcery {X, greenPips:2}{G}{G}: search your library for a creature with MV ≤ X, put it onto the battlefield. Harmonize {X}{G}{G}{G}{G}: cast from graveyard (tap creatures to reduce generic cost by their power), then exile. Effectively two creature tutors — cast normally then Harmonize once from the graveyard."},
+  "Beast Within":          { type:"instant", cmc:3, tags:["removal","instant"] , greenPips:1},
+  "Force of Vigor":        { type:"instant", cmc:4, tags:["removal","instant","free"] , greenPips:2},
+  "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , greenPips:2},
+  "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , greenPips:1},
+  "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","split-second","untap","removal"] , greenPips:1},
+  "Nature's Rhythm":       { type:"sorcery", cmc:2, tags:["tutor","sorcery","harmonize"] , role:"creature-tutor", note:"Sorcery {X, greenPips:2}{G}{G}: search your library for a creature with MV ≤ X, put it onto the battlefield. Harmonize {X}{G}{G}{G}{G}: cast from graveyard (tap creatures to reduce generic cost by their power), then exile. Effectively two creature tutors — cast normally then Harmonize once from the graveyard."},
   // OTHER UTILITY
-  "Yisan, the Wanderer Bard": { type:"creature", cmc:3, tags:["tutor","engine","yisan"] , devotion:1, greenPips:1},
-  "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , devotion:1, greenPips:1},
-  "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , devotion:1, role:"ramp-combo", greenPips:1},
-  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , devotion:1, role:"haste-combo", greenPips:1},
-  "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land"] , devotion:2, greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
-  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor"] , devotion:1, greenPips:1},
-  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , devotion:1, greenPips:1},
-  "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling"] , devotion:1, greenPips:1},
-  "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection"] , devotion:1, role:"protection", note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
-  "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop"] , devotion:1, greenPips:1},
-  "Yeva, Nature's Herald": { type:"creature", cmc:4, tags:["commander","flash-enabler"] , devotion:2, greenPips:2},
+  "Yisan, the Wanderer Bard": { type:"creature", cmc:3, tags:["tutor","engine","yisan"] , greenPips:1},
+  "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , greenPips:1},
+  "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , role:"ramp-combo", greenPips:1},
+  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , role:"haste-combo", greenPips:1},
+  "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land"] , greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
+  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor"] , greenPips:1},
+  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , greenPips:1},
+  "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling"] , greenPips:1},
+  "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection"] , role:"protection", greenPips:1, note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
+  "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop"] , greenPips:1},
+  "Yeva, Nature's Herald": { type:"creature", cmc:4, tags:["commander","flash-enabler"] , greenPips:2},
 
   // ── VARIANT / SIDEBOARD CARDS ──────────────────────────────────────────
   // Mana dorks & big dorks
-  "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"dork-combo", greenPips:1},
-  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"elves", devotion:1, role:"big-dork-combo", greenPips:1},
-  "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork","human"], tapsFor:"power", devotion:2, role:"big-dork-combo", greenPips:1},
-  "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", devotion:1, role:"big-dork-combo", greenPips:1},
-  "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], devotion:2, role:"storm-engine", greenPips:2},
+  "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"elves", role:"dork-combo", greenPips:1},
+  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"elves", role:"big-dork-combo", greenPips:1},
+  "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork","human"], tapsFor:"power", role:"big-dork-combo", greenPips:2},
+  "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", role:"big-dork-combo", greenPips:1},
+  "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], role:"storm-engine", greenPips:2},
   // Untap & haste combo pieces
-  "Ley Weaver":            { type:"creature", cmc:4, tags:["combo","human","untap-lands"], devotion:1, role:"untap-combo", greenPips:1},
-  "Cloudstone Curio":      { type:"artifact", cmc:3, tags:["combo","bounce","sabertooth"], devotion:0, role:"bounce-combo", greenPips:0},
-  "Thousand-Year Elixir":  { type:"artifact", cmc:3, tags:["combo","haste","untap"], devotion:0, role:"haste-combo", greenPips:0},
-  "Concordant Crossroads": { type:"enchantment", cmc:1, tags:["combo","haste","enchantment"], devotion:1, role:"haste-enabler", greenPips:1},
-  "Surrak and Goreclaw":   { type:"creature", cmc:6, tags:["combo","haste","pump"], devotion:2, role:"haste-enabler", greenPips:2},
-  "Touch of Vitae":        { type:"instant", cmc:3, tags:["combo","haste","untap","instant"], devotion:0, role:"haste-combo", greenPips:1},
-  "Ulvenwald Oddity":      { type:"creature", cmc:4, tags:["combo","haste","mana-sink"], devotion:2, role:"haste-enabler", greenPips:1},
-  "Vitalize":              { type:"instant", cmc:1, tags:["combo","untap","storm","instant"], devotion:0, role:"storm-ritual", greenPips:1},
-  "Leyline of Abundance":  { type:"enchantment", cmc:4, tags:["combo","ramp","elf-synergy","enchantment"], devotion:2, role:"mana-boost", greenPips:2},
-  "Great Oak Guardian":    { type:"creature", cmc:6, tags:["combo","flash","pump","untap"], devotion:2, role:"flash-combo", greenPips:2},
-  "Genesis Hydra":         { type:"creature", cmc:2, tags:["combo","outlet","etb"], devotion:1, role:"infinite-outlet", greenPips:1},
-  "Agatha's Soul Cauldron":{ type:"artifact", cmc:2, tags:["combo","graveyard","recursion"], devotion:0, role:"graveyard-engine"},
-  "Beastrider Vanguard":   { type:"creature", cmc:2, tags:["combo","outlet","mana-sink"], devotion:1, role:"infinite-outlet", greenPips:1},
-  "Lotus Cobra":           { type:"creature", cmc:2, tags:["combo","landfall","ramp"], devotion:1, role:"ramp-combo", greenPips:1},
-  "Nissa, Resurgent Animist": { type:"creature", cmc:3, tags:["combo","elf","landfall","tutor"], devotion:1, role:"ramp-combo", greenPips:1},
+  "Ley Weaver":            { type:"creature", cmc:4, tags:["combo","human","untap-lands"], role:"untap-combo", greenPips:1},
+  "Cloudstone Curio":      { type:"artifact", cmc:3, tags:["combo","bounce","sabertooth"], role:"bounce-combo", greenPips:0},
+  "Thousand-Year Elixir":  { type:"artifact", cmc:3, tags:["combo","haste","untap"], role:"haste-combo", greenPips:0},
+  "Concordant Crossroads": { type:"enchantment", cmc:1, tags:["combo","haste","enchantment"], role:"haste-enabler", greenPips:1},
+  "Surrak and Goreclaw":   { type:"creature", cmc:6, tags:["combo","haste","pump"], role:"haste-enabler", greenPips:2},
+  "Touch of Vitae":        { type:"instant", cmc:3, tags:["combo","haste","untap","instant"], role:"haste-combo", greenPips:1},
+  "Ulvenwald Oddity":      { type:"creature", cmc:4, tags:["combo","haste","mana-sink"], role:"haste-enabler", greenPips:2},
+  "Vitalize":              { type:"instant", cmc:1, tags:["combo","untap","storm","instant"], role:"storm-ritual", greenPips:1},
+  "Leyline of Abundance":  { type:"enchantment", cmc:4, tags:["combo","ramp","elf-synergy","enchantment"], role:"mana-boost", greenPips:2},
+  "Great Oak Guardian":    { type:"creature", cmc:6, tags:["combo","flash","pump","untap"], role:"flash-combo", greenPips:1},
+  "Genesis Hydra":         { type:"creature", cmc:2, tags:["combo","outlet","etb"], role:"infinite-outlet", greenPips:2},
+  "Agatha's Soul Cauldron":{ type:"artifact", cmc:2, tags:["combo","graveyard","recursion"], role:"graveyard-engine"},
+  "Beastrider Vanguard":   { type:"creature", cmc:2, tags:["combo","outlet","mana-sink"], role:"infinite-outlet", greenPips:1},
+  "Lotus Cobra":           { type:"creature", cmc:2, tags:["combo","landfall","ramp"], role:"ramp-combo", greenPips:1},
+  "Nissa, Resurgent Animist": { type:"creature", cmc:3, tags:["combo","elf","landfall","tutor"], role:"ramp-combo", greenPips:1},
   // Tutors
-  "Finale of Devastation": { type:"sorcery", cmc:2, tags:["tutor","finisher","sorcery"], devotion:0, role:"tutor-finisher"},
-  "Invasion of Ikoria":    { type:"battle", cmc:2, tags:["tutor","recursion"], devotion:0, role:"tutor", greenPips:2},
-  "Skyshroud Poacher":     { type:"creature", cmc:4, tags:["tutor","elf","engine"], devotion:2, role:"elf-tutor", greenPips:2},
-  "Treefolk Harbinger":    { type:"creature", cmc:1, tags:["tutor","treefolk","1drop"], devotion:1, role:"tutor"},
-  "Lignify":               { type:"enchantment", cmc:2, tags:["removal","aura","treefolk"], devotion:1, role:"removal"},
+  "Finale of Devastation": { type:"sorcery", cmc:2, tags:["tutor","finisher","sorcery"], role:"tutor-finisher", greenPips:2},
+  "Invasion of Ikoria":    { type:"battle", cmc:2, tags:["tutor","recursion"], role:"tutor", greenPips:2},
+  "Skyshroud Poacher":     { type:"creature", cmc:4, tags:["tutor","elf","engine"], role:"elf-tutor", greenPips:2},
+  "Treefolk Harbinger":    { type:"creature", cmc:1, tags:["tutor","treefolk","1drop"], role:"tutor", greenPips:1},
+  "Lignify":               { type:"enchantment", cmc:2, tags:["removal","aura","treefolk"], role:"removal", greenPips:1},
   // Ramp & utility lands
-  "Carpet of Flowers":     { type:"enchantment", cmc:1, tags:["ramp","enchantment","meta"], devotion:1, role:"meta-ramp"},
-  "Castle Garenbrig":      { type:"land", cmc:0, tags:["land","ramp","combo","green-mana"], devotion:0},
-  "Bonders' Enclave":      { type:"land", cmc:0, tags:["land","draw","utility"], devotion:0},
-  "Bridgeworks Battle":    { type:"sorcery", cmc:3, tags:["removal","sorcery","fight"], devotion:0, role:"removal"},
-  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], devotion:0, note:"{T}: Add {1}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
-  "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"], devotion:0},
-  "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"], devotion:0},
-  "Turntimber Symbiosis":  { type:"land", cmc:0, tags:["land","utility","forest"], devotion:0},
-  "Emerald Medallion":     { type:"artifact", cmc:2, tags:["ramp","cost-reducer"], devotion:0, role:"cost-reducer"},
-  "Nylea, Keen-Eyed":      { type:"creature", cmc:5, tags:["combo","mana-sink","cost-reducer"], devotion:4, role:"storm-engine"},
+  "Carpet of Flowers":     { type:"enchantment", cmc:1, tags:["ramp","enchantment","meta"], role:"meta-ramp", greenPips:1},
+  "Castle Garenbrig":      { type:"land", cmc:0, tags:["land","ramp","combo","green-mana"]},
+  "Bonders' Enclave":      { type:"land", cmc:0, tags:["land","draw","utility"]},
+  "Bridgeworks Battle":    { type:"sorcery", cmc:3, tags:["removal","sorcery","fight"], role:"removal", greenPips:1},
+  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], note:"{T}: Add {1}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
+  "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"]},
+  "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"]},
+  "Turntimber Symbiosis":  { type:"land", cmc:0, tags:["land","utility","forest"], greenPips:3, note:"Land side: enters tapped as Forest. Spell side {4}{G}{G}{G} (CMC 7): look at top 7, put a creature with CMC ≤ 3 onto battlefield with 3 extra +1/+1 counters. greenPips:3 reflects spell side for Defiler cost reduction."},
+  "Emerald Medallion":     { type:"artifact", cmc:2, tags:["ramp","cost-reducer"], role:"cost-reducer"},
+  "Nylea, Keen-Eyed":      { type:"creature", cmc:4, tags:["combo","mana-sink","cost-reducer"], role:"storm-engine", greenPips:1},
   // Draw engines
-  "Sylvan Library":        { type:"enchantment", cmc:2, tags:["draw","engine","enchantment"], devotion:1, role:"draw-engine"},
-  "Guardian Project":      { type:"enchantment", cmc:4, tags:["draw","engine","enchantment"], devotion:1, role:"draw-engine"},
-  "Runic Armasaur":        { type:"creature", cmc:3, tags:["draw","engine","meta"], devotion:2, role:"draw-engine", greenPips:2},
-  "Compost":               { type:"enchantment", cmc:2, tags:["draw","engine","meta","enchantment"], devotion:1, role:"meta-draw"},
-  "Viridian Revel":        { type:"enchantment", cmc:3, tags:["draw","engine","meta","enchantment"], devotion:2, role:"meta-draw", greenPips:2},
+  "Sylvan Library":        { type:"enchantment", cmc:2, tags:["draw","engine","enchantment"], role:"draw-engine", greenPips:1},
+  "Guardian Project":      { type:"enchantment", cmc:4, tags:["draw","engine","enchantment"], role:"draw-engine", greenPips:1},
+  "Runic Armasaur":        { type:"creature", cmc:3, tags:["draw","engine","meta"], role:"draw-engine", greenPips:2},
+  "Compost":               { type:"enchantment", cmc:2, tags:["draw","engine","meta","enchantment"], role:"meta-draw", greenPips:1},
+  "Viridian Revel":        { type:"enchantment", cmc:3, tags:["draw","engine","meta","enchantment"], role:"meta-draw", greenPips:2},
   // Interaction & removal
-  "Reclamation Sage":      { type:"creature", cmc:3, tags:["removal","elf","etb"], devotion:1, role:"removal"},
-  "Outland Liberator":     { type:"creature", cmc:2, tags:["removal","werewolf"], devotion:1, role:"removal"},
-  "Manglehorn":            { type:"creature", cmc:3, tags:["removal","stax","hate"], devotion:1, role:"removal"},
-  "Nature's Claim":        { type:"instant", cmc:1, tags:["removal","instant"], devotion:0, role:"removal"},
-  "Ram Through":           { type:"instant", cmc:2, tags:["removal","instant","trample"], devotion:0, role:"removal"},
-  "Tail Swipe":            { type:"instant", cmc:1, tags:["removal","instant"], devotion:0, role:"removal", greenPips:1},
-  "Bouncer's Beatdown":    { type:"instant", cmc:3, tags:["removal","instant","meta"], devotion:0, role:"removal"},
-  "Kenrith's Transformation": { type:"enchantment", cmc:2, tags:["removal","aura","draw"], devotion:1, role:"removal"},
-  "King of the Coldblood Curse": { type:"creature", cmc:4, tags:["removal","etb","commander-hate"], devotion:2, role:"removal"},
-  "Insidious Fungus":      { type:"creature", cmc:1, tags:["removal","utility","fungus"], devotion:1, role:"removal", note:"{2}, Sacrifice: Choose — destroy target artifact; OR destroy target enchantment; OR draw a card and put a land from hand onto battlefield tapped. CMC 1 ({G}). NOT a land-destroyer on ETB."},
-  "Saryth, the Viper's Fang": { type:"creature", cmc:4, tags:["protection","untap","dork"], devotion:2, role:"protection"},
-  "Skullwinder":           { type:"creature", cmc:3, tags:["recursion","etb","snake","politics"], devotion:1, role:"recursion"},
-  "Noxious Revival":       { type:"instant", cmc:0, tags:["recursion","graveyard","instant","free"], devotion:0, role:"recursion"},
-  "Emerald Charm":         { type:"instant", cmc:1, tags:["utility","untap","removal","instant"], devotion:0, role:"ritual"},
-  "Warping Wail":          { type:"instant", cmc:2, tags:["utility","counter","removal","instant"], devotion:0, role:"interaction"},
-  "Scavenging Ooze":       { type:"creature", cmc:2, tags:["hate","graveyard"], devotion:1, role:"hate"},
-  "Autumn's Veil":         { type:"instant", cmc:1, tags:["protection","instant","meta"], devotion:0, role:"protection"},
-  "Veil of Summer":        { type:"instant", cmc:1, tags:["protection","instant","draw"], devotion:0, role:"protection"},
+  "Reclamation Sage":      { type:"creature", cmc:3, tags:["removal","elf","etb"], role:"removal", greenPips:1},
+  "Outland Liberator":     { type:"creature", cmc:2, tags:["removal","werewolf"], role:"removal", greenPips:1},
+  "Manglehorn":            { type:"creature", cmc:3, tags:["removal","stax","hate"], role:"removal", greenPips:1},
+  "Nature's Claim":        { type:"instant", cmc:1, tags:["removal","instant"], role:"removal", greenPips:1},
+  "Ram Through":           { type:"instant", cmc:2, tags:["removal","instant","trample"], role:"removal", greenPips:1},
+  "Tail Swipe":            { type:"instant", cmc:1, tags:["removal","instant"], role:"removal", greenPips:1},
+  "Bouncer's Beatdown":    { type:"instant", cmc:3, tags:["removal","instant","meta"], role:"removal", greenPips:1},
+  "Kenrith's Transformation": { type:"enchantment", cmc:2, tags:["removal","aura","draw"], role:"removal", greenPips:1},
+  "King of the Coldblood Curse": { type:"creature", cmc:4, tags:["removal","etb","commander-hate"], role:"removal", greenPips:2},
+  "Insidious Fungus":      { type:"creature", cmc:1, tags:["removal","utility","fungus"], role:"removal", greenPips:1, note:"{2}, Sacrifice: Choose — destroy target artifact; OR destroy target enchantment; OR draw a card and put a land from hand onto battlefield tapped. CMC 1 ({G}). NOT a land-destroyer on ETB."},
+  "Saryth, the Viper's Fang": { type:"creature", cmc:4, tags:["protection","untap","dork"], role:"protection", greenPips:2},
+  "Skullwinder":           { type:"creature", cmc:3, tags:["recursion","etb","snake","politics"], role:"recursion", greenPips:1},
+  "Noxious Revival":       { type:"instant", cmc:1, tags:["recursion","graveyard","instant","free"], role:"recursion", greenPips:1},
+  "Emerald Charm":         { type:"instant", cmc:1, tags:["utility","untap","removal","instant"], role:"ritual", greenPips:1},
+  "Warping Wail":          { type:"instant", cmc:2, tags:["utility","counter","removal","instant"], role:"interaction"},
+  "Scavenging Ooze":       { type:"creature", cmc:2, tags:["hate","graveyard"], role:"hate", greenPips:1},
+  "Autumn's Veil":         { type:"instant", cmc:1, tags:["protection","instant","meta"], role:"protection", greenPips:1},
+  "Veil of Summer":        { type:"instant", cmc:1, tags:["protection","instant","draw"], role:"protection", greenPips:1},
   // Stax
-  "Root Maze":             { type:"enchantment", cmc:2, tags:["stax","enchantment"], devotion:1, role:"stax"},
-  "Orb of Dreams":         { type:"artifact", cmc:3, tags:["stax"], devotion:0, role:"stax"},
-  "Null Rod":              { type:"artifact", cmc:2, tags:["stax","hate"], devotion:0, role:"stax"},
-  "Thorn of Amethyst":     { type:"artifact", cmc:2, tags:["stax","tax"], devotion:0, role:"stax"},
-  "Trinisphere":           { type:"artifact", cmc:3, tags:["stax"], devotion:0, role:"stax"},
-  "Titania's Song":        { type:"enchantment", cmc:4, tags:["stax","hate","enchantment"], devotion:1, role:"stax"},
-  "Vexing Bauble":         { type:"artifact", cmc:1, tags:["stax","hate","free"], devotion:0, role:"stax"},
-  "The Cabbage Merchant":  { type:"creature", cmc:3, tags:["stax","storm-hate"], devotion:1, role:"stax"},
+  "Root Maze":             { type:"enchantment", cmc:1, tags:["stax","enchantment"], role:"stax", greenPips:1},
+  "Orb of Dreams":         { type:"artifact", cmc:3, tags:["stax"], role:"stax"},
+  "Null Rod":              { type:"artifact", cmc:2, tags:["stax","hate"], role:"stax"},
+  "Thorn of Amethyst":     { type:"artifact", cmc:2, tags:["stax","tax"], role:"stax"},
+  "Trinisphere":           { type:"artifact", cmc:3, tags:["stax"], role:"stax"},
+  "Titania's Song":        { type:"enchantment", cmc:4, tags:["stax","hate","enchantment"], role:"stax", greenPips:1},
+  "Vexing Bauble":         { type:"artifact", cmc:1, tags:["stax","hate","free"], role:"stax"},
+  "The Cabbage Merchant":  { type:"creature", cmc:3, tags:["stax","storm-hate"], role:"stax", greenPips:1},
 };
 
 const ALL_CARD_NAMES = Object.keys(CARDS).sort();
@@ -568,7 +568,7 @@ const COMBOS = [
     id: "draw_loop_neutral",
     name: "Mana-Neutral Draw Loop (Ashaya + Ranger + 1-Drop Dork + Draw Engine)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
-    description: "Ashaya + Quirion Ranger + any 1-mana dork loops infinitely but nets 0 mana. Beast Whisperer draws on every creature cast (any turn). Glademuse draws only off-turn. Drawing your library converts to infinite mana via Tireless Provisioner or Elvish Spirit Guide. This is a library-draw engine -- you need a conversion piece to win.",
+    description: "Ashaya + Quirion Ranger + any 1-mana dork loops infinitely but nets 0 mana. Beast Whisperer draws on every creature cast (any turn). Glademuse draws only off-turn — it triggers when YOU cast a spell on an opponent's turn, drawing YOU a card (Glademuse does not draw your opponents). Drawing your library converts to infinite mana via Tireless Provisioner or Elvish Spirit Guide. This is a library-draw engine -- you need a conversion piece to win.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsDrawEngine: true,
     needsOneDrop: true,
@@ -577,7 +577,7 @@ const COMBOS = [
     type: "win-draw",
     lines: [
       "Ashaya + Quirion Ranger + any 1-mana dork + Beast Whisperer or Glademuse on battlefield.",
-      "TIMING: Beast Whisperer triggers on any turn (cast a creature = draw). Glademuse only triggers off-turn.",
+      "TIMING: Beast Whisperer triggers on any turn (cast a creature = you draw). Glademuse triggers only off-turn — when you cast a spell on an opponent's turn, YOU draw (not opponents).",
       "Tap the 1-mana dork for {G}. Cast Quirion Ranger for {G} -- trigger draw engine (draw 1 card).",
       "Bounce Quirion Ranger to untap the dork. Loop is mana-neutral but draws 1 card per iteration.",
       "Draw your entire library at zero net mana cost.",
@@ -762,13 +762,13 @@ const COMBOS = [
     id: "glademuse_draw",
     name: "Ashaya + Quirion Ranger + Glademuse (Draw Library, Instant Speed)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger", "Glademuse"],
-    description: "On an opponent's turn with Yeva flash active: each Quirion Ranger cast triggers Glademuse (you cast a spell off-turn → you draw). The mana-neutral loop now draws your entire library. Then find Tireless Provisioner to generate Treasures each loop → infinite mana.",
+    description: "On an opponent's turn with Yeva flash active: each Quirion Ranger cast triggers Glademuse (you cast a spell off-turn → YOU draw a card, not your opponents). The mana-neutral loop now draws your entire library. Then find Tireless Provisioner to generate Treasures each loop → infinite mana.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger", "Glademuse"],
     priority: 9,
     type: "win-draw",
     lines: [
       "Ashaya + Glademuse on battlefield. It is an opponent's turn (Yeva flash active).",
-      "Cast Quirion Ranger ({G}) — it's not your turn, so Glademuse triggers: you draw a card.",
+      "Cast Quirion Ranger ({G}) — it's not your turn, so Glademuse triggers: YOU draw a card (Glademuse draws only the caster of the off-turn spell).",
       "Tap Quirion Ranger as a Forest for {G}. Activate its ability: return itself to hand, untap any dork.",
       "Recast Ranger for {G} → draw again. Loop is mana-neutral but draws 1 card per iteration.",
       "Draw entire library. Find Tireless Provisioner — each Ranger ETB = Forest ETB (Ashaya) = Treasure → net mana.",
@@ -1691,7 +1691,7 @@ function buildBoardContext(battlefield, sickSet = null, attachments = null) {
     : creatures;
   const elves         = creatures.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creatureCount = creatures.length;
-  const devotion      = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
+  const devotion      = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
   // Ferocious: true if any creature on board has power 4 or greater.
   // We track this via explicit "power4" tag or by checking known big creatures.
   // Fanatic of Rhonas itself is power 3 — it does NOT enable its own ferocious.
@@ -1975,7 +1975,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
   const dorksOnBoard    = battlefield.filter(c => getCard(c)?.tags?.includes("dork")).length;
   // Exact green devotion: sum of devotion field for every permanent on the battlefield
-  const devotionOnBoard = battlefield.reduce((sum, c) => sum + (getCard(c)?.devotion ?? 0), 0);
+  const devotionOnBoard = battlefield.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
 
   // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
   const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || accessible("Temur Sabertooth") || accessible("Kogla, the Titan Ape");
@@ -2549,7 +2549,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         projectedOutput = cCount;
         tapDesc = `${cCount} creature${cCount !== 1 ? "s" : ""} on board → taps for ${cCount}{G} next turn`;
       } else if (cd.tapsFor === "devotion") {
-        const devCount = devotionOnBoard + (cd.devotion ?? 1);
+        const devCount = devotionOnBoard + (cd.greenPips ?? 1);
         projectedOutput = devCount;
         tapDesc = `${devCount} green devotion → taps for ${devCount}{G} next turn`;
       } else {
@@ -3133,7 +3133,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (typeof t === "number" && t >= 2) return t;
       if (t === "elves")     return elvesOnBoard;          // Witness is NOT an elf
       if (t === "creatures") return creaturesOnBoard + 1;  // +1 for Witness (any creature)
-      if (t === "devotion")  return devotionOnBoard + (getCard(c)?.devotion ?? 0); // Witness devotion 1
+      if (t === "devotion")  return devotionOnBoard + (getCard(c)?.greenPips ?? 0); // Witness devotion 1
     }
     return 0;
   })();
@@ -5580,7 +5580,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const missingCard = missing[0];
         const missingData = getCard(missingCard);
         const missingCmc = missingData?.cmc ?? 0;
-        const missingPips = missingData?.greenPips ?? Math.min(missingCmc, missingData?.devotion ?? 0);
+        const missingPips = missingData?.greenPips ?? 0;
         // Suppress if we couldn't afford to cast the missing piece even if we had it now.
         const canAffordMissing = infiniteManaActive || missingCmc === 0 || mana >= missingCmc;
         if (!canAffordMissing) {
@@ -6580,7 +6580,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if ((board.has("Regal Force") || (inHand.has("Regal Force") && canCastNow))
       && board.has("Temur Sabertooth")
       && infiniteManaActive) {
-    const gCreatures = battlefield.filter(c => getCard(c)?.type === "creature" && (getCard(c)?.devotion ?? 0) >= 1).length;
+    const gCreatures = battlefield.filter(c => getCard(c)?.type === "creature" && (getCard(c)?.greenPips ?? 0) >= 1).length;
     if (!results.some(r => r.combo === "regal_force_draw")) {
       results.push({
         priority: 12,
@@ -8058,7 +8058,7 @@ function validateCardEntry(entry, name) {
         entry.tapsFor = 1;
       }
     }
-    if (typeof entry.devotion !== "number" || isNaN(entry.devotion)) entry.devotion = 0;
+    if (typeof entry.greenPips !== "number" || isNaN(entry.greenPips)) entry.greenPips = 0;
     return entry;
   } catch (e) {
     console.warn(`[Yeva] validateCardEntry failed for "${name}":`, e.message);
@@ -11005,7 +11005,7 @@ function simCanCast(card, manaPool, battlefield = []) {
   const data = getCard(card);
   if (!data) return false;
   const cmc = data.cmc ?? 0;
-  const pips = data.greenPips ?? (data.type !== "land" ? Math.min(cmc, data.devotion ?? 0) : 0);
+  const pips = data.greenPips ?? (data.type !== "land" ? Math.min(cmc, data.greenPips ?? 0) : 0);
   // Green Sun's Zenith: {X}{G}. cmc in DB is 1 (the {G}). Require total >= 2 so X >= 1
   // (X=0 only fetches Dryad Arbor which is rarely worth it).
   if (card === "Green Sun's Zenith") {
@@ -11321,7 +11321,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
             const data = getCard(req);
             if (!data || data.type === "land") continue;
             const cmc = data.cmc ?? 0;
-            const pips = data.greenPips ?? Math.min(cmc, data.devotion ?? 0);
+            const pips = data.greenPips ?? Math.min(cmc, data.greenPips ?? 0);
             if (remainingGreen < pips || (remainingGreen + remainingColorless) < cmc) {
               winValid = false; break;
             }
@@ -11683,7 +11683,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       if (!spTarget) spTarget = library.find(c => {
         const cd = getCard(c);
         return cd?.type === "creature" && !boardSetSP.has(c) &&
-          (cd.tags?.includes("elf") || cd.greenPips > 0 || (cd.devotion ?? 0) > 0);
+          (cd.tags?.includes("elf") || cd.greenPips > 0 || (cd.greenPips ?? 0) > 0);
       }) ?? null;
       if (spTarget) {
         library.splice(library.indexOf(spTarget), 1);
@@ -11876,7 +11876,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       const imprintable = hand.reduce((acc, c, i) => {
         const cd = getCard(c);
         if (!cd || cd.type === "land") return acc;
-        if ((cd.greenPips ?? 0) < 1 && (cd.devotion ?? 0) < 1) return acc; // not green
+        if ((cd.greenPips ?? 0) < 1 && (cd.greenPips ?? 0) < 1) return acc; // not green
         // Never imprint 1-drop dorks — they're too valuable
         if (cd.tags?.includes("dork") && (cd.cmc ?? 0) === 1) return acc;
         acc.push({ c, i, cmc: cd.cmc ?? 0 });
@@ -12018,7 +12018,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       // Count green creatures already on battlefield (Regal Force itself just entered, already pushed above).
       const greenCreatureCount = battlefield.filter(c => {
         const cd = getCard(c);
-        return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.devotion ?? 0) > 0);
+        return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.greenPips ?? 0) > 0);
       }).length;
       const draws = Math.max(1, greenCreatureCount); // draw at least 1
       for (let d = 0; d < draws && library.length > 0; d++) {
@@ -13011,6 +13011,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor / Survival mode
   const [tutorLandsOnly,     setTutorLandsOnly]     = useState(false); // Sylvan Scrying mode
   const [tutorTreefolk,      setTutorTreefolk]      = useState(false); // Treefolk Harbinger mode
+  const [tutorElvesOnly,     setTutorElvesOnly]     = useState(false); // Elvish Harbinger mode
   const [tutorNonLegendary,  setTutorNonLegendary]  = useState(false); // Woodland Bellower mode
   const [tutorFromGraveyard, setTutorFromGraveyard] = useState(false); // Finale of Devastation — search graveyard instead
   const [tutorOnSelect, setTutorOnSelect] = useState(null); // callback after selection (for GSZ shuffle)
@@ -13877,7 +13878,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           .filter(({ c }) => {
             const cd = getCard(c);
             if (cd?.type !== "creature") return false;
-            if (isNO && (cd.greenPips ?? 0) === 0 && (cd.devotion ?? 0) === 0) return false;
+            if (isNO && (cd.greenPips ?? 0) === 0 && (cd.greenPips ?? 0) === 0) return false;
             return true;
           });
         if (sacrificeTargets.length === 0) {
@@ -14120,6 +14121,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           ],
           onSelect: ({ key: mode }) => {
             if (mode === "tutor") {
+              // Reset ALL tutor flags — Archdruid's Charm finds creature OR land (mode 1)
+              setTutorCreaturesOnly(false);
+              setTutorLandsOnly(false);
+              setTutorTreefolk(false);
+              setTutorElvesOnly(false);
+              setTutorNonLegendary(false);
+              setTutorMinCmc(null);
+              setTutorMaxCmc(null);
+              setTutorFromGraveyard(false);
               setTutorOnSelect(() => (chosen) => {
                 setLibrary(prev => { const i = prev.indexOf(chosen); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
                 setHand(prev => [...prev, chosen]);
@@ -14293,7 +14303,33 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         addLog(`Treefolk Harbinger ETB — search for a Treefolk or Forest card.`, COLORS.purple);
       }
 
-      // ── Eternal Witness: return any card from graveyard to hand ──
+      // ── Elvish Harbinger: ETB puts any Elf card on top of library ──
+      if (card === "Elvish Harbinger") {
+        setTutorElvesOnly(true);
+        setTutorCreaturesOnly(false);
+        setTutorLandsOnly(false);
+        setTutorTreefolk(false);
+        setTutorNonLegendary(false);
+        setTutorMinCmc(null);
+        setTutorMaxCmc(null);
+        setTutorFromGraveyard(false);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen);
+            if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let i = without.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [without[i], without[j]] = [without[j], without[i]];
+            }
+            return [chosen, ...without]; // chosen goes on top
+          });
+          addLog(`Elvish Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("elf");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Elvish Harbinger ETB — search for any Elf card → top of library.`, COLORS.green2);
+      }
       if (card === "Eternal Witness") {
         if (graveyard.length > 0) {
           setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "ETERNAL WITNESS — RETURN A CARD FROM GRAVEYARD TO HAND" });
@@ -14406,7 +14442,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         // Count green creatures (devotion > 0 or greenPips > 0) on battlefield including Regal Force itself
         const greenCreatures = battlefield.filter(c => {
           const cd = getCard(c);
-          return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.devotion ?? 0) > 0);
+          return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.greenPips ?? 0) > 0);
         }).length;
         const drawCount = greenCreatures; // Regal Force itself was just added and has greenPips:3
         if (drawCount > 0 && library.length >= drawCount) {
@@ -14524,7 +14560,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     if (tutorOnSelect) {
       // GSZ mode: callback handles where the card goes
       tutorOnSelect(card);
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
       return;
     }
     const idx = library.indexOf(card);
@@ -14538,7 +14574,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       return without;
     });
     setHand(prev => [...prev, card]);
-    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
+    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
     addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
   }
 
@@ -15842,7 +15878,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         {/* ── Nykthos, Shrine to Nyx: {2} tap — add mana equal to devotion to green ── */}
         {isBF && card === "Nykthos, Shrine to Nyx" && (() => {
           const cost = 2;
-          const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
+          const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
           const netMana = Math.max(0, devotion - cost); // net after paying {2}
           if (isCardTapped || manaPool < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -17020,7 +17056,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       if (e.key === "m" || e.key === "M") { e.preventDefault(); tapAllMana(); }
       if (e.key === "Escape") {
         const anyOpen = showUntapModal || showTutor || showScry || contextMenu;
-        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
+        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -17107,6 +17143,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const isCreature    = tutorCreaturesOnly && !isGSZ && !isBellower && !isFierceEmpath;
     const isLand        = tutorLandsOnly;
     const isTreefolk    = tutorTreefolk;
+    const isElf         = tutorElvesOnly;
     const isFinale      = tutorFromGraveyard;
     const q = tutorQuery.toLowerCase();
 
@@ -17125,6 +17162,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       if (isCreature)    return d?.type === "creature" && (tutorMaxCmc === null || (d?.cmc ?? 99) <= tutorMaxCmc);
       if (isLand)        return d?.type === "land";
       if (isTreefolk)    return d?.tags?.includes("treefolk") || d?.tags?.includes("forest") || d?.tags?.includes("basic");
+      if (isElf)         return d?.tags?.includes("elf");
       return true;
     };
 
@@ -17161,6 +17199,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       : isCreature ? `CREATURE TUTOR \u2014 LIBRARY (${pool.length} cards)`
       : isLand     ? `LAND TUTOR \u2014 LIBRARY (${pool.length} cards)`
       : isTreefolk ? `TREEFOLK HARBINGER \u2014 TREEFOLK OR FOREST (${pool.length} cards)`
+      : isElf      ? `ELVISH HARBINGER \u2014 ELF CARDS (${pool.length} cards)`
       :              `TUTOR \u2014 LIBRARY (${pool.length} cards)`;
 
     const hint = isBellower      ? "NON-LEGENDARY CREATURES CMC ≤ 3"
@@ -17170,6 +17209,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       : isCreature               ? "CREATURES IN LIBRARY"
       : isLand                   ? "LANDS IN LIBRARY"
       : isTreefolk               ? "TREEFOLK & FORESTS IN LIBRARY"
+      : isElf                    ? "ELF CARDS IN LIBRARY"
       : null;
 
     const emptyMsg = isBellower  ? "No non-legendary creatures with CMC ≤ 3 in library."
@@ -17179,6 +17219,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       : isCreature               ? "No creatures in library."
       : isLand                   ? "No lands in library."
       : isTreefolk               ? "No Treefolk or Forest cards in library."
+      : isElf                    ? "No Elf cards in library."
       :                            "No matches in library.";
 
     const placeholder = isGSZ          ? `Search creatures (CMC ≤ ${tutorMaxCmc})...`
@@ -17187,11 +17228,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       : isCreature                      ? "Search creatures..."
       : isLand                          ? "Search lands..."
       : isTreefolk                      ? "Search Treefolk or Forests..."
+      : isElf                           ? "Search Elves..."
       :                                   "Type card name...";
 
     const closeTutor = () => {
       setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null);
-      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
+      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
     };
 
     return (
@@ -17275,7 +17317,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         .filter(({ c }) => {
           const cd = getCard(c);
           if (cd?.type !== "creature") return false;
-          if (isNO && (cd.greenPips ?? 0) === 0 && (cd.devotion ?? 0) === 0) return false;
+          if (isNO && (cd.greenPips ?? 0) === 0 && (cd.greenPips ?? 0) === 0) return false;
           return true;
         });
       const confirmSacrifice = (sacCard, sacIdx) => {
@@ -18030,7 +18072,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 {(() => {
                   const elves = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
                   const dorks = battlefield.filter(c => getCard(c)?.tags?.includes("dork")).length;
-                  const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.devotion ?? 0), 0);
+                  const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
                   const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
                   const comboPieces = [...hand, ...battlefield].filter(c =>
                     getCard(c)?.tags?.some(t => ["ashaya","earthcraft","quirion","wirewood","duskwatch"].includes(t))
@@ -19820,7 +19862,7 @@ function YevaAdvisor() {
 
   const elvesOnBoard     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
-  const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (getCard(c)?.devotion ?? 0), 0);
+  const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
 
   return (
     <>
