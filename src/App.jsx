@@ -15595,8 +15595,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             </div>
           );
         })()}
-          );
-        })()}
 
         {/* ── Eladamri, Korvecdal: {G},{T}, tap two untapped creatures → put creature from top of library onto battlefield ── */}
         {isBF && card === "Eladamri, Korvecdal" && (() => {
@@ -15691,7 +15689,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           );
         })()}
 
-        {/* ── Geier Reach Sanitarium: {2},{T} — each player draws then discards ── */}}
+        {/* ── Geier Reach Sanitarium: {2},{T} — each player draws then discards ── */}
         {isBF && card === "Geier Reach Sanitarium" && (() => {
           const cost = 2; const canPay = manaPool >= cost;
           if (isCardTapped || !canPay) return (
@@ -16735,7 +16733,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           );
         })()}
 
-        {/* ── Mikokoro, Center of the Sea: {2},{T} — each player draws a card ── */}}
+        {/* ── Mikokoro, Center of the Sea: {2},{T} — each player draws a card ── */}
         {isBF && card === "Mikokoro, Center of the Sea" && (() => {
           const cost = 2;
           if (isCardTapped || manaPool < cost) return (
