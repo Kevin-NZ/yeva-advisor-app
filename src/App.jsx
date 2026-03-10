@@ -13603,6 +13603,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     pushUndo();
 
     // ── Auto-tap: if manaPool < cmc, tap untapped mana sources to cover cost ──
+    // Compute effectiveTapped synchronously so pickers built later in this call see the right state.
+    let effectiveTapped = new Set(tapped);
     if (cmc > 0 && manaPool < cmc) {
       const needed = cmc - manaPool;
       // Gather untapped mana producers sorted by output descending (tap bigger sources first)
@@ -13620,6 +13622,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         autoTapped.push(src);
       }
       if (autoMana > 0) {
+        effectiveTapped = tapped_;
         setTapped(tapped_);
         setManaPool(prev => prev + autoMana);
         if (autoTapped.length === 1) {
@@ -13756,6 +13759,58 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         setShowTutor(true); setTutorQuery("");
         setTimeout(() => tutorInputRef.current?.focus(), 50);
         addLog(`Cast Chord of Calling — search for a creature.`, COLORS.purple);
+      } else if (card === "Crop Rotation") {
+        // Instant: sacrifice a land → search library for any land → battlefield. Library shuffled.
+        const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+        if (lands.length === 0) {
+          // No lands to sacrifice — fizzle
+          setHand(prev => [...prev, card]);
+          setManaPool(p => p + (getCard(card)?.cmc ?? 0));
+          addLog(`Crop Rotation fizzled — no lands to sacrifice.`, COLORS.red);
+        } else {
+          setGraveyard(prev => [...prev, card]);
+          // Sort tapped lands first so they appear at the top of the picker
+          const sorted = [...lands].sort((a, b) => {
+            const aTapped = effectiveTapped.has(cardKey(a.c, a.i)) ? 0 : 1;
+            const bTapped = effectiveTapped.has(cardKey(b.c, b.i)) ? 0 : 1;
+            return aTapped - bTapped;
+          });
+          setPendingPicker({
+            label: "CROP ROTATION — SACRIFICE A LAND",
+            color: COLORS.green2,
+            items: sorted.map(({ c, i }) => ({
+              label: c,
+              sub: effectiveTapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+              key: `${c}:${i}`, c, i,
+            })),
+            onSelect: ({ c: sacCard, i: sacIdx }) => {
+              // Remove the sacrificed land from the battlefield
+              goldfishRemoveFromBattlefield(sacCard, sacIdx);
+              setGraveyard(prev => [...prev, sacCard]);
+              addLog(`Crop Rotation: sacrificed ${sacCard} — search for a land.`, COLORS.green2);
+              // Now open land tutor → battlefield
+              setTutorLandsOnly(true);
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => {
+                  const idx = prev.indexOf(chosen);
+                  if (idx === -1) return prev;
+                  const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+                  for (let i = without.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [without[i], without[j]] = [without[j], without[i]];
+                  }
+                  return without;
+                });
+                setBattlefield(prev => [...prev, chosen]);
+                addLog(`Crop Rotation → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+              });
+              setShowTutor(true); setTutorQuery("");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+            },
+          });
+          setPickerSelected([]);
+          addLog(`Cast Crop Rotation — choose a land to sacrifice.`, COLORS.purple);
+        }
       } else if (card === "Sylvan Scrying") {
         // Search library for any land → hand; library shuffled.
         setGraveyard(prev => [...prev, card]);
@@ -14972,7 +15027,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
               // Step 1: pick a land to sacrifice
               setPendingPicker({ label: "ELVISH RECLAIMER — SACRIFICE A LAND", color: COLORS.green2,
-                items: lands.map(({c,i}) => ({ label: c, sub: "land · sacrifice", key: `${c}:${i}`, c, i })),
+                items: [...lands].sort((a, b) => (effectiveTapped.has(cardKey(a.c, a.i)) ? 0 : 1) - (effectiveTapped.has(cardKey(b.c, b.i)) ? 0 : 1))
+                  .map(({c,i}) => ({ label: c, sub: effectiveTapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: sacCard, i: sacIdx }) => {
                   setBattlefield(prev => { const a = [...prev]; a.splice(sacIdx, 1); return a; });
                   setGraveyard(prev => [...prev, sacCard]);
