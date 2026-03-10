@@ -12997,6 +12997,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [expandedSteps, setExpandedSteps] = useState(new Set());
   const [expandedSuppressed, setExpandedSuppressed] = useState(new Set());
   const [showAllResults, setShowAllResults] = useState(false);
+  const [showLibraryTop, setShowLibraryTop] = useState(false);
   const [gameNotes, setGameNotes] = useState(""); // scratchpad for current game
   const [mulliganCount, setMulliganCount] = useState(0);
   const [contextMenu, setContextMenu] = useState(null);
@@ -18155,13 +18156,27 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
                 {/* LIBRARY TOP */}
                 <div>
-                  {zoneLabel("LIBRARY TOP", library.length, COLORS.textDim)}
-                  <div style={{ minHeight: "24px" }}>
-                    {library.slice(0, 3).map((card, i) => renderCard(card, i, "library", {
-                      style: { opacity: 0.45, fontSize: "10px", cursor: "context-menu" },
-                    }))}
-                    {library.length > 3 && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "4px" }}>+{library.length - 3} more</span>}
+                  <div
+                    onClick={() => setShowLibraryTop(v => !v)}
+                    style={{ fontSize: "10px", letterSpacing: "2px", color: COLORS.textDim,
+                      fontFamily: "'Cinzel', serif", marginBottom: "6px",
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      cursor: "pointer", userSelect: "none" }}
+                  >
+                    <span>LIBRARY TOP</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ color: COLORS.textDim }}>{library.length}</span>
+                      <span style={{ fontSize: "9px", color: COLORS.textDim }}>{showLibraryTop ? "▲" : "▼"}</span>
+                    </span>
                   </div>
+                  {showLibraryTop && (
+                    <div style={{ minHeight: "24px" }}>
+                      {library.slice(0, 3).map((card, i) => renderCard(card, i, "library", {
+                        style: { opacity: 0.45, fontSize: "10px", cursor: "context-menu" },
+                      }))}
+                      {library.length > 3 && <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "4px" }}>+{library.length - 3} more</span>}
+                    </div>
+                  )}
                 </div>
                 </>)} {/* end viewMode === "list" */}
               </div>
