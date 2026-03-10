@@ -12943,7 +12943,7 @@ function ScryRow({ card, i, toBottom, onMoveUp, onMoveDown, onToggleBottom, move
   );
 }
 
-function GoldfishModal({ activeDeck, onClose, onLoadState }) {
+function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // ── state ──────────────────────────────────────────────────
   const goldfishTour = useGoldfishTour();
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
@@ -13074,6 +13074,49 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
       }
     })();
   }, [statsKey]);
+
+  // ── Seed from advisor state (Shift+Goldfish) ─────────────────
+  useEffect(() => {
+    if (!seedState) return;
+    const { hand: sh, battlefield: sb, graveyard: sg, greenMana: sgm, colorlessMana: scm, isMyTurn: sit, attachments: sa } = seedState;
+    // Build library from remaining deck cards not already placed in zones
+    const placed = [...(sh ?? []), ...(sb ?? []), ...(sg ?? [])];
+    const placedCounts = {};
+    placed.forEach(c => { placedCounts[c] = (placedCounts[c] ?? 0) + 1; });
+    const remaining = [...(activeDeck?.cards ?? [])];
+    const libCards = [];
+    const used = {};
+    remaining.forEach(c => {
+      used[c] = (used[c] ?? 0) + 1;
+      if (used[c] > (placedCounts[c] ?? 0)) libCards.push(c);
+    });
+    const lib = shuffleArray(libCards);
+    setHand(sh ?? []);
+    setBattlefield(sb ?? []);
+    setGraveyard(sg ?? []);
+    setExile([]);
+    setLibrary(lib);
+    setAttachments(sa ?? new Map());
+    setSickCreatures(new Set()); // assume advisor state is settled
+    setTapped(new Set());
+    setCounters({});
+    const gm = parseInt(sgm ?? "0", 10) || 0;
+    const cm = parseInt(scm ?? "0", 10) || 0;
+    setManaPool(gm + cm);
+    setLandPlayed(false);
+    setTurnNumber(1); turnRef.current = 1;
+    setIsMyTurn(sit ?? true);
+    setYevaTax(0);
+    setLog([{ msg: "⇄ Imported state from Advisor — continuing from here.", color: COLORS.green2, turn: 1 }]);
+    setPendingBottoms([]); setPhase2(null);
+    milestoneRef.current = { firstDork: null, infiniteMana: null, winCondition: null };
+    replaySnapshotsRef.current = [];
+    winComboRef.current = null;
+    openingHandRef.current = sh ?? [];
+    setGameNotes("");
+    setPhase("playing");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount only
 
   // Persist whenever gameHistory changes (after initial load)
   useEffect(() => {
@@ -19533,6 +19576,7 @@ function YevaAdvisor() {
   const [showDeckManager, setShowDeckManager] = useState(false);
   const [showSynergyMap, setShowSynergyMap]   = useState(false);
   const [showGoldfish, setShowGoldfish]       = useState(false);
+  const [goldfishSeedState, setGoldfishSeedState] = useState(null);
   const [showHelp, setShowHelp]               = useState(false);
   const tour = useTour();
 
@@ -19890,7 +19934,14 @@ function YevaAdvisor() {
               onMouseEnter={e => { e.target.style.borderColor = "#a569bd"; e.target.style.color = "#a569bd"; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
             >⬡ SYNERGY</button>
-            <button onClick={() => setShowGoldfish(true)} title="Play through your deck solo to test opening hands, combo consistency, and win speed" style={{
+            <button onClick={(e) => {
+              if (e.shiftKey) {
+                setGoldfishSeedState({ hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, attachments });
+              } else {
+                setGoldfishSeedState(null);
+              }
+              setShowGoldfish(true);
+            }} title="Play through your deck solo to test opening hands, combo consistency, and win speed&#10;Shift+Click to import current advisor state into Goldfish" style={{
               background: "none", border: `1px solid ${COLORS.border}`,
               borderRadius: "6px", padding: "5px 14px",
               color: COLORS.textDim, cursor: "pointer",
@@ -19957,7 +20008,8 @@ function YevaAdvisor() {
           {showGoldfish && (
             <GoldfishModal
               activeDeck={activeDeck ?? PRESET_DECKS.find(d => d.name === "Competitive")}
-              onClose={() => setShowGoldfish(false)}
+              onClose={() => { setShowGoldfish(false); setGoldfishSeedState(null); }}
+              seedState={goldfishSeedState}
               onLoadState={(s) => {
                 if (s.hand)        setHand(s.hand);
                 if (s.battlefield) setBattlefield(s.battlefield);
