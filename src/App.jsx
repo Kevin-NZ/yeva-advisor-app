@@ -13,7 +13,7 @@ const CARDS = {
   "Llanowar Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
   "Elvish Mystic":         { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
   "Fyndhorn Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
-  "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , devotion:1, greenPips:1},
+  "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop","snow"], tapsFor:1 , devotion:0, greenPips:1, note:"{T}: Add {C}. Produces colorless mana, not green. Counts as an Elf for Elf synergies. Green pip in mana cost counts toward devotion to green." },
   "Birds of Paradise":     { type:"creature", cmc:1, tags:["dork","1drop"], tapsFor:1 , devotion:1, greenPips:1},
   "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , devotion:1, role:"dork-combo", greenPips:1},
   "Elvish Spirit Guide":   { type:"creature", cmc:2, tags:["dork","elf","free-mana"], tapsFor:1 , devotion:1, role:"fast-mana", greenPips:1},
@@ -28,7 +28,7 @@ const CARDS = {
   "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , devotion:2, greenPips:2},
   "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork","human"], tapsFor:"devotion" , devotion:1, greenPips:1},
   "Fanatic of Rhonas":     { type:"creature", cmc:2, tags:["dork","big-dork"], tapsFor:"ferocious", devotion:1, role:"big-dork-combo", note:"{T}: Add {G}. Ferocious — {T}: Add {G}{G}{G}{G} if you control a creature with power 4+. NOT an elf — Wirewood Lodge cannot untap it. Goes infinite with Ashaya+Quirion Ranger (nets {3}) or Ashaya+Scryb Ranger (nets {2}). CMC 2 — Yisan V2."},
-  "Hope Tender":           { type:"creature", cmc:2, tags:["dork","elf","human","untap-lands","exert"], tapsFor:1 , devotion:1, role:"untap-combo", note:"{T}: Add {G}. {1},{T}: Untap target land or creature (exert — Hope Tender doesn't untap next turn). The {1} cost is paid from the mana produced. Human subtype — Kogla's {1}{G} ability returns it to hand, resetting the exert. With Yavimaya/Ashaya, can untap Cradle/Nykthos for massive mana."},
+  "Hope Tender":           { type:"creature", cmc:2, tags:["human","untap-lands","exert"], devotion:1, role:"untap-combo", note:"{1},{T}: Untap target land. {1},{T}, Exert: Untap two target lands (Hope Tender won't untap during your next untap step). Does NOT tap for mana. Human subtype — Kogla's {1}{G} returns it to hand, resetting the exert restriction. Best loop: Hope Tender exert + Kogla bounce + big land (producing ≥5). Note: Wirewood Lodge only untaps Elves; Hope Tender is Human and cannot be targeted by Lodge."},
   // COMBO PIECES
   "Ashaya, Soul of the Wild": { type:"creature", cmc:5, tags:["combo","key","ashaya"], tapsFor:0 , devotion:2, greenPips:2},
   "Temur Sabertooth":      { type:"creature", cmc:4, tags:["combo","sabertooth","bounce","protection"] , devotion:2, greenPips:2},
@@ -48,7 +48,7 @@ const CARDS = {
   "Gaea's Cradle":         { type:"land", cmc:0, tags:["land","combo","key","cradle"] , devotion:0},
   "Nykthos, Shrine to Nyx":{ type:"land", cmc:0, tags:["land","combo","nykthos"] , devotion:0},
   "Itlimoc, Cradle of the Sun": { type:"land", cmc:0, tags:["land","combo","itlimoc"] , devotion:0},
-  "Growing Rites of Itlimoc":   { type:"enchantment", cmc:4, tags:["land","combo","itlimoc","draw"] , devotion:1, transformsTo:"Itlimoc, Cradle of the Sun", greenPips:2},
+  "Growing Rites of Itlimoc":   { type:"enchantment", cmc:3, tags:["land","combo","itlimoc","draw"] , devotion:1, transformsTo:"Itlimoc, Cradle of the Sun", greenPips:1},
   "Deserted Temple":       { type:"land", cmc:0, tags:["land","combo","untap-land"] , devotion:0},
   "Yavimaya, Cradle of Growth": { type:"land", cmc:0, tags:["land","combo","forestwalk","green-mana"] , devotion:0},
   "Ancient Tomb":          { type:"land", cmc:0, tags:["land","fast-mana"] , devotion:0},
@@ -127,7 +127,7 @@ const CARDS = {
   "Thousand-Year Elixir":  { type:"artifact", cmc:3, tags:["combo","haste","untap"], devotion:0, role:"haste-combo", greenPips:0},
   "Concordant Crossroads": { type:"enchantment", cmc:1, tags:["combo","haste","enchantment"], devotion:1, role:"haste-enabler", greenPips:1},
   "Surrak and Goreclaw":   { type:"creature", cmc:5, tags:["combo","haste","pump"], devotion:2, role:"haste-enabler", greenPips:1},
-  "Touch of Vitae":        { type:"instant", cmc:2, tags:["combo","haste","untap","instant"], devotion:0, role:"haste-combo", greenPips:1},
+  "Touch of Vitae":        { type:"instant", cmc:3, tags:["combo","haste","untap","instant"], devotion:0, role:"haste-combo", greenPips:1},
   "Ulvenwald Oddity":      { type:"creature", cmc:4, tags:["combo","haste","mana-sink"], devotion:2, role:"haste-enabler", greenPips:1},
   "Vitalize":              { type:"instant", cmc:1, tags:["combo","untap","storm","instant"], devotion:0, role:"storm-ritual", greenPips:1},
   "Leyline of Abundance":  { type:"enchantment", cmc:4, tags:["combo","ramp","elf-synergy","enchantment"], devotion:2, role:"mana-boost", greenPips:2},
@@ -147,8 +147,8 @@ const CARDS = {
   "Carpet of Flowers":     { type:"enchantment", cmc:1, tags:["ramp","enchantment","meta"], devotion:1, role:"meta-ramp"},
   "Castle Garenbrig":      { type:"land", cmc:0, tags:["land","ramp","combo","green-mana"], devotion:0},
   "Bonders' Enclave":      { type:"land", cmc:0, tags:["land","draw","utility"], devotion:0},
-  "Bridgeworks Battle":    { type:"land", cmc:0, tags:["land","removal","utility"], devotion:0},
-  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], devotion:0},
+  "Bridgeworks Battle":    { type:"sorcery", cmc:3, tags:["removal","sorcery","fight"], devotion:0, role:"removal"},
+  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], devotion:0, note:"{T}: Add {1}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
   "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"], devotion:0},
   "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"], devotion:0},
   "Turntimber Symbiosis":  { type:"land", cmc:0, tags:["land","utility","forest"], devotion:0},
@@ -166,11 +166,11 @@ const CARDS = {
   "Manglehorn":            { type:"creature", cmc:3, tags:["removal","stax","hate"], devotion:1, role:"removal"},
   "Nature's Claim":        { type:"instant", cmc:1, tags:["removal","instant"], devotion:0, role:"removal"},
   "Ram Through":           { type:"instant", cmc:2, tags:["removal","instant","trample"], devotion:0, role:"removal"},
-  "Tail Swipe":            { type:"instant", cmc:2, tags:["removal","instant"], devotion:0, role:"removal"},
-  "Bouncer's Beatdown":    { type:"instant", cmc:2, tags:["removal","instant","meta"], devotion:0, role:"removal"},
+  "Tail Swipe":            { type:"instant", cmc:1, tags:["removal","instant"], devotion:0, role:"removal", greenPips:1},
+  "Bouncer's Beatdown":    { type:"instant", cmc:3, tags:["removal","instant","meta"], devotion:0, role:"removal"},
   "Kenrith's Transformation": { type:"enchantment", cmc:2, tags:["removal","aura","draw"], devotion:1, role:"removal"},
   "King of the Coldblood Curse": { type:"creature", cmc:4, tags:["removal","etb","commander-hate"], devotion:2, role:"removal"},
-  "Insidious Fungus":      { type:"creature", cmc:3, tags:["removal","land-tutor","fungus"], devotion:1, role:"removal"},
+  "Insidious Fungus":      { type:"creature", cmc:1, tags:["removal","utility","fungus"], devotion:1, role:"removal", note:"{2}, Sacrifice: Choose — destroy target artifact; OR destroy target enchantment; OR draw a card and put a land from hand onto battlefield tapped. CMC 1 ({G}). NOT a land-destroyer on ETB."},
   "Saryth, the Viper's Fang": { type:"creature", cmc:4, tags:["protection","untap","dork"], devotion:2, role:"protection"},
   "Skullwinder":           { type:"creature", cmc:3, tags:["recursion","etb","snake","politics"], devotion:1, role:"recursion"},
   "Noxious Revival":       { type:"instant", cmc:0, tags:["recursion","graveyard","instant","free"], devotion:0, role:"recursion"},
@@ -325,7 +325,7 @@ const COMBOS = [
       "Argothian Elder + Deserted Temple + Wirewood Lodge + Gaea's Cradle or Nykthos on battlefield.",
       "Tap big land for N mana.",
       "Tap Argothian Elder: untap two lands — target the big land AND Deserted Temple.",
-      "Tap Deserted Temple (free — just tap): untap the big land again.",
+      "Pay {1}, tap Deserted Temple: untap the big land again.",
       "Tap big land again for N mana. (Two taps of Cradle per Elder activation.)",
       "Spend {G}: activate Wirewood Lodge, untapping Argothian Elder.",
       "Net: (2N − 1) mana per loop. With even a 3-creature Cradle nets 5 per loop. Repeat for infinite.",
@@ -671,10 +671,10 @@ const COMBOS = [
   // ── WIN CON: Disciple of Freyalise bounce loop ────────────────────────
   {
     id: "disciple_freyalise_loop",
-    name: "Disciple of Freyalise + Bouncer + Infinite Mana (Board Wipe + Draw)",
+    name: "Disciple of Freyalise + Bouncer + Infinite Mana (Sacrifice + Draw)",
     onBattlefield: ["Disciple of Freyalise"],
     mustPreExist: ["Disciple of Freyalise"],
-    description: "With infinite mana: Disciple of Freyalise ETB has each opponent sacrifice a creature (removal), then you draw cards equal to creatures you control (draw). Bounce with Temur Sabertooth or Kogla and recast repeatedly. Clears all opposing creatures and draws your entire library.",
+    description: "With infinite mana: Disciple of Freyalise ETB — you may sacrifice another creature you control. If you do, gain X life and draw X cards where X is that creature's power. Bounce with Temur Sabertooth and recast repeatedly. Sacrifice low-value creatures each loop to draw your entire library.",
     requires: ["Disciple of Freyalise"],
     needsAlsoBouncer: true,
     needsInfiniteMana: true,
@@ -682,11 +682,11 @@ const COMBOS = [
     type: "win-draw",
     lines: [
       "Infinite mana established. Disciple of Freyalise + Temur Sabertooth on battlefield (Disciple is an Elf, not a Human — Kogla cannot bounce it).",
-      "Disciple ETB: each opponent sacrifices a creature. Then you draw cards equal to creatures you control.",
+      "Disciple ETB: you may sacrifice another creature you control. If you do, gain X life and draw X cards where X is that creature's power.",
+      "Sacrifice a token, dork, or any expendable creature for X cards drawn.",
       "Pay {1}{G}: Temur Sabertooth bounces Disciple to hand.",
-      "Recast Disciple ({3}{G}{G}{G}): ETB again — each opponent sacrifices another creature, you draw again.",
-      "Loop to clear all opposing creatures. Stop drawing once you find Duskwatch Recruiter or another win outlet.",
-      "Win via Duskwatch Recruiter activation loop → Sanitarium mill.",
+      "Recast Disciple ({3}{G}{G}{G}): ETB again — sacrifice another creature, gain life, draw more cards.",
+      "Loop to draw your entire library. Win via Duskwatch Recruiter activation loop → Sanitarium mill.",
     ]
   },
 
@@ -838,40 +838,35 @@ const COMBOS = [
     name: "Hope Tender + Kogla + Big Land (≥4 mana)",
     onBattlefield: ["Hope Tender", "Kogla, the Titan Ape"],
     mustPreExist: ["Hope Tender", "Kogla, the Titan Ape"],
-    description: "Infinite mana. Hope Tender has two {T} abilities: tap for {G}, or exert (tap) to untap a land. Use Kogla's {2} activated ability to return Hope Tender (Human) to hand, resetting the exert. Loop: exert Hope Tender to untap big land, tap land for N, pay {2} Kogla + recast {1}{G}. Net: (land output − 3) per loop. Need N ≥ 4.",
+    description: "Infinite mana. Hope Tender has two activated abilities (both cost {1}): {1},{T}: Untap target land; and {1},{T}, Exert: Untap two target lands (skips next untap). Use Kogla's {1}{G} activated ability to return Hope Tender (Human) to hand, resetting the exert restriction. Loop: exert Hope Tender to untap big land, tap land for N, pay {1}{G} Kogla + recast {1}{G} Hope Tender. Net: (land output − 3) per loop. Need land ≥ 4.",
     requires: ["Hope Tender", "Kogla, the Titan Ape"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
     priority: 10,
     type: "infinite-mana",
     lines: [
       "Hope Tender and Kogla, the Titan Ape on battlefield. Big land (Cradle/Nykthos/Itlimoc) producing ≥4 mana.",
-      "Tap Hope Tender using the exert ability ({T}, exert): untap the big land.",
+      "Pay {1}, tap and exert Hope Tender: untap the big land (exert — Hope Tender won't untap next turn).",
       "Tap big land for {N} mana (≥4).",
-      "Pay {2}: Kogla's activated ability returns Hope Tender (a Human) to hand — exert is fully reset.",
-      "Recast Hope Tender for {1}{G}. Net: (land output − 3) mana per loop. Repeat for infinite green mana.",
+      "Pay {1}{G}: Kogla's activated ability returns Hope Tender (a Human) to hand — exert restriction fully reset.",
+      "Recast Hope Tender for {1}{G}. Total loop cost: {1} exert + {1}{G} Kogla + {1}{G} recast = {3}{G}. Net: (land output − 4). Need land ≥ 5.",
     ]
   },
 
-  // ── Hope Tender + Wirewood Lodge + Land (≥3 mana) ─────────────────────
+  // ── Hope Tender + Wirewood Lodge — INVALID COMBO ────────────────────────
+  // Hope Tender is a Human Druid, NOT an Elf. Wirewood Lodge only untaps Elves.
   {
     id: "hope_tender_lodge",
-    name: "Hope Tender + Wirewood Lodge + Land (≥2 mana)",
+    name: "Hope Tender + Wirewood Lodge (INVALID — Hope Tender is not an Elf)",
     onBattlefield: ["Hope Tender", "Wirewood Lodge"],
     mustPreExist: ["Hope Tender", "Wirewood Lodge"],
-    description: "Infinite mana. Tap Hope Tender for {G} and exert it to untap a land producing ≥3. Spend {G} activating Wirewood Lodge to untap Hope Tender (an Elf) — this bypasses the exert restriction since Lodge forcibly untaps it. Net: (land output − 2) mana per loop. Infinite when land produces ≥3.",
+    description: "⚠️ INVALID COMBO: Hope Tender is a Human Druid, not an Elf. Wirewood Lodge ({G},{T}: Untap target Elf) cannot target Hope Tender. Use Hope Tender + Kogla (bounce Human to reset exert) instead.",
     requires: ["Hope Tender", "Wirewood Lodge"],
-    needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
-    needsAuraLand: true,
-    priority: 10,
-    type: "infinite-mana",
+    needsAlso: [],
+    priority: 0,
+    type: "invalid",
     lines: [
-      "Hope Tender + Wirewood Lodge + a land producing ≥2 mana on battlefield.",
-      "Eligible lands: Gaea's Cradle, Nykthos, Itlimoc, or a Forest enchanted with Utopia Sprawl/Wild Growth.",
-      "Tap Hope Tender using the exert ability ({T}, exert): untap the big land.",
-      "Tap big land for ≥2 mana.",
-      "Spend {G}: activate Wirewood Lodge, untapping Hope Tender (an Elf).",
-      "Lodge's forced untap bypasses the exert restriction — Hope Tender can activate exert again immediately.",
-      "Net: (land output − 1) mana per loop. Repeat for infinite mana.",
+      "⚠️ INVALID: Hope Tender is a Human Druid. Wirewood Lodge only untaps Elves.",
+      "This combo does not function. Use Hope Tender + Kogla, the Titan Ape instead.",
     ]
   },
 
@@ -968,9 +963,9 @@ const COMBOS = [
   // ── Disciple of Freyalise loop (infinite mana + bouncer) ──────────────────
   {
     id: "disciple_loop",
-    name: "Disciple of Freyalise Loop (Infinite Mana -- Board Wipe + Draw)",
+    name: "Disciple of Freyalise Loop (Infinite Mana + Draw Library)",
     onBattlefield: ["Disciple of Freyalise"],
-    description: "With infinite mana and Temur Sabertooth: cast Disciple of Freyalise, each opponent sacrifices a creature, you draw cards equal to creatures you control. Bounce with Sabertooth and recast. Each loop clears opponents' boards AND draws cards. Note: Disciple is an Elf, not a Human — Kogla cannot bounce it.",
+    description: "With infinite mana and Temur Sabertooth: Disciple of Freyalise ETB — you may sacrifice another creature you control. If you do, gain X life and draw X cards (X = that creature's power). Bounce with Sabertooth and recast. Each loop draws more cards until your library is empty. Note: Disciple is an Elf, not a Human — Kogla cannot bounce it.",
     requires: ["Disciple of Freyalise"],
     needsInfiniteMana: true,
     needsAlsoBouncer: true,
@@ -978,11 +973,11 @@ const COMBOS = [
     type: "win-draw",
     lines: [
       "SETUP: Infinite mana active. Disciple of Freyalise + Temur Sabertooth on battlefield (Disciple is an Elf, not a Human — Kogla cannot bounce it).",
-      "Disciple ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control.",
+      "Disciple ETB: you may sacrifice another creature you control. If you do, gain X life and draw X cards where X is that creature's power.",
+      "Sacrifice any expendable creature (token, 1-drop dork, etc.) for X cards.",
       "Pay {1}{G}: Temur Sabertooth bounces Disciple to hand.",
-      "Recast Disciple ({3}{G}{G}{G}): ETB triggers again -- opponents sacrifice again, you draw again.",
-      "Each loop clears one creature from each opponent's board AND draws you cards.",
-      "After opponents have no creatures: draw your library via repeated Disciple ETBs, then win via standard pile.",
+      "Recast Disciple ({3}{G}{G}{G}): ETB triggers again — sacrifice another creature, draw more cards.",
+      "Loop until library is drawn. Win via standard pile (Duskwatch → Sanitarium mill).",
     ]
   },
 
@@ -1071,7 +1066,7 @@ const COMBOS = [
     type: "infinite-mana",
     lines: [
       "Argothian Elder in graveyard. Shifting Woodland + Ashaya on battlefield.",
-      "Pay {G}{G}: activate Shifting Woodland -- it becomes a copy of Argothian Elder until end of turn.",
+      "Pay {2}{G}{G}: activate Shifting Woodland -- it becomes a copy of Argothian Elder until end of turn (delirium — need 4+ card types in graveyard).",
       "Shifting Woodland is now a Forest AND a copy of Argothian Elder (lands can activate abilities).",
       "Tap Shifting Woodland as a Forest for {G} (it's a land via Ashaya).",
       "Activate Woodland-as-Elder's tap ability: untap two lands -- target itself AND any other land.",
@@ -1479,10 +1474,9 @@ const COMBOS = [
     lines: [
       "Castle Garenbrig + Hope Tender on battlefield. A big land (Cradle, Nykthos, or Itlimoc) also in play.",
       "Tap Castle Garenbrig for {G}{G} (restricted to creature costs/activations).",
-      "Tap Hope Tender for {G}. Use the Garenbrig mana to pay activation costs or recast costs.",
-      "Exert Hope Tender: untap up to two lands — target Cradle/Nykthos + Castle Garenbrig.",
+      "Pay {1}, tap+exert Hope Tender: untap up to two lands — target Cradle/Nykthos + Castle Garenbrig. (Garenbrig mana can pay the {1} activation cost.)",
       "Tap Cradle/Nykthos for full unrestricted mana. Re-tap Castle Garenbrig next turn.",
-      "TIP: This line enables the Hope Tender + Kogla or Hope Tender + Lodge combos with fewer green sources.",
+      "TIP: This line enables the Hope Tender + Kogla combo with fewer green sources.",
     ]
   },
 
@@ -2372,12 +2366,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         (hasAshaya && hasQuirion) ||                  // 4. Ashaya + Quirion Ranger
         (hasAshaya && hasScryb) ||                    // 5. Ashaya + Scryb Ranger
         (hasSymbiote && hasLandAnimate) ||            // 6. Wirewood Symbiote + Destiny Spinner / Badgermole
-        (hasAshaya && hasElder) ||                    // 7. Ashaya + Argothian Elder
-        (hasHopeTender && hasLodge);                  // 8. Hope Tender + Wirewood Lodge (exert + Lodge bypass)
+        (hasAshaya && hasElder);                      // 7. Ashaya + Argothian Elder
+        // Note: Hope Tender + Wirewood Lodge is INVALID — Lodge only untaps Elves, Hope Tender is Human
 
       if (!hasUntapMethod) return {
         ok: false,
-        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner (or Badgermole + bouncer) + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; Wirewood Symbiote + Destiny Spinner/Badgermole; or Hope Tender + Wirewood Lodge",
+        missing: "a land untap method: Woodcaller Automaton; Destiny Spinner (or Badgermole + bouncer) + Hyrax Tower Scout; Ashaya + Magus/Quirion Ranger/Scryb Ranger/Argothian Elder; Wirewood Symbiote + Destiny Spinner/Badgermole; or Hope Tender + Kogla (bounce to reset exert)",
       };
     }
 
@@ -2786,13 +2780,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       : `Cast Hope Tender ({1}{G}) — mana dork + exert engine`;
 
     const detail = hasKogla && target
-      ? `Hope Tender is a Human — Kogla's {2} activated ability returns it to hand, resetting the exert. Cast, use exert ability to untap ${target}, tap ${target} for mana, Kogla bounces it back. Repeatable with infinite mana.`
+      ? `Hope Tender is a Human — Kogla's {1}{G} returns it to hand, resetting the exert restriction. Cast, pay {1}+exert to untap ${target}, tap ${target} for mana, Kogla bounces it back. Repeatable with infinite mana.`
       : target
-      ? `Hope Tender can exert ({T}: untap target land) or tap for {G}. With ${target} in play, using the exert ability to untap it each loop generates big mana.`
-      : `Hope Tender taps for {G} like any dork, but its exert ability ({T}: untap a land or creature) unlocks powerful loops with Gaea's Cradle, Nykthos, Kogla, or Wirewood Lodge. Cast now to establish a mana presence and set up future combos.`;
+      ? `Hope Tender's abilities both cost {1}: {1},{T}: untap one land; {1},{T},Exert: untap two lands. With ${target} in play, paying {1} to exert and untap it each loop generates big mana.`
+      : `Hope Tender does NOT tap for mana, but its exert ability ({1},{T},Exert: untap two target lands) unlocks powerful loops with Gaea's Cradle, Nykthos, and Kogla. Cast now to establish land-untap utility.`;
 
     const synergySuggestion = !hasSynergy
-      ? `Pairs with: Kogla (infinite loop via Human bounce), Wirewood Lodge (exert bypass), Gaea's Cradle or Nykthos (big mana untap target).`
+      ? `Pairs with: Kogla (infinite loop via Human bounce + exert reset), Gaea's Cradle or Nykthos (big mana untap target).`
       : null;
 
     results.push({
@@ -2803,16 +2797,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       steps: [
         `Cast Hope Tender ({1}{G}).`,
         ...(target ? [
-          `Tap Hope Tender using the exert ability ({T}, exert): untap ${target}.`,
+          `Pay {1}, tap+exert Hope Tender: untap ${target} (and one other land if available).`,
           `Tap ${target} for big mana.`,
         ] : [
-          `Tap Hope Tender for {G} — or use exert ({T}): untap a land or creature.`,
+          `Pay {1},{T}: untap target land. Or pay {1},{T},Exert: untap two target lands (skips next untap).`,
         ]),
         ...(hasKogla ? [
-          "Pay {2}: Kogla returns Hope Tender (Human) to hand — exert fully resets.",
+          "Pay {1}{G}: Kogla returns Hope Tender (Human) to hand — exert restriction fully resets.",
           "Recast and repeat next turn (or immediately with infinite mana).",
         ] : hasLodge ? [
-          "Wirewood Lodge ({G}): untap Hope Tender — Lodge's forced untap bypasses the exert restriction.",
+          "⚠️ Note: Wirewood Lodge only untaps Elves — Hope Tender is a Human, Lodge cannot target it.",
         ] : hasRanger ? [
           "Quirion/Scryb Ranger: return a Forest to hand to untap Hope Tender — resets exert.",
         ] : synergySuggestion ? [synergySuggestion] : []),
@@ -3812,7 +3806,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Kogla, the Titan Ape", cmc: 6, reason: "destroys a non-land permanent on ETB, bounces Humans" },
       { name: "Regal Force",          cmc: 7, reason: "draw cards equal to creatures on board — often draws 6-10" },
       { name: "Woodcaller Automaton", cmc: 4, reason: "cast at prototype {2}{G}{G} (3/3, CMC 4) — ETB untaps one land and animates it into a 3/3 Treefolk with haste; with Ashaya or Sabertooth loops infinitely" },
-      { name: "Disciple of Freyalise",cmc: 6, reason: "ETB: each opponent sacrifices a creature, then you draw cards equal to creatures you control — board wipe + draw engine" },
+      { name: "Disciple of Freyalise",cmc: 6, reason: "ETB: sacrifice a creature you control to gain X life and draw X cards (X = that creature's power) — a draw engine with infinite mana" },
     ].filter(t => !board.has(t.name) && !inHand.has(t.name));
     if (empathTargets.length > 0) {
       const castable = inHand.has("Fierce Empath") && (mana >= 3 || infiniteManaActive);
@@ -3971,7 +3965,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: 7,
         category: "🔄 ENGINE",
         headline: `Formidable Speaker + ${bouncer}: untap ${untapTargets[0].split(" ")[0]}`,
-        detail: "Formidable Speaker's ETB also untaps a land or creature you control. With a bouncer, bounce and recast Speaker to repeatedly untap Gaea's Cradle, Nykthos, or a big dork for explosive mana generation.",
+        detail: "Formidable Speaker has {1},{T}: Untap another target permanent. With a bouncer, bounce and recast Speaker to repeatedly untap Gaea's Cradle, Nykthos, or a big dork for explosive mana generation.",
         steps: [
           `Pay {1}{G}: ${bouncer} bounces Formidable Speaker to hand.`,
           `Recast Speaker ({1}{G}): ETB untaps ${untapTargets[0]}.`,
@@ -4202,20 +4196,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       priority: loopActive ? 7 : 5,
       category: loopActive ? "🔄 PHASE LOOP" : "🛡️ PHASING",
       headline: loopActive
-        ? `Talon Gates: phase once/loop via Yavimaya + ${rangerName} + big dork`
-        : "Talon Gates of Madara: phase out a creature (protection or removal)",
+        ? `Talon Gates: ETB phases out a creature each loop via Yavimaya + ${rangerName}`
+        : "Talon Gates of Madara: ETB phases out a creature (protection or removal)",
       detail: loopActive
-        ? `Yavimaya makes Talon Gates a Forest. ${rangerName} can bounce it (returning a Forest) to untap a creature, then you recast the land. Each Ranger loop untaps Talon Gates, enabling one phase activation per cycle.`
-        : "Tap Talon Gates to phase out any creature — yours for protection from removal/combat, or an opponent's as pseudo-removal until your next turn. Phased-out permanents don't untap, can't be targeted, and don't count for anything.",
+        ? `Yavimaya makes Talon Gates a Forest. ${rangerName} can bounce it (returning a Forest) to untap a creature, then you recast the land. Each time Talon Gates enters, its ETB phases out a creature — use for protection or pseudo-removal.`
+        : "When Talon Gates of Madara enters, you may phase out up to one target creature — yours for protection from removal/combat, or an opponent's as pseudo-removal until their next turn. Phased-out permanents don't untap, can't be targeted, and don't count for anything. Tap abilities: {T}→{C}; {1},{T}→any color.",
       steps: [
         ...(loopActive ? [
           `Yavimaya makes Talon Gates of Madara a Forest — ${rangerName} can return it to hand.`,
-          `Tap Talon Gates: phase out a target creature.`,
+          `Play Talon Gates: ETB triggers — phase out a target creature.`,
           `${rangerName}: return Talon Gates (a Forest) to hand, untapping a creature.`,
-          "Recast Talon Gates (it enters tapped — use the untap from next Ranger loop).",
+          "Recast Talon Gates — ETB triggers again: phase out another creature.",
           "Net: one phase activation per Ranger bounce cycle.",
         ] : [
-          "Tap Talon Gates of Madara: choose a target creature.",
+          "Play Talon Gates of Madara: ETB — choose a target creature to phase out (optional).",
           "Phase out your own creature: protects it from targeted removal, board wipes, or combat until your next turn.",
           "Phase out opponent's creature: removes their blocker or threat until your next untap step.",
           ...(ownKeyPieces.length > 0 ? [`Best pieces to protect: ${ownKeyPieces.slice(0,3).join(", ")}.`] : []),
@@ -4447,10 +4441,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: 6,
         category: "🌿 REMOVAL AVAILABLE",
         headline: `Yavimaya + Boseiju: destroy any land, artifact, or enchantment (uncounterable)`,
-        detail: `Boseiju, Who Endures is a Forest via Yavimaya. Its channel ability ({G}, discard Boseiju): destroy target artifact, enchantment, or nonbasic land. Uncounterable. With Yavimaya in play, Boseiju can also be fetched by any Forest-search effect (Crop Rotation, Elvish Reclaimer, fetchlands).`,
+        detail: `Boseiju, Who Endures is a Forest via Yavimaya. Its channel ability ({1}{G}, discard Boseiju): destroy target artifact, enchantment, or nonbasic land. Costs {1} less per legendary creature you control. Uncounterable. With Yavimaya in play, Boseiju can also be fetched by any Forest-search effect (Crop Rotation, Elvish Reclaimer, fetchlands).`,
         steps: [
           `Identify the threat: an artifact (Collector Ouphe, Torpor Orb), enchantment (Rest in Peace, Rhystic Study), or nonbasic land.`,
-          `Activate Boseiju's channel: pay {G}, discard Boseiju → destroy target artifact, enchantment, or nonbasic land. This ability can't be countered.`,
+          `Activate Boseiju's channel: pay {1}{G}, discard Boseiju → destroy target artifact, enchantment, or nonbasic land (costs {1} less per legendary creature you control). This ability can't be countered.`,
           `Note: Boseiju can be fetched via Crop Rotation, Elvish Reclaimer, or fetchlands since Yavimaya makes it a Forest.`,
         ],
         color: "#e74c3c",
@@ -4473,35 +4467,33 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : "a key land";
 
       const resetMethod = hasKogla
-        ? "Kogla attacks → returns Hope Tender (Human) to hand → recast → exert resets"
-        : board.has("Wirewood Lodge") ? "Wirewood Lodge ({G}): untap Hope Tender, resetting the exert"
-        : board.has("Quirion Ranger") ? "Quirion Ranger: return itself to hand to untap Hope Tender"
-        : "Wirewood Symbiote: bounce an elf to untap Hope Tender";
+        ? "Kogla's {1}{G}: returns Hope Tender (Human) to hand → recast → exert restriction fully reset"
+        : board.has("Quirion Ranger") ? "Quirion Ranger: return a Forest to hand to untap Hope Tender"
+        : "Find Kogla (best) to reset Hope Tender's exert — Wirewood Lodge only untaps Elves, not Humans";
 
       results.push({
         priority: hasExertSynergy ? 8 : 6,
         category: "🌿 HOPE TENDER",
         headline: hasKogla
           ? `Hope Tender + Kogla loop: exert → untap ${exertTarget} every turn`
-          : `Hope Tender: exert to untap ${exertTarget} for double mana`,
+          : `Hope Tender: exert to untap ${exertTarget} for big mana`,
         detail: hasKogla
-          ? `Kogla attacks and returns Hope Tender (a Human) to hand — this resets the exert completely. Recast Hope Tender, tap for {G}, exert to untap ${exertTarget} again. With infinite mana this loops freely every turn.`
+          ? `Kogla's {1}{G} returns Hope Tender (a Human) to hand — this resets the exert restriction. Recast Hope Tender, pay {1}+exert to untap ${exertTarget} again. With infinite mana this loops freely every turn.`
           : hasAshaya
-          ? "With Ashaya, Hope Tender is itself a Forest. Tap it for {G}, then exert to untap a big land. Use an untapper to reset the exert each loop."
-          : `Hope Tender's exert ability untaps ${exertTarget}. Pair with an untapper to reset it each turn.`,
+          ? `With Ashaya, Hope Tender is itself a Forest. Pay {1}+exert to untap ${exertTarget} for big mana. Use an untapper to reset the exert each loop.`
+          : `Hope Tender's exert ability ({1},{T},Exert) untaps ${exertTarget}. Pair with an untapper (Kogla) to reset the exert each turn.`,
         steps: [
-          `Tap Hope Tender for {G}.`,
-          `Exert Hope Tender: untap ${exertTarget}.`,
+          `Pay {1}, tap+exert Hope Tender: untap ${exertTarget}.`,
           `Tap ${exertTarget} for big mana.`,
           ...(hasKogla ? [
-            "Kogla attacks: return Hope Tender (Human) to hand — exert is fully reset.",
-            "Recast Hope Tender ({1}{G}), tap for {G}, exert again next activation.",
-            "With infinite mana this loop repeats freely — double-tap a key land every iteration.",
+            "Pay {1}{G}: Kogla returns Hope Tender (Human) to hand — exert restriction is fully reset.",
+            "Recast Hope Tender ({1}{G}), pay {1}+exert again next activation.",
+            "With infinite mana this loop repeats freely — untap a key land every iteration.",
           ] : [
             resetMethod + ".",
-            ...(hasAshaya ? ["With Ashaya, Hope Tender is a Forest — Wirewood Lodge can untap it directly as an elf."] : []),
+            ...(hasAshaya ? ["With Ashaya, Hope Tender is a Forest — but Lodge only untaps Elves, not Humans."] : []),
           ]),
-          ...(!hasKogla && !hasUntapper ? ["Find Kogla (best), Wirewood Lodge, or Quirion Ranger to reset Hope Tender's exert each turn."] : []),
+          ...(!hasKogla && !hasUntapper ? ["Find Kogla (best reset) or Quirion/Scryb Ranger to reset Hope Tender's exert each turn."] : []),
         ],
         color: "#27ae60",
       });
@@ -4600,9 +4592,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: castableNow ? 6 : 4,
         category: "📖 CARD ADVANTAGE",
         headline: castableNow
-          ? "Cast Heartwood Storyteller — punishes non-creature spells, draws you cards"
-          : "Heartwood Storyteller in hand — cast next turn for draw + stax pressure",
-        detail: "Heartwood Storyteller: whenever any player casts a non-creature spell, each OTHER player draws a card. In cEDH this is a strong stax piece and draw engine — opponents casting tutors, interaction, or combos fill your hand. Especially powerful against blue decks relying on counterspells and artifact-based strategies.",
+          ? "Cast Heartwood Storyteller — opponents drawing when they cast noncreature spells"
+          : "Heartwood Storyteller in hand — cast next turn for stax + group draw",
+        detail: "Heartwood Storyteller: whenever any player casts a noncreature spell, each OTHER player may draw a card. In cEDH this primarily benefits you — opponents casting tutors, counterspells, or combos lets each other player draw. Note: if YOU cast a noncreature spell, opponents may draw instead. Your creature-heavy deck means you rarely trigger the drawback. Especially powerful against blue decks.",
         steps: [
           castableNow
             ? (manaSources.length > 0 ? `${manaSources.join(", then ")} → tap for mana → cast Heartwood Storyteller ({1}{G}{G}).` : `Tap ${mana} mana → cast Heartwood Storyteller ({1}{G}{G}).`)
@@ -4685,10 +4677,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: 11,
         category: "⚡ STORM ENGINE",
         headline: "Defiler of Vigor: every spell cast puts +1/+1 counters on ALL creatures → storm win",
-        detail: "With infinite mana: every green spell you cast causes Defiler to trigger, putting +1/+1 counters on all your creatures. Infinite storm count → infinite +1/+1 counters. Swing for lethal. Defiler also lets you substitute 2 life for {G} in casting costs.",
+        detail: "With infinite mana: every green permanent spell you cast (creature, enchantment, artifact, land — not instants/sorceries) triggers Defiler, putting a +1/+1 counter on each creature you control. Infinite casts → infinite counters. Defiler also lets you pay 2 life instead of any {G} in permanent spell costs.",
         steps: [
-          "Infinite mana is active. Cast any green spell — Defiler triggers, all creatures get +1/+1 counters.",
-          "With infinite spell casts (Formidable Speaker loop or Duskwatch): trigger Defiler infinitely.",
+          "Infinite mana active. Cast green permanent spells (creatures, enchantments, artifacts, lands — not instants/sorceries): each cast triggers Defiler → +1/+1 counter on every creature you control.",
+          "Loop a green permanent spell infinitely (Formidable Speaker, creature bounces, etc.) → Defiler triggers each cast → all creatures gain counters infinitely.",
           "All creatures become arbitrarily large. Swing for lethal combat damage.",
         ],
         color: "#9b59b6",
@@ -4698,11 +4690,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: 6,
         category: "⚡ STORM PIECE",
         headline: "Cast Defiler of Vigor → enables +1/+1 counter storm win with infinite mana",
-        detail: "Defiler of Vigor is a powerful storm-win payoff: once you have infinite mana and begin casting spells in a loop (Formidable Speaker + Quirion Ranger, or Duskwatch activations), Defiler triggers on every cast, putting +1/+1 counters on all your creatures. Also lets you pay 2 life instead of {G} in casting costs.",
+        detail: "Defiler of Vigor triggers whenever you cast a green permanent spell (creature, enchantment, artifact, or land — NOT instants or sorceries), putting a +1/+1 counter on each creature you control. Once you have infinite green permanent spell casts (Formidable Speaker + Quirion Ranger loop, or bounce loops), Defiler produces infinite counters. Also lets you pay 2 life in place of any {G} in a permanent spell's cost.",
         steps: [
           "Cast Defiler of Vigor ({3}{G}{G}, or pay 2 life for each {G} in cost).",
           "Assemble infinite mana (Ashaya + Argothian Elder, etc.).",
-          "Begin infinite spell loop → Defiler triggers each cast → all creatures get +1/+1 counters → attack for lethal.",
+          "Begin infinite green permanent spell loop → Defiler triggers each cast → all creatures accumulate +1/+1 counters → attack for lethal.",
         ],
         color: "#9b59b6",
       });
@@ -4805,8 +4797,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   {
     const drawLands = [
       { name: "Bonders' Enclave", cost: 4, desc: "{4}: draw a card if you control a creature with power 4+. Repeatable draw engine with big dorks.", powerReq: 4 },
-      { name: "Mikokoro, Center of the Sea", cost: 3, desc: "{3}: each player draws a card. Group draw — best used on your turn with Yeva to fill your hand in response to a key spell.", powerReq: 0 },
-      { name: "Mariposa Military Base", cost: 2, desc: "Enters tapped. {T}: scry 1, then draw if you control a legendary creature. Filtering draw with Yeva/commanders.", powerReq: 0 },
+      { name: "Mikokoro, Center of the Sea", cost: 2, desc: "{2},{T}: each player draws a card. Group draw — best used on your turn with Yeva to fill your hand in response to a key spell.", powerReq: 0 },
+      { name: "Mariposa Military Base", cost: 2, desc: "ETB: may enter tapped for 2 rad counters. {T}: +1. {5},{T}: draw a card (costs 1 less per rad counter — 0 cost with 5 counters). Slow draw engine, better late game.", powerReq: 0 },
     ];
     for (const dl of drawLands) {
       if (inHand.has(dl.name) && isMyTurn) {
@@ -4868,7 +4860,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: 6,
         category: "📖 DRAW ENGINE",
         headline: "Guardian Project is live — cast creatures to draw cards",
-        detail: "Guardian Project draws you a card whenever a nontoken creature enters under your control, if it doesn't share a name with another creature you control. Every creature cast this turn triggers a draw.",
+        detail: "Guardian Project draws you a card whenever a nontoken creature enters under your control, if it doesn't share a name with another creature you control or a creature card in your graveyard. Every uniquely-named creature cast this turn triggers a draw.",
         steps: [
           "Guardian Project is on the battlefield.",
           "Each nontoken creature you cast (with a unique name) draws a card on ETB.",
@@ -4885,8 +4877,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const removalSpells = [
       { name: "Nature's Claim", cmc: 1, desc: "Destroy target artifact or enchantment. They gain 4 life. Instant speed.", category: "🗑️ REMOVAL" },
       { name: "Ram Through", cmc: 2, desc: "Target creature you control deals damage equal to its power to target creature. Trample means excess bleeds through.", category: "🗑️ REMOVAL" },
-      { name: "Tail Swipe", cmc: 2, desc: "Target creature you control fights another creature — but only works if yours has more power.", category: "🗑️ REMOVAL" },
-      { name: "Bouncer's Beatdown", cmc: 2, desc: "Target creature with the greatest power fights another target creature.", category: "🗑️ REMOVAL" },
+      { name: "Tail Swipe", cmc: 1, desc: "{G} instant. Target creature you control fights another. If cast in main phase, your creature gets +1/+1 until EOT first.", category: "🗑️ REMOVAL" },
+      { name: "Bouncer's Beatdown", cmc: 3, desc: "Deals X damage to target creature or planeswalker (X = greatest power among your creatures). Costs {2} less if targeting a black permanent. Exiles instead of destroying if it would die.", category: "🗑️ REMOVAL" },
       { name: "Kenrith's Transformation", cmc: 2, desc: "Enchant target creature — it becomes a 3/3 Elk and loses all abilities. Draw a card.", category: "🗑️ REMOVAL" },
       { name: "Reclamation Sage", cmc: 3, desc: "ETB: destroy target artifact or enchantment. Flash via Yeva.", category: "🗑️ REMOVAL" },
       { name: "Outland Liberator", cmc: 2, desc: "Transforms into Frenzied Trapbreaker — destroys artifact or enchantment when it attacks.", category: "🗑️ REMOVAL" },
@@ -5263,18 +5255,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
     }
 
-    // Heartwood Storyteller — punishes non-creature spells with card draw for you
+    // Heartwood Storyteller — punishes non-creature spells with card draw for each other player
     if (inHand.has("Heartwood Storyteller") && (mana >= 3 || infiniteManaActive)) {
       results.push({
         priority: isHighThreat ? 8 : 6,
         category: "🔒 STAX",
-        headline: `Cast Heartwood Storyteller — draw cards when opponents cast non-creature spells`,
-        detail: "Heartwood Storyteller draws you a card whenever an opponent casts a non-creature spell (unless you also cast one). Your creature-heavy deck means you almost never trigger the drawback. In non-creature-heavy pods (blue or black combo), this generates massive card advantage.",
+        headline: `Cast Heartwood Storyteller — opponents draw when casting noncreature spells (so do you)`,
+        detail: "Heartwood Storyteller: whenever a player casts a noncreature spell, each OTHER player may draw a card. When opponents cast tutors, counterspells, or combo pieces — you (and other opponents) may draw. When you cast a noncreature spell, opponents may draw instead. Your creature-heavy deck rarely triggers the drawback. Best against blue/black combo pods.",
         steps: [
-          "Cast Heartwood Storyteller ({1}{G}{G}) — draw on each opponent's non-creature spell.",
-          "Your creature-heavy lines rarely trigger the 'they draw too' clause.",
-          "Most effective against: tutors-heavy decks (Demonic Tutor, Vampiric Tutor), counterspell-heavy control, storm/ritual decks.",
-          "Each draw helps you find combo pieces faster. Deploy early to generate advantage.",
+          "Cast Heartwood Storyteller ({1}{G}{G}).",
+          "When an opponent casts a noncreature spell — each other player (including you) may draw a card.",
+          "When YOU cast a noncreature spell — each opponent may draw instead. Minimize noncreature casts.",
+          "Most effective against: tutor-heavy decks, counterspell-heavy control, storm/ritual decks.",
         ],
         color: "#27ae60",
       });
@@ -5721,7 +5713,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Via tutor: a tutor that can find Duskwatch (a CMC-2 green creature) is castable now
   // Instant-speed tutors: castable any time (or with Yeva on board for flash window)
   const instantCreatureTutors = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons",
-    "Archdruid's Charm"]  // Archdruid's Charm mode 2: find any green creature → hand (instant speed)
+    "Archdruid's Charm"]  // Archdruid's Charm mode 1: find any creature or land card (land ETB tapped, creature to hand)
     .filter(t => {
       if (!inHand.has(t)) return false;
       if (t === "Archdruid's Charm") return (mana >= 3 || infiniteManaActive); // costs {G}{G}{G}
@@ -5812,7 +5804,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : `Chord of Calling (convoke — tap ${convokeTap} creatures, pay {${remainder}} mana)`;
     }
     if (name === "Summoner's Pact")   return "Summoner's Pact (free — pay {2}{G}{G} at next upkeep or lose)";
-    if (name === "Archdruid's Charm") return "Archdruid's Charm (mode 2: find any green creature)";
+    if (name === "Archdruid's Charm") return "Archdruid's Charm (mode 1: find any creature or land card)";
     if (name === "Woodland Bellower") return "Woodland Bellower (ETB puts creature directly onto battlefield)";
     if (name === "Formidable Speaker")return "Formidable Speaker (ETB + bounce loop to find creature)";
     return name;
@@ -6017,7 +6009,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // Also reachable via the same tutor logic as Duskwatch
     const witnessTutors = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons",
-      "Archdruid's Charm",  // mode 2: find any green creature → hand (instant speed, {G}{G}{G})
+      "Archdruid's Charm",  // mode 1: find any creature or land → hand (instant speed, {G}{G}{G})
       "Green Sun's Zenith","Natural Order","Eldritch Evolution","Fauna Shaman","Survival of the Fittest",
       "Woodland Bellower","Formidable Speaker"]
       .filter(t => {
@@ -6617,18 +6609,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (!results.some(r => r.combo === "disciple_loop")) {
       results.push({
         priority: 11,
-        category: "🔥 WIN NOW -- BOARD WIPE + DRAW",
-        headline: "Disciple of Freyalise loop: wipe all opponent creatures, draw entire library",
-        detail: `Each Disciple ETB forces each opponent to sacrifice a creature, then you draw ${crCount} cards. Loop with ${bouncer2} to clear boards and draw your library.`,
+        category: "🔥 WIN NOW — DRAW LIBRARY",
+        headline: "Disciple of Freyalise loop: sacrifice creatures to draw entire library",
+        detail: `Disciple ETB: sacrifice another creature you control → gain X life + draw X cards (X = that creature's power). With ${crCount} creatures available and infinite mana, loop with ${bouncer2} to draw your entire library.`,
         steps: [
           ...(inHand.has("Disciple of Freyalise") && !board.has("Disciple of Freyalise") ? ["Cast Disciple of Freyalise ({3}{G}{G}{G})."] : []),
-          `Disciple ETB: each opponent sacrifices a creature. You draw ${crCount} cards.`,
+          `Disciple ETB: sacrifice another creature you control. Gain X life and draw X cards where X is that creature's power.`,
           bouncer2 === "Temur Sabertooth"
-            ? "Pay {1}{G}: Temur Sabertooth bounces Disciple. Recast. ETB again."
-            : "Pay {1}{G}: Temur Sabertooth bounces Disciple (Elf — Kogla only bounces Humans). Recast. ETB again.",
-          "Each loop removes one creature from each opponent's board.",
-          "After clearing opponents' boards: each loop draws your library.",
-          "Win via Duskwatch Recruiter, Sanitarium mill, or Infectious Bite from hand.",
+            ? "Pay {1}{G}: Temur Sabertooth bounces Disciple. Recast. ETB again — sacrifice another creature, draw more cards."
+            : "Note: Disciple is an Elf, not a Human — only Temur Sabertooth can bounce it, not Kogla.",
+          "Each loop draws X cards equal to the sacrificed creature's power. Sacrifice bigger creatures for more draws.",
+          "Once library is drawn, win via Duskwatch Recruiter, Sanitarium mill, or any outlet in hand.",
         ],
         color: "#c0392b",
       });
@@ -7451,7 +7442,7 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
         && (mana >= 3 || infiniteMana)) options.push("Elvish Harbinger (ETB → top of library next draw)");
     if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && getCard(target)?.type === "creature") options.push("Worldly Tutor");
     if (accessible("Summoner's Pact") && getCard(target)?.type === "creature") options.push("Summoner's Pact");
-    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 2: find creature)");
+    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 1: find creature or land)");
     if (inHand.has("Chord of Calling")) {
       const targetCmc = getCard(target)?.cmc ?? 2;
       const chordCost = Math.max(0, targetCmc + 3 - (battlefield?.length ?? 0));
@@ -13974,6 +13965,167 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           },
         });
         setPickerSelected([]);
+      } else if (card === "Vitalize") {
+        // {G}: Untap all creatures you control
+        setGraveyard(prev => [...prev, card]);
+        const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+        setTapped(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+        addLog(`Vitalize: untapped all ${creatures.length} creatures.`, COLORS.green2);
+      } else if (card === "Touch of Vitae") {
+        // {2}{G}: Target creature gains haste and "{0}: Untap this creature. Activate only once."
+        // Draw a card at beginning of next upkeep. Targets ONE creature.
+        setGraveyard(prev => [...prev, card]);
+        const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+        if (creatures.length > 0) {
+          setPendingPicker({
+            label: "TOUCH OF VITAE — GIVE HASTE + SELF-UNTAP TO A CREATURE", color: COLORS.green2,
+            items: creatures.map(({ c, i }) => ({
+              label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped — untap via ability" : "○ untapped",
+              key: `${c}:${i}`, c, i,
+            })),
+            onSelect: ({ c: tc, i: ti }) => {
+              // Remove summoning sickness; optionally untap if tapped
+              setSickCreatures(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+              addLog(`Touch of Vitae → ${tc}: gains haste and may untap itself once. Draw a card at beginning of next upkeep.`, COLORS.green2);
+            },
+          });
+          setPickerSelected([]);
+        } else {
+          addLog(`Touch of Vitae: no creatures to target.`, COLORS.textDim);
+        }
+      } else if (card === "Great Oak Guardian") {
+        // Flash creature: ETB — creatures TARGET PLAYER controls get +2/+2 until EOT and untap (all of them)
+        setGraveyard(prev => [...prev, card]);
+        goldfishAddToBattlefield(card);
+        // In goldfish you target yourself — untap ALL your creatures and note +2/+2
+        const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+        setTapped(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+        setSickCreatures(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+        addLog(`Great Oak Guardian ETB — all ${creatures.length} creatures get +2/+2 until EOT and untap. (Target: yourself)`, COLORS.green2);
+      } else if (card === "Turntimber Symbiosis") {
+        // Spell side {4}{G}{G}{G}: look at top 7, put a creature onto battlefield, rest on bottom
+        setGraveyard(prev => [...prev, card]);
+        const top7 = library.slice(0, 7);
+        const creatures = top7.filter(c => getCard(c)?.type === "creature");
+        setLibrary(prev => prev.slice(7)); // remove top 7 temporarily
+        if (creatures.length > 0) {
+          setPendingPicker({
+            label: "TURNTIMBER SYMBIOSIS — PUT A CREATURE ONTO BATTLEFIELD (top 7)", color: COLORS.green2,
+            items: creatures.map(c => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? "?"}`, key: c, c })),
+            onSelect: ({ c: chosen }) => {
+              goldfishAddToBattlefield(chosen);
+              // Put the rest of the 7 on the bottom of the library
+              const rest = top7.filter(c => c !== chosen);
+              setLibrary(prev => [...prev, ...rest]);
+              const chosenCmc = getCard(chosen)?.cmc ?? 99;
+              const counterNote = chosenCmc <= 3 ? ` ${chosen} has CMC ≤ 3 — enters with 3 additional +1/+1 counters!` : "";
+              addLog(`Turntimber Symbiosis → ${chosen} onto battlefield. Other ${rest.length} cards on bottom.${counterNote}`, COLORS.green2);
+            },
+            onSkip: () => { setLibrary(prev => [...prev, ...top7]); addLog(`Turntimber Symbiosis: no creature chosen — all 7 on bottom.`, COLORS.textDim); },
+          });
+          setPickerSelected([]);
+        } else {
+          setLibrary(prev => [...prev, ...top7]);
+          addLog(`Turntimber Symbiosis: no creature in top 7 — all on bottom.`, COLORS.textDim);
+        }
+        addLog(`Cast Turntimber Symbiosis — looking at top 7 cards.`, COLORS.purple);
+      } else if (card === "Summoner's Pact") {
+        // Free instant: search for a green creature → hand. At upkeep, pay {2}{G}{G} or lose.
+        setGraveyard(prev => [...prev, card]);
+        setTutorCreaturesOnly(true);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => { const i = prev.indexOf(chosen); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+          setHand(prev => [...prev, chosen]);
+          addLog(`Summoner's Pact → ${chosen} → hand. Remember: pay {2}{G}{G} at your next upkeep or lose!`, COLORS.gold);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+        addLog(`Cast Summoner's Pact — search for a green creature (free; pay {2}{G}{G} at upkeep).`, COLORS.purple);
+      } else if (card === "Shared Summons") {
+        // {3}{G}{G}: search for up to 2 creature cards → hand
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast Shared Summons — search for up to 2 creatures → hand (use TUTOR twice or pick from library).`, COLORS.purple);
+        setTutorCreaturesOnly(true);
+        setTutorOnSelect(() => (chosen1) => {
+          setLibrary(prev => { const i = prev.indexOf(chosen1); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+          setHand(prev => [...prev, chosen1]);
+          addLog(`Shared Summons: first creature → ${chosen1}. Search for a second…`, COLORS.purple);
+          setTutorCreaturesOnly(true);
+          setTutorOnSelect(() => (chosen2) => {
+            setLibrary(prev => { const i = prev.indexOf(chosen2); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+            setHand(prev => [...prev, chosen2]);
+            addLog(`Shared Summons: second creature → ${chosen2}. Library shuffled.`, COLORS.purple);
+          });
+          setShowTutor(true); setTutorQuery("");
+          setTimeout(() => tutorInputRef.current?.focus(), 50);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+      } else if (card === "Archdruid's Charm") {
+        // {G}{G}{G}: three modes per oracle:
+        // 1) Search library for a creature or land card; put onto battlefield tapped if land, else hand
+        // 2) Put a +1/+1 counter on target creature you control. It deals damage = its power to target creature you don't control.
+        // 3) Exile target artifact or enchantment.
+        setGraveyard(prev => [...prev, card]);
+        setPendingPicker({
+          label: "ARCHDRUID'S CHARM — CHOOSE A MODE", color: COLORS.green2,
+          items: [
+            { label: "Search for a creature or land → hand (or land onto battlefield tapped)", sub: "tutor", key: "tutor" },
+            { label: "+1/+1 counter on your creature; it deals power damage to their creature", sub: "fight-like", key: "pump" },
+            { label: "Exile target artifact or enchantment", sub: "removal", key: "exile" },
+          ],
+          onSelect: ({ key: mode }) => {
+            if (mode === "tutor") {
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => { const i = prev.indexOf(chosen); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+                setHand(prev => [...prev, chosen]);
+                addLog(`Archdruid's Charm → ${chosen} → hand. Library shuffled.`, COLORS.green2);
+              });
+              setShowTutor(true); setTutorQuery("elf");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+              addLog(`Archdruid's Charm: search for a creature or land card (land enters tapped, creature goes to hand).`, COLORS.green2);
+            } else if (mode === "pump") {
+              addLog(`Archdruid's Charm: put +1/+1 counter on target creature you control; it deals damage equal to its power to target creature you don't control.`, COLORS.green2);
+            } else {
+              addLog(`Archdruid's Charm: exiled target artifact or enchantment.`, COLORS.green1);
+            }
+          },
+        });
+        setPickerSelected([]);
+      } else if (card === "Bridgeworks Battle") {
+        // {2}{G} sorcery: target creature you control gets +2/+2 until EOT, fights up to one creature you don't control
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast Bridgeworks Battle ({2}{G}): target creature you control gets +2/+2 until EOT and fights up to one target creature you don't control.`, COLORS.green1);
+      } else if (card === "Ram Through" || card === "Tail Swipe") {
+        setGraveyard(prev => [...prev, card]);
+        if (card === "Tail Swipe") {
+          addLog(`Cast Tail Swipe: chose two creatures to fight each other. If cast during your main phase, your creature gets +1/+1 until end of turn before fighting.`, COLORS.green1);
+        } else {
+          addLog(`Cast Ram Through: target creature you control deals damage equal to its power to target creature you don't control. If trample, excess goes to controller.`, COLORS.green1);
+        }
+      } else if (card === "Bouncer's Beatdown") {
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast Bouncer's Beatdown: deals X damage to target creature or planeswalker, where X is the greatest power among your creatures. Costs {2} less against black permanents. If the target would die this turn, exile it instead.`, COLORS.green1);
+      } else if (card === "Nature's Claim") {
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast Nature's Claim: destroyed target artifact or enchantment. Its controller gains 4 life.`, COLORS.green1);
+      } else if (card === "Beast Within") {
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast Beast Within: destroyed target permanent. Its controller creates a 3/3 Beast token.`, COLORS.green1);
+      } else if (card === "Force of Vigor") {
+        // Free (exile a green card) or {2}{G}{G}: destroy up to 2 artifacts/enchantments
+        setGraveyard(prev => [...prev, card]);
+        addLog(`Cast Force of Vigor: destroyed up to 2 target artifacts and/or enchantments (free if exiling a green card from hand).`, COLORS.green1);
+      } else if (card === "Kenrith's Transformation") {
+        // Enchant creature: becomes 3/3 Elk and loses abilities. Draw a card.
+        const targets = battlefield.filter(c => getCard(c)?.type === "creature");
+        setGraveyard(prev => [...prev, card]);
+        if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+        if (targets.length > 0) {
+          addLog(`Cast Kenrith's Transformation: enchanted a creature (it becomes a 3/3 Elk). Drew a card.`, COLORS.green1);
+        } else {
+          addLog(`Cast Kenrith's Transformation: drew a card.`, COLORS.blue);
+        }
       } else {
         setGraveyard(prev => [...prev, card]);
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
@@ -13981,12 +14133,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
     } else if (type === "creature" || type === "enchantment" || type === "artifact" || type === "planeswalker" || type === "battle") {
       goldfishAddToBattlefield(card);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
-      // ── Chrome Mox: imprint a non-land card from hand ──
+      // ── Insidious Fungus: 1/1 creature for {G}. No ETB. Sacrifice ability: {2}, sac → destroy artifact, destroy enchantment, or draw+land ──
+      if (card === "Insidious Fungus") {
+        addLog(`Insidious Fungus enters as a 1/1 creature. Activated ability: pay {2} and sacrifice it to destroy an artifact, destroy an enchantment, OR draw a card and put a land from your hand onto the battlefield tapped.`, COLORS.textMid);
+      }
       if (card === "Chrome Mox") {
         const imprintTargets = hand.filter(c => getCard(c)?.type !== "land");
         if (imprintTargets.length > 0) {
           setPendingImprint({ moxCard: card });
-          addLog(`Chrome Mox ETB — choose a card to imprint (exile from hand for {G}).`, COLORS.gold);
+          addLog(`Chrome Mox ETB — choose a card to imprint (exile from hand for colored mana).`, COLORS.gold);
         } else {
           addLog(`Chrome Mox ETB — no non-land cards in hand to imprint. Mox produces no mana.`, COLORS.textDim);
         }
@@ -14103,12 +14258,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         }
       }
 
-      // ── Skullwinder: return any card from graveyard to hand ──
+      // ── Skullwinder: return any card from graveyard to hand, then choose opponent to also return from their GY ──
       if (card === "Skullwinder") {
         if (graveyard.length > 0) {
           setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "SKULLWINDER — RETURN A CARD FROM GRAVEYARD TO HAND" });
+          addLog(`Skullwinder ETB — after returning your card, choose an opponent. That opponent also returns a card from their graveyard to their hand.`, COLORS.textMid);
         } else {
-          addLog(`Skullwinder ETB — graveyard is empty.`, COLORS.textDim);
+          addLog(`Skullwinder ETB — graveyard is empty, but you still choose an opponent who returns a card from their graveyard.`, COLORS.textDim);
         }
       }
 
@@ -14122,9 +14278,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         addLog(`Manglehorn ETB — destroy target artifact. Also: artifacts enter tapped.`, COLORS.green1);
       }
 
-      // ── King of the Coldblood Curse: destroy target commander ──
+      // ── King of the Coldblood Curse: ETB — up to one other target creature loses all abilities, becomes 4/4 green Lizard ──
       if (card === "King of the Coldblood Curse") {
-        addLog(`King of the Coldblood Curse ETB — destroy target commander.`, COLORS.green1);
+        addLog(`King of the Coldblood Curse ETB — up to one other target creature loses all abilities and becomes a green Lizard creature with base 4/4. (No ETB triggers when it enters as a copy or when abilities are lost.)`, COLORS.green1);
       }
 
       // ── Hyrax Tower Scout: untap target creature ──
@@ -14161,25 +14317,43 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         addLog(`Fierce Empath ETB — search for a creature with CMC ≥ 6.`, COLORS.purple);
       }
 
-      // ── Disciple of Freyalise: draw cards equal to number of non-Human creatures you control (including itself) ──
+      // ── Disciple of Freyalise: ETB — you may sacrifice another creature, gain X life + draw X (X = that creature's power) ──
       if (card === "Disciple of Freyalise") {
-        // Disciple draws for each non-Human creature you control including itself
-        const nonHumanCount = battlefield.filter(c => {
-          const cd = getCard(c);
-          return cd?.type === "creature" && !cd.tags?.includes("human");
-        }).length;
-        // +1 for Disciple itself (it just entered and is not a Human)
-        const drawCount = nonHumanCount + 1;
-        if (drawCount > 0 && library.length >= drawCount) {
-          setHand(prev => [...prev, ...library.slice(0, drawCount)]);
-          setLibrary(prev => prev.slice(drawCount));
-          addLog(`Disciple of Freyalise ETB — drew ${drawCount} cards (${nonHumanCount} non-Human creatures + itself).`, COLORS.blue);
-        } else if (library.length > 0) {
-          setHand(prev => [...prev, ...library]);
-          setLibrary([]);
-          addLog(`Disciple of Freyalise ETB — drew ${library.length} cards (library exhausted).`, COLORS.blue);
+        const sacrificeCandidates = battlefield.filter(c => c !== "Disciple of Freyalise").filter(c => getCard(c)?.type === "creature");
+        if (sacrificeCandidates.length > 0) {
+          // Auto-sacrifice the smallest power creature (simulate optimal play: sacrifice biggest for max draw, but in goldfish just pick first)
+          // Show picker so user can choose
+          setPendingPicker({
+            label: "DISCIPLE OF FREYALISE — SACRIFICE A CREATURE (OPTIONAL)", color: COLORS.green2,
+            items: [
+              { label: "(Skip — don't sacrifice)", key: "__skip__", c: "__skip__", i: -1 },
+              ...sacrificeCandidates.map((c, i) => {
+                const cd = getCard(c); const pw = cd?.power ?? cd?.cmc ?? 1;
+                return { label: c, sub: `power ${pw} → draw ${pw} cards`, key: `${c}:${i}`, c, i };
+              }),
+            ],
+            onSelect: ({ c: sc, i: si }) => {
+              if (sc === "__skip__") { addLog("Disciple of Freyalise ETB — chose not to sacrifice.", COLORS.textDim); return; }
+              // Sacrifice the chosen creature
+              setBattlefield(prev => { const idx = prev.indexOf(sc); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
+              setGraveyard(prev => [...prev, sc]);
+              const cd = getCard(sc); const pw = cd?.power ?? cd?.cmc ?? 1;
+              if (pw > 0 && library.length >= pw) {
+                setHand(prev => [...prev, ...library.slice(0, pw)]);
+                setLibrary(prev => prev.slice(pw));
+                addLog(`Disciple of Freyalise ETB — sacrificed ${sc} (power ${pw}): gained ${pw} life, drew ${pw} cards.`, COLORS.blue);
+              } else if (library.length > 0) {
+                setHand(prev => [...prev, ...library]);
+                setLibrary([]);
+                addLog(`Disciple of Freyalise ETB — sacrificed ${sc}: gained ${pw} life, drew ${library.length} cards (library exhausted).`, COLORS.blue);
+              } else {
+                addLog(`Disciple of Freyalise ETB — sacrificed ${sc}: gained ${pw} life, library empty.`, COLORS.textDim);
+              }
+            },
+          });
+          setPickerSelected([]);
         } else {
-          addLog(`Disciple of Freyalise ETB — library empty, no cards drawn.`, COLORS.textDim);
+          addLog("Disciple of Freyalise ETB — no other creatures to sacrifice.", COLORS.textDim);
         }
       }
 
@@ -14244,7 +14418,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         addLog(`Invasion of Ikoria ETB — search for a non-Human creature card.`, COLORS.purple);
       }
       if (card === "Nissa, Resurgent Animist") {
-        addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a Forest enters, search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
+        addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a land enters, add mana of any color; second landfall each turn: search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
       }
 
       // ── Tireless Provisioner: landfall — when a land enters, create a Food or Treasure (+1 mana) ──
@@ -14252,9 +14426,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
         addLog(`Tireless Provisioner ETB — landfall active: when a land enters the battlefield, create a Food or Treasure token (use + MANA button to add +1 mana each time you play a land).`, COLORS.green2);
       }
 
-      // ── Kogla, the Titan Ape: ETB — destroy target Human or Ape ──
+      // ── Kogla, the Titan Ape: ETB — fights up to one target creature you don't control ──
       if (card === "Kogla, the Titan Ape") {
-        addLog(`Kogla ETB — destroy target Human or Ape an opponent controls.`, COLORS.green1);
+        addLog(`Kogla ETB — fights up to one target creature you don't control (each deals damage equal to its power to the other).`, COLORS.green1);
       }
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
@@ -15221,7 +15395,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           const creaturesInTop3 = top3.filter(c => getCard(c)?.type === "creature");
           if (!canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Recruit ({'{3}'}) — need {cost} mana
+              ⚡ Recruit ({'{2}{G}'}) — need {cost} mana
             </div>
           );
           return (
@@ -15229,24 +15403,30 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               pushUndo();
               setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
               if (creaturesInTop3.length === 0) {
-                addLog(`Duskwatch Recruiter: paid {3} — no creatures in top ${top3.length} cards. All go back.`, COLORS.textDim);
+                // No creatures — put all 3 on the bottom
+                setLibrary(prev => [...prev.slice(3), ...top3]);
+                addLog(`Duskwatch Recruiter: paid {2}{G} — no creatures in top ${top3.length} cards. All placed on the bottom.`, COLORS.textDim);
                 closeContextMenu(); return;
               }
-              setPendingPicker({ label: `DUSKWATCH RECRUITER — TOP ${top3.length} CARDS (PICK A CREATURE → HAND)`, color: COLORS.gold,
+              setPendingPicker({ label: `DUSKWATCH RECRUITER — TOP ${top3.length} CARDS (PICK A CREATURE → HAND, REST TO BOTTOM)`, color: COLORS.gold,
                 items: top3.map((c,idx) => ({ label: c, sub: `${getCard(c)?.type ?? "?"} · CMC ${getCard(c)?.cmc ?? "?"}` + (getCard(c)?.type !== "creature" ? " · not a creature" : ""), key: `${c}:${idx}`, c, idx, disabled: getCard(c)?.type !== "creature" })),
                 onSelect: ({ c: chosen, idx }) => {
-                  setLibrary(prev => prev.filter((_,li) => li !== idx));
+                  const rest = top3.filter((_,i) => i !== idx);
+                  setLibrary(prev => [...prev.slice(3), ...rest]);
                   setHand(prev => [...prev, chosen]);
-                  addLog(`Duskwatch Recruiter: ${chosen} → hand. Other top cards remain.`, COLORS.gold);
+                  addLog(`Duskwatch Recruiter: paid {2}{G} — ${chosen} → hand. Other ${rest.length} card(s) placed on the bottom.`, COLORS.gold);
                 },
-                onSkip: () => addLog(`Duskwatch Recruiter: no creature found / skipped. Top cards remain.`, COLORS.textDim),
+                onSkip: () => {
+                  setLibrary(prev => [...prev.slice(3), ...top3]);
+                  addLog(`Duskwatch Recruiter: no creature chosen — all top cards placed on the bottom.`, COLORS.textDim);
+                },
               });
               setPickerSelected([]);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#1a1a0a"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Recruit — look at top 3 ({'{3}'})
+              ⚡ Recruit — look at top 3 ({'{2}{G}'})
             </div>
           );
         })()}
@@ -15384,23 +15564,26 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           );
         })()}
 
-        {/* ── Saryth, the Viper's Fang: tap — untap target creature ── */}
+        {/* ── Saryth, the Viper's Fang: {1},{T} — untap another target creature or land ── */}
         {isBF && card === "Saryth, the Viper's Fang" && (() => {
-          const creatures = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature" && c !== "Saryth, the Viper's Fang");
-          if (isCardTapped || creatures.length === 0) return (
+          const targets = battlefield.map((c,i) => ({c,i})).filter(({c}) => c !== "Saryth, the Viper's Fang" && (getCard(c)?.type === "creature" || getCard(c)?.type === "land"));
+          const canAct = !isCardTapped && !sickCreatures.has(key) && manaPool >= 1 && targets.length > 0;
+          if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Creature — {isCardTapped ? "tapped" : "no other creatures"}
+              ⚡ Untap Creature/Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need {1}" : "no targets"}
             </div>
           );
           return (
             <div onClick={() => {
+              if (manaPool < 1) { addLog("Saryth: need {1} to activate.", COLORS.red); return; }
               pushUndo();
               toggleTap(card, index);
-              setPendingPicker({ label: "SARYTH — UNTAP A CREATURE", color: COLORS.green2,
-                items: creatures.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              setPendingPicker({ label: "SARYTH — UNTAP A CREATURE OR LAND", color: COLORS.green2,
+                items: targets.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: tc, i: ti }) => {
                   setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
-                  addLog(`Saryth: tapped, untapped ${tc}.`, COLORS.green2);
+                  addLog(`Saryth: paid {1}, tapped — untapped ${tc}.`, COLORS.green2);
                 }
               });
               setPickerSelected([]);
@@ -15408,8 +15591,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Tap — untap a creature
+              ⚡ {'{1}'}Tap — untap a creature or land
             </div>
+          );
+        })()}
           );
         })()}
 
@@ -15457,10 +15642,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
         {/* ── War Room: {3} tap — draw a card ── */}
         {isBF && card === "War Room" && (() => {
-          const cost = 3; const canPay = manaPool >= cost;
+          const cost = 3; const lifeCost = 1; // Yeva is mono-green — 1 color in identity = 1 life
+          const canPay = manaPool >= cost;
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Draw ({'{3}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+              ⚡ Draw ({'{3}'}tap, 1 life) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
           );
           return (
@@ -15468,23 +15654,49 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               pushUndo();
               toggleTap(card, index);
               setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
-              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); addLog(`War Room: paid {3}, tapped — drew ${library[0]}.`, COLORS.blue); }
-              else addLog(`War Room: paid {3}, tapped — library empty.`, COLORS.textDim);
+              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); addLog(`War Room: paid {3}, tapped, paid ${lifeCost} life (Yeva = 1 color) — drew ${library[0]}.`, COLORS.blue); }
+              else addLog(`War Room: paid {3}, tapped, paid ${lifeCost} life — library empty.`, COLORS.textDim);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#0a0a2a"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Draw a card ({'{3}'}, tap)
+              📖 {'{3}'}Tap, 1 life — draw a card
             </div>
           );
         })()}
 
-        {/* ── Geier Reach Sanitarium: {3} tap — each player draws then discards ── */}
+        {/* ── Ominous Cemetery: {5},{T}, Exile — target creature's owner shuffles it into their library ── */}
+        {isBF && card === "Ominous Cemetery" && (() => {
+          const cost = 5;
+          const canAct = !isCardTapped && manaPool >= cost;
+          if (!canAct) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Shuffle away creature ({'{5}'}tap+exile) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              toggleTap(card, index);
+              // Sacrifice / exile the land
+              goldfishRemoveFromBattlefield(card, index);
+              addLog(`Ominous Cemetery: paid {5}, tapped, exiled itself — target creature's owner shuffles it into their library (bypasses indestructible and graveyard replacement).`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{5}'}Tap+exile self — shuffle target creature into library
+            </div>
+          );
+        })()}
+
+        {/* ── Geier Reach Sanitarium: {2},{T} — each player draws then discards ── */}}
         {isBF && card === "Geier Reach Sanitarium" && (() => {
-          const cost = 3; const canPay = manaPool >= cost;
+          const cost = 2; const canPay = manaPool >= cost;
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Loot ({'{3}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+              ⚡ Group loot ({'{2}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
           );
           const drawn = library[0];
@@ -15494,12 +15706,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               toggleTap(card, index);
               setManaPool(p => Math.max(0,p-cost)); flashMana(-cost);
               if (drawn) { setHand(prev => [...prev, drawn]); setLibrary(prev => prev.slice(1)); }
-              addLog(`Geier Reach Sanitarium: paid {3}, tapped — drew ${drawn ?? "(empty library)"}, then discard a card (move manually from hand to graveyard).`, COLORS.blue);
+              addLog(`Geier Reach Sanitarium: paid {2}, tapped — each player draws a card, then discards a card. You drew ${drawn ?? "(empty library)"}; discard a card from hand to graveyard.`, COLORS.blue);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#0a0a2a"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Loot ({'{3}'}, tap)
+              📖 {'{2}'}Tap — each player draws then discards
             </div>
           );
         })()}
@@ -15555,21 +15767,24 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
         {/* ── Deserted Temple: tap — untap target land ── */}
         {isBF && card === "Deserted Temple" && (() => {
+          const cost = 1;
           const lands = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.type === "land" && c !== "Deserted Temple");
-          if (isCardTapped || lands.length === 0) return (
+          const canAct = !isCardTapped && manaPool >= cost && lands.length > 0;
+          if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Land — {isCardTapped ? "tapped" : "no other lands"}
+              ⚡ Untap Land ({'{1}'}tap) — {isCardTapped ? "tapped" : manaPool < cost ? "need {1}" : "no other lands"}
             </div>
           );
           return (
             <div onClick={() => {
               pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
               toggleTap(card, index);
               setPendingPicker({ label: "DESERTED TEMPLE — UNTAP A LAND", color: COLORS.green2,
                 items: lands.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: lc, i: li }) => {
                   setTapped(prev => { const next = new Set(prev); next.delete(cardKey(lc,li)); return next; });
-                  addLog(`Deserted Temple: tapped, untapped ${lc}.`, COLORS.green2);
+                  addLog(`Deserted Temple: paid {1}, tapped — untapped ${lc}.`, COLORS.green2);
                 }
               });
               setPickerSelected([]);
@@ -15577,7 +15792,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Tap — untap a land
+              ⚡ {'{1}'}Tap — untap a land
             </div>
           );
         })()}
@@ -15736,7 +15951,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                   setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
                   // Also remove summoning sickness (Elixir gives haste-like effect for activated abilities)
                   setSickCreatures(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
-                  addLog(`Thousand-Year Elixir: paid {1}, tapped — untapped ${tc} (sickness cleared).`, COLORS.gold);
+                  addLog(`Thousand-Year Elixir: paid {1}, tapped — untapped ${tc}. Note: Elixir also lets you activate creature abilities as though they had haste.`, COLORS.gold);
                 },
               });
               setPickerSelected([]);
@@ -15751,27 +15966,26 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
         {/* ── Agatha's Soul Cauldron: {1} tap — exile a card from a graveyard ── */}
         {isBF && card === "Agatha's Soul Cauldron" && (() => {
-          const cost = 1;
           const gyCards = [...graveyard.map((c, gi) => ({ c, gi, zone: "own" }))];
-          if (isCardTapped || manaPool < cost || gyCards.length === 0) return (
+          if (isCardTapped || gyCards.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Exile from Graveyard ({'{1}'}tap) — {isCardTapped ? "tapped" : manaPool < cost ? `need ${cost} mana` : "graveyard empty"}
+              ⚡ Exile from Graveyard ({'{T}'}) — {isCardTapped ? "tapped" : "graveyard empty"}
             </div>
           );
           return (
             <div onClick={() => {
               pushUndo();
               toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
               setPendingPicker({
-                label: "AGATHA'S SOUL CAULDRON — EXILE FROM GRAVEYARD", color: COLORS.purple,
+                label: "AGATHA'S SOUL CAULDRON — EXILE FROM GRAVEYARD (free {T})", color: COLORS.purple,
                 items: gyCards.map(({ c, gi }) => ({
                   label: c, sub: getCard(c)?.type ?? "card", key: `${c}:${gi}`, c, gi,
                 })),
                 onSelect: ({ c: chosen, gi }) => {
+                  const isCreature = getCard(chosen)?.type === "creature";
                   setGraveyard(prev => prev.filter((_, i) => i !== gi));
                   setExile(prev => [...prev, chosen]);
-                  addLog(`Agatha's Soul Cauldron: paid {1}, tapped — exiled ${chosen} from graveyard.`, COLORS.purple);
+                  addLog(`Agatha's Soul Cauldron: tapped — exiled ${chosen} from graveyard.${isCreature ? " Triggered: put a +1/+1 counter on target creature you control." : ""}`, COLORS.purple);
                 },
               });
               setPickerSelected([]);
@@ -15779,7 +15993,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.purple, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ {'{1}'}tap — exile a card from graveyard
+              ⚡ Tap (free) — exile a card from graveyard
             </div>
           );
         })()}
@@ -15818,25 +16032,102 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
 
         {/* ── Beastrider Vanguard: mana sink — activated ability ── */}
         {isBF && card === "Beastrider Vanguard" && (() => {
-          const cd = getCard(card);
-          const cost = cd?.cmc ?? 2;
-          if (manaPool < cost) return (
+          const cost = 5; // {4}{G}: look at top 3, may reveal a permanent card → hand
+          if (isCardTapped || manaPool < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Activate — need {cost} mana
+              ⚡ Scry/reveal ({'{4}{G}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
           );
+          const top3 = library.slice(0, 3);
+          const permanents = top3.filter(c => {
+            const t = getCard(c)?.type;
+            return t && t !== "instant" && t !== "sorcery";
+          });
           return (
             <div onClick={() => {
               pushUndo();
+              toggleTap(card, index);
               setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
-              addLog(`Beastrider Vanguard: activated (−${cost} mana).`, COLORS.green2);
+              if (permanents.length === 0) {
+                setLibrary(prev => [...prev.slice(3), ...top3]);
+                addLog(`Beastrider Vanguard: paid {4}{G}, tapped — no permanent cards in top ${top3.length}. All placed on bottom.`, COLORS.green2);
+                closeContextMenu(); return;
+              }
+              setPendingPicker({
+                label: "BEASTRIDER VANGUARD — TOP 3: REVEAL A PERMANENT CARD → HAND (rest to bottom)", color: COLORS.green2,
+                items: top3.map((c, idx) => {
+                  const isPermanent = getCard(c)?.type && !["instant","sorcery"].includes(getCard(c)?.type);
+                  return { label: c, sub: `${getCard(c)?.type ?? "?"}${!isPermanent ? " · not a permanent" : ""}`, key: `${c}:${idx}`, c, idx, disabled: !isPermanent };
+                }),
+                onSelect: ({ c: chosen, idx }) => {
+                  const rest = top3.filter((_, i) => i !== idx);
+                  setLibrary(prev => [...prev.slice(3), ...rest]);
+                  setHand(prev => [...prev, chosen]);
+                  addLog(`Beastrider Vanguard: paid {4}{G}, tapped — ${chosen} → hand. Other ${rest.length} card(s) to bottom.`, COLORS.green2);
+                },
+                onSkip: () => {
+                  setLibrary(prev => [...prev.slice(3), ...top3]);
+                  addLog(`Beastrider Vanguard: no permanent chosen — all top cards placed on the bottom.`, COLORS.textDim);
+                },
+              });
+              setPickerSelected([]);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Activate (−{cost} mana)
+              ⚡ {'{4}{G}'}Tap — look at top 3, reveal a permanent → hand
             </div>
           );
+        })()}
+
+        {/* ── Insidious Fungus: {2} sac — destroy artifact, destroy enchantment, or draw+land from hand ── */}
+        {isBF && card === "Insidious Fungus" && (() => {
+          const cost = 2;
+          const hasLandInHand = hand.some(c => getCard(c)?.type === "land");
+          if (manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Sacrifice ability — need {cost} mana
+            </div>
+          );
+          return (<>
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              goldfishRemoveFromBattlefield(card, index);
+              setGraveyard(prev => [...prev, card]);
+              addLog(`Insidious Fungus: paid {2}, sacrificed — destroyed target artifact.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{2}'}sac — destroy target artifact
+            </div>
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              goldfishRemoveFromBattlefield(card, index);
+              setGraveyard(prev => [...prev, card]);
+              addLog(`Insidious Fungus: paid {2}, sacrificed — destroyed target enchantment.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{2}'}sac — destroy target enchantment
+            </div>
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              goldfishRemoveFromBattlefield(card, index);
+              setGraveyard(prev => [...prev, card]);
+              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+              addLog(`Insidious Fungus: paid {2}, sacrificed — drew a card.${hasLandInHand ? " You may put a land from your hand onto the battlefield tapped." : " (No lands in hand to put onto battlefield.)"}`, COLORS.blue);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              📖 {'{2}'}sac — draw a card {hasLandInHand ? "+ put land from hand onto battlefield tapped" : "(no lands in hand)"}
+            </div>
+          </>);
         })()}
 
         {/* ── Outland Liberator: {G} sacrifice — destroy target artifact or enchantment ── */}
@@ -15844,7 +16135,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
           const cost = 1;
           if (manaPool < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Destroy artifact/enchantment ({'{G}'}sac) — need 1 mana
+              ⚡ Destroy artifact/enchantment ({'{1}'}sac) — need 1 mana
             </div>
           );
           return (
@@ -15853,12 +16144,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
               goldfishRemoveFromBattlefield(card, index);
               setGraveyard(prev => [...prev, card]);
-              addLog(`Outland Liberator: paid {G}, sacrificed — destroyed target artifact or enchantment.`, COLORS.green1);
+              addLog(`Outland Liberator: paid {1}, sacrificed — destroyed target artifact or enchantment.`, COLORS.green1);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ {'{G}'}sac — destroy artifact or enchantment
+              ⚡ {'{1}'}sac — destroy artifact or enchantment
             </div>
           );
         })()}
@@ -15973,6 +16264,688 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
               onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
               🎵 Harmonize ({'{X}{G}{G}{G}{G}'}) — cast from graveyard
+            </div>
+          );
+        })()}
+
+        {/* ── Sol Ring: tap — +2 colorless mana ── */}
+        {isBF && card === "Sol Ring" && (() => {
+          if (isCardTapped) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>⚡ Tap — tapped</div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => p + 2); flashMana(2);
+              addLog(`Sol Ring: tapped — +2 mana.`, COLORS.gold);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — +2 mana
+            </div>
+          );
+        })()}
+
+        {/* ── Arbor Elf: tap — untap target Forest (or Forest-enchanted land) ── */}
+        {isBF && card === "Arbor Elf" && (() => {
+          const forests = battlefield.map((c, i) => ({ c, i })).filter(({ c }) =>
+            getCard(c)?.tags?.includes("forest") || getCard(c)?.tags?.includes("fetch-forest") ||
+            c === "Yavimaya, Cradle of Growth" || c === "Dryad Arbor"
+          );
+          if (isCardTapped || sickCreatures.has(key) || forests.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Forest — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : "no Forests"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setPendingPicker({
+                label: "ARBOR ELF — UNTAP TARGET FOREST", color: COLORS.green2,
+                items: forests.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  addLog(`Arbor Elf: tapped — untapped ${tc}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]); closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — untap a Forest
+            </div>
+          );
+        })()}
+
+        {/* ── Hope Tender: {1},{T} — untap a land; {1},{T},Exert — untap 2 lands ── */}
+        {isBF && card === "Hope Tender" && (() => {
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          const canAct = !isCardTapped && !sickCreatures.has(key) && manaPool >= 1 && lands.length >= 1;
+          const canExert = canAct && !sickCreatures.has(key);
+          if (!canAct) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need {1}" : "no lands"}
+            </div>
+          );
+          return (<>
+            <div onClick={() => {
+              if (manaPool < 1) { addLog("Hope Tender: need {1} to activate.", COLORS.red); return; }
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              setPendingPicker({
+                label: "HOPE TENDER — UNTAP A LAND", color: COLORS.green2,
+                items: lands.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  addLog(`Hope Tender: paid {1}, tapped — untapped ${tc}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]); closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{1}'}Tap — untap a land
+            </div>
+            {canExert && (
+              <div onClick={() => {
+                if (manaPool < 1) { addLog("Hope Tender exert: need {1} to activate.", COLORS.red); return; }
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+                // Mark as exerted (won't untap next turn — track via sickCreatures as a proxy)
+                setSickCreatures(prev => { const next = new Set(prev); next.add(key); return next; });
+                setPendingPicker({
+                  label: "HOPE TENDER (EXERT) — UNTAP UP TO 2 LANDS", color: COLORS.green2, multi: Math.min(2, lands.length),
+                  items: lands.map(({ c, i }) => ({
+                    label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                    key: `${c}:${i}`, c, i,
+                  })),
+                  onSelect: (chosen) => {
+                    const arr = Array.isArray(chosen) ? chosen : [chosen];
+                    setTapped(prev => { const next = new Set(prev); arr.forEach(({ c: lc, i: li }) => next.delete(cardKey(lc, li))); return next; });
+                    addLog(`Hope Tender (exert): paid {1}, tapped — untapped ${arr.map(x => x.c).join(" and ")}. Won't untap next turn.`, COLORS.green2);
+                  },
+                });
+                setPickerSelected([]); closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ {'{1}'}Tap+Exert — untap 2 lands (skip next untap)
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* ── Fanatic of Rhonas: tap +1 mana; ferocious tap +4 mana ── */}
+        {isBF && card === "Fanatic of Rhonas" && (() => {
+          const hasPower4 = battlefield.some(c => {
+            const cd = getCard(c); return cd?.type === "creature" && (cd?.cmc ?? 0) >= 4;
+          });
+          if (isCardTapped || sickCreatures.has(key)) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Tap — {isCardTapped ? "tapped" : "summoning sickness"}
+            </div>
+          );
+          return (<>
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => p + 1); flashMana(1);
+              addLog(`Fanatic of Rhonas: tapped — +1 mana.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — +1 mana
+            </div>
+            {hasPower4 && (
+              <div onClick={() => {
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => p + 4); flashMana(4);
+                addLog(`Fanatic of Rhonas (ferocious): tapped — +4 mana (power 4+ creature present).`, COLORS.green2);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ Ferocious tap — +4 mana
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* ── Karametra's Acolyte: tap — add G equal to devotion ── */}
+        {isBF && card === "Karametra's Acolyte" && (() => {
+          const devotionVal = battlefield.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
+          if (isCardTapped || sickCreatures.has(key)) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Tap — {isCardTapped ? "tapped" : "summoning sickness"} (devotion {devotionVal})
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => p + devotionVal); flashMana(devotionVal);
+              addLog(`Karametra's Acolyte: tapped — +${devotionVal} mana (devotion to green = ${devotionVal}).`, COLORS.green2);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — +{devotionVal} mana (devotion {devotionVal})
+            </div>
+          );
+        })()}
+
+        {/* ── Elvish Archdruid: tap — add G per elf you control ── */}
+        {isBF && card === "Elvish Archdruid" && (() => {
+          const elfCount = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+          if (isCardTapped || sickCreatures.has(key)) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Tap — {isCardTapped ? "tapped" : "summoning sickness"} ({elfCount} elves)
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => p + elfCount); flashMana(elfCount);
+              addLog(`Elvish Archdruid: tapped — +${elfCount} mana (${elfCount} elves).`, COLORS.green2);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap — +{elfCount} mana ({elfCount} elves)
+            </div>
+          );
+        })()}
+
+        {/* ── Formidable Speaker: {1},{T} — untap another target permanent ── */}
+        {isBF && card === "Formidable Speaker" && (() => {
+          const permanents = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => c !== "Formidable Speaker");
+          const canAct = !isCardTapped && !sickCreatures.has(key) && manaPool >= 1 && permanents.length > 0;
+          if (!canAct) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Untap Permanent — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need {1}" : "no other permanents"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              if (manaPool < 1) { addLog("Formidable Speaker: need {1} to activate.", COLORS.red); return; }
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              setPendingPicker({
+                label: "FORMIDABLE SPEAKER — UNTAP ANOTHER PERMANENT", color: COLORS.green2,
+                items: permanents.map(({ c, i }) => ({
+                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  addLog(`Formidable Speaker: paid {1}, tapped — untapped ${tc}.`, COLORS.green2);
+                },
+              });
+              setPickerSelected([]); closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{1}'}Tap — untap another permanent
+            </div>
+          );
+        })()}
+
+        {/* ── Seedborn Muse: reminder button — untap all permanents each opponent's untap step ── */}
+        {isBF && card === "Seedborn Muse" && (
+          <div onClick={() => {
+            pushUndo();
+            // Untap all permanents as a convenience button for opponent's turn
+            setTapped(new Set());
+            addLog(`Seedborn Muse: untapped all permanents (opponent's untap step).`, COLORS.green2);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            🌿 Opponent's untap — untap all permanents
+          </div>
+        )}
+
+        {/* ── Leyline of Abundance: mana bonus when tapping dork; {6}{G}{G} pump ── */}
+        {isBF && card === "Leyline of Abundance" && (() => {
+          const pumpCost = 8;
+          const creatures = battlefield.filter(c => getCard(c)?.type === "creature");
+          return (<>
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => p + 1); flashMana(1);
+              addLog(`Leyline of Abundance: triggered — +1 bonus mana (a creature tapped for mana).`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🌿 Tap trigger — +1 bonus mana (dork tapped)
+            </div>
+            {manaPool >= pumpCost && creatures.length > 0 && (
+              <div onClick={() => {
+                pushUndo();
+                setManaPool(p => Math.max(0, p - pumpCost)); flashMana(-pumpCost);
+                addLog(`Leyline of Abundance: paid {6}{G}{G} — put +1/+1 counter on each of ${creatures.length} creatures.`, COLORS.green2);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{6}{G}{G}'} — +1/+1 counter on each creature ({creatures.length})
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* ── Glademuse: draw trigger — you cast a spell on an opponent's turn ── */}
+        {isBF && card === "Glademuse" && (
+          <div onClick={() => {
+            pushUndo();
+            if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+            addLog(`Glademuse triggered — you cast a spell on an opponent's turn (via Yeva flash): drew a card.`, COLORS.blue);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            📖 Trigger — you cast spell off-turn: draw 1
+          </div>
+        )}
+
+        {/* ── Beast Whisperer: draw trigger — creature spell cast ── */}
+        {isBF && card === "Beast Whisperer" && (
+          <div onClick={() => {
+            pushUndo();
+            if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+            addLog(`Beast Whisperer triggered — creature spell cast: drew a card.`, COLORS.blue);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            📖 Trigger — creature cast: draw 1
+          </div>
+        )}
+
+        {/* ── Guardian Project: draw trigger — unique nontoken creature ETB (not in hand or graveyard) ── */}
+        {isBF && card === "Guardian Project" && (
+          <div onClick={() => {
+            pushUndo();
+            if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+            addLog(`Guardian Project triggered — unique nontoken creature ETB (no same-named creature on battlefield or in graveyard): drew a card.`, COLORS.blue);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            📖 Trigger — unique creature ETB: draw 1
+          </div>
+        )}
+
+        {/* ── Runic Armasaur: draw trigger — opponent activates ability of creature or land (non-mana) ── */}
+        {isBF && card === "Runic Armasaur" && (
+          <div onClick={() => {
+            pushUndo();
+            if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+            addLog(`Runic Armasaur triggered — opponent activated a non-mana ability of a creature or land: you may draw a card.`, COLORS.blue);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            📖 Trigger — opponent activated creature/land ability: draw 1
+          </div>
+        )}
+
+        {/* ── Heartwood Storyteller: draw trigger — opponent cast a noncreature spell ── */}
+        {isBF && card === "Heartwood Storyteller" && (
+          <div onClick={() => {
+            pushUndo();
+            if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+            addLog(`Heartwood Storyteller triggered — opponent cast a noncreature spell: you may draw a card.`, COLORS.blue);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            📖 Trigger — opponent cast noncreature spell: draw 1
+          </div>
+        )}
+
+        {/* ── Growing Rites of Itlimoc: ETB look at top 4; end-step transform if 4+ creatures ── */}
+        {isBF && card === "Growing Rites of Itlimoc" && (() => {
+          const creatureCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
+          const canTransform = creatureCount >= 4;
+          const top4 = library.slice(0, 4);
+          const creatureInTop4 = top4.find(c => getCard(c)?.type === "creature");
+          return (<>
+            {top4.length > 0 && (
+              <div onClick={() => {
+                pushUndo();
+                // Look at top 4, put a creature into hand, rest on bottom
+                if (creatureInTop4) {
+                  setHand(prev => [...prev, creatureInTop4]);
+                  const rest = top4.filter(c => c !== creatureInTop4);
+                  setLibrary(prev => [...prev.slice(4), ...rest]);
+                  addLog(`Growing Rites ETB: looked at top 4 — put ${creatureInTop4} into hand, ${rest.length} cards on bottom.`, COLORS.green2);
+                } else {
+                  setLibrary(prev => [...prev.slice(4), ...top4]);
+                  addLog(`Growing Rites ETB: looked at top 4 — no creature found, all 4 on bottom.`, COLORS.textDim);
+                }
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                🌱 ETB — look at top 4, take creature to hand
+              </div>
+            )}
+            <div onClick={() => {
+              if (!canTransform) { addLog(`Growing Rites: need 4+ creatures to transform (have ${creatureCount}).`, COLORS.textDim); closeContextMenu(); return; }
+              pushUndo();
+              setBattlefield(prev => prev.map((c, i) => i === index ? "Itlimoc, Cradle of the Sun" : c));
+              addLog(`Growing Rites of Itlimoc → transformed into Itlimoc, Cradle of the Sun (${creatureCount} creatures).`, COLORS.gold);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: canTransform ? COLORS.gold : COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = canTransform ? "#1a1500" : "transparent"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🔄 End step — transform {canTransform ? `(${creatureCount} creatures ✓)` : `(need 4+, have ${creatureCount})`}
+            </div>
+          </>);
+        })()}
+
+        {/* ── Shifting Woodland: {T}→+{G}; Delirium {2}{G}{G} — becomes copy of graveyard permanent until EOT ── */}
+        {isBF && card === "Shifting Woodland" && (() => {
+          const gyTypes = new Set(graveyard.map(c => getCard(c)?.type).filter(Boolean));
+          const hasDelirium = gyTypes.size >= 4;
+          const deliriumCost = 4; // {2}{G}{G} = 4 mana
+          const canDelirium = !isCardTapped && hasDelirium && manaPool >= deliriumCost && graveyard.length > 0;
+          if (isCardTapped) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Shifting Woodland — tapped ({gyTypes.size} card types in GY)
+            </div>
+          );
+          return (<>
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => p + 1); flashMana(1);
+              addLog(`Shifting Woodland: tapped — +{G}.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🌲 Tap — +{'{G}'}
+            </div>
+            {hasDelirium && graveyard.length > 0 && (
+              <div onClick={() => {
+                if (manaPool < deliriumCost) { addLog(`Shifting Woodland delirium: need {2}{G}{G} (4 mana).`, COLORS.textDim); closeContextMenu(); return; }
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => Math.max(0, p - deliriumCost)); flashMana(-deliriumCost);
+                // Show picker to choose which graveyard permanent card to copy
+                const permanentCards = graveyard.map((c, i) => ({ c, i, type: getCard(c)?.type })).filter(({ type }) => type !== "instant" && type !== "sorcery");
+                if (permanentCards.length > 0) {
+                  setPendingPicker({
+                    label: "SHIFTING WOODLAND — BECOME A COPY OF WHICH PERMANENT CARD?", color: COLORS.green2,
+                    items: permanentCards.map(({ c, i }) => ({
+                      label: c, sub: `${getCard(c)?.type} in graveyard`,
+                      key: `${c}:${i}`, c, i,
+                    })),
+                    onSelect: ({ c: tc }) => {
+                      addLog(`Shifting Woodland (delirium): paid {2}{G}{G}, tapped — becomes a copy of ${tc} until end of turn. (It's still a land; no ETB abilities trigger.)`, COLORS.green2);
+                    },
+                  });
+                  setPickerSelected([]);
+                } else {
+                  addLog(`Shifting Woodland (delirium): paid {2}{G}{G}, tapped — becomes a copy of target permanent card in graveyard until EOT.`, COLORS.green2);
+                }
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: canDelirium ? COLORS.green2 : COLORS.textDim, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = canDelirium ? "#162616" : "transparent"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ Delirium {'{2}{G}{G}'} tap — copy graveyard permanent until EOT {hasDelirium ? `(${gyTypes.size} types ✓)` : `(need 4 types, have ${gyTypes.size})`}
+              </div>
+            )}
+            {!hasDelirium && (
+              <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+                ⚡ Delirium — need 4+ card types in GY (have {gyTypes.size}: {[...gyTypes].join(", ")})
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* ── Emergence Zone: {1}+tap+sac — cast spells as though they had flash this turn ── */}
+        {isBF && card === "Emergence Zone" && (() => {
+          const cost = 1;
+          if (isCardTapped || manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Flash this turn — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              setBattlefield(prev => prev.filter((_, i) => i !== index));
+              setGraveyard(prev => [...prev, card]);
+              addLog(`Emergence Zone: paid {1}, tapped, sacrificed — you may cast spells as though they had flash this turn.`, COLORS.gold);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{1}'}tap+sac — flash this turn
+            </div>
+          );
+        })()}
+
+        {/* ── Mikokoro, Center of the Sea: {2},{T} — each player draws a card ── */}}
+        {isBF && card === "Mikokoro, Center of the Sea" && (() => {
+          const cost = 2;
+          if (isCardTapped || manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              📖 Group draw ({'{2}'}tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+              addLog(`Mikokoro: paid {2}, tapped — each player draws a card.`, COLORS.blue);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              📖 {'{2}'}Tap — each player draws a card
+            </div>
+          );
+        })()}
+
+        {/* ── Urza's Cave: {2}+tap — tutor for an Urza's land piece ── */}
+        {isBF && card === "Urza's Cave" && (() => {
+          const cost = 2;
+          if (isCardTapped || manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Tutor ({'{2}'}tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo(); toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              // No Urza lands in deck — just log
+              addLog(`Urza's Cave: paid {2}, tapped — search for Urza's Bauble, Mine, Power Plant, or Tower → hand. (None in this deck by default.)`, COLORS.gold);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {'{2}'}tap — tutor Urza's land piece
+            </div>
+          );
+        })()}
+
+        {/* ── Boseiju, Who Endures: channel — {1}{G}, discard to destroy artifact/enchantment/nonbasic land ── */}
+        {zone === "hand" && card === "Boseiju, Who Endures" && (() => {
+          // Channel costs {1}{G} = 2 mana, minus 1 per legendary creature you control
+          const legendaryCount = battlefield.filter(c => getCard(c)?.tags?.includes("legendary") || c === "Yeva, Nature's Herald").length;
+          const cost = Math.max(1, 2 - legendaryCount); // minimum 1 (the {G} component)
+          if (manaPool < cost) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              🌳 Channel — need {cost} mana ({legendaryCount} legendary → {2 - legendaryCount} discount)
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              setHand(prev => prev.filter((_, i) => i !== index));
+              setGraveyard(prev => [...prev, card]);
+              addLog(`Boseiju (channel): paid {1}{G} (${legendaryCount} legendary → −${2 - legendaryCount} discount = ${cost} paid), discarded — destroyed target artifact, enchantment, or nonbasic land. Opponent may search for a basic land.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🌳 Channel {'{1}{G}'} (-{2 - legendaryCount} for {legendaryCount} legendary) — destroy artifact/enchantment/nonbasic
+            </div>
+          );
+        })()}
+
+        {/* ── Talon Gates of Madara: ETB phases out a creature; {T} +1 colorless; {1}{T} any color; {4} play from hand ── */}
+        {isBF && card === "Talon Gates of Madara" && (() => {
+          const canAny = !isCardTapped && manaPool >= 1;
+          return (<>
+            {!isCardTapped && (
+              <div onClick={() => {
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => p + 1); flashMana(1);
+                addLog(`Talon Gates of Madara: tapped — +1 colorless mana.`, COLORS.textMid);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textMid, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#1a1a1a"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ Tap — +1 mana
+              </div>
+            )}
+            {canAny && (
+              <div onClick={() => {
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => p + 1); flashMana(1); // net 0 (paid {1}, got {1})
+                addLog(`Talon Gates of Madara: paid {1}, tapped — +1 mana of any color (net 0).`, COLORS.gold);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ {'{1}'}Tap — +1 mana any color
+              </div>
+            )}
+            {zone === "hand" && manaPool >= 4 && (
+              <div onClick={() => {
+                pushUndo();
+                setManaPool(p => Math.max(0, p - 4)); flashMana(-4);
+                setHand(prev => prev.filter((_, i) => i !== index));
+                goldfishAddToBattlefield(card);
+                addLog(`Talon Gates of Madara: paid {4} — put onto battlefield from hand.`, COLORS.gold);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ {'{4}'} from hand — enter battlefield
+              </div>
+            )}
+            {isBF && (
+              <div onClick={() => {
+                pushUndo();
+                const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c, i }) => getCard(c)?.type === "creature" && i !== index);
+                if (creatures.length === 0) { addLog(`Talon Gates ETB: no creature to phase out.`, COLORS.textDim); closeContextMenu(); return; }
+                setPendingPicker({
+                  label: "TALON GATES ETB — PHASE OUT A CREATURE (optional)", color: COLORS.textDim,
+                  items: creatures.map(({ c, i }) => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? "?"}`, key: `${c}:${i}`, c, i })),
+                  onSelect: ({ c: chosen }) => {
+                    addLog(`Talon Gates ETB: ${chosen} phases out until your next turn.`, COLORS.textDim);
+                  },
+                  onSkip: () => { addLog(`Talon Gates ETB: no creature phased out.`, COLORS.textDim); },
+                });
+                setPickerSelected([]); closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textDim, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#1a1a1a"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                🔄 ETB — phase out a creature
+              </div>
+            )}
+          </>);
+        })()}
+
+        {/* ── Mariposa Military Base: {T} +1 colorless; {5}{T} draw (−1 per rad counter) ── */}
+        {isBF && card === "Mariposa Military Base" && (() => {
+          const radCounters = counters[key] ?? 0;
+          const drawCost = Math.max(0, 5 - radCounters);
+          const canDraw = !isCardTapped && manaPool >= drawCost;
+          return (<>
+            {!isCardTapped && (
+              <div onClick={() => {
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => p + 1); flashMana(1);
+                addLog(`Mariposa Military Base: tapped — +1 mana.`, COLORS.textMid);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textMid, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#1a1a1a"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ Tap — +1 mana
+              </div>
+            )}
+            {canDraw && (
+              <div onClick={() => {
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => Math.max(0, p - drawCost)); flashMana(-drawCost);
+                if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
+                addLog(`Mariposa Military Base: paid {${drawCost}}, tapped — drew a card (${radCounters} rad counter${radCounters !== 1 ? "s" : ""}).`, COLORS.blue);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.blue, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#0a1020"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ {`{${drawCost}}`}tap — draw a card {radCounters > 0 ? `(${radCounters} rad counters)` : ""}
+              </div>
+            )}
+            <div onClick={() => {
+              pushUndo();
+              setCounters(prev => ({ ...prev, [key]: (prev[key] ?? 0) + 2 }));
+              addLog(`Mariposa Military Base: entered tapped — gained 2 rad counters (now ${(counters[key] ?? 0) + 2}).`, COLORS.textDim);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1a1a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ☢ ETB tapped — +2 rad counters ({(counters[key] ?? 0)} now)
+            </div>
+          </>);
+        })()}
+
+        {/* ── Cloudstone Curio: bounce trigger — creature ETB, return a creature to hand ── */}
+        {isBF && card === "Cloudstone Curio" && (() => {
+          const bounceable = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+          if (bounceable.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              🔄 Bounce trigger — no creatures to bounce
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              setPendingPicker({
+                label: "CLOUDSTONE CURIO — BOUNCE A CREATURE TO HAND", color: COLORS.gold,
+                items: bounceable.map(({ c, i }) => ({
+                  label: c, sub: `CMC ${getCard(c)?.cmc ?? "?"}`,
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: bounced, i: bi }) => {
+                  setBattlefield(prev => prev.filter((_, i) => i !== bi));
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(bounced, bi)); return next; });
+                  setSickCreatures(prev => { const next = new Set(prev); next.delete(cardKey(bounced, bi)); return next; });
+                  setHand(prev => [...prev, bounced]);
+                  addLog(`Cloudstone Curio: triggered — bounced ${bounced} to hand.`, COLORS.gold);
+                },
+              });
+              setPickerSelected([]); closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🔄 Trigger — bounce a creature to hand
             </div>
           );
         })()}
@@ -16917,7 +17890,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState }) {
                     setTimeout(() => tutorInputRef.current?.focus(), 50);
                     addLog(`Nissa landfall triggered — search for an Elf or Elemental.`, COLORS.green3);
                   }} style={{ ...btnStyle(COLORS.green3), background: "#0a1e0a" }}
-                    title="Nissa, Resurgent Animist landfall: when a Forest enters, search your library for an Elf or Elemental → hand.">
+                    title="Nissa, Resurgent Animist landfall: whenever a land enters, adds {G} of any color. Second landfall each turn: search your library for an Elf or Elemental → hand.">
                     🌿 NISSA TUTOR
                   </button>
                 )}
