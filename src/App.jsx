@@ -13023,6 +13023,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [showScry, setShowScry] = useState(false);
   const [scryOrder, setScryOrder] = useState([]);
   const [scryBottom, setScryBottom] = useState(new Set());
+  const [growingRitesCards, setGrowingRitesCards] = useState(null); // {cards:[...], selected:null|idx} when modal open
   const [manaPool, setManaPool] = useState(0); // floating mana currently in pool
   const [manaPoolDelta, setManaPoolDelta] = useState(null); // {value, id} for flash animation
   const [showUntapModal, setShowUntapModal] = useState(null); // {card, i} for Wirewood Lodge etc
@@ -14330,6 +14331,18 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         setTimeout(() => tutorInputRef.current?.focus(), 50);
         addLog(`Elvish Harbinger ETB — search for any Elf card → top of library.`, COLORS.green2);
       }
+
+      // ── Growing Rites of Itlimoc: ETB — look at top 4, may take a creature to hand, rest go to bottom ──
+      if (card === "Growing Rites of Itlimoc") {
+        const top4 = library.slice(0, 4);
+        if (top4.length > 0) {
+          setGrowingRitesCards({ cards: top4, selected: null });
+          addLog(`Growing Rites of Itlimoc ETB — looking at top ${top4.length} card${top4.length !== 1 ? "s" : ""}...`, COLORS.green2);
+        } else {
+          addLog(`Growing Rites of Itlimoc ETB — library is empty.`, COLORS.textDim);
+        }
+      }
+
       if (card === "Eternal Witness") {
         if (graveyard.length > 0) {
           setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "ETERNAL WITNESS — RETURN A CARD FROM GRAVEYARD TO HAND" });
@@ -16699,16 +16712,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             {top4.length > 0 && (
               <div onClick={() => {
                 pushUndo();
-                // Look at top 4, put a creature into hand, rest on bottom
-                if (creatureInTop4) {
-                  setHand(prev => [...prev, creatureInTop4]);
-                  const rest = top4.filter(c => c !== creatureInTop4);
-                  setLibrary(prev => [...prev.slice(4), ...rest]);
-                  addLog(`Growing Rites ETB: looked at top 4 — put ${creatureInTop4} into hand, ${rest.length} cards on bottom.`, COLORS.green2);
-                } else {
-                  setLibrary(prev => [...prev.slice(4), ...top4]);
-                  addLog(`Growing Rites ETB: looked at top 4 — no creature found, all 4 on bottom.`, COLORS.textDim);
-                }
+                setGrowingRitesCards({ cards: top4, selected: null });
+                addLog(`Growing Rites ETB — looking at top ${top4.length} cards...`, COLORS.green2);
                 closeContextMenu();
               }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
                 onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
@@ -17055,8 +17060,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       if (e.key === "d" || e.key === "D") { e.preventDefault(); drawCard(1); }
       if (e.key === "m" || e.key === "M") { e.preventDefault(); tapAllMana(); }
       if (e.key === "Escape") {
-        const anyOpen = showUntapModal || showTutor || showScry || contextMenu;
-        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); }
+        const anyOpen = showUntapModal || showTutor || showScry || contextMenu || growingRitesCards;
+        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); setGrowingRitesCards(null); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -17083,6 +17088,85 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             </div>
           ))}
           <button onClick={() => setShowUntapModal(null)} style={{ marginTop: "8px", width: "100%", background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "4px", color: COLORS.textDim, cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "10px" }}>✕ CANCEL (Esc)</button>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Growing Rites of Itlimoc modal ──────────────────────────
+  const GrowingRitesModal = () => {
+    if (!growingRitesCards) return null;
+    const { cards, selected } = growingRitesCards;
+    const confirmRites = () => {
+      if (selected !== null) {
+        const taken = cards[selected];
+        const rest  = cards.filter((_, i) => i !== selected);
+        setHand(prev => [...prev, taken]);
+        setLibrary(prev => [...prev.slice(cards.length), ...rest]);
+        addLog(`Growing Rites ETB → ${taken} to hand. ${rest.length} card${rest.length !== 1 ? "s" : ""} on bottom of library.`, COLORS.green2);
+      } else {
+        setLibrary(prev => [...prev.slice(cards.length), ...cards]);
+        addLog(`Growing Rites ETB — no creature taken. All ${cards.length} card${cards.length !== 1 ? "s" : ""} on bottom of library.`, COLORS.textDim);
+      }
+      setGrowingRitesCards(null);
+    };
+    return (
+      <div onClick={e => e.stopPropagation()} style={{
+        position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 620,
+        background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <div style={{
+          background: "#091a09", border: `1px solid ${COLORS.green2}`,
+          borderRadius: "10px", padding: "20px", minWidth: "320px", maxWidth: "420px",
+          boxShadow: "0 4px 28px rgba(0,0,0,0.95)",
+        }}>
+          <div style={{ fontSize: "11px", color: COLORS.green2, letterSpacing: "2px", fontFamily: "'Cinzel', serif", marginBottom: "6px" }}>
+            🌱 GROWING RITES OF ITLIMOC — ETB
+          </div>
+          <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginBottom: "14px" }}>
+            Look at the top {cards.length} cards. You may take a <span style={{ color: COLORS.green1 }}>creature</span> to hand. The rest go to the bottom.
+          </div>
+          {cards.map((c, i) => {
+            const cd = getCard(c);
+            const isCreature = cd?.type === "creature";
+            const isSel = selected === i;
+            return (
+              <div key={i} onClick={() => {
+                if (!isCreature) return;
+                setGrowingRitesCards(prev => ({ ...prev, selected: isSel ? null : i }));
+              }} style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "7px 10px", marginBottom: "5px", borderRadius: "6px", cursor: isCreature ? "pointer" : "default",
+                border: `1px solid ${isSel ? COLORS.green2 : isCreature ? COLORS.border : "#1a1a1a"}`,
+                background: isSel ? "#0d2e0d" : isCreature ? "#111811" : "#0d0d0d",
+                opacity: isCreature ? 1 : 0.45,
+              }}
+                onMouseEnter={e => { if (isCreature && !isSel) e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = isCreature ? "#111811" : "#0d0d0d"; }}>
+                <div>
+                  <span style={{ color: isSel ? COLORS.green2 : isCreature ? COLORS.textMid : COLORS.textDim, fontSize: "12px" }}>{c}</span>
+                  <span style={{ color: COLORS.textDim, fontSize: "10px", marginLeft: "8px" }}>
+                    {cd?.type ?? "unknown"}{cd?.cmc != null ? ` · CMC ${cd.cmc}` : ""}
+                  </span>
+                </div>
+                {isSel && <span style={{ color: COLORS.green2, fontSize: "11px", marginLeft: "8px" }}>✓ to hand</span>}
+                {!isSel && isCreature && <span style={{ color: COLORS.textDim, fontSize: "10px", marginLeft: "8px" }}>click to take</span>}
+                {!isCreature && <span style={{ color: COLORS.textDim, fontSize: "10px", marginLeft: "8px" }}>→ bottom</span>}
+              </div>
+            );
+          })}
+          <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+            <button onClick={confirmRites} style={{
+              flex: 1, background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "6px",
+              padding: "8px", color: COLORS.green2, cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+            }}>
+              {selected !== null ? `✓ TAKE ${cards[selected].split(",")[0].toUpperCase()}` : "✓ PUT ALL ON BOTTOM"}
+            </button>
+            <button onClick={() => setGrowingRitesCards(null)} style={{
+              background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
+              padding: "8px 14px", color: COLORS.textDim, cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
+            }}>✕</button>
+          </div>
         </div>
       </div>
     );
@@ -18037,6 +18121,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
               {/* Tutor / Scry overlays — called as functions to avoid remount */}
               {TutorOverlay()}
               {ScryModal()}
+              {GrowingRitesModal()}
               {UntapModal()}
 
               <div style={{ flex: 1, overflowY: "auto", padding: viewMode === "image" ? "0" : "12px 14px" }}>
