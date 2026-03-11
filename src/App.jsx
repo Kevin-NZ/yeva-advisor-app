@@ -16188,7 +16188,8 @@ if (card === "Talon Gates of Madara") {
         : "0 lands that tap for {G}";
       notes.push(`⚠️ No green mana source ✗ — ${landDesc}`);
       notes.push("Cannot cast any spell T1 or T2 without a green-producing land");
-      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
+      // Hard gate — combo nearness cannot save a hand with zero green production
+      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
     }
 
     // Gate 2: 0 real lands + 0 rocks → dorks can't cast themselves
@@ -16199,7 +16200,7 @@ if (card === "Talon Gates of Madara") {
       } else {
         notes.push("0 lands, 0 ramp, 0 rocks ✗ — completely stranded");
       }
-      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
+      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
     }
 
     // Gate 3: No ramp of any kind → can't execute game plan
@@ -16212,7 +16213,7 @@ if (card === "Talon Gates of Madara") {
         notes.push("No ramp, no tutors ✗ — can't execute the game plan");
         if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} present but no way to develop the board`);
       }
-      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
+      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
     }
 
     // ════════════════════════════════════════════════════════════
@@ -16358,7 +16359,7 @@ if (card === "Talon Gates of Madara") {
   }
 
   // Layer advisor analysis signals on top of the structural hand grade
-  function enrichWithAnalysis({ grade, notes }, analysis) {
+  function enrichWithAnalysis({ grade, notes, hardMulligan = false }, analysis) {
     if (!analysis) return { grade, notes };
     const results    = analysis.results ?? [];
     const live       = results.filter(r => !r.isSuppressed);
@@ -16374,7 +16375,7 @@ if (card === "Talon Gates of Madara") {
       grade = { label: "KEEP", color: COLORS.green2 };
     } else if (topCat.includes("WIN NEXT")) {
       advisorNotes.push("⚡ WIN NEXT TURN line available");
-      if (grade.label === "MULLIGAN") grade = { label: "BORDERLINE", color: COLORS.gold };
+      if (grade.label === "MULLIGAN" && !hardMulligan) grade = { label: "BORDERLINE", color: COLORS.gold };
     } else if (suppressed.length > 0) {
       // A suppressed line means a piece is MISSING — upgrade to BORDERLINE at most, never KEEP
       const s = suppressed[0];
@@ -16382,7 +16383,7 @@ if (card === "Talon Gates of Madara") {
       const reason    = reasonRaw.length > 60 ? reasonRaw.slice(0, 57) + "…" : reasonRaw;
       if (reason) {
         advisorNotes.push(`1 piece away from combo — need: ${reason}`);
-        if (grade.label === "MULLIGAN") grade = { label: "BORDERLINE", color: COLORS.gold };
+        if (grade.label === "MULLIGAN" && !hardMulligan) grade = { label: "BORDERLINE", color: COLORS.gold };
       }
       if (suppressed.length > 1) {
         advisorNotes.push(`(+${suppressed.length - 1} other near-combo line${suppressed.length > 2 ? "s" : ""})`);
@@ -16568,38 +16569,50 @@ if (card === "Talon Gates of Madara") {
               ⚡ Activate — {isCardTapped ? "tapped" : "no creature in hand to discard"}
             </div>
           );
-          const discard = handCreatures[0];
+          const cardName = card; const cardIndex = index;
           return (
             <div onClick={() => {
               pushUndo();
-              const di = hand.indexOf(discard);
-              setHand(prev => [...prev.slice(0, di), ...prev.slice(di + 1)]);
-              setGraveyard(prev => [...prev, discard]);
-              toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
-              addLog(`${card}: discarded ${discard}, paid {G} — choose a creature to fetch.`, COLORS.purple);
-              setTutorCreaturesOnly(true);
-              setTutorOnSelect(() => (chosen) => {
-                setLibrary(prev => {
-                  const idx = prev.indexOf(chosen);
-                  if (idx === -1) return prev;
-                  const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-                  for (let i = without.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [without[i], without[j]] = [without[j], without[i]];
-                  }
-                  return without;
-                });
-                setHand(prev => [...prev, chosen]);
-                addLog(`${card} → ${chosen} → hand. Library shuffled.`, COLORS.green2);
-              });
-              setShowTutor(true); setTutorQuery("");
-              setTimeout(() => tutorInputRef.current?.focus(), 50);
               closeContextMenu();
+              setPendingPicker({
+                label: `${cardName.toUpperCase()} — DISCARD A CREATURE`,
+                color: COLORS.purple,
+                items: handCreatures.map(c => ({
+                  label: c,
+                  sub: `CMC ${getCard(c)?.cmc ?? "?"} · discard to fetch any creature`,
+                  key: c,
+                })),
+                onSelect: ({ key: discard }) => {
+                  const di = hand.indexOf(discard);
+                  setHand(prev => [...prev.slice(0, di), ...prev.slice(di + 1)]);
+                  setGraveyard(prev => [...prev, discard]);
+                  toggleTap(cardName, cardIndex);
+                  setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+                  addLog(`${cardName}: discarded ${discard}, paid {G} — choose a creature to fetch.`, COLORS.purple);
+                  setTutorCreaturesOnly(true);
+                  setTutorOnSelect(() => (chosen) => {
+                    setLibrary(prev => {
+                      const idx = prev.indexOf(chosen);
+                      if (idx === -1) return prev;
+                      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+                      for (let i = without.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [without[i], without[j]] = [without[j], without[i]];
+                      }
+                      return without;
+                    });
+                    setHand(prev => [...prev, chosen]);
+                    addLog(`${cardName} → ${chosen} → hand. Library shuffled.`, COLORS.green2);
+                  });
+                  setShowTutor(true); setTutorQuery("");
+                  setTimeout(() => tutorInputRef.current?.focus(), 50);
+                },
+              });
+              setPickerSelected([]);
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.purple, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#1a0a2a"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Activate — discard {discard}
+              ⚡ Activate — discard a creature
             </div>
           );
         })()}
