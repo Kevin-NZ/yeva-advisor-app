@@ -16586,7 +16586,8 @@ if (card === "Talon Gates of Madara") {
                   const di = hand.indexOf(discard);
                   setHand(prev => [...prev.slice(0, di), ...prev.slice(di + 1)]);
                   setGraveyard(prev => [...prev, discard]);
-                  toggleTap(cardName, cardIndex);
+                  // Fauna Shaman taps to activate; Survival of the Fittest does not
+                  if (cardName === "Fauna Shaman") toggleTap(cardName, cardIndex);
                   setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
                   addLog(`${cardName}: discarded ${discard}, paid {G} — choose a creature to fetch.`, COLORS.purple);
                   setTutorCreaturesOnly(true);
