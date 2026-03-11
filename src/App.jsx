@@ -7192,6 +7192,98 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     }
 
+    // ── WIN NOW: Bellower → Speaker (ETB finds Temur) → Temur+Hope Tender+big land = infinite → WIN ──
+    // Temur bounces ANY creature ({1}{G}), including Hope Tender (resets exert) AND Formidable Speaker.
+    // Line: Bellower(6) → Speaker enters → ETB: discard → find Temur Sabertooth → cast Temur(4).
+    // Loop A (infinite mana): Temur({1}{G}) bounces Tender → recast Tender({1}{G}) → exert → untap big land → tap.
+    //   Net positive when big land ≥ 4 mana.
+    // Loop B (win): Temur({1}{G}) bounces Speaker → recast Speaker({2}{G}) → ETB → find Duskwatch → WIN.
+    // Total mana: 6 (Bellower) + 4 (Temur) = 10 minimum.
+    {
+      const bsTBellower   = inHand.has("Woodland Bellower");
+      const bsTSpeakerOut = !board.has("Formidable Speaker");
+      const bsTTemurOut   = !board.has("Temur Sabertooth") && !inHand.has("Temur Sabertooth");
+      const bsTHopeTender = board.has("Hope Tender");
+      const bsTAlreadyWin = results.some(r => r.priority >= 14);
+      const bsTBigLand    = board.has("Gaea's Cradle") && creaturesOnBoard >= 4 ? "Gaea's Cradle"
+        : board.has("Itlimoc, Cradle of the Sun") ? "Itlimoc, Cradle of the Sun"
+        : board.has("Nykthos, Shrine to Nyx") && devotionOnBoard >= 4 ? "Nykthos, Shrine to Nyx"
+        : null;
+      // Mana: Bellower(6) + Temur(4) = 10
+      const bsTManaOk   = mana >= 10 || infiniteManaActive;
+      const bsTDiscard  = hand.find(c => c !== "Woodland Bellower") ?? null;
+
+      if (bsTBellower && bsTSpeakerOut && bsTTemurOut && bsTHopeTender
+          && bsTBigLand && bsTManaOk && bsTDiscard
+          && (isMyTurn || yevaAvailable) && !bsTAlreadyWin) {
+        const manaAfterBoth = mana - 10;
+        const bigLandOutput = bsTBigLand === "Gaea's Cradle" ? creaturesOnBoard
+          : bsTBigLand === "Nykthos, Shrine to Nyx" ? devotionOnBoard : 4;
+        const loopNet = bigLandOutput - 3; // output − {1}{G}(Temur bounce Tender) − {1}{G}(Tender recast)
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW",
+          headline: `Woodland Bellower → Formidable Speaker (ETB→Temur Sabertooth) → Hope Tender+Temur+${bsTBigLand} = infinite → Temur bounces Speaker → WIN`,
+          combo: "bellower_speaker_temur_hope_tender_win",
+          detail: `Hope Tender is on board. Cast Bellower (6) → ETB puts Speaker onto battlefield. Speaker ETB: discard ${bsTDiscard} → find Temur Sabertooth → cast Temur (4). Infinite mana loop: pay {1}{G} Temur → bounce Hope Tender → recast Tender ({1}{G}) → exert → untap ${bsTBigLand} + one land → tap ${bsTBigLand} for ${bigLandOutput} {G}. Net +${loopNet} per loop → infinite. Win: pay {1}{G} Temur → bounce Formidable Speaker → recast Speaker ({2}{G}) → ETB → find Duskwatch Recruiter → activate repeatedly → WIN.`,
+          steps: [
+            `Cast Woodland Bellower ({5}{G}): ETB finds Formidable Speaker (non-legendary, CMC ≤ 3) → onto battlefield.`,
+            `Formidable Speaker ETB: discard ${bsTDiscard} → search library for Temur Sabertooth → to hand. Library shuffles.`,
+            `Cast Temur Sabertooth ({2}{G}{G}) — ${manaAfterBoth >= 0 ? `${mana} − 10 = ${manaAfterBoth} mana left` : "tap remaining sources"}.`,
+            `Infinite mana loop: pay {1}{G} Temur → return Hope Tender to hand (resets exert).`,
+            `Recast Hope Tender ({1}{G}) → exert → untap ${bsTBigLand} + one other land.`,
+            `Tap ${bsTBigLand} for ${bigLandOutput} {G}. Net +${loopNet} {G} per loop → infinite mana.`,
+            `Win: pay {1}{G} Temur → bounce Formidable Speaker. Recast Speaker ({2}{G}): ETB → find Duskwatch Recruiter.`,
+            `Activate Duskwatch Recruiter repeatedly with infinite mana → assemble win pile → WIN.`,
+          ],
+          color: "#ff4500",
+        });
+      }
+    }
+
+    // ── CAST TO WIN: Bellower → Speaker (ETB finds Kogla) → Hope Tender+Kogla+big land = infinite mana
+    //   Kogla bounces Humans only — cannot bounce Speaker. Need Temur from library to close the win. ──
+    {
+      const bsKBellower   = inHand.has("Woodland Bellower");
+      const bsKSpeakerOut = !board.has("Formidable Speaker");
+      const bsKKoglaOut   = !board.has("Kogla, the Titan Ape") && !inHand.has("Kogla, the Titan Ape");
+      const bsKTemurOut   = !board.has("Temur Sabertooth") && !inHand.has("Temur Sabertooth");
+      const bsKHopeTender = board.has("Hope Tender");
+      const bsKAlreadyWin = results.some(r => r.priority >= 13);
+      const bsKBigLand    = board.has("Gaea's Cradle") && creaturesOnBoard >= 4 ? "Gaea's Cradle"
+        : board.has("Itlimoc, Cradle of the Sun") ? "Itlimoc, Cradle of the Sun"
+        : board.has("Nykthos, Shrine to Nyx") && devotionOnBoard >= 4 ? "Nykthos, Shrine to Nyx"
+        : null;
+      const bsKManaOk   = mana >= 12 || infiniteManaActive;
+      const bsKDiscard  = hand.find(c => c !== "Woodland Bellower") ?? null;
+
+      if (bsKBellower && bsKSpeakerOut && bsKKoglaOut && bsKTemurOut && bsKHopeTender
+          && bsKBigLand && bsKManaOk && bsKDiscard
+          && (isMyTurn || yevaAvailable) && !bsKAlreadyWin) {
+        const manaAfterBoth = mana - 12;
+        const bigLandOutput = bsKBigLand === "Gaea's Cradle" ? creaturesOnBoard
+          : bsKBigLand === "Nykthos, Shrine to Nyx" ? devotionOnBoard : 4;
+        const loopNet = bigLandOutput - 3;
+        results.push({
+          priority: 13,
+          category: "⚡ CAST TO WIN",
+          headline: `Woodland Bellower → Formidable Speaker (ETB→Kogla) → Hope Tender+Kogla+${bsKBigLand} = infinite mana — find Temur Sabertooth to WIN`,
+          combo: "bellower_speaker_kogla_hope_tender_win",
+          detail: `Hope Tender is on board. Cast Bellower (6) → Speaker ETB: discard → find Kogla. Cast Kogla (6). Infinite mana loop: {1}{G} Kogla bounces Hope Tender (a Human) → recast Tender ({1}{G}) → exert → untap ${bsKBigLand} → tap for ${bigLandOutput} {G}. Net +${loopNet}/loop → infinite. NOTE: Kogla bounces Humans only — cannot bounce Formidable Speaker. With infinite mana, tutor Temur Sabertooth: {1}{G} Temur bounces Speaker → ETB finds Duskwatch → WIN.`,
+          steps: [
+            `Cast Woodland Bellower ({5}{G}): ETB finds Formidable Speaker → onto battlefield.`,
+            `Formidable Speaker ETB: discard ${bsKDiscard} → find Kogla, the Titan Ape → to hand. Library shuffles.`,
+            `Cast Kogla, the Titan Ape ({4}{G}{G}) — ${manaAfterBoth >= 0 ? `${mana} − 12 = ${manaAfterBoth} mana left` : "tap remaining sources"}.`,
+            `Infinite mana: {1}{G} Kogla → bounce Hope Tender (Human) → recast Tender ({1}{G}) → exert → untap ${bsKBigLand} → tap for ${bigLandOutput}. Net +${loopNet}/loop.`,
+            `⚠ Kogla cannot bounce Formidable Speaker (not a Human) — you need Temur Sabertooth to close.`,
+            `With infinite mana: use Fauna Shaman, Chord of Calling, or any tutor to find Temur Sabertooth.`,
+            `{1}{G} Temur → bounce Formidable Speaker → recast ({2}{G}) → ETB → find Duskwatch Recruiter → WIN.`,
+          ],
+          color: "#e67e22",
+        });
+      }
+    }
+
     // ── WIN NOW: Quirion + Elder on board, fetch Speaker via Pact → Speaker ETB finds Ashaya → infinite → WIN ──
     // Speaker is NOT on the board. Fetch it with Summoner's Pact (free), cast it (3 mana), ETB: discard → find Ashaya.
     // Cast Ashaya (5 mana). Elder is already on board → infinite mana → Quirion bounces Speaker → tutor loop → WIN.
@@ -14526,6 +14618,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   }
 
   function toggleTap(card, i) {
+    // Lotus Petal is a sacrifice ability, not a tap ability — tapping it sacrifices for {G}
+    if (card === "Lotus Petal") {
+      pushUndo();
+      goldfishRemoveFromBattlefield(card, i);
+      setGraveyard(prev => [...prev, "Lotus Petal"]);
+      setManaPool(p => p + 1); flashMana(1);
+      addLog(`Lotus Petal: sacrificed — +1 {G}.`, COLORS.gold);
+      return;
+    }
+
     const key = cardKey(card, i);
     const cardMana = cardManaAt(card, i);
     const cardData = CARDS[card] ?? EXTRA_CARDS.get(card);
@@ -15178,13 +15280,9 @@ if (card === "Chrome Mox") {
     addLog(`Chrome Mox ETB — no non-land cards in hand to imprint. Mox produces no mana.`, COLORS.textDim);
   }
 }
-// ── Lotus Petal: sacrifice for {G} ──
+// ── Lotus Petal: enters battlefield as a 0-cost artifact. Right-click to sacrifice for {G}. ──
 if (card === "Lotus Petal") {
-  // Lotus Petal enters then immediately sacrifices for 1 mana
-  setBattlefield(prev => prev.filter(c => c !== "Lotus Petal"));
-  setGraveyard(prev => [...prev, "Lotus Petal"]);
-  setManaPool(p => p + 1); flashMana(1);
-  addLog(`Lotus Petal: sacrificed for {G} (+1 mana).`, COLORS.green1);
+  addLog(`Lotus Petal entered the battlefield. Right-click → sacrifice for {G}.`, COLORS.gold);
 }
 // ── Mox Diamond: discard a land from hand, or exile if no land ──
 if (card === "Mox Diamond") {
@@ -17678,6 +17776,22 @@ if (card === "Talon Gates of Madara") {
             </div>
           );
         })()}
+
+        {/* ── Lotus Petal: sacrifice for {G} ── */}
+        {isBF && card === "Lotus Petal" && (
+          <div onClick={() => {
+            pushUndo();
+            goldfishRemoveFromBattlefield(card, index);
+            setGraveyard(prev => [...prev, "Lotus Petal"]);
+            setManaPool(p => p + 1); flashMana(1);
+            addLog(`Lotus Petal: sacrificed — +1 {G}.`, COLORS.gold);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            🌸 Sacrifice — +1 {G}
+          </div>
+        )}
 
         {/* ── Arbor Elf: tap — untap target Forest (or Forest-enchanted land) ── */}
         {isBF && card === "Arbor Elf" && (() => {
