@@ -108,7 +108,7 @@ const CARDS = {
   "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler","infinite-dork","haste","land-animator"] , role:"haste-combo", greenPips:1},
   "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land","haste","treefolk","land-animator"] , greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
   "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor","devotion","kicker"] , greenPips:1},
-  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf","big-dork"] , greenPips:1},
+  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , greenPips:1},
   "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling","treefolk","removal","combo"] , role:"kogla-loop", greenPips:1},
   "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection","legend-protection"] , role:"legend-protector", greenPips:1, note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
   "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop","combo","tutor"] , role:"land-tutor", greenPips:1},
@@ -2628,6 +2628,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const castableBigDorks = hand.filter(c => {
       const cd = getCard(c);
       if (!cd?.tags?.includes("big-dork")) return false;
+      if (!cd?.tapsFor) return false; // must actually tap for mana (not just tagged big-dork for other reasons)
       if (board.has(c)) return false; // already on board (unique legend or already cast)
       return canAfford(cd.cmc, cd.greenPips ?? 1);
     });
@@ -14841,9 +14842,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           const arborIdx = library.indexOf("Dryad Arbor");
           if (arborIdx !== -1) {
             setLibrary(prev => [...prev.slice(0, arborIdx), ...prev.slice(arborIdx + 1)]);
-            setBattlefield(prev => [...prev, "Dryad Arbor"]);
+            setBattlefield(prev => {
+              const newIdx = prev.length;
+              setSickCreatures(s => new Set([...s, `Dryad Arbor:${newIdx}`]));
+              return [...prev, "Dryad Arbor"];
+            });
             shuffleGSZBack();
-            addLog(`Cast Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield. GSZ shuffled back.`, COLORS.green2);
+            addLog(`Cast Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield (summoning sick). GSZ shuffled back.`, COLORS.green2);
           } else {
             shuffleGSZBack();
             addLog(`Cast Green Sun's Zenith (X=0) — Dryad Arbor not in library. GSZ shuffled back.`, COLORS.textMid);
@@ -14857,13 +14862,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
               setLibrary(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
               setBattlefield(prev => {
                 const newIdx = prev.length;
-                if (getCard(chosen)?.type === "creature") setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
+                // Dryad Arbor has type "land" but is a creature — always gets summoning sickness via GSZ
+                const isCreatureForSickness = getCard(chosen)?.type === "creature" || chosen === "Dryad Arbor";
+                if (isCreatureForSickness) setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
                 return [...prev, chosen];
               });
               fireETB(chosen);
             }
             shuffleGSZBack();
-            addLog(`Green Sun's Zenith (X=${gszX}) → ${chosen} onto battlefield. GSZ shuffled back.`, COLORS.green2);
+            addLog(`Green Sun's Zenith (X=${gszX}) → ${chosen} onto battlefield${chosen === "Dryad Arbor" ? " (summoning sick)" : ""}. GSZ shuffled back.`, COLORS.green2);
           });
           setTutorSpellName("Green Sun's Zenith");
           setShowTutor(true); setTutorQuery("");
@@ -16766,54 +16773,83 @@ if (card === "Talon Gates of Madara") {
 
         {/* ── Elvish Reclaimer: {2}{T}, sacrifice a land — search library for a land → battlefield tapped ── */}
         {isBF && card === "Elvish Reclaimer" && (() => {
-          const cost = 2; const canPay = manaPool >= cost;
+          const cost = 2;
+          const canPay = manaPool >= cost;
           const lands = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "land");
           if (isCardTapped || !canPay || lands.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Reclaim ({'{2}'}, tap, sac land) — {isCardTapped ? "tapped" : !canPay ? `need ${cost} mana` : "no lands to sacrifice"}
+              ⚡ Reclaim ({'{1}{G}'}, tap, sac land) — {isCardTapped ? "tapped" : !canPay ? `need ${cost} mana` : "no lands to sacrifice"}
             </div>
           );
           return (
             <div onClick={() => {
               pushUndo();
-              toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              closeContextMenu();
+              // Capture card/index now before closeContextMenu nulls contextMenu
+              const reclaimerCard = card;
+              const reclaimerIdx = index;
               // Step 1: pick a land to sacrifice
-              setPendingPicker({ label: "ELVISH RECLAIMER — SACRIFICE A LAND", color: COLORS.green2,
-                items: [...lands].sort((a, b) => (effectiveTapped.has(cardKey(a.c, a.i)) ? 0 : 1) - (effectiveTapped.has(cardKey(b.c, b.i)) ? 0 : 1))
-                  .map(({c,i}) => ({ label: c, sub: effectiveTapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+              setPendingPicker({
+                label: "ELVISH RECLAIMER — SACRIFICE A LAND",
+                color: COLORS.green2,
+                items: [...lands]
+                  .sort((a, b) => (tapped.has(cardKey(a.c, a.i)) ? 0 : 1) - (tapped.has(cardKey(b.c, b.i)) ? 0 : 1))
+                  .map(({c: lc, i: li}) => ({
+                    label: lc,
+                    sub: tapped.has(cardKey(lc, li)) ? "● tapped (good sac)" : "○ untapped",
+                    key: `${lc}:${li}`,
+                    c: lc,
+                    i: li,
+                  })),
                 onSelect: ({ c: sacCard, i: sacIdx }) => {
-                  setBattlefield(prev => { const a = [...prev]; a.splice(sacIdx, 1); return a; });
+                  // Pay mana cost
+                  setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+                  // Remove sacrificed land and tap Reclaimer in one atomic update
+                  // so Reclaimer's final index is correct after the splice
+                  setBattlefield(prev => {
+                    const next = [...prev];
+                    next.splice(sacIdx, 1);
+                    // Find Reclaimer's index in the post-splice array
+                    const newReclaimerIdx = next.indexOf(reclaimerCard);
+                    if (newReclaimerIdx !== -1) {
+                      setTapped(t => { const s = new Set(t); s.add(cardKey(reclaimerCard, newReclaimerIdx)); return s; });
+                    }
+                    return next;
+                  });
                   setGraveyard(prev => [...prev, sacCard]);
-                  addLog(`Elvish Reclaimer: sacrificed ${sacCard}. Searching library for a land…`, COLORS.green2);
-                  // Step 2: tutor a land from library → battlefield tapped
+                  addLog(`Elvish Reclaimer: paid {1}{G}, tapped, sacrificed ${sacCard} → searching library for a land…`, COLORS.green2);
+                  // Step 2: open land tutor
                   setTutorLandsOnly(true);
                   setTutorOnSelect(() => (chosen) => {
                     setLibrary(prev => {
-                      const idx2 = prev.indexOf(chosen); if (idx2 === -1) return prev;
+                      const idx2 = prev.indexOf(chosen);
+                      if (idx2 === -1) return prev;
                       const without = [...prev.slice(0, idx2), ...prev.slice(idx2 + 1)];
-                      for (let i2 = without.length - 1; i2 > 0; i2--) { const j = Math.floor(Math.random() * (i2 + 1)); [without[i2], without[j]] = [without[j], without[i2]]; }
+                      for (let i2 = without.length - 1; i2 > 0; i2--) {
+                        const j = Math.floor(Math.random() * (i2 + 1));
+                        [without[i2], without[j]] = [without[j], without[i2]];
+                      }
                       return without;
                     });
-                    setBattlefield(prev => [...prev, chosen]);
-                    // Enter tapped: find the new index and tap it
-                    setTapped(prev => {
-                      const newBF = [...battlefield.filter((_,bi) => bi !== sacIdx), chosen];
-                      const newIdx = newBF.lastIndexOf(chosen);
-                      return new Set([...prev, cardKey(chosen, newIdx)]);
+                    // Put land onto battlefield tapped
+                    setBattlefield(prev => {
+                      const newBF = [...prev, chosen];
+                      const newIdx = newBF.length - 1;
+                      setTapped(t => new Set([...t, cardKey(chosen, newIdx)]));
+                      return newBF;
                     });
                     addLog(`Elvish Reclaimer → ${chosen} onto battlefield tapped. Library shuffled.`, COLORS.green2);
                   });
-                  setShowTutor(true); setTutorQuery("");
+                  setShowTutor(true);
+                  setTutorQuery("");
                   setTimeout(() => tutorInputRef.current?.focus(), 50);
-                }
+                },
               });
               setPickerSelected([]);
-              closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Reclaim land ({'{2}'}, tap, sac land)
+              ⚡ Reclaim land ({'{1}{G}'}, tap, sac land)
             </div>
           );
         })()}
