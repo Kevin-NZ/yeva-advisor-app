@@ -2489,6 +2489,63 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- CAST ARGOTHIAN ELDER FROM HAND ----
+  // Elder is a combo piece AND a ramp piece. Its tap ability untaps two lands — with any two
+  // lands that produce ≥2 mana total, this is net-positive mana every turn.
+  // Not tagged big-dork so it falls through all other ramp checks. Surface it explicitly.
+  if ((isMyTurn || yevaAvailable) && !infiniteManaActive
+      && inHand.has("Argothian Elder") && !board.has("Argothian Elder")) {
+    const elderCmc = 4;
+    const canCastElder = canAfford(elderCmc, 1);
+    if (canCastElder && !results.some(r => r.headline?.includes("Argothian Elder") && r.priority >= 6)) {
+      const hasAshaya = board.has("Ashaya, Soul of the Wild");
+      const hasLodge  = board.has("Wirewood Lodge");
+      const bigLands  = battlefield.filter(c => {
+        const cd = getCard(c);
+        return cd?.type === "land" && c !== "Forest"
+          && !["Talon Gates of Madara","War Room","Geier Reach Sanitarium",
+               "Emergence Zone","Boseiju, Who Endures"].includes(c);
+      });
+      const infiniteNote = hasAshaya
+        ? "With Ashaya in play, Elder enters as a Forest — it can untap itself + another land for infinite mana immediately."
+        : hasLodge
+        ? "Wirewood Lodge can untap Elder after it taps — enables repeated untap activations."
+        : bigLands.length >= 1
+        ? `Untaps ${bigLands[0]}${bigLands.length > 1 ? ` + ${bigLands[1]}` : ""} each activation — strong mana acceleration.`
+        : "Tap ability untaps two lands — mana acceleration, and the engine piece for Ashaya infinite.";
+      // Boost Elder priority when it's the most impactful affordable play this turn.
+      // If no other action at priority ≥8 is truly castable (e.g. tutor advice exists but
+      // we lack the mana to execute it), Elder deserves top billing.
+      const elderPriorityBoost = !hasAshaya && !infiniteManaActive
+        && results.filter(r => r.priority >= 8).length === 0;
+      results.push({
+        priority: hasAshaya ? 12 : (elderPriorityBoost ? 9 : 7),
+        category: hasAshaya ? "⚡ CAST TO WIN" : "🌱 RAMP",
+        headline: hasAshaya
+          ? "Cast Argothian Elder → enters as Forest via Ashaya → untaps itself → infinite mana"
+          : "Cast Argothian Elder ({3}{G}) — untaps two lands each activation (ramp + combo setup)",
+        detail: hasAshaya
+          ? "Argothian Elder + Ashaya, Soul of the Wild = infinite mana. Elder enters as a Forest via Ashaya. Tap Elder as a Forest for {G}, activate Elder's ability: untap Elder + any other land. Elder re-untaps itself → loop infinitely."
+          : `Argothian Elder's tap ability untaps any two lands you control. ${infiniteNote} Key combo piece with Ashaya (infinite mana) and Wirewood Lodge (repeated activations).`,
+        steps: [
+          `Cast Argothian Elder ({3}{G}).`,
+          ...(hasAshaya ? [
+            "Elder enters as a Forest via Ashaya, Soul of the Wild.",
+            "Tap Elder as a Forest for {G}. Activate Elder's tap ability: untap Elder + any other land.",
+            "Elder untaps itself → repeat → infinite mana.",
+          ] : [
+            "Tap ability ({T}): untap two target lands you control.",
+            bigLands.length >= 1
+              ? `Untap ${bigLands.slice(0,2).join(" + ")} — nets significant extra mana each turn.`
+              : "Use each turn to untap your two biggest mana producers.",
+            "Once Ashaya is in play: Elder + Ashaya = infinite mana immediately.",
+          ]),
+        ],
+        color: hasAshaya ? "#e67e22" : "#52be80",
+      });
+    }
+  }
+
   // ---- CAST QUIRION / SCRYB RANGER ----
   // Quirion and Scryb Ranger are not tagged as dorks so fall through all ramp advice.
   // They're core combo pieces — surface them when affordable and not yet on board.
@@ -3316,15 +3373,36 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (sacCandidates.length > 0 && (mana >= 3 || infiniteManaActive)) {
       const bestSac = sacCandidates[0]; // lowest CMC to sacrifice
       const maxCmc  = (getCard(bestSac)?.cmc ?? 1) + 2;
+      // Graveyard value: Eternal Witness is only worth tutoring if there's something
+      // meaningful to retrieve. High-value = combo pieces, tutors, fast mana, key spells.
+      const HIGH_VALUE_GRAVE_CARDS = new Set([
+        "Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger","Argothian Elder",
+        "Temur Sabertooth","Kogla, the Titan Ape","Earthcraft","Duskwatch Recruiter",
+        "Priest of Titania","Elvish Archdruid","Circle of Dreams Druid","Selvala, Heart of the Wilds",
+        "Gaea's Cradle","Nykthos, Shrine to Nyx","Wirewood Lodge","Deserted Temple",
+        "Formidable Speaker","Hyrax Tower Scout","Seedborn Muse","Eladamri, Korvecdal",
+        "Natural Order","Eldritch Evolution","Chord of Calling","Summoner's Pact",
+        "Green Sun's Zenith","Worldly Tutor","Crop Rotation","Sylvan Scrying",
+        "Survival of the Fittest","Fauna Shaman","Force of Vigor","Veil of Summer",
+        "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+        "Finale of Devastation","Invasion of Ikoria","Shared Summons",
+      ]);
+      const graveyardHasValue = graveyard.some(c => HIGH_VALUE_GRAVE_CARDS.has(c));
+      // Fetchlands in the graveyard are NOT worth recurring (already cracked, can't be re-used).
+      // Only count graveyard value from the high-value set above.
+      const witnessWorthIt = graveyardHasValue;
+
       // Find the best missing target at or below maxCmc
+      // Eternal Witness drops to the bottom of the priority list when graveyard has nothing useful
       const targetPriority = [
         "Ashaya, Soul of the Wild",  // CMC 5 — sac a 3-drop
-        "Eternal Witness",           // CMC 3 — sac a 1-drop
+        ...(witnessWorthIt ? ["Eternal Witness"] : []),  // CMC 3 — only if graveyard has value
         "Heartwood Storyteller",     // CMC 3 — sac a 1-drop: strong stax/draw early
         "Hyrax Tower Scout",         // CMC 3 — sac a 1-drop
         "Duskwatch Recruiter",       // CMC 2 — sac a 0-drop (Dryad Arbor)
         "Destiny Spinner",           // CMC 2
         "Quirion Ranger",            // CMC 1 — rarely worth sacrificing for
+        ...(!witnessWorthIt ? ["Eternal Witness"] : []),  // CMC 3 — low priority: nothing to retrieve
       ].filter(t => !board.has(t) && (getCard(t)?.cmc ?? 0) <= maxCmc);
       const target = targetPriority[0];
       if (target) {
@@ -3365,8 +3443,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Elvish Reclaimer",      xCost: 1, reason: "land tutor for Cradle / Sanitarium / Nykthos" },
       { name: "Ashaya, Soul of the Wild", xCost: 5, reason: "combo engine — all creatures become Forests" },
       { name: "Seedborn Muse",           xCost: 4, reason: "untap all permanents on each opponent's untap — enables free activations every turn" },
-      { name: "Eternal Witness",         xCost: 3, reason: "retrieve key piece from graveyard" },
-    ].filter(t => !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 1 || infiniteManaActive));
+      { name: "Eternal Witness",         xCost: 3, reason: "retrieve key piece from graveyard",
+        skip: !(() => {
+          const HV = new Set(["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger","Argothian Elder",
+            "Temur Sabertooth","Kogla, the Titan Ape","Earthcraft","Duskwatch Recruiter",
+            "Priest of Titania","Elvish Archdruid","Circle of Dreams Druid","Selvala, Heart of the Wilds",
+            "Formidable Speaker","Hyrax Tower Scout","Seedborn Muse","Eladamri, Korvecdal",
+            "Natural Order","Eldritch Evolution","Chord of Calling","Summoner's Pact",
+            "Green Sun's Zenith","Worldly Tutor","Crop Rotation","Sylvan Scrying",
+            "Survival of the Fittest","Fauna Shaman","Force of Vigor","Veil of Summer",
+            "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+            "Finale of Devastation","Invasion of Ikoria","Shared Summons"]);
+          return graveyard.some(c => HV.has(c));
+        })() },
+    ].filter(t => !t.skip && !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 1 || infiniteManaActive));
     if (gsTargets.length > 0) {
       const best = gsTargets[0];
 
@@ -4081,10 +4171,26 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // in hand, enough mana to cast Speaker (CMC 3), and a discard card available for the ETB.
   {
     const speakerNotOnBoard = !board.has("Formidable Speaker") && !inHand.has("Formidable Speaker");
+    // Tutor cost + Speaker cast cost must be affordable.
+    // Worldly Tutor: {G}=1 + Speaker {2}{G}=3 → total 4 mana needed.
+    // Summoner's Pact: free + Speaker {2}{G}=3 → total 3 mana needed.
+    // Chord of Calling: X=3 (Speaker CMC) + {G}{G}{G} - convoke(creatures). Minimum without convoke = 6.
+    //   With N creatures tapping as convoke: cost = max(0, 6 - N).
+    const chordConvokeSources = battlefield.filter(c => getCard(c)?.type === "creature").length;
+    const chordCostForSpeaker = Math.max(0, 6 - chordConvokeSources); // X=3 + {G}{G}{G} - convoke
     const hasTutorForSpeaker = (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteManaActive))
       || (inHand.has("Summoner's Pact"))
-      || (inHand.has("Chord of Calling") && (mana >= 3 || infiniteManaActive));
-    const canCastSpeakerAfterTutor = mana >= 4 || infiniteManaActive; // {G} tutor + {2}{G} Speaker
+      || (inHand.has("Chord of Calling") && (mana >= chordCostForSpeaker || infiniteManaActive));
+    // Mana needed after tutor resolves to cast Speaker {2}{G}=3. Pact is free so just 3.
+    // Worldly puts Speaker on top → draw and cast later, so mana check is across two turns.
+    const speakerCostAfterTutor = inHand.has("Summoner's Pact") ? 3
+      : inHand.has("Worldly Tutor") ? 3  // cast next turn, check current mana for tutor only
+      : chordCostForSpeaker; // Chord puts Speaker directly onto battlefield — no separate cast
+    const canCastSpeakerAfterTutor = inHand.has("Chord of Calling")
+      ? (mana >= chordCostForSpeaker || infiniteManaActive)
+      : inHand.has("Summoner's Pact")
+      ? (mana >= 3 || infiniteManaActive)
+      : (mana >= 4 || infiniteManaActive); // Worldly {G} + Speaker {2}{G}
     const hasDiscardAvail = hand.filter(c => c !== "Worldly Tutor" && c !== "Summoner's Pact" && c !== "Chord of Calling").length > 0;
     const alreadyHasSpeakerWinCard = results.some(r => r.combo === "speaker_win_via_tutor");
 
@@ -6443,10 +6549,23 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (bellowerCastable) {
     const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
 
-    // Determine best target based on board state
-    const winTarget = bellowerKeyTargets.find(c =>
-      ["Duskwatch Recruiter","Eternal Witness","Endurance","Destiny Spinner","Elvish Reclaimer"].includes(c)
-    );
+    // Determine best target based on board state.
+    // Formidable Speaker chains into Ashaya (via ETB) — a stronger play than fetching Duskwatch
+    // directly when no infinite mana is active, because Ashaya unlocks combo potential.
+    // However, if infinite mana IS active, Duskwatch is the direct win and beats Speaker.
+    const ashayaReachableViaSpeaker = !board.has("Ashaya, Soul of the Wild")
+      && !inHand.has("Ashaya, Soul of the Wild")
+      && bellowerKeyTargets.includes("Formidable Speaker")
+      && hand.filter(c => c !== "Woodland Bellower").length > 0; // need a discard for ETB
+    // Prefer Speaker over Duskwatch when Ashaya is reachable and infinite mana is not yet active.
+    // Duskwatch without infinite mana does nothing useful; Speaker ETB finds Ashaya which
+    // enables infinite mana combos. If infinite mana IS active, Duskwatch is the direct win.
+    const speakerIsWinChain = ashayaReachableViaSpeaker && !infiniteManaActive;
+    const winTarget = speakerIsWinChain
+      ? null  // let comboTarget pick up Speaker below (keeps priority at 8, not win-level)
+      : bellowerKeyTargets.find(c =>
+          ["Duskwatch Recruiter","Eternal Witness","Endurance","Destiny Spinner","Elvish Reclaimer"].includes(c)
+        );
     const comboTarget = bellowerKeyTargets.find(c =>
       ["Fauna Shaman","Formidable Speaker","Hyrax Tower Scout","Quirion Ranger","Scryb Ranger",
        "Magus of the Candelabra"].includes(c)
@@ -6471,7 +6590,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "Destiny Spinner":        "enters play — gives all your creatures haste; makes green spells uncounterable",
         "Elvish Reclaimer":       "enters play — activate to tutor Geier Reach Sanitarium, Cradle, or Nykthos",
         "Fauna Shaman":           "enters play — activate to find any creature (Duskwatch, Witness, etc.)",
-        "Formidable Speaker":     "enters play — ETB bounce loop with Sabertooth/Kogla finds any creature",
+        "Formidable Speaker":     speakerIsWinChain ? "enters play — ETB: discard → find Ashaya → all creatures become Forests → Quirion Ranger loop → infinite mana → WIN" : "enters play — ETB: discard → search library for any creature (guaranteed full tutor)",
         "Hyrax Tower Scout":      "enters play — ETB untaps a creature; key Sanitarium untap method",
         "Quirion Ranger":         "enters play — enables Ashaya infinite mana loop",
         "Scryb Ranger":           "enters play — flash untap engine for Ashaya loop",
@@ -6875,6 +6994,148 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           ],
           color: "#ff4500",
         });
+      }
+    }
+
+    // ── WIN NOW: Bellower → Speaker (ETB→Quirion) + Pact → Ashaya → Speaker+Quirion loop → WIN ──
+    // Bellower (6) → Speaker enters → ETB: discard → find Quirion Ranger.
+    // Summoner's Pact (free) → Ashaya into hand → cast Ashaya (5).
+    // Now: Speaker on board + Quirion + Ashaya = tutor loop.
+    // Quirion returns Speaker (Forest via Ashaya) → untaps any creature → recast Speaker (3) → ETB finds big dork.
+    // With Yavimaya: all lands are also Forests, so tapping back generates mana to sustain the loop.
+    // Mana: 15 - 6(Bellower) - 5(Ashaya) - 1(Quirion cast) = 3. Enough to start loop (Speaker costs 3).
+    // Speaker ETB → find Priest of Titania / Elvish Archdruid → loop becomes mana-positive → infinite → WIN.
+    {
+      const bw6 = inHand.has("Woodland Bellower");
+      const pact6 = inHand.has("Summoner's Pact") || inHand.has("Shared Summons");
+      const ashayaAbsent6  = !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild");
+      const speakerAbsent6 = !board.has("Formidable Speaker") && !inHand.has("Formidable Speaker");
+      const quirionAbsent6 = !board.has("Quirion Ranger") && !board.has("Scryb Ranger")
+                          && !inHand.has("Quirion Ranger") && !inHand.has("Scryb Ranger");
+      const elderAbsent6   = !board.has("Argothian Elder");
+      const alreadyWin6    = results.some(r => r.priority >= 14);
+
+      if (bw6 && pact6 && ashayaAbsent6 && speakerAbsent6 && quirionAbsent6
+          && (isMyTurn || yevaAvailable) && !alreadyWin6) {
+        // Mana math:
+        // Bellower = 6, Ashaya = 5, Quirion = 1 (Quirion enters free via Bellower? No — Speaker ETB puts
+        // Quirion into hand, then we CAST it for 1). Total hard costs = 6 + 5 + 1 = 12.
+        // Also need 3 to recast Speaker for the first loop iteration.
+        // Yavimaya makes all lands Forests → tap back after Ashaya resolves.
+        // Creatures become Forests via Ashaya → each untapped creature taps for {G}.
+        const yavimaya6 = board.has("Yavimaya, Cradle of Growth");
+        const untappedCreatures6 = battlefield.filter(c => getCard(c)?.type === "creature").length;
+        // After Bellower resolves: Speaker enters (Forest via Ashaya post-Ashaya-cast), Quirion enters (hand)
+        // Tap-back sources after Ashaya resolves: existing creatures + speaker + non-Forest lands via Yavimaya
+        const speakerTap6 = 1; // Speaker on board, taps as Forest
+        const quirionTap6 = 1; // Quirion on board after being cast, taps as Forest
+        const yavLands6 = yavimaya6
+          ? battlefield.filter(c => { const cd = getCard(c); return cd?.type === "land" && c !== "Forest" && !cd?.tags?.includes("fetch"); }).length
+          : 0;
+        const tapBackMana6 = untappedCreatures6 + speakerTap6 + quirionTap6 + yavLands6;
+        // Hard cost: 6(Bellower) + 5(Ashaya) + 1(Quirion) = 12. Then need 3 to recast Speaker.
+        const hardCost6 = 12;
+        const speakerRecastCost = 3;
+        const totalNeeded6 = hardCost6 + speakerRecastCost;
+        const effectiveMana6 = mana + tapBackMana6; // tap-back mana offsets the cost
+        const hasDiscard6 = hand.filter(c => c !== "Woodland Bellower" && c !== "Summoner's Pact" && c !== "Shared Summons").length > 0;
+        const pactSpell6 = inHand.has("Summoner's Pact") ? "Summoner's Pact" : "Shared Summons";
+
+        if (effectiveMana6 >= totalNeeded6 && hasDiscard6) {
+          const discardCard6 = hand.filter(c => c !== "Woodland Bellower" && c !== "Summoner's Pact" && c !== "Shared Summons")[0] ?? "a card";
+          const tapNote6 = tapBackMana6 > 0
+            ? `After Ashaya resolves, tap ${untappedCreatures6 + speakerTap6 + quirionTap6} creature${untappedCreatures6 + speakerTap6 + quirionTap6 !== 1 ? "s" : ""} as Forests${yavLands6 > 0 ? ` + ${yavLands6} non-Forest land${yavLands6 !== 1 ? "s" : ""} via Yavimaya` : ""} for ${tapBackMana6} {G}.`
+            : "";
+
+          results.push({
+            priority: 15,
+            category: "🔥 WIN NOW",
+            headline: `Woodland Bellower → Speaker (ETB→Quirion) + ${pactSpell6} → Ashaya → Speaker+Quirion loop → find big dork → infinite → WIN`,
+            combo: "bellower_speaker_quirion_pact_ashaya_win",
+            detail: `Two-spell sequence: Woodland Bellower (6) fetches Formidable Speaker. Speaker ETB: discard → search library for Quirion Ranger. Simultaneously, ${pactSpell6} (free) fetches Ashaya. Cast Ashaya (5) — all creatures become Forests. Cast Quirion Ranger (1). ${tapNote6} Speaker + Quirion loop: Quirion returns Speaker to hand (untapping a creature), recast Speaker ETB → find Priest of Titania or Elvish Archdruid. Once a dork producing ≥3 mana is in play, loop becomes mana-positive → infinite → find Duskwatch → WIN.`,
+            steps: [
+              `Cast Woodland Bellower ({5}{G}): ETB — search library for Formidable Speaker (CMC 3, non-legendary green) → put directly onto the battlefield.`,
+              `Formidable Speaker ETB: discard ${discardCard6} → search your entire library for Quirion Ranger. Put Quirion into your hand, then shuffle.`,
+              `Cast ${pactSpell6} (free): search library for Ashaya, Soul of the Wild → put into hand.${pactSpell6 === "Summoner's Pact" ? " ⚠ Pay {2}{G}{G} next upkeep." : ""}`,
+              `Cast Ashaya, Soul of the Wild ({3}{G}{G}): all nontoken creatures are now Forest lands.`,
+              tapNote6,
+              `Cast Quirion Ranger ({G}): enters as a Forest via Ashaya.`,
+              `Activate Quirion Ranger: return Formidable Speaker (a Forest via Ashaya) to hand, untapping any creature.`,
+              `Recast Formidable Speaker ({2}{G}): ETB — discard any card → search library for Priest of Titania (or Elvish Archdruid / Circle of Dreams Druid).`,
+              `Cast the big dork. Now dork taps for ≥3 mana. Quirion returns Speaker again → loop is mana-positive → infinite mana.`,
+              `With infinite mana: Speaker ETB → find Duskwatch Recruiter. Activate Duskwatch repeatedly → assemble win pile → WIN.`,
+            ].filter(Boolean),
+            color: "#ff4500",
+          });
+        }
+      }
+    }
+
+    // ── WIN NOW: Ashaya already on board, Bellower → Speaker (ETB→Elder) → Elder infinite → WIN ──
+    // Ashaya is already in play. Bellower (6) → Speaker enters → ETB: discard → find Argothian Elder.
+    // Cast Elder (CMC 4). Elder enters as a Forest via Ashaya → Elder untaps itself → infinite mana → WIN.
+    // Mana math: after casting Bellower (cost 6), tap remaining untapped creatures/lands as Forests
+    // (via Ashaya + optionally Yavimaya) to fund Elder (4). This works if total available ≥ 6 + 4 = 10,
+    // OR if post-Bellower tappable Ashaya-Forests generate ≥4 mana.
+    {
+      const bellowerInHand4   = inHand.has("Woodland Bellower");
+      const ashayaAlreadyOn   = board.has("Ashaya, Soul of the Wild");
+      const elderNotOnBoard4  = !board.has("Argothian Elder");
+      const elderNotInHand4   = !inHand.has("Argothian Elder");
+      const speakerNotBoard4  = !board.has("Formidable Speaker");
+      const alreadyWin4       = results.some(r => r.priority >= 14);
+
+      if (bellowerInHand4 && ashayaAlreadyOn && elderNotOnBoard4 && elderNotInHand4
+          && speakerNotBoard4 && (isMyTurn || yevaAvailable) && !alreadyWin4) {
+        // Count mana available after casting Bellower (cost 6)
+        const manaAfterBellower = mana - 6;
+        // With Ashaya on board, untapped creatures become Forests that tap for {G}.
+        // Yavimaya makes ALL lands Forests too — non-basic lands gain Forest tap ability.
+        const yavimayaActive = board.has("Yavimaya, Cradle of Growth");
+        // Count untapped permanents that can tap for {G} via Ashaya/Yavimaya after Bellower resolves.
+        // Creatures: all untapped creatures are Forests via Ashaya (1 {G} each).
+        // Lands: if Yavimaya active, all lands are also Forests (1 {G} each, but basic Forests already counted in mana).
+        // We estimate how many extra {G} are available from these sources:
+        const untappedCreatureCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
+        // Speaker just entered via Bellower (untapped, also a Forest via Ashaya) — counts as +1
+        const speakerExtraMana = 1; // Speaker itself taps for {G} after entering
+        // Non-basic non-Forest lands that gain Forest type from Yavimaya:
+        const yavimayaExtraLands = yavimayaActive
+          ? battlefield.filter(c => {
+              const cd = getCard(c);
+              return cd?.type === "land" && c !== "Forest" && !cd?.tags?.includes("fetch");
+            }).length
+          : 0;
+        const postBellowerTapMana = untappedCreatureCount + speakerExtraMana + yavimayaExtraLands;
+        const totalEffectiveMana  = manaAfterBellower + postBellowerTapMana;
+        const elderCmc = 4;
+        const hasDiscardForSpeaker4 = hand.filter(c => c !== "Woodland Bellower").length > 0;
+
+        if (totalEffectiveMana >= elderCmc && hasDiscardForSpeaker4) {
+          const discardCard4 = hand.filter(c => c !== "Woodland Bellower")[0] ?? "a card";
+          const tapNote = postBellowerTapMana > 0
+            ? `After Bellower resolves, tap ${untappedCreatureCount + speakerExtraMana} creature${untappedCreatureCount + speakerExtraMana !== 1 ? "s" : ""} as Forests (via Ashaya${yavimayaActive ? " + Yavimaya" : ""}) for ${postBellowerTapMana} {G} to fund Elder.`
+            : "";
+          results.push({
+            priority: 15,
+            category: "🔥 WIN NOW",
+            headline: `Woodland Bellower → Formidable Speaker (ETB → Argothian Elder) → Elder + Ashaya infinite → WIN`,
+            combo: "bellower_speaker_elder_win_ashaya_board",
+            detail: `Ashaya is already on board. Cast Woodland Bellower (6 mana) → ETB puts Formidable Speaker directly onto battlefield. Speaker ETB: discard → search library for Argothian Elder. ${tapNote} Cast Elder (4 mana). Elder enters as a Forest via Ashaya — tap Elder as Forest for {G}, activate Elder's ability to untap itself + another land → infinite mana → WIN.`,
+            steps: [
+              `Cast Woodland Bellower ({5}{G}): ETB — search library for a non-legendary green creature CMC ≤ 3. Find Formidable Speaker → put directly onto battlefield.`,
+              `Formidable Speaker ETB: discard ${discardCard4} → search your entire library for Argothian Elder. Put Elder into your hand, then shuffle.`,
+              ...(postBellowerTapMana > 0 ? [
+                `Tap untapped creatures as Forests (via Ashaya)${yavimayaActive ? " and non-Forest lands (via Yavimaya)" : ""} to generate ${postBellowerTapMana} {G}.`,
+              ] : []),
+              `Cast Argothian Elder ({3}{G}): enters as a Forest via Ashaya, Soul of the Wild.`,
+              `Tap Argothian Elder as a Forest for {G}. Activate Elder's tap ability: untap Elder + any other land. Elder is itself a Forest — it untaps itself. Loop: infinite mana.`,
+              `With infinite mana: cast any remaining combo pieces. Find Duskwatch Recruiter via any tutor or Formidable Speaker loop.`,
+              `Activate Duskwatch Recruiter ({2}{G}) repeatedly → assemble win pile → WIN.`,
+            ],
+            color: "#ff4500",
+          });
+        }
       }
     }
 
@@ -7445,7 +7706,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor") && (getCard(c)?.cmc <= mana || infiniteManaActive));
     if (tutors.length > 0) {
       const tutor = tutors[0];
-      const targets = getPriorityTargets(battlefield, hand);
+      const targets = getPriorityTargets(battlefield, hand, graveyard);
       results.push({
         priority: 6,
         category: "🎯 TUTOR",
@@ -8104,12 +8365,23 @@ function getSurvivalTargets(hand, battlefield) {
   return targets.slice(0, 4);
 }
 
-function getPriorityTargets(battlefield, hand) {
+function getPriorityTargets(battlefield, hand, graveyard = []) {
   const board = new Set(battlefield);
+  const HV_GRAVE = new Set(["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger","Argothian Elder",
+    "Temur Sabertooth","Kogla, the Titan Ape","Earthcraft","Duskwatch Recruiter",
+    "Priest of Titania","Elvish Archdruid","Circle of Dreams Druid","Selvala, Heart of the Wilds",
+    "Formidable Speaker","Hyrax Tower Scout","Seedborn Muse","Eladamri, Korvecdal",
+    "Natural Order","Eldritch Evolution","Chord of Calling","Summoner's Pact",
+    "Green Sun's Zenith","Worldly Tutor","Crop Rotation","Sylvan Scrying",
+    "Survival of the Fittest","Fauna Shaman","Force of Vigor","Veil of Summer",
+    "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+    "Finale of Devastation","Invasion of Ikoria","Shared Summons"]);
+  const witnessWorthIt = graveyard.some(c => HV_GRAVE.has(c));
   const allNeeded = [
     "Ashaya, Soul of the Wild","Temur Sabertooth","Priest of Titania",
     "Quirion Ranger","Hyrax Tower Scout","Circle of Dreams Druid",
-    "Karametra's Acolyte","Earthcraft","Wirewood Symbiote","Eternal Witness"
+    "Karametra's Acolyte","Earthcraft","Wirewood Symbiote",
+    ...(witnessWorthIt ? ["Eternal Witness"] : []),
   ];
   return allNeeded.filter(c => !board.has(c));
 }
@@ -13649,6 +13921,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [tutorElvesOnly,     setTutorElvesOnly]     = useState(false); // Elvish Harbinger mode
   const [tutorNonLegendary,  setTutorNonLegendary]  = useState(false); // Woodland Bellower mode
   const [tutorFromGraveyard, setTutorFromGraveyard] = useState(false); // Finale of Devastation — search graveyard instead
+  const [tutorSpellName, setTutorSpellName] = useState(""); // which spell opened the tutor modal
   const [tutorOnSelect, setTutorOnSelect] = useState(null); // callback after selection (for GSZ shuffle)
   const [tutorSelected, setTutorSelected] = useState(0); // keyboard-highlighted index
   const tutorInputRef = useRef(null);
@@ -14358,6 +14631,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             shuffleGSZBack();
             addLog(`Green Sun's Zenith (X=${gszX}) → ${chosen} onto battlefield. GSZ shuffled back.`, COLORS.green2);
           });
+          setTutorSpellName("Green Sun's Zenith");
           setShowTutor(true); setTutorQuery("");
           setTimeout(() => tutorInputRef.current?.focus(), 50);
         }
@@ -14367,6 +14641,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         setGraveyard(prev => [...prev, card]);
         setTutorCreaturesOnly(true);
         setTutorMaxCmc(rhythmX);
+        setTutorSpellName("Nature's Rhythm");
         setTutorOnSelect(() => (chosen) => {
           setLibrary(prev => {
             const idx = prev.indexOf(chosen);
@@ -18205,9 +18480,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const passesMode = (c) => {
       const d = getCard(c);
       if (isBellower)    return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc && !LEGENDARY_NAMES.has(c);
-      if (isGSZ)         return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc;
+      if (isGSZ)         return (d?.type === "creature" || c === "Dryad Arbor") && (d?.cmc ?? 99) <= tutorMaxCmc;
       if (isFierceEmpath) return d?.type === "creature" && (d?.cmc ?? 0) >= tutorMinCmc;
-      if (isCreature)    return d?.type === "creature" && (tutorMaxCmc === null || (d?.cmc ?? 99) <= tutorMaxCmc);
+      if (isCreature)    return (d?.type === "creature" || c === "Dryad Arbor") && (tutorMaxCmc === null || (d?.cmc ?? 99) <= tutorMaxCmc);
       if (isLand)        return d?.type === "land";
       if (isTreefolk)    return d?.tags?.includes("treefolk") || d?.tags?.includes("forest") || d?.tags?.includes("basic");
       if (isElf)         return d?.tags?.includes("elf");
@@ -18241,7 +18516,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const header = isBellower
       ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CMC \u2264 3`
       : isGSZ
-      ? `GREEN SUN'S ZENITH \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
+      ? `${tutorSpellName ? tutorSpellName.toUpperCase() : "GREEN SUN'S ZENITH"} \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
       : isFierceEmpath ? `FIERCE EMPATH \u2014 CREATURES CMC \u2265 6 (${pool.length} cards)`
       : isFinale       ? `FINALE OF DEVASTATION \u2014 GRAVEYARD (${pool.length} cards)`
       : isCreature ? `CREATURE TUTOR \u2014 LIBRARY (${pool.length} cards)`
@@ -18281,7 +18556,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
     const closeTutor = () => {
       setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null);
-      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
+      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setTutorSpellName("");
     };
 
     return (
