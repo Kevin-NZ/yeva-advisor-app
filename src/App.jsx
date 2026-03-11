@@ -18573,7 +18573,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     }}
                       onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
                       onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
-                    >✓ KEEP (K)</button>
+                    ><span>✓ <span style={{textDecoration:"underline"}}>K</span>EEP</span></button>
                     {hand.length > 0 && mulliganCount < 7 && (
                       <button onClick={doMulligan} style={{
                         background: "none", border: `1px solid ${COLORS.gold}`, borderRadius: "8px",
@@ -18582,7 +18582,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                       }}
                         onMouseEnter={e => { e.target.style.background = "#1a1a0a"; }}
                         onMouseLeave={e => { e.target.style.background = "transparent"; }}
-                      >↺ MULLIGAN TO {Math.max(0, 7 - mulliganCount)} (M)</button>
+                      ><span>↺ <span style={{textDecoration:"underline"}}>M</span>ULLIGAN TO {Math.max(0, 7 - mulliganCount)}</span></button>
                     )}
                     <button onClick={() => setPhase("setup")} style={{
                       background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "8px",
