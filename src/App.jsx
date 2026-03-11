@@ -2984,19 +2984,95 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- SURVIVAL OF THE FITTEST ----
   if (board.has("Survival of the Fittest") && (hand.some(c => getCard(c)?.type === "creature") || infiniteManaActive)) {
-    const targets = getSurvivalTargets(hand, battlefield);
-    if (targets.length > 0) {
-      const discardable = hand.filter(c => getCard(c)?.type === "creature");
+    const discardable = hand.filter(c => getCard(c)?.type === "creature");
+
+    // Build a prioritised target list based on current game state
+    const survTargets = [];
+
+    // 1. Win now targets (if infinite mana active)
+    if (infiniteManaActive) {
+      if (!board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter"))
+        survTargets.push({ name: "Duskwatch Recruiter", reason: "WIN — activate with infinite mana to draw your whole deck", priority: 15 });
+      if (!board.has("Finale of Devastation"))
+        survTargets.push({ name: "Craterhoof Behemoth", reason: "WIN — Finale of Devastation (X=10) gives all creatures +X/+X + haste", priority: 14 });
+    }
+
+    // 2. Missing infinite mana pieces
+    const hasAshaya   = board.has("Ashaya, Soul of the Wild");
+    const hasQuirion  = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const hasElder    = board.has("Argothian Elder");
+    const hasTemur    = board.has("Temur Sabertooth");
+    const hasSpeaker  = board.has("Formidable Speaker");
+
+    if (!hasAshaya && !inHand.has("Ashaya, Soul of the Wild"))
+      survTargets.push({ name: "Ashaya, Soul of the Wild", reason: "makes all creatures Forests — unlocks every infinite mana loop", priority: 12 });
+    if (hasAshaya && !hasElder && !inHand.has("Argothian Elder"))
+      survTargets.push({ name: "Argothian Elder", reason: "becomes a Forest via Ashaya → untaps itself → infinite mana", priority: 13 });
+    if (hasAshaya && !hasQuirion && !inHand.has("Quirion Ranger") && !inHand.has("Scryb Ranger"))
+      survTargets.push({ name: "Quirion Ranger", reason: "bounces itself as a Forest to untap a big dork — infinite mana loop", priority: 11 });
+    if (!hasTemur && !inHand.has("Temur Sabertooth"))
+      survTargets.push({ name: "Temur Sabertooth", reason: "bounce engine — returns any creature for {1}{G}, enabling repeating ETBs", priority: 10 });
+    if (!hasSpeaker && !inHand.has("Formidable Speaker"))
+      survTargets.push({ name: "Formidable Speaker", reason: "ETB tutors any creature to hand — chaining with Temur/Quirion finds everything", priority: 9 });
+
+    // 3. Big mana dorks (if none producing ≥4)
+    const bigDorkOnBoard = ["Priest of Titania","Circle of Dreams Druid","Karametra's Acolyte",
+      "Selvala, Heart of the Wilds","Elvish Archdruid","Marwyn, the Nurturer","Wirewood Channeler"]
+      .some(d => board.has(d));
+    if (!bigDorkOnBoard) {
+      if (!board.has("Priest of Titania") && !inHand.has("Priest of Titania"))
+        survTargets.push({ name: "Priest of Titania", reason: "taps for {G} per elf — most efficient big dork in an elf deck", priority: 8 });
+      else if (!board.has("Karametra's Acolyte") && !inHand.has("Karametra's Acolyte"))
+        survTargets.push({ name: "Karametra's Acolyte", reason: "taps for {G} per green devotion — scales with your permanents", priority: 8 });
+    }
+
+    // 4. Draw engines
+    if (!board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter") && !infiniteManaActive)
+      survTargets.push({ name: "Duskwatch Recruiter", reason: "draw engine + win con with infinite mana ({2}{G} to look at 3 cards)", priority: 7 });
+    if (!board.has("Regal Force") && !inHand.has("Regal Force") && creaturesOnBoard >= 4)
+      survTargets.push({ name: "Regal Force", reason: `draw ${creaturesOnBoard} cards on ETB — massive refill with ${creaturesOnBoard} creatures`, priority: 7 });
+
+    // 5. Protection (if opponents have counterspells / removal)
+    if (!board.has("Allosaurus Shepherd") && !inHand.has("Allosaurus Shepherd") && threatLevel >= 2)
+      survTargets.push({ name: "Allosaurus Shepherd", reason: "makes your green spells uncounterable — cast before key combo turns", priority: 7 });
+    if (!board.has("Endurance") && !inHand.has("Endurance") && threatLevel >= 2)
+      survTargets.push({ name: "Endurance", reason: "flash 3/4 reach + graveyard hate — can cast for free (exile green card)", priority: 6 });
+
+    // Sort by priority, deduplicate
+    survTargets.sort((a, b) => b.priority - a.priority);
+    const seen = new Set();
+    const topTargets = survTargets.filter(t => { if (seen.has(t.name)) return false; seen.add(t.name); return true; }).slice(0, 5);
+
+    if (topTargets.length > 0) {
+      const top = topTargets[0];
+      const canChain = discardable.length >= 2 || infiniteManaActive;
+      const chainNote = canChain
+        ? `Chain: after fetching ${top.name}, discard it next activation to find ${topTargets[1]?.name ?? "the next piece"}.`
+        : discardable.length === 1
+          ? `1 creature in hand to discard — fetches ${top.name}. Need more fodder to chain.`
+          : "With infinite mana, chain activations freely — discard each found creature to find the next.";
+      const bestDiscard = discardable.find(c => !topTargets.some(t => t.name === c)) ?? discardable[0];
+
       results.push({
-        priority: 8,
-        category: "🎯 TUTOR",
-        headline: `Survival of the Fittest: discard ${discardable[0] ?? "a creature"} → find ${targets[0]}`,
-        detail: "Survival of the Fittest turns every creature in hand into a tutor activation. Repeatable each turn. With infinite mana, chain activations to assemble any board state — discard the last target to find the next.",
+        priority: infiniteManaActive ? 13 : top.priority >= 11 ? 9 : 8,
+        category: infiniteManaActive ? "🔥 WIN NOW — SURVIVAL CHAIN" : "🎯 SURVIVAL OF THE FITTEST",
+        headline: infiniteManaActive
+          ? `Survival chain (infinite mana): find ${top.name} → ${topTargets[1]?.name ?? "win pile"} → WIN`
+          : `Survival of the Fittest: discard ${bestDiscard ?? "a creature"} → find ${top.name}`,
+        detail: `Survival of the Fittest ({G}, discard a creature): search library for any creature → hand. No tap required — activates every turn (or multiple times with mana and fodder). ${top.reason}. ${chainNote}`,
         steps: [
-          ...targets.map((t,i) => `Activation ${i+1}: pay {G}, tap Survival, discard a creature → find ${t}.`),
-          "Chain activations: discard the card you just found to find the next piece.",
-          discardable.length > 0 ? `Currently discardable: ${discardable.slice(0,3).join(", ")}.` : "With infinite mana, use any creature as fodder.",
-        ],
+          bestDiscard
+            ? `Pay {G}: discard ${bestDiscard} → search library for ${top.name} → to hand.`
+            : `Pay {G}: discard any creature → search library for ${top.name} → to hand.`,
+          `${top.name}: ${top.reason}.`,
+          ...(topTargets.length > 1 && canChain
+            ? topTargets.slice(1, 4).map((t, i) => `Activation ${i + 2}: discard ${i === 0 ? top.name : topTargets[i].name} → find ${t.name} (${t.reason}).`)
+            : []),
+          chainNote,
+          discardable.length > 0
+            ? `Current discard fodder: ${discardable.slice(0, 4).join(", ")}.`
+            : "With infinite mana, any fetched creature becomes fodder for the next activation.",
+        ].filter(Boolean),
         color: "#5dade2",
       });
     }
@@ -3709,7 +3785,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- SUMMONER'S PACT UPKEEP REMINDER ----
   // Pact goes to the graveyard after resolving. If it's there on our turn,
   // the delayed trigger is live — pay {2}{G}{G} or lose.
-  if (isMyTurn && inGrave.has("Summoner's Pact")) {
+  if (isMyTurn && inGrave.has("Summoner's Pact") && !infiniteManaActive) {
     results.push({
       priority: 14,
       category: "⚠️ PACT UPKEEP — PAY NOW",
@@ -16893,6 +16969,116 @@ if (card === "Talon Gates of Madara") {
         })()}
 
         {/* ── Duskwatch Recruiter: {3} — look at top 3, put a creature into hand ── */}
+        {isBF && card === "Duskwatch Recruiter" && analysis?.infiniteManaActive && (() => {
+          // ── Mill Win Pile ──────────────────────────────────────────────────────
+          // Core pieces (always needed unless already in hand/battlefield):
+          //   Destiny Spinner   — counter protection + grants haste to lands (via Ashaya)
+          //   Ashaya, Soul of the Wild — creatures become Forests → Reclaimer has haste via Destiny
+          //   Elvish Reclaimer  — activated ability fetches Geier Reach Sanitarium (land tutor)
+          //   Temur Sabertooth  — bounce engine, untaps Geier Reach via Woodcaller loop
+          //   Endurance         — mill protection (ETB shuffles graveyard back; hold ETB on stack)
+          // Untap land (pick best available — any one suffices):
+          //   Woodcaller Automaton > Hyrax Tower Scout > Magus of the Candelabra >
+          //   Quirion Ranger / Scryb Ranger > Wirewood Symbiote > Argothian Elder
+          // How it works:
+          //   Destiny Spinner + Ashaya → Elvish Reclaimer is a Forest creature with haste
+          //   Activate Reclaimer → fetch Geier Reach Sanitarium onto battlefield
+          //   Temur Sabertooth bounces untap-land creature → recast → untap Geier Reach
+          //   Loop Sanitarium with Endurance ETB on stack → opponents mill out
+          // ──────────────────────────────────────────────────────────────────────
+          const have = c => new Set(battlefield).has(c) || new Set(hand).has(c);
+
+          // Core non-untapper pieces
+          const CORE = [
+            "Destiny Spinner",
+            "Ashaya, Soul of the Wild",
+            "Elvish Reclaimer",
+            "Temur Sabertooth",
+            "Endurance",
+          ];
+
+          // Geier Reach — may already be on battlefield as a land
+          const hasGeier = have("Geier Reach Sanitarium") || battlefield.includes("Geier Reach Sanitarium");
+
+          // Untap-land piece — pick best one already available, else first found in library
+          const UNTAPPERS = [
+            "Woodcaller Automaton",
+            "Hyrax Tower Scout",
+            "Magus of the Candelabra",
+            "Quirion Ranger",
+            "Scryb Ranger",
+            "Wirewood Symbiote",
+            "Argothian Elder",
+          ];
+          const hasUntapper = UNTAPPERS.some(u => have(u));
+          const bestUntapper = UNTAPPERS.find(u => library.includes(u)) ?? UNTAPPERS.find(u => have(u));
+
+          // Build needed list: core pieces not yet in hand/battlefield
+          const neededCore = CORE.filter(c => !have(c));
+          const neededUntapper = (!hasUntapper && bestUntapper) ? [bestUntapper] : [];
+          const neededGeier = !hasGeier ? ["Geier Reach Sanitarium"] : [];
+          const needed = [...neededCore, ...neededUntapper, ...neededGeier];
+
+          const inLibrary = needed.filter(c => library.includes(c));
+          const missing   = needed.filter(c => !library.includes(c));
+          const allFound  = missing.length === 0;
+
+          // Label showing chosen untapper
+          const untapperLabel = hasUntapper
+            ? UNTAPPERS.find(u => have(u))
+            : (bestUntapper ?? "no untapper found");
+
+          if (needed.length === 0) return (
+            <div style={{ padding: "5px 14px", color: "#c084fc", fontSize: "10px", letterSpacing: "1px" }}>
+              ✅ Mill Win pile assembled — ready to execute
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              if (!allFound) return;
+              pushUndo();
+              let lib = [...library];
+              const pulled = [];
+              for (const c of inLibrary) {
+                const idx = lib.indexOf(c);
+                if (idx !== -1) { lib.splice(idx, 1); pulled.push(c); }
+              }
+              // Shuffle remaining library
+              for (let i = lib.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [lib[i], lib[j]] = [lib[j], lib[i]];
+              }
+              setLibrary(lib);
+              setHand(prev => [...prev, ...pulled]);
+              addLog(
+                `Duskwatch Recruiter (∞ mana) — Mill Win pile assembled: ${pulled.join(", ")} → hand. ` +
+                `Untap engine: ${untapperLabel}. Library shuffled.`,
+                "#c084fc"
+              );
+              closeContextMenu();
+            }}
+            style={{
+              padding: "6px 14px", cursor: allFound ? "pointer" : "not-allowed",
+              color: allFound ? "#c084fc" : COLORS.textDim, letterSpacing: "1px",
+              opacity: allFound ? 1 : 0.5,
+            }}
+              onMouseEnter={e => { if (allFound) e.currentTarget.style.background = "#1a0a2a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+              title={allFound
+                ? `Pull ${inLibrary.join(", ")} → hand. Untap engine: ${untapperLabel}`
+                : `Missing from library: ${missing.join(", ")}`}
+            >
+              🏆 Assemble Mill Win Pile
+              <span style={{ fontSize: "9px", display: "block", marginTop: "2px",
+                color: allFound ? "#c084fc88" : COLORS.red }}>
+                {allFound
+                  ? `→ ${inLibrary.join(", ")}${!hasUntapper ? ` + ${untapperLabel}` : ""}`
+                  : `✗ not in library: ${missing.join(", ")}`}
+              </span>
+            </div>
+          );
+        })()}
+
         {isBF && card === "Duskwatch Recruiter" && (() => {
           const cost = 3; const canPay = manaPool >= cost; const top3 = library.slice(0,3);
           const creaturesInTop3 = top3.filter(c => getCard(c)?.type === "creature");
@@ -19254,15 +19440,17 @@ if (card === "Talon Gates of Madara") {
                 onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
               >↺ {isMobile ? "" : "NEW GAME"}{isMobile && "NEW"}</button>
             )}
-            <button onClick={() => goldfishTour.start()} title="Start guided tour (? key)"
-              style={{
-                background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
-                padding: "4px 8px", color: COLORS.textDim, cursor: "pointer",
-                fontFamily: "'Cinzel', serif", fontSize: "12px", lineHeight: 1,
-              }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green1; e.currentTarget.style.color = COLORS.green1; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; }}
-            >?</button>
+            {phase !== "mulligan" && phase !== "stats" && (
+              <button onClick={() => goldfishTour.start()} title="Start guided tour (? key)"
+                style={{
+                  background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
+                  padding: "4px 8px", color: COLORS.textDim, cursor: "pointer",
+                  fontFamily: "'Cinzel', serif", fontSize: "12px", lineHeight: 1,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green1; e.currentTarget.style.color = COLORS.green1; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; }}
+              >?</button>
+            )}
             <button onClick={onClose} style={{
               position: "absolute", top: "10px", right: "12px",
               background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "6px",
@@ -19721,7 +19909,8 @@ if (card === "Talon Gates of Madara") {
                           // Affordability: total mana = already-tapped pool + untapped sources still available
                           const totalMana = manaPool + currentMana;
                           const cmc = cd?.cmc ?? 0;
-                          const cantAfford = !isLand && cmc > 0 && cmc > totalMana;
+                          const gfInfinite = analysis?.infiniteManaActive ?? false;
+                          const cantAfford = !gfInfinite && !isLand && cmc > 0 && cmc > totalMana;
                           const unplayable = cantPlay || cantAfford;
                           return renderCard(card, i, "hand", {
                             onClick: () => !unplayable && castFromHand(card, i),
@@ -21098,19 +21287,36 @@ function SynergyMapModal({ onClose, activeDeck, onLoadCombo }) {
   );
 }
 
-function SavedStatesPanel({ currentState, onLoad, onClose }) {
+function SavedStatesPanel({ currentState, activeDeck, onLoad, onClose }) {
   const { states, save } = useSavedStates();
   const [name, setName] = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
 
   const handleSave = async () => {
     const label = name.trim() || `State ${new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`;
-    const entry = { id: Date.now(), name: label, savedAt: Date.now(), state: currentState };
+    const entry = {
+      id: Date.now(),
+      name: label,
+      savedAt: Date.now(),
+      deckId: activeDeck?.id ?? null,
+      deckName: activeDeck?.name ?? null,
+      state: currentState,
+    };
     await save([entry, ...states].slice(0, 20)); // cap at 20
     setName("");
   };
 
-  const handleLoad = (entry) => { onLoad(entry.state); onClose(); };
+  const handleLoad = (entry) => {
+    const deckMismatch = entry.deckId && activeDeck && entry.deckId !== activeDeck.id;
+    if (deckMismatch) {
+      if (!window.confirm(
+        `This state was saved with deck "${entry.deckName ?? entry.deckId}"\n` +
+        `but your active deck is "${activeDeck.name}".\n\nLoad anyway?`
+      )) return;
+    }
+    onLoad(entry.state);
+    onClose();
+  };
 
   const handleDelete = async (id) => {
     await save(states.filter(s => s.id !== id));
@@ -21181,7 +21387,19 @@ function SavedStatesPanel({ currentState, onLoad, onClose }) {
               background:"#0a150a", border:`1px solid ${COLORS.border}`,
             }}>
               <div style={{flex:1, minWidth:0}} >
-                <div style={{fontFamily:"'Cinzel', serif", fontSize:"12px", color:COLORS.textMid, marginBottom:"2px"}}>{entry.name}</div>
+                <div style={{fontFamily:"'Cinzel', serif", fontSize:"12px", color:COLORS.textMid, marginBottom:"2px", display:"flex", alignItems:"center", gap:"6px"}}>
+                  {entry.name}
+                  {entry.deckName && (
+                    <span style={{
+                      fontSize:"9px", color: activeDeck && entry.deckId !== activeDeck.id ? "#e67e22" : COLORS.green1,
+                      border:`1px solid ${activeDeck && entry.deckId !== activeDeck.id ? "#e67e2244" : COLORS.green1 + "44"}`,
+                      borderRadius:"3px", padding:"1px 5px", letterSpacing:"0.5px", fontFamily:"'Cinzel', serif",
+                      flexShrink: 0,
+                    }}>
+                      {activeDeck && entry.deckId !== activeDeck.id ? "⚠ " : ""}{entry.deckName}
+                    </span>
+                  )}
+                </div>
                 <div style={{fontSize:"11px", color:COLORS.textDim, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{statePreview(entry.state)}</div>
                 <div style={{fontSize:"10px", color:COLORS.textDim, marginTop:"2px"}}>{formatTime(entry.savedAt)}</div>
               </div>
@@ -21754,6 +21972,7 @@ function YevaAdvisor() {
           {/* SAVED STATES MODAL */}
           {showSavedStates && (
             <SavedStatesPanel
+              activeDeck={activeDeck}
               currentState={{ hand, battlefield, graveyard, greenMana: parseInt(greenMana) || 0, colorlessMana: parseInt(colorlessMana) || 0, isMyTurn, yisanCounters, attachments: [...attachments] }}
               onLoad={(s) => {
                 if (s.hand)        setHand(s.hand);
