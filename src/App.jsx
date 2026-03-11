@@ -2582,7 +2582,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         detail: `${dork} is a high-output mana dork. Cast it now to dramatically increase your mana next turn.${comboHint} With ${projectedOutput}+ mana available, you'll be in range for most combo lines.`,
         steps: [
           isFlash
-            ? `On last opponent's EOT: flash in ${dork} via Yeva (${yevaNote}). It untaps next turn with no summoning sickness.`
+            ? `On last opponent's EOT: flash in ${dork} via Yeva (${yevaFlash ? "on board" : "cast from command zone"}). It untaps next turn with no summoning sickness.`
             : `Cast ${dork} ({${cd.cmc ?? "?"}}).`,
           `Next turn: tap ${dork} for ${projectedOutput}{G} (${cd.tapsFor === "elves" ? "one {G} per elf you control" : cd.tapsFor === "creatures" ? "one {G} per creature you control" : cd.tapsFor === "devotion" ? "one {G} per green devotion" : "its normal output"}).`,
           ...(enablesCombo.length > 0 ? [`Pair with ${enablesCombo[0]} for infinite mana.`] : []),
@@ -3876,20 +3876,44 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- TUTOR → FORMIDABLE SPEAKER WIN PATH --------------------------------
-  // If Quirion/Scryb Ranger + a big dork are on board and Speaker isn't accessible,
-  // any tutor that can find Speaker (green creature, CMC 3) is effectively a win.
-  // Cast tutor → get Speaker → bounce loop via Quirion → find Ashaya → loop freely.
+  // Any tutor that can find Speaker (green creature, CMC 3) is effectively a win when:
+  //   PATH A: Quirion/Scryb Ranger + a big dork are already on board (classic loop).
+  //   PATH B: Enough mana (≥6) to cast Speaker + pay for loop pieces — Speaker's ETB
+  //           finds Quirion Ranger first, then on the next loop finds Ashaya etc.
+  //           With 6+ mana we can cast Speaker (3) + Quirion (1) + recast Speaker (3) = 7,
+  //           but Eladamri / Boreal Druid / big dork mana can cover this.
+  //           We only need ≥4 mana after tutor cost to make this live (cast Speaker + one loop).
   {
-    const hasRangerForSpeaker   = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const speakerAlreadyAccess  = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+    const hasRangerForSpeaker   = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const hasBigDorkForSpeaker  = board.has("Priest of Titania") || board.has("Circle of Dreams Druid")
       || board.has("Elvish Archdruid") || board.has("Karametra's Acolyte");
 
-    if (hasRangerForSpeaker && !speakerAlreadyAccess && hasBigDorkForSpeaker) {
+    // PATH B: no ranger on board, but one is confirmed accessible (in hand or graveyard with retrieval)
+    // AND enough mana to cast Speaker + bootstrap the loop.
+    // We cannot assume Quirion/Scryb Ranger is in the library — the advisor has no library visibility.
+    // Only fire PATH B when a ranger is confirmed in hand or retrievable from graveyard.
+    const rangerInHand = inHand.has("Quirion Ranger") || inHand.has("Scryb Ranger");
+    const rangerInGrave = graveyard.includes("Quirion Ranger") || graveyard.includes("Scryb Ranger");
+    const canRetrieveRanger = rangerInGrave && (inHand.has("Eternal Witness") || board.has("Eternal Witness"));
+    const rangerConfirmed = rangerInHand || canRetrieveRanger;
+    const hasSomeDorkOnBoard = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
+    const manaAfterTutor = mana - 1; // Worldly Tutor costs {G}
+    const canBootstrapSpeakerLoop = !hasRangerForSpeaker && rangerConfirmed && hasSomeDorkOnBoard
+      && manaAfterTutor >= 3  // enough to cast Speaker after tutoring it
+      && (mana >= 6 || infiniteManaActive); // enough headroom to loop at least once
+
+    // PATH A or PATH B qualifies
+    const pathA = hasRangerForSpeaker && hasBigDorkForSpeaker;
+    const pathB = canBootstrapSpeakerLoop;
+
+    if ((pathA || pathB) && !speakerAlreadyAccess) {
+      // Best big dork label for detail text
       const dorkName = board.has("Priest of Titania") ? "Priest of Titania"
         : board.has("Circle of Dreams Druid") ? "Circle of Dreams Druid"
         : board.has("Elvish Archdruid") ? "Elvish Archdruid"
-        : "Karametra's Acolyte";
+        : board.has("Karametra's Acolyte") ? "Karametra's Acolyte"
+        : battlefield.find(c => getCard(c)?.tags?.includes("dork")) ?? "a mana dork";
 
       // Determine the best available tutor for Speaker (green creature, CMC 3)
       const speakerCmc = 3;
@@ -3901,7 +3925,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         tutorNote = `Green Sun's Zenith (X=${speakerCmc}): search library for Formidable Speaker, put it directly onto the battlefield.`;
         tutorNow = true;
       } else if (inHand.has("Green Sun's Zenith") && !isMyTurn && (mana >= gszCost || infiniteManaActive)) {
-        // GSZ is a sorcery — can't cast on opponent's turn, but will be able to next turn
         tutorName = "Green Sun's Zenith (next turn)"; tutorCost = `{${speakerCmc}}{G}`;
         tutorNote = `On your next turn: cast Green Sun's Zenith (X=${speakerCmc}) → Formidable Speaker enters the battlefield directly.`;
         tutorNow = false;
@@ -3914,35 +3937,122 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           && (mana >= 1 || infiniteManaActive)) {
         tutorName = inHand.has("Worldly Tutor") ? "Worldly Tutor" : "Summoner's Pact";
         tutorCost = tutorName === "Worldly Tutor" ? "{G}" : "{0}";
-        tutorNote = `${tutorName}: search library for Formidable Speaker, put it on top.`;
+        tutorNote = `${tutorName}: search library for Formidable Speaker, put it on top of library. Draw it — cast immediately with remaining mana.`;
         tutorNow = true;
       }
 
       if (tutorName) {
-        const gszDirect = tutorName === "Green Sun's Zenith"; // puts directly onto battlefield
+        const gszDirect = tutorName === "Green Sun's Zenith";
         const gszNextTurn = tutorName === "Green Sun's Zenith (next turn)";
+
+        // Build the step list dynamically for PATH A vs PATH B
+        const stepsPathA = [
+          tutorNote,
+          (gszDirect || gszNextTurn)
+            ? `Formidable Speaker enters the battlefield. ETB: discard a card → search your entire library for any creature → find Ashaya, Soul of the Wild.`
+            : `Cast Formidable Speaker ({2}{G}): ETB — discard any card → search entire library for any creature → find Ashaya, Soul of the Wild.`,
+          `Ashaya makes all creatures Forests. ${hasRangerForSpeaker ? (board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger") : "Quirion/Scryb Ranger"} returns Speaker to hand, untapping ${dorkName}.`,
+          `${dorkName} taps for mana. Recast Speaker → ETB again → search for Duskwatch Recruiter.`,
+          "Activate Duskwatch Recruiter with infinite mana → assemble win pile → Sanitarium mill.",
+        ];
+        // PATH B correct sequence:
+        // Speaker is NOT a Forest until Ashaya is in play — Quirion cannot bounce it beforehand.
+        // Step 1: Speaker ETB → find ASHAYA (makes Speaker a Forest immediately).
+        // Step 2: Now Speaker IS a Forest → cast Quirion Ranger → Quirion bounces Speaker → untap dork.
+        // Step 3: Dork pays for recast → loop is free → find Duskwatch → win.
+        // Worldly Tutor on opponent's turn puts Speaker on top → we draw it next turn (not this turn).
+        const pathBDrawStep = !isMyTurn && tutorName === "Worldly Tutor"
+          ? "Next turn: draw Formidable Speaker (it's on top of your library from Worldly Tutor)."
+          : null;
+        const stepsPathB = [
+          tutorNote,
+          ...(pathBDrawStep ? [pathBDrawStep] : []),
+          `Cast Formidable Speaker ({2}{G}): ETB — discard any card → search entire library for any creature. First target: ASHAYA, Soul of the Wild (makes Speaker a Forest — required before Quirion can bounce it).`,
+          `Ashaya enters. All your nontoken creatures are now Forests. Formidable Speaker is now a Forest.`,
+          `Cast Quirion Ranger ({G}). Activate: return Formidable Speaker (now a Forest) to hand, untapping ${dorkName}.`,
+          `${dorkName} taps for mana. Recast Formidable Speaker → ETB again → find next piece. Loop is now self-sustaining.`,
+          `Find Duskwatch Recruiter → activate with accumulated mana → assemble win pile → Sanitarium mill.`,
+        ];
+
+        // Category: on opponent's turn with Worldly Tutor (instant), Speaker goes on top of library
+        // and is drawn next turn — so it's correctly "WIN NEXT TURN", not "WIN NOW".
+        // GSZ is a sorcery so also next turn if cast on opponent's turn.
+        const categoryLabel = gszDirect ? "🔥 WIN NOW" : "🔥 WIN NEXT TURN";
+
         results.push({
-          priority: 14,
-          category: gszDirect ? "🔥 WIN NOW" : "🔥 WIN NEXT TURN",
+          priority: pathA ? 14 : 13, // PATH B is slightly lower since it needs one extra step
+          category: categoryLabel,
           headline: gszDirect
             ? `Green Sun's Zenith (X=3) → Formidable Speaker → inevitable win this turn`
             : gszNextTurn
               ? `Green Sun's Zenith next turn (X=3) → Formidable Speaker → inevitable win`
-              : `${tutorName} → Formidable Speaker → inevitable win`,
-          detail: `With Quirion Ranger + ${dorkName} on board, fetching Formidable Speaker starts the full tutor loop: Speaker ETB finds any creature (discard to search entire library), Quirion bounces Speaker back to hand, ${dorkName} pays the recast. Find Ashaya → Speaker becomes a Forest → loop freely. Fetch Duskwatch Recruiter → win.`,
-          steps: [
-            tutorNote,
-            (gszDirect || gszNextTurn)
-              ? `Formidable Speaker enters the battlefield. ETB: discard a card → search your ENTIRE library for any creature → find Ashaya, Soul of the Wild.`
-              : `Cast Formidable Speaker ({2}{G}): ETB — discard any card. Search your ENTIRE library for any creature → find Ashaya, Soul of the Wild.`,
-            `Ashaya makes Formidable Speaker a Forest. Quirion Ranger returns Speaker to hand, untapping ${dorkName}.`,
-            `${dorkName} taps for mana. Recast Speaker → ETB again → search for next piece. Repeat until you find Duskwatch Recruiter.`,
-            "Activate Duskwatch Recruiter to assemble the full win pile → Sanitarium mill.",
-          ],
+              : `${tutorName} → Formidable Speaker → bootstrap loop → inevitable win`,
+          detail: pathA
+            ? `With ${board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger"} + ${dorkName} on board, fetching Formidable Speaker starts the full tutor loop immediately: Speaker ETB finds any creature, Quirion bounces Speaker to untap ${dorkName}, loop pays for itself. Find Ashaya → loop freely. Fetch Duskwatch Recruiter → win.`
+            : `Worldly Tutor puts Formidable Speaker on top of library — draw it next turn. Cast Speaker: ETB finds Ashaya first (Speaker must be a Forest before Quirion can bounce it). Once Ashaya is in play, cast Quirion Ranger → bounce Speaker → untap ${dorkName} → loop runs. Each ETB is a free tutor for any creature. Find Duskwatch Recruiter → win.`,
+          steps: pathA ? stepsPathA : stepsPathB,
           color: "#ff6b35",
           combo: "speaker_win_via_tutor",
         });
       }
+    }
+  }
+
+  // ---- TUTOR → FORMIDABLE SPEAKER → ETB FINDS ENGINE PIECE --------------------------------
+  // When a tutor can find Speaker and we have enough mana to cast it, Speaker's ETB
+  // is a free tutor for ANY creature — including Seedborn Muse, Eladamri, Yisan, etc.
+  // This is better than tutoring those pieces directly because we also get Speaker's body.
+  // Fire this when: no loop is available (PATH A/B above didn't fire), but we have a tutor
+  // in hand, enough mana to cast Speaker (CMC 3), and a discard card available for the ETB.
+  {
+    const speakerNotOnBoard = !board.has("Formidable Speaker") && !inHand.has("Formidable Speaker");
+    const hasTutorForSpeaker = (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteManaActive))
+      || (inHand.has("Summoner's Pact"))
+      || (inHand.has("Chord of Calling") && (mana >= 3 || infiniteManaActive));
+    const canCastSpeakerAfterTutor = mana >= 4 || infiniteManaActive; // {G} tutor + {2}{G} Speaker
+    const hasDiscardAvail = hand.filter(c => c !== "Worldly Tutor" && c !== "Summoner's Pact" && c !== "Chord of Calling").length > 0;
+    const alreadyHasSpeakerWinCard = results.some(r => r.combo === "speaker_win_via_tutor");
+
+    // Best ETB target: the highest-value creature not already on board
+    const speakerEtbTargets = [
+      { name: "Ashaya, Soul of the Wild",   reason: "enables infinite mana loop with any ranger" },
+      { name: "Seedborn Muse",              reason: "untaps all permanents each turn — effectively free activations forever" },
+      { name: "Eladamri, Korvecdal",        reason: "cast any creature from top of library — engine piece" },
+      { name: "Yisan, the Wanderer Bard",   reason: "verse tutor chain — finds any creature by CMC" },
+      { name: "Regal Force",                reason: "draw cards equal to green creatures — refill hand" },
+      { name: "Priest of Titania",          reason: "big dork — taps for elves on board" },
+      { name: "Circle of Dreams Druid",     reason: "Gaea's Cradle on a body" },
+      { name: "Elvish Archdruid",           reason: "big dork — taps for elves" },
+      { name: "Quirion Ranger",             reason: "infinite mana loop piece with Ashaya" },
+    ].filter(t => !board.has(t.name) && !inHand.has(t.name));
+
+    if (speakerNotOnBoard && hasTutorForSpeaker && canCastSpeakerAfterTutor
+        && hasDiscardAvail && !alreadyHasSpeakerWinCard && speakerEtbTargets.length > 0) {
+      const best = speakerEtbTargets[0];
+      const tutorUsed = inHand.has("Worldly Tutor") ? "Worldly Tutor"
+        : inHand.has("Summoner's Pact") ? "Summoner's Pact" : "Chord of Calling";
+      const tutorInstant = tutorUsed === "Worldly Tutor" || tutorUsed === "Chord of Calling";
+      const drawNote = !isMyTurn && tutorUsed === "Worldly Tutor"
+        ? "Speaker goes on top of library — draw and cast it on your next turn."
+        : `Cast Speaker immediately ({2}{G}) this turn.`;
+      const discardCard = hand.find(c => c !== tutorUsed && c !== "Formidable Speaker") ?? "any card";
+
+      results.push({
+        priority: 10,
+        category: "🎯 TUTOR → SPEAKER ETB",
+        headline: `${tutorUsed} → Formidable Speaker → ETB finds ${best.name}`,
+        detail: `Formidable Speaker's ETB tutors any creature from your library. Using ${tutorUsed} to find Speaker first is strictly better than tutoring ${best.name} directly — you get Speaker's body AND a free search for any creature. ${best.reason}.`,
+        combo: "speaker_etb_tutor",
+        steps: [
+          `${tutorUsed} ({G}): search library for Formidable Speaker, put it on top. ${drawNote}`,
+          `Cast Formidable Speaker ({2}{G}): ETB — discard ${discardCard} → search entire library for any creature → find ${best.name}.`,
+          `${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}.`,
+          ...(speakerEtbTargets.length > 1
+            ? [`Other strong ETB targets: ${speakerEtbTargets.slice(1, 3).map(t => t.name).join(", ")}.`]
+            : []),
+        ],
+        color: "#e67e22",
+      });
     }
   }
 
@@ -3958,36 +4068,82 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // HIGH PRIORITY: handled by the generic TUTOR → SPEAKER WIN PATH block above.
     // Only emit the general Harbinger tutor advice if the Speaker win wasn't already shown.
 
+    // Determine if Formidable Speaker should jump to the top of the target list.
+    // Conditions: Speaker not already on board/hand, we have enough mana to cast it after
+    // Harbinger (Harbinger {2}{G}=3, draw next turn, Speaker {2}{G}=3, total ≥6),
+    // there's at least one other card in hand to discard for Speaker's ETB,
+    // and Speaker's ETB would find something useful (i.e. there are good non-elf creatures missing).
+    const speakerAlreadyThere = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+    const canAffordHarbingerPlusSpeaker = mana >= 6 || infiniteManaActive;
+    // Speaker's ETB can find any creature — it's an elf so Harbinger can fetch it
+    // Wirewood Symbiote on board also acts as a bouncer for Speaker's untap ability
+    const hasSpeakerBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")
+      || board.has("Wirewood Symbiote"); // Symbiote can bounce Speaker (an elf) to untap a creature
+    const speakerEtbUseful = !board.has("Ashaya, Soul of the Wild") || !board.has("Quirion Ranger");
+    const harbingerCanFindSpeaker = !speakerAlreadyThere && canAffordHarbingerPlusSpeaker
+      && hasSpeakerBouncer && speakerEtbUseful;
+
+    // Best ETB targets Speaker could find — drives the "why" explanation
+    const speakerEtbBestTarget = [
+      { name: "Ashaya, Soul of the Wild", reason: "enables infinite mana loop with any ranger" },
+      { name: "Seedborn Muse",            reason: "untaps all permanents each turn" },
+      { name: "Eladamri, Korvecdal",      reason: "cast any creature from top of library" },
+      { name: "Yisan, the Wanderer Bard", reason: "verse tutor chain — finds any creature by CMC" },
+      { name: "Regal Force",              reason: "draw cards equal to green creatures" },
+      { name: "Quirion Ranger",           reason: "infinite mana loop piece with Ashaya" },
+      { name: "Priest of Titania",        reason: "big dork — taps for elves on board" },
+      { name: "Elvish Archdruid",         reason: "big dork — taps for elves" },
+    ].find(t => !board.has(t.name) && !inHand.has(t.name));
+
     // General Harbinger targets (lower priority)
     const harbingerTargets = [
+      // Speaker floated to top when conditions are met — strictly better than any single target
+      ...(harbingerCanFindSpeaker ? [{ name: "Formidable Speaker", reason: `ETB tutors any creature from library — find ${speakerEtbBestTarget?.name ?? "any engine piece"} immediately. Strictly better than tutoring that piece directly.` }] : []),
       { name: "Elvish Archdruid",       reason: "big dork — taps for elves on board; also pumps all elves" },
       { name: "Priest of Titania",      reason: "big dork — taps for elves on board" },
       { name: "Circle of Dreams Druid", reason: "taps for creatures on board — Gaea's Cradle on a body" },
       { name: "Allosaurus Shepherd",    reason: "protection — elves and green spells can't be countered" },
       { name: "Fauna Shaman",           reason: "repeatable tutor — finds any creature including non-elves" },
-      { name: "Formidable Speaker",     reason: "tutor engine — find any creature on your end step with a bouncer" },
+      ...(!harbingerCanFindSpeaker ? [{ name: "Formidable Speaker", reason: "tutor engine — find any creature on your end step with a bouncer" }] : []),
       { name: "Quirion Ranger",         reason: "infinite mana loop with Ashaya" },
       { name: "Wirewood Symbiote",      reason: "untap engine — bounces elf to untap any creature" },
       { name: "Elvish Reclaimer",       reason: "land tutor for Cradle, Sanitarium, Nykthos" },
       { name: "Chomping Changeling",    reason: "elf body that counts for all elf synergies" },
     ].filter(t => !board.has(t.name) && !inHand.has(t.name));
-    const alreadyShowedSpeakerWin = results.some(r => r.combo === "speaker_win_via_tutor");
-    if (harbingerTargets.length > 0 && (castable || etbReady) && (isMyTurn || yevaFlash) && !alreadyShowedSpeakerWin) {
+
+    const alreadyShowedSpeakerWin = results.some(r => r.combo === "speaker_win_via_tutor" || r.combo === "speaker_etb_tutor");
+    // Show on my turn (cast now) OR opponent's turn (plan for next turn) — Harbinger is a sorcery
+    // so it can't be flashed without Yeva, but the advice is still valid as a next-turn play.
+    if (harbingerTargets.length > 0 && castable && !alreadyShowedSpeakerWin) {
       const best = harbingerTargets[0];
+      const isSpeakerTarget = best.name === "Formidable Speaker";
+      const castNow = isMyTurn || yevaFlash;
+      const castPrefix = castNow ? "Cast" : "Next turn: cast";
+      const speakerDrawTiming = castNow
+        ? "Draw Formidable Speaker (top of library) — cast it this same turn with remaining mana."
+        : "Harbinger resolves — Speaker on top of library. Draw and cast it on your next turn.";
+      const speakerExtraSteps = isSpeakerTarget && speakerEtbBestTarget ? [
+        speakerDrawTiming,
+        `Cast Formidable Speaker ({2}{G}): ETB — discard any card → search entire library for any creature → find ${speakerEtbBestTarget.name}.`,
+        `${speakerEtbBestTarget.reason.charAt(0).toUpperCase() + speakerEtbBestTarget.reason.slice(1)}.`,
+      ] : [];
       results.push({
-        priority: 7,
+        priority: isSpeakerTarget ? 10 : 7,
         category: "🎯 TUTOR",
-        headline: `Elvish Harbinger${etbReady ? " ETB" : ""} → ${best.name}`,
+        headline: `Elvish Harbinger${etbReady ? " ETB" : castNow ? "" : " (next turn)"} → ${best.name}`,
         detail: `Elvish Harbinger finds any elf. ${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}. Harbinger also adds a mana dork body ({T}: add {G}) and an elf to the count.`,
         steps: [
           etbReady
             ? `Elvish Harbinger ETB: search for ${best.name} → top of library. Draw it next turn.`
-            : `Cast Elvish Harbinger ({2}{G}): ETB puts ${best.name} on top of library.`,
-          best.reason.charAt(0).toUpperCase() + best.reason.slice(1) + ".",
-          "Note: Harbinger puts the card on TOP of library, not into hand — draw it on your next draw step.",
-          ...(harbingerTargets.length > 1 ? [`Other strong elf targets: ${harbingerTargets.slice(1,3).map(t => t.name).join(", ")}.`] : []),
+            : `${castPrefix} Elvish Harbinger ({2}{G}): ETB puts ${best.name} on top of library.`,
+          ...speakerExtraSteps,
+          ...(speakerExtraSteps.length === 0 ? [best.reason.charAt(0).toUpperCase() + best.reason.slice(1) + "."] : []),
+          isSpeakerTarget
+            ? (castNow ? "Note: Harbinger puts Speaker on TOP of library — draw and cast it this same turn." : "Note: Harbinger is a sorcery — cast it on your next turn, then draw and cast Speaker immediately.")
+            : (castNow ? "Note: Harbinger puts the card on TOP of library — draw it on your next draw step." : "Note: Harbinger is a sorcery — cast it on your next turn, draw the tutored card the turn after."),
+          ...(harbingerTargets.length > 1 ? [`Other elf targets: ${harbingerTargets.slice(1,3).map(t => t.name).join(", ")}.`] : []),
         ],
-        color: "#5dade2",
+        color: isSpeakerTarget ? "#e67e22" : "#5dade2",
       });
     }
   }
@@ -18225,7 +18381,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         {phase === "mulligan" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "16px", overflow: "hidden" }}>
 
-            {/* ── Improvement 10: Mulligan depth indicator ── */}
+            {/* ── Improvement 10: Mulligan depth indicator + CMC chart top-right ── */}
             <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px", flexShrink: 0 }}>
               <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px" }}>
                 OPENING HAND{mulliganCount > 0 ? ` · MULLIGAN #${mulliganCount}` : ""} · {hand.length} CARDS
@@ -18245,6 +18401,40 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                   {7 - hand.length} card{7 - hand.length !== 1 ? "s" : ""} short of 7
                 </div>
               )}
+              {/* ── CMC curve chart — top right ── */}
+              <div style={{ marginLeft: "auto" }}>
+                {(() => {
+                const cmcBuckets = { "0": 0, "1": 0, "2": 0, "3": 0, "4+": 0 };
+                hand.forEach(c => {
+                  const cd = getCard(c);
+                  if (!cd || cd.type === "land") return;
+                  const cmc = cd.cmc ?? 0;
+                  const key = cmc === 0 ? "0" : cmc === 1 ? "1" : cmc === 2 ? "2" : cmc === 3 ? "3" : "4+";
+                  cmcBuckets[key]++;
+                });
+                const maxVal = Math.max(...Object.values(cmcBuckets), 1);
+                const bucketColor = { "0": COLORS.textDim, "1": COLORS.green2, "2": COLORS.green1, "3": COLORS.gold, "4+": COLORS.accent };
+                return (
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: "4px", flexShrink: 0 }}>
+                    <div style={{ fontSize: "8px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginRight: "2px", alignSelf: "center" }}>CMC</div>
+                    {Object.entries(cmcBuckets).map(([label, count]) => (
+                      <div key={label} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1px" }}>
+                        {count > 0 && <div style={{ fontSize: "8px", color: bucketColor[label], fontFamily: "'Cinzel', serif" }}>{count}</div>}
+                        <div style={{
+                          width: 18,
+                          height: Math.max(3, (count / maxVal) * 32),
+                          background: count > 0 ? `${bucketColor[label]}88` : COLORS.border,
+                          border: `1px solid ${count > 0 ? bucketColor[label] : COLORS.border}`,
+                          borderRadius: "2px 2px 0 0",
+                          transition: "height 0.3s",
+                        }} />
+                        <div style={{ fontSize: "8px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              </div>
             </div>
 
             {/* ── Improvement 2: Hand composition summary ── */}
@@ -18317,40 +18507,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
               })}
             </div>
 
-            {/* ── Improvement 6: Mana curve mini bar chart ── */}
-            {(() => {
-              const cmcBuckets = { "0": 0, "1": 0, "2": 0, "3": 0, "4+": 0 };
-              hand.forEach(c => {
-                const cd = getCard(c);
-                if (!cd || cd.type === "land") return;
-                const cmc = cd.cmc ?? 0;
-                const key = cmc === 0 ? "0" : cmc === 1 ? "1" : cmc === 2 ? "2" : cmc === 3 ? "3" : "4+";
-                cmcBuckets[key]++;
-              });
-              const maxVal = Math.max(...Object.values(cmcBuckets), 1);
-              const bucketColor = { "0": COLORS.textDim, "1": COLORS.green2, "2": COLORS.green1, "3": COLORS.gold, "4+": COLORS.accent };
-              return (
-                <div style={{ display: "flex", alignItems: "flex-end", gap: "6px", marginBottom: "10px", flexShrink: 0 }}>
-                  <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginRight: "4px", alignSelf: "center" }}>CMC</div>
-                  {Object.entries(cmcBuckets).map(([label, count]) => (
-                    <div key={label} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
-                      {count > 0 && (
-                        <div style={{ fontSize: "9px", color: bucketColor[label], fontFamily: "'Cinzel', serif" }}>{count}</div>
-                      )}
-                      <div style={{
-                        width: 22,
-                        height: Math.max(4, (count / maxVal) * 40),
-                        background: count > 0 ? `${bucketColor[label]}88` : COLORS.border,
-                        border: `1px solid ${count > 0 ? bucketColor[label] : COLORS.border}`,
-                        borderRadius: "3px 3px 0 0",
-                        transition: "height 0.3s",
-                      }} />
-                      <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>{label}</div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
 
             {phase2 === "bottoming" && (
               <div style={{ marginTop: "8px", marginBottom: "8px", padding: "12px 16px", background: "#1a1a0a", border: `1px solid ${COLORS.gold}`, borderRadius: "8px", fontSize: "12px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "16px", position: "relative", zIndex: 10 }}>
