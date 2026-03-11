@@ -16336,7 +16336,7 @@ if (card === "Talon Gates of Madara") {
       notes.push(`${colourlessOnlyLands.length} colourless land${colourlessOnlyLands.length > 1 ? "s" : ""} (${colourlessOnlyLands.join(", ")}) — no T1 green`);
     }
     if (fetchLands > 0) {
-      notes.push(`${fetchLands} fetch land${fetchLands > 1 ? "s" : ""} — fixing, but enters tapped until cracked`);
+      notes.push(`${fetchLands} fetch land${fetchLands > 1 ? "s" : ""} — enters untapped, crack to find a Forest`);
     }
 
     // T1 play
