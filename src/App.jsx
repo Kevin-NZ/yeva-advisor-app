@@ -6783,6 +6783,150 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     }
 
+    // ── WIN NOW: Speaker + Quirion + Elder on board, fetch Ashaya → infinite → WIN ──
+    // Ashaya is not yet in play but can be fetched for free via Summoner's Pact (free instant-speed tutor).
+    // Once Ashaya resolves: Elder is already untapped, Ashaya makes Elder a Forest → Elder can untap itself
+    // → infinite mana → Speaker + Quirion loop → find Duskwatch → WIN this turn.
+    {
+      const speakerAlreadyBoard = board.has("Formidable Speaker");
+      const quirionAlreadyBoard = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+      const quirionBoardName    = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      const elderAlreadyBoard   = board.has("Argothian Elder");
+      const ashayaReachable     = !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild");
+      // Fetch sources that can find Ashaya (CMC 5 creature)
+      const pactsInHand = inHand.has("Summoner's Pact");
+      const sharedSummonsInHand = inHand.has("Shared Summons");
+      const canFetchAshaya = pactsInHand || sharedSummonsInHand;
+      // Ashaya costs {3}{G}{G} = 5 mana to cast after fetching
+      const ashayaCmc = 5;
+      const canAffordAshaya = mana >= ashayaCmc || infiniteManaActive;
+      // After Ashaya: Elder (already on board, not sick) + Ashaya = infinite mana
+      // Quirion Ranger bounces Speaker (Forest via Ashaya) to untap a big dork = free Speaker loop
+      // Speaker ETB fetches Duskwatch → WIN
+      const speakerHasDiscard = speakerAlreadyBoard || hand.filter(c => c !== "Summoner's Pact" && c !== "Shared Summons").length > 0;
+      const alreadyWinFired = results.some(r => r.priority >= 14 && (r.combo || "").includes("speaker"));
+      if (speakerAlreadyBoard && quirionAlreadyBoard && elderAlreadyBoard
+          && ashayaReachable && canFetchAshaya && canAffordAshaya
+          && (isMyTurn || yevaAvailable) && speakerHasDiscard && !alreadyWinFired) {
+        const fetchSpell = pactsInHand ? "Summoner's Pact" : "Shared Summons";
+        const fetchNote  = fetchSpell === "Summoner's Pact"
+          ? "Summoner's Pact is free — pay {2}{G}{G} next upkeep."
+          : "Shared Summons fetches two creatures — grab Ashaya + Duskwatch Recruiter if available.";
+        const discardCard = hand.filter(c => c !== fetchSpell)[0] ?? "a card";
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW",
+          headline: `${fetchSpell} → Ashaya → Elder goes infinite → Speaker + ${quirionBoardName} loop → Duskwatch → WIN`,
+          combo: "speaker_pact_ashaya_win",
+          detail: `All pieces are in place. ${fetchSpell} fetches Ashaya at no mana cost. Once Ashaya resolves, Argothian Elder (already on board, not summoning sick) becomes a Forest via Ashaya — Elder can now tap as a Forest and use its ability to untap itself + another land: infinite mana. With infinite mana, Formidable Speaker + ${quirionBoardName} is a guaranteed win: bounce Speaker each loop (it's a Forest via Ashaya), recast for ETB tutor, find Duskwatch Recruiter. ${fetchNote}`,
+          steps: [
+            `Cast ${fetchSpell}: search library for Ashaya, Soul of the Wild. Put it into your hand.`,
+            `Cast Ashaya, Soul of the Wild ({3}{G}{G}): all your nontoken creatures are now Forest lands.`,
+            `Argothian Elder is now a Forest. Tap Elder as a Forest for {G}, then activate Elder's tap ability: untap Elder + any other land. Elder untaps itself → infinite mana.`,
+            `With infinite mana: activate ${quirionBoardName} — return Formidable Speaker (a Forest via Ashaya) to hand, untapping any creature.`,
+            `Recast Formidable Speaker ({2}{G}): ETB — discard ${discardCard} → search your entire library for Duskwatch Recruiter.`,
+            `Cast Duskwatch Recruiter. Activate ({2}{G}) with infinite mana — look at top 3 cards repeatedly to assemble win pile.`,
+            `Win pile: Endurance + Geier Reach Sanitarium + untap method → mill all opponents.`,
+            fetchSpell === "Summoner's Pact" ? `Remember: pay {2}{G}{G} at your next upkeep or lose the game.` : ``,
+          ].filter(Boolean),
+          color: "#ff4500",
+        });
+      }
+    }
+
+    // ── WIN NOW: Woodland Bellower → Formidable Speaker (ETB→Ashaya) → Elder infinite → Quirion loop → WIN ──
+    // Bellower (CMC 6) puts any non-legendary green creature CMC≤3 directly onto battlefield.
+    // Formidable Speaker (CMC 3, non-legendary, green) qualifies. Speaker ETB: discard → find Ashaya.
+    // Cast Ashaya (5 mana). Elder (already on board) → infinite. Quirion bounces Speaker → WIN.
+    // Mana: Bellower(6) + Ashaya(5) = 11 minimum.
+    {
+      const bellowerInHand    = inHand.has("Woodland Bellower");
+      const speakerNotBoard2  = !board.has("Formidable Speaker");
+      const quirionBoard3     = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+      const quirionName3      = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      const elderBoard3       = board.has("Argothian Elder");
+      const ashayaNotBoard3   = !board.has("Ashaya, Soul of the Wild");
+      const ashayaNotHand3    = !inHand.has("Ashaya, Soul of the Wild");
+      // Mana: Bellower 6 + Ashaya 5 = 11
+      const minManaBellower   = 11;
+      const canAffordBellower = mana >= minManaBellower || infiniteManaActive;
+      // Need a discard for Speaker ETB (find Ashaya): any card other than Bellower
+      const hasDiscardBellower = hand.filter(c => c !== "Woodland Bellower").length > 0;
+      const alreadyWin3       = results.some(r => r.priority >= 14);
+      if (bellowerInHand && speakerNotBoard2 && quirionBoard3 && elderBoard3
+          && ashayaNotBoard3 && ashayaNotHand3 && canAffordBellower
+          && hasDiscardBellower && (isMyTurn || yevaAvailable) && !alreadyWin3) {
+        const discardCard3 = hand.filter(c => c !== "Woodland Bellower")[0] ?? "a card";
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW",
+          headline: `Woodland Bellower → Formidable Speaker (ETB → Ashaya) → Elder infinite → ${quirionName3} loop → WIN`,
+          combo: "bellower_speaker_ashaya_elder_win",
+          detail: `Cast Woodland Bellower (6 mana): ETB puts Formidable Speaker (CMC 3, non-legendary) directly onto the battlefield. Speaker ETB immediately triggers — discard a card → search library for Ashaya, Soul of the Wild. Cast Ashaya (5 mana). Argothian Elder (already on board, not summoning sick) is now a Forest via Ashaya — Elder untaps itself for infinite mana. ${quirionName3} bounces Speaker back to hand, recast to tutor Duskwatch Recruiter → WIN.`,
+          steps: [
+            `Cast Woodland Bellower ({5}{G}): ETB — search library for a non-legendary green creature with CMC ≤ 3. Find Formidable Speaker and put it directly onto the battlefield.`,
+            `Formidable Speaker ETB triggers immediately: discard ${discardCard3} → search your entire library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+            `Cast Ashaya, Soul of the Wild ({3}{G}{G}): all your nontoken creatures (including Argothian Elder, ${quirionName3}, and Formidable Speaker) are now Forest lands.`,
+            `Argothian Elder is now a Forest. Tap Elder as a Forest for {G}, then activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → infinite mana.`,
+            `With infinite mana: activate ${quirionName3} — return Formidable Speaker (a Forest via Ashaya) to hand, untapping any creature.`,
+            `Recast Formidable Speaker ({2}{G}): ETB — discard any card → search your entire library for Duskwatch Recruiter.`,
+            `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana to assemble win pile.`,
+            `Win pile: Endurance + Geier Reach Sanitarium + untap method → mill all opponents.`,
+          ],
+          color: "#ff4500",
+        });
+      }
+    }
+
+    // ── WIN NOW: Quirion + Elder on board, fetch Speaker via Pact → Speaker ETB finds Ashaya → infinite → WIN ──
+    // Speaker is NOT on the board. Fetch it with Summoner's Pact (free), cast it (3 mana), ETB: discard → find Ashaya.
+    // Cast Ashaya (5 mana). Elder is already on board → infinite mana → Quirion bounces Speaker → tutor loop → WIN.
+    // Total mana: 0 (Pact) + 3 (Speaker) + 5 (Ashaya) = 8. Bellower (6) + Ashaya (5) = 11 — too expensive.
+    {
+      const speakerNotOnBoard  = !board.has("Formidable Speaker");
+      const quirionAlreadyBoard2 = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+      const quirionBoardName2  = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      const elderAlreadyBoard2 = board.has("Argothian Elder");
+      const ashayaNotOnBoard2  = !board.has("Ashaya, Soul of the Wild");
+      const ashayaNotInHand2   = !inHand.has("Ashaya, Soul of the Wild");
+      // Need a free creature tutor to fetch Speaker (CMC 3): Summoner's Pact
+      const pactInHand2 = inHand.has("Summoner's Pact");
+      // Mana: Speaker {2}{G}=3 + Ashaya {3}{G}{G}=5 = 8 minimum
+      const speakerCmc = 3;
+      const ashayaCmc2 = 5;
+      const minManaNeeded = speakerCmc + ashayaCmc2; // 8
+      const canAffordLine2 = mana >= minManaNeeded || infiniteManaActive;
+      // Need a discard for Speaker's ETB (to find Ashaya): any card other than Speaker
+      // Speaker isn't in hand yet — need at least 1 card in hand to discard on first ETB
+      const hasDiscardForSpeaker2 = hand.filter(c => c !== "Summoner's Pact").length > 0;
+      const alreadyWinFired2 = results.some(r => r.priority >= 14);
+      if (speakerNotOnBoard && quirionAlreadyBoard2 && elderAlreadyBoard2
+          && ashayaNotOnBoard2 && ashayaNotInHand2 && pactInHand2
+          && canAffordLine2 && hasDiscardForSpeaker2
+          && (isMyTurn || yevaAvailable) && !alreadyWinFired2) {
+        const discardCard2 = hand.filter(c => c !== "Summoner's Pact")[0] ?? "a card";
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW",
+          headline: `Summoner's Pact → Formidable Speaker → ETB finds Ashaya → Elder infinite → ${quirionBoardName2} loop → WIN`,
+          combo: "pact_speaker_ashaya_elder_win",
+          detail: `Summoner's Pact (free) fetches Formidable Speaker. Cast Speaker (3 mana): ETB — discard a card → search library for Ashaya, Soul of the Wild. Cast Ashaya (5 mana). Argothian Elder (already on board, not summoning sick) is now a Forest — Elder untaps itself for infinite mana. ${quirionBoardName2} bounces Speaker (a Forest via Ashaya) back to hand, untapping any creature. Recast Speaker: ETB tutors Duskwatch Recruiter. Activate Duskwatch → WIN. Remember to pay Summoner's Pact trigger next upkeep.`,
+          steps: [
+            `Cast Summoner's Pact (free): search library for Formidable Speaker. Put it into your hand.`,
+            `Cast Formidable Speaker ({2}{G}): ETB — discard ${discardCard2} → search your entire library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+            `Cast Ashaya, Soul of the Wild ({3}{G}{G}): all your nontoken creatures are now Forest lands.`,
+            `Argothian Elder is now a Forest. Tap Elder as a Forest for {G}, then activate Elder's tap ability: untap Elder + any other land. Elder untaps itself → infinite mana.`,
+            `With infinite mana: activate ${quirionBoardName2} — return Formidable Speaker (a Forest via Ashaya) to hand, untapping any creature.`,
+            `Recast Formidable Speaker ({2}{G}): ETB — discard any card → search your entire library for Duskwatch Recruiter. Put Duskwatch into your hand, then shuffle.`,
+            `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) with infinite mana — look at top 3 cards repeatedly to assemble win pile.`,
+            `Win pile: Endurance + Geier Reach Sanitarium + untap method → mill all opponents.`,
+            `⚠ Remember: pay {2}{G}{G} at your next upkeep for Summoner's Pact or lose the game.`,
+          ],
+          color: "#ff4500",
+        });
+      }
+    }
+
     if (infiniteManaActive && ashayaOnBoard && quirionOnBoard && bigDork && !hasDuskwatch) {
       // When Speaker is in hand (not yet cast), verify there's another card to discard for the ETB.
       // Once on board the loop is self-sustaining: each fetch provides a card to discard next loop.
@@ -7167,6 +7311,133 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       ].filter(Boolean),
       color: "#ff6b35",
     });
+  }
+
+  // ---- TUTOR CHAIN WIN NOW DETECTOR ----
+  // Checks whether any accessible primary tutor can reach a powerful secondary tutor,
+  // which in turn can complete an active combo or assemble infinite mana + win.
+  // This catches lines like: Summoner's Pact → Formidable Speaker → ETB→ Ashaya → WIN
+  //                          Woodland Bellower → Quirion Ranger → (combo piece)
+  //                          Worldly Tutor → Formidable Speaker → ETB → combo piece
+  {
+    // Only fire if no WIN NOW is already present
+    const alreadyHasWin = results.some(r => r.priority >= 14);
+    if (!alreadyHasWin && (isMyTurn || yevaAvailable)) {
+
+      // ── CHAIN: any creature tutor → Formidable Speaker → ETB → any creature ──
+      // Speaker ETB: discard a card → search entire library for ANY creature.
+      // So: tutor1 → Speaker → ETB → [missing combo piece] = 2-step chain.
+      // Requirements:
+      //   1. A primary creature tutor is accessible
+      //   2. Formidable Speaker is not already on board (tutor would be wasted)
+      //   3. At least one combo is one piece away from a win (the ETB target)
+      //   4. Enough mana for tutor1 + Speaker cast + (combo piece cast if needed)
+      //   5. At least one card in hand to discard for the Speaker ETB
+      const speakerOnBoardChain = board.has("Formidable Speaker");
+      const speakerInDeckChain  = !speakerOnBoardChain && !inHand.has("Formidable Speaker");
+
+      if (speakerInDeckChain) {
+        // Primary tutors that can find Speaker (CMC 3, non-legendary green creature)
+        const primaryTutorForSpeaker = (() => {
+          if (inHand.has("Summoner's Pact")) return { name: "Summoner's Pact", cost: 0 };
+          if (inHand.has("Woodland Bellower") && mana >= 6) return { name: "Woodland Bellower", cost: 6, note: "puts Speaker directly onto battlefield" };
+          if (inHand.has("Worldly Tutor") && mana >= 1) return { name: "Worldly Tutor", cost: 1, note: "puts Speaker on top of library (draw next)" };
+          if (inHand.has("Chord of Calling") && mana >= 3) return { name: "Chord of Calling", cost: Math.max(0, 3 - battlefield.filter(c => getCard(c)?.type === "creature").length) };
+          if (inHand.has("Green Sun's Zenith") && mana >= 4) return { name: "Green Sun's Zenith", cost: 4 };
+          if (inHand.has("Shared Summons") && mana >= 5) return { name: "Shared Summons", cost: 5, note: "fetches two creatures — grab Speaker + one more" };
+          if (board.has("Fauna Shaman") && mana >= 1 && hand.some(c => getCard(c)?.type === "creature")) return { name: "Fauna Shaman", cost: 1 };
+          if (board.has("Survival of the Fittest") && mana >= 1 && hand.some(c => getCard(c)?.type === "creature")) return { name: "Survival of the Fittest", cost: 1 };
+          return null;
+        })();
+
+        if (primaryTutorForSpeaker) {
+          const isBellower = primaryTutorForSpeaker.name === "Woodland Bellower";
+          const isWorldly  = primaryTutorForSpeaker.name === "Worldly Tutor";
+          // Speaker costs 3 mana to cast (Bellower puts it directly — free cast)
+          const speakerCastCost = isBellower ? 0 : 3;
+          const manaAfterChain  = mana - primaryTutorForSpeaker.cost - speakerCastCost;
+          // Need a discard card for Speaker's ETB
+          const hasDiscard = hand.filter(c => c !== primaryTutorForSpeaker.name).length > 0;
+
+          if (hasDiscard && manaAfterChain >= 0) {
+            // What can Speaker's ETB find that leads to a win?
+            // Priority: cards that unlock infinite mana or are one piece away from win
+            const chainTargets = [];
+
+            // If Elder + Quirion on board → Ashaya via Speaker ETB = infinite → WIN
+            if (board.has("Argothian Elder") && (board.has("Quirion Ranger") || board.has("Scryb Ranger"))
+                && !board.has("Ashaya, Soul of the Wild") && manaAfterChain >= 5) {
+              const quirionN = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+              chainTargets.push({
+                target: "Ashaya, Soul of the Wild",
+                extraCost: 5,
+                why: `Cast Ashaya (5 mana) → Argothian Elder + Ashaya = infinite mana → ${quirionN} + Speaker loop → Duskwatch → WIN`,
+                winNow: true,
+              });
+            }
+
+            // If infinite mana active → any win piece via Speaker ETB
+            if (infiniteManaActive) {
+              if (!board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")) {
+                chainTargets.push({ target: "Duskwatch Recruiter", extraCost: 2, why: "Activate Duskwatch with infinite mana → WIN", winNow: true });
+              }
+            }
+
+            // If Ashaya on board + Quirion on board → Elder via Speaker ETB = infinite
+            if (board.has("Ashaya, Soul of the Wild") && (board.has("Quirion Ranger") || board.has("Scryb Ranger"))
+                && !board.has("Argothian Elder") && manaAfterChain >= 4) {
+              chainTargets.push({ target: "Argothian Elder", extraCost: 4, why: "Elder enters as a Forest via Ashaya → tap as Forest, activate to untap itself → infinite mana", winNow: false });
+            }
+
+            // If Ashaya + Elder on board → Quirion via Speaker ETB = infinite
+            if (board.has("Ashaya, Soul of the Wild") && board.has("Argothian Elder")
+                && !board.has("Quirion Ranger") && !board.has("Scryb Ranger") && manaAfterChain >= 1) {
+              chainTargets.push({ target: "Quirion Ranger", extraCost: 1, why: "Quirion + Ashaya + Elder = infinite mana immediately", winNow: false });
+            }
+
+            if (chainTargets.length > 0) {
+              const best = chainTargets[0];
+              const totalCost = primaryTutorForSpeaker.cost + speakerCastCost + best.extraCost;
+              const canAffordFull = mana >= totalCost || infiniteManaActive;
+
+              if (canAffordFull) {
+                const discardCard = hand.filter(c => c !== primaryTutorForSpeaker.name)[0] ?? "a card";
+                const tutorNote   = primaryTutorForSpeaker.note ? ` (${primaryTutorForSpeaker.note})` : "";
+                const speakerStep = isBellower
+                  ? `Woodland Bellower ETB puts Formidable Speaker directly onto the battlefield.`
+                  : isWorldly
+                  ? `Worldly Tutor puts Formidable Speaker on top of library — draw it.`
+                  : `Cast Formidable Speaker ({2}{G}${speakerCastCost > 3 ? "+" : ""}).`;
+
+                results.push({
+                  priority: best.winNow ? 15 : 13,
+                  category: best.winNow ? "🔥 WIN NOW" : "⚡ CAST TO WIN",
+                  headline: `${primaryTutorForSpeaker.name}${tutorNote} → Formidable Speaker ETB → ${best.target} → ${best.winNow ? "WIN" : "infinite mana"}`,
+                  combo: "tutor_chain_speaker_win",
+                  detail: `Two-step tutor chain: ${primaryTutorForSpeaker.name} finds Formidable Speaker. Speaker ETB: discard a card → search your entire library for ${best.target}. ${best.why}.`,
+                  steps: [
+                    isBellower
+                      ? `Cast Woodland Bellower ({5}{G}): ETB — search library for Formidable Speaker (CMC 3, non-legendary green) → put directly onto battlefield.`
+                      : isWorldly
+                      ? `Cast Worldly Tutor ({G}): search library for Formidable Speaker → put on top of library. Draw it.`
+                      : `Cast ${primaryTutorForSpeaker.name}: search library for Formidable Speaker → put into hand.`,
+                    speakerStep,
+                    `Formidable Speaker ETB: discard ${discardCard} → search your entire library for ${best.target}. Put it into your hand, then shuffle.`,
+                    `Cast ${best.target}. ${best.why}.`,
+                    ...(best.target === "Ashaya, Soul of the Wild" ? [
+                      `Argothian Elder is now a Forest via Ashaya. Tap Elder as a Forest for {G}, activate its ability: untap Elder + another land → Elder untaps itself → infinite mana.`,
+                      `${board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger"} returns Formidable Speaker (a Forest via Ashaya) to hand. Recast Speaker: ETB → find Duskwatch Recruiter.`,
+                      `Activate Duskwatch Recruiter with infinite mana → assemble win pile → WIN.`,
+                    ] : []),
+                  ].filter(Boolean),
+                  color: best.winNow ? "#ff4500" : "#e67e22",
+                });
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // ---- GENERIC HIGH PRIORITY TUTOR WHEN NOTHING ELSE ----
@@ -7798,6 +8069,26 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
       options.push("Woodland Bellower (ETB → directly onto battlefield)");
     }
   }
+  // ── Tutor chain: can we reach the target via a secondary tutor? ──
+  // If no direct tutor is available, check whether a primary tutor can find
+  // Formidable Speaker, whose ETB can then find any creature target.
+  if (options.length === 0 && getCard(target)?.type === "creature" && !board.has("Formidable Speaker") && !inHand.has("Formidable Speaker")) {
+    const speakerDiscardChain = hand.filter(c => c !== "Summoner's Pact" && c !== "Woodland Bellower" && c !== "Worldly Tutor").length > 0;
+    if (speakerDiscardChain) {
+      const speakerCost = 3;
+      const targetCost  = getCard(target)?.cmc ?? 0;
+      const totalNeeded = speakerCost + targetCost;
+      const canAffordChain = mana >= totalNeeded || infiniteMana;
+      if (canAffordChain) {
+        if (inHand.has("Summoner's Pact")) options.push("Summoner's Pact → Formidable Speaker → ETB finds " + target + " (2-step chain)");
+        else if (inHand.has("Woodland Bellower") && (getCard(target)?.cmc ?? 99) <= 3 && (mana >= 6 + targetCost || infiniteMana))
+          options.push("Woodland Bellower → Formidable Speaker → ETB finds " + target + " (2-step chain, Bellower puts Speaker directly onto battlefield)");
+        else if (inHand.has("Worldly Tutor") && (mana >= 1 + speakerCost + targetCost || infiniteMana))
+          options.push("Worldly Tutor → Formidable Speaker → ETB finds " + target + " (2-step chain, Worldly puts Speaker on top)");
+      }
+    }
+  }
+
   return options;
 }
 
@@ -15208,10 +15499,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     onClose();
   }
 
+  const runNActualCount = React.useRef(null);
   function runGames(e) {
     if (!hasDeck || runNRunning) return;
     const multiplier = e?.shiftKey ? 10 : 1;
     const count = runNCount * multiplier;
+    runNActualCount.current = count;
     setRunNRunning(true);
     setRunNResults(null);
     // Defer to next tick so the UI can show the spinner before blocking
@@ -18649,10 +18942,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
             {phase2 === "bottoming" && (
               <div style={{ marginTop: "8px", marginBottom: "8px", padding: "12px 16px", background: "#1a1a0a", border: `1px solid ${COLORS.gold}`, borderRadius: "8px", fontSize: "12px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "16px", position: "relative", zIndex: 10 }}>
-                <span>{Math.max(0, mulliganCount - 1) - pendingBottoms.length > 0
-                  ? `Choose ${Math.max(0, mulliganCount - 1) - pendingBottoms.length} more card${Math.max(0, mulliganCount - 1) - pendingBottoms.length !== 1 ? "s" : ""} to bottom.`
-                  : "All cards selected."
-                }</span>
+                <span style={{ color: (() => { const d = Math.max(0, mulliganCount - 1) - pendingBottoms.length; return d < 0 ? COLORS.red : "inherit"; })() }}>{(() => {
+                  const needed = Math.max(0, mulliganCount - 1);
+                  const diff = needed - pendingBottoms.length;
+                  if (diff > 0) return `Choose ${diff} more card${diff !== 1 ? "s" : ""} to bottom.`;
+                  if (diff < 0) return `⚠ Too many selected — deselect ${Math.abs(diff)} card${Math.abs(diff) !== 1 ? "s" : ""}.`;
+                  return "All cards selected.";
+                })()}</span>
                 {pendingBottoms.length === Math.max(0, mulliganCount - 1) && (
                   <button onClick={confirmBottom} style={{
                     background: "#1a1a0a", border: `1px solid ${COLORS.gold}`,
@@ -18660,25 +18956,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
                   }}>✓ CONFIRM</button>
                 )}
-              </div>
-            )}
-
-            {/* ── Bottoming instruction banner — above suggestion ── */}
-            {phase2 === "bottoming" && (
-              <div style={{
-                marginBottom: "8px", padding: "8px 14px", flexShrink: 0,
-                background: "#1a1a0a", border: `1px solid ${COLORS.gold}88`,
-                borderRadius: "8px", display: "flex", alignItems: "center", gap: "10px",
-              }}>
-                <span style={{ fontSize: "16px" }}>👇</span>
-                <div>
-                  <div style={{ fontSize: "11px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
-                    CLICK CARDS TO SEND TO BOTTOM
-                  </div>
-                  <div style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginTop: "2px" }}>
-                    Choose {Math.max(0, mulliganCount - 1)} card{Math.max(0, mulliganCount - 1) !== 1 ? "s" : ""} to bottom before seeing the rest of your hand. Click again to undo.
-                  </div>
-                </div>
               </div>
             )}
 
@@ -19264,6 +19541,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     {statPill("AVG DORK T",  avg(g => g.firstDork),     COLORS.green2)}
                     {statPill("AVG MULLS",   avg(g => g.mulligans),      COLORS.gold)}
                     {statPill("T1 DORK",     pct(g => g.firstDork === 1), COLORS.green2)}
+                    {statPill("WIN ≤T3",     pct(g => g.winCondition !== null && g.winCondition <= 3), COLORS.red)}
                     {statPill("WIN ≤T4",     pct(g => g.winCondition !== null && g.winCondition <= 4), COLORS.red)}
                     {statPill("WIN ≤T5",     pct(g => g.winCondition !== null && g.winCondition <= 5), COLORS.red)}
                   </div>
@@ -19360,6 +19638,37 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     </div>
                   )}
 
+                  {/* ── Win turn distribution (manual games) ── */}
+                  {games.length > 0 && (() => {
+                    const distKeys = ["T1","T2","T3","T4","T5","T6","T7","T8+"];
+                    const distCounts = distKeys.map(k => {
+                      if (k === "T8+") return games.filter(g => g.winCondition !== null && g.winCondition >= 8).length;
+                      const t = parseInt(k.slice(1));
+                      return games.filter(g => g.winCondition === t).length;
+                    });
+                    const maxCount = Math.max(...distCounts, 1);
+                    if (distCounts.every(c => c === 0)) return null;
+                    return (
+                      <div style={{ marginTop: "16px" }}>
+                        <div style={{ fontSize: "9px", letterSpacing: "2px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "6px" }}>WIN TURN DISTRIBUTION</div>
+                        <div style={{ display: "flex", gap: "4px", alignItems: "flex-end", height: "52px" }}>
+                          {distKeys.map((k, i) => {
+                            const count = distCounts[i];
+                            const h = count > 0 ? Math.max(4, Math.round(count / maxCount * 48)) : 2;
+                            const col = count === 0 ? COLORS.border : i <= 1 ? "#7c3aed" : i <= 3 ? COLORS.green2 : i <= 4 ? COLORS.gold : COLORS.textDim;
+                            return (
+                              <div key={k} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+                                <div style={{ fontSize: "8px", color: col, fontFamily: "'Cinzel', serif" }}>{count > 0 ? count : ""}</div>
+                                <div style={{ width: "100%", height: `${h}px`, background: col, borderRadius: "2px 2px 0 0", opacity: count === 0 ? 0.2 : 1 }} />
+                                <div style={{ fontSize: "8px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>{k}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* ── Win combo breakdown (manual games) ── */}
                   {games.length > 0 && (() => {
                     const comboCounts = {};
@@ -19451,7 +19760,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                         fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
                         opacity: runNRunning ? 0.6 : 1,
                       }}
-                    >{runNRunning ? `⏳ Running ${runNCount} games…` : `▶ RUN ${runNCount} GAMES`}
+                    >{runNRunning ? `⏳ Running ${runNActualCount.current ?? runNCount} games…` : `▶ RUN ${runNCount} GAMES`}
                     </button>
                     {!hasDeck && <div style={{ fontSize: "10px", color: COLORS.red, marginTop: "6px", fontFamily: "'Crimson Text', serif" }}>Load a deck first.</div>}
                     {nr && !runNRunning && (
@@ -19524,7 +19833,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     {runNRunning && (
                       <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
                         <div style={{ width: 28, height: 28, border: `2px solid ${COLORS.border}`, borderTopColor: COLORS.blue, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
-                        Simulating {runNCount} games…
+                        Simulating {runNActualCount.current ?? runNCount} games…
                       </div>
                     )}
                     {nr && !runNRunning && (() => {
