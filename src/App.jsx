@@ -3683,6 +3683,46 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- NATURE'S RHYTHM ----
   // Functions as a second Green Sun's Zenith that can be cast again after use.
   if (inHand.has("Nature's Rhythm") && isMyTurn) {
+    // WIN NOW: if Quirion/Scryb Ranger already on board + dork available → Ashaya = infinite mana
+    const nrRangerOnBoard = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const nrHasTappingDork = battlefield.some(c => {
+      if (c === "Quirion Ranger" || c === "Scryb Ranger") return false;
+      const cd = getCard(c); return cd?.type === "creature" && (cd?.tapsFor ?? 0) > 0;
+    });
+    const nrAshayaWin = nrRangerOnBoard && nrHasTappingDork &&
+      !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild") &&
+      (mana >= 7 || infiniteManaActive); // X=5 + {G}{G} = 7
+    if (nrAshayaWin) {
+      const nrRanger = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      const nrDuskwatch  = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+      const nrFinale     = inHand.has("Finale of Devastation");
+      const nrSpeaker    = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+      // After casting Nature's Rhythm from hand it goes to graveyard — Harmonize finds Duskwatch
+      const nrHarmonize  = !nrDuskwatch; // always available as fallback once NR is in grave
+      const nrHasOutlet  = nrDuskwatch || nrFinale || nrSpeaker || nrHarmonize;
+      const nrPriority   = nrHasOutlet ? 14 : 12;
+      const nrCategory   = nrHasOutlet ? "🔥 WIN NOW — NATURE'S RHYTHM" : "⚡ NEAR WIN — NATURE'S RHYTHM";
+      const nrOutlet     = nrDuskwatch
+        ? "Duskwatch Recruiter converts infinite mana into drawing your entire library."
+        : nrFinale
+        ? "Finale of Devastation (X≥10) finds and pumps your whole board."
+        : nrSpeaker
+        ? "Formidable Speaker ETB finds Duskwatch Recruiter. Activate with infinite mana to draw your library."
+        : "Nature's Rhythm goes to graveyard after resolving — Harmonize it (X=2, trivial cost with infinite mana) to find Duskwatch Recruiter. Draw your entire library.";
+      results.push({
+        priority: nrPriority,
+        category: nrCategory,
+        headline: "Nature's Rhythm (X=5) → Ashaya → infinite mana with " + nrRanger + (nrHasOutlet ? " → WIN" : ""),
+        detail: `You have ${nrRanger} and a tapping dork on board. Casting Nature's Rhythm for X=5 (cost {5}{G}{G}=7) puts Ashaya directly onto the battlefield. Ashaya makes all creatures Forests — ${nrRanger} can return a creature-Forest to untap a dork repeatedly, creating infinite mana. ${nrOutlet}`,
+        steps: [
+          `Cast Nature's Rhythm with X=5 (total cost: 7 mana): put Ashaya, Soul of the Wild onto the battlefield.`,
+          `Ashaya ETB: all your creatures become Forests in addition to their other types.`,
+          `Loop: tap a dork for mana → ${nrRanger} returns that creature (now a Forest) to hand → recast it → repeat. Infinite mana.`,
+          nrOutlet,
+        ],
+        color: nrHasOutlet ? "#ff6b35" : "#f39c12",
+      });
+    }
     const nrTargets = [
       { name: "Dryad Arbor",          xCost: 0, reason: "free land ramp onto battlefield" },
       { name: "Allosaurus Shepherd",   xCost: 1, reason: "protection — elves become uncounterable" },
@@ -3690,8 +3730,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Destiny Spinner",       xCost: 2, reason: "haste + uncounterable protection" },
       { name: "Quirion Ranger",        xCost: 1, reason: "infinite mana loop with Ashaya" },
       { name: "Elvish Reclaimer",      xCost: 1, reason: "land tutor" },
-    ].filter(t => !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 1 || infiniteManaActive));
-    if (nrTargets.length > 0) {
+    ].filter(t => !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 2 || infiniteManaActive));
+    if (nrTargets.length > 0 && !nrAshayaWin) {
       const best = nrTargets[0];
       results.push({
         priority: 7,
@@ -3716,35 +3756,81 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (inGrave.has("Nature's Rhythm")) {
     const bigCreatures = battlefield.filter(c => getCard(c)?.type === "creature").map(c => ({ name: c, power: getCard(c)?.tapsFor || 1 }));
     const totalPowerReduction = bigCreatures.reduce((sum, c) => sum + (typeof c.power === "number" ? c.power : 1), 0);
-    const grTargets = [
-      { name: "Ashaya, Soul of the Wild",  xCost: 5, reason: "unlocks all infinite mana combos" },
-      { name: "Temur Sabertooth",           xCost: 4, reason: "bounce engine for ETB loops" },
-      { name: "Argothian Elder",            xCost: 4, reason: "infinite mana with Wirewood Lodge" },
-      { name: "Elvish Archdruid",           xCost: 3, reason: "big mana dork + elf pump" },
-      { name: "Duskwatch Recruiter",        xCost: 2, reason: "win condition with infinite mana" },
-      { name: "Hope Tender",                xCost: 2, reason: "untap big land, Kogla resets exert" },
-      { name: "Quirion Ranger",             xCost: 1, reason: "infinite mana loop piece" },
-    ].filter(t => !board.has(t.name) && !inHand.has(t.name));
 
-    if (grTargets.length > 0) {
-      const best = grTargets[0];
-      const harmonizeCost = best.xCost + 4;
-      const reducedCost = Math.max(0, harmonizeCost - totalPowerReduction);
-      results.push({
-        priority: 6,
-        category: "🔄 NATURE'S RHYTHM HARMONIZE",
-        headline: `Harmonize Nature's Rhythm from graveyard: find ${best.name}`,
-        detail: `Nature's Rhythm is in your graveyard and can be recast once via Harmonize ({X}{G}{G}{G}{G}). Tap your creatures to reduce the generic cost by their power. After resolving it's exiled.`,
-        steps: [
-          `Harmonize cost for X=${best.xCost}: ${harmonizeCost} mana base.`,
-          totalPowerReduction > 0
-            ? `Tap your creatures (total power ${totalPowerReduction}) while casting to reduce generic cost — effective cost drops to ~${reducedCost} mana.`
-            : "Tap your largest creatures while casting to reduce the generic cost by their power.",
-          `Find ${best.name} (CMC ${best.xCost}) — ${best.reason}.`,
-          "After resolving, Nature's Rhythm is exiled permanently — this is your last use.",
-        ],
-        color: "#5dade2",
-      });
+    // ── WIN NOW via Harmonize with infinite mana ──────────────────
+    // With infinite mana the Harmonize cost is irrelevant.
+    // Path A: Duskwatch not on board/hand → Harmonize for Duskwatch (X=2, cost=6) → WIN
+    // Path B: Speaker not on board/hand → Harmonize for Formidable Speaker (X=3, cost=7)
+    //         → Speaker ETB discards a card → finds Duskwatch → WIN
+    const hasDuskwatch = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+    const hasSpeaker   = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+    if (infiniteManaActive) {
+      if (!hasDuskwatch) {
+        const speakerBridge = !hasSpeaker
+          ? " Alternatively, Harmonize for Formidable Speaker (X=3) → Speaker ETB fetches Duskwatch."
+          : "";
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW — HARMONIZE",
+          headline: "Harmonize Nature's Rhythm → Duskwatch Recruiter → draw entire library → WIN",
+          detail: `Infinite mana is active and Nature's Rhythm is in your graveyard. Harmonize it (cast from graveyard for {X}{G}{G}{G}{G}, tap creatures to reduce generic cost) targeting Duskwatch Recruiter (X=2). With infinite mana, Duskwatch activates infinitely to draw your entire library.${speakerBridge}`,
+          steps: [
+            "Harmonize Nature's Rhythm: cast from graveyard for X=2 (base cost {2}{G}{G}{G}{G}=6). Tap creatures to reduce generic portion — with infinite mana, cost is trivial.",
+            "Duskwatch Recruiter enters the battlefield.",
+            "Activate Duskwatch ({2}: look at top 3, put a creature into hand) with infinite mana — draw your entire library.",
+            "Find Finale of Devastation (X≥10) or your preferred win condition. Nature's Rhythm is now exiled.",
+          ],
+          color: "#ff6b35",
+        });
+      } else if (!hasSpeaker) {
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW — HARMONIZE",
+          headline: "Harmonize Nature's Rhythm → Formidable Speaker → finds Duskwatch → WIN",
+          detail: "Infinite mana is active and Nature's Rhythm is in your graveyard. Duskwatch is already available, but if you need the Speaker chain: Harmonize for Formidable Speaker (X=3), Speaker ETB discards a card to find Duskwatch. With Duskwatch on board and infinite mana, draw your entire library.",
+          steps: [
+            "Harmonize Nature's Rhythm: cast from graveyard for X=3 (base cost {3}{G}{G}{G}{G}=7). Cost is trivial with infinite mana.",
+            "Formidable Speaker ETB: discard a card → search library for a creature → put into hand. Find Duskwatch Recruiter.",
+            "Cast Duskwatch Recruiter. Activate with infinite mana to draw your entire library.",
+            "Find Finale of Devastation (X≥10) or your win condition. Nature's Rhythm is now exiled.",
+          ],
+          color: "#ff6b35",
+        });
+      }
+    }
+
+    // ── Normal Harmonize advice (no infinite mana) ────────────────
+    if (!infiniteManaActive) {
+      const grTargets = [
+        { name: "Ashaya, Soul of the Wild",  xCost: 5, reason: "unlocks all infinite mana combos" },
+        { name: "Temur Sabertooth",           xCost: 4, reason: "bounce engine for ETB loops" },
+        { name: "Argothian Elder",            xCost: 4, reason: "infinite mana with Wirewood Lodge" },
+        { name: "Elvish Archdruid",           xCost: 3, reason: "big mana dork + elf pump" },
+        { name: "Duskwatch Recruiter",        xCost: 2, reason: "win condition with infinite mana" },
+        { name: "Hope Tender",                xCost: 2, reason: "untap big land, Kogla resets exert" },
+        { name: "Quirion Ranger",             xCost: 1, reason: "infinite mana loop piece" },
+      ].filter(t => !board.has(t.name) && !inHand.has(t.name));
+
+      if (grTargets.length > 0) {
+        const best = grTargets[0];
+        const harmonizeCost = best.xCost + 4;
+        const reducedCost = Math.max(0, harmonizeCost - totalPowerReduction);
+        results.push({
+          priority: 6,
+          category: "🔄 NATURE'S RHYTHM HARMONIZE",
+          headline: `Harmonize Nature's Rhythm from graveyard: find ${best.name}`,
+          detail: `Nature's Rhythm is in your graveyard and can be recast once via Harmonize ({X}{G}{G}{G}{G}). Tap your creatures to reduce the generic cost by their power. After resolving it's exiled.`,
+          steps: [
+            `Harmonize cost for X=${best.xCost}: ${harmonizeCost} mana base.`,
+            totalPowerReduction > 0
+              ? `Tap your creatures (total power ${totalPowerReduction}) while casting to reduce generic cost — effective cost drops to ~${reducedCost} mana.`
+              : "Tap your largest creatures while casting to reduce the generic cost by their power.",
+            `Find ${best.name} (CMC ${best.xCost}) — ${best.reason}.`,
+            "After resolving, Nature's Rhythm is exiled permanently — this is your last use.",
+          ],
+          color: "#5dade2",
+        });
+      }
     }
   }
 
@@ -5929,6 +6015,72 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const nykthosWinNote = nykthosNetAfterFetch >= 3
       ? ` Nykthos nets ${nykthosNetAfterFetch} mana (devotion ${devotionOnBoard} − 2 cost).`
       : "";
+
+    // ── WIN NOW: Crop Rotation → Cradle + Nature's Rhythm → Ashaya ──
+    // Conditions: Quirion/Scryb Ranger on board, Nature's Rhythm in hand,
+    // and enough mana after Cradle fetch to cast Nature's Rhythm for Ashaya (X=5, cost=7).
+    const hasRangerOnBoard = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+    const hasNaturesRhythmInHand = inHand.has("Nature's Rhythm");
+    const ashayaNotOnBoard = !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild");
+    const manaAfterCradleForRhythm = (mana - 1) + cradleManaAfterFetch; // -1 for CR, +cradle
+    // Nature's Rhythm X=5 (for Ashaya CMC 5) costs {5}{G}{G} = 7 mana
+    const canCastRhythmForAshaya = manaAfterCradleForRhythm >= 7;
+    // Also need a dork to untap (any tapping creature besides Quirion Ranger)
+    const hasTappingDork = battlefield.some(c => {
+      if (c === "Quirion Ranger" || c === "Scryb Ranger") return false;
+      const cd = getCard(c);
+      return cd?.type === "creature" && (cd?.tapsFor ?? 0) > 0;
+    });
+
+    if (
+      isMyTurn &&
+      hasRangerOnBoard &&
+      hasNaturesRhythmInHand &&
+      ashayaNotOnBoard &&
+      !board.has("Gaea's Cradle") &&
+      missingKeyLands.includes("Gaea's Cradle") &&
+      canCastRhythmForAshaya &&
+      hasTappingDork &&
+      (mana >= 1 || infiniteManaActive)
+    ) {
+      const rangerName = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      // Check if we have a win outlet available to convert infinite mana.
+      // Nature's Rhythm goes to graveyard after casting — can Harmonize (recast from grave)
+      // for Duskwatch Recruiter (X=2, cost=6) with the infinite mana we just made.
+      const hasDuskwatchOutlet  = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+      const hasFinaleOutlet     = inHand.has("Finale of Devastation");
+      const hasSpeakerOutlet    = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+      // Nature's Rhythm in hand → after casting it goes to grave → Harmonize finds Duskwatch
+      const hasHarmonizeOutlet  = inHand.has("Nature's Rhythm") && !hasDuskwatchOutlet;
+      const hasWinOutlet = hasDuskwatchOutlet || hasFinaleOutlet || hasSpeakerOutlet || hasHarmonizeOutlet;
+      const priority   = hasWinOutlet ? 15 : 13;
+      const category   = hasWinOutlet ? "🔥 WIN NOW" : "⚡ NEAR WIN — ASSEMBLE INFINITE";
+      const outletNote = hasDuskwatchOutlet
+        ? "Duskwatch Recruiter converts infinite mana into drawing your entire library."
+        : hasFinaleOutlet
+        ? "Finale of Devastation (X≥10) finds and pumps your whole board."
+        : hasSpeakerOutlet
+        ? "Formidable Speaker ETB finds Duskwatch Recruiter. Activate Duskwatch with infinite mana to draw your library."
+        : hasHarmonizeOutlet
+        ? "Nature's Rhythm goes to graveyard after resolving — immediately Harmonize it (X=2, cost trivial with infinite mana) to find Duskwatch Recruiter. Draw your entire library."
+        : "After going infinite, use a tutor to find Duskwatch Recruiter or Finale of Devastation.";
+      results.push({
+        priority,
+        category,
+        headline: "Crop Rotation → Gaea's Cradle → Nature's Rhythm (X=5) → Ashaya → infinite mana" + (hasWinOutlet ? " → WIN" : ""),
+        detail: `Crop Rotation fetches Gaea's Cradle (taps for ${cradleManaAfterFetch} mana with ${creaturesOnBoard} creatures). That gives you ${manaAfterCradleForRhythm} total mana — enough to cast Nature's Rhythm for X=5 (cost: {5}{G}{G}=7), putting Ashaya onto the battlefield. With Ashaya in play, ${rangerName} + any tapping dork creates an infinite mana loop. ${outletNote}`,
+        steps: [
+          `Cast Crop Rotation ({G}): sacrifice a tapped land, fetch Gaea's Cradle → battlefield.`,
+          `Tap Gaea's Cradle for ${cradleManaAfterFetch} mana (${creaturesOnBoard} creatures). Total mana: ${manaAfterCradleForRhythm}.`,
+          `Cast Nature's Rhythm with X=5 (cost {5}{G}{G}=7 mana): find Ashaya, Soul of the Wild → battlefield.`,
+          `Ashaya makes all your creatures into Forests. ${rangerName} can now return a creature-Forest to untap a tapping dork.`,
+          `Loop: tap dork for mana → ${rangerName} returns it (as a Forest) to hand → recast → repeat. Infinite mana established.`,
+          outletNote,
+          ...(hasHarmonizeOutlet ? ["Nature's Rhythm is now in your graveyard. Cast it again via Harmonize ({X}{G}{G}{G}{G}, X=2) — with infinite mana the cost is trivial. Find Duskwatch Recruiter → activate repeatedly → draw entire library → win."] : []),
+        ],
+        color: "#ff6b35",
+      });
+    }
 
     if (sanitariumWinsNow && (mana >= 1 || infiniteManaActive)) {
       results.push({
@@ -14645,9 +14797,18 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   function goldfishAddToBattlefield(card) {
     const isEnchantLand = getCard(card)?.tags?.includes("enchant-land");
     if (isEnchantLand) {
+      const forestOnly = card === "Utopia Sprawl";
       const lands = battlefield
         .map((c, idx) => ({ name: c, idx }))
-        .filter(({ name }) => getCard(name)?.type === "land" && !getCard(name)?.tags?.includes("fetch"));
+        .filter(({ name }) => {
+          const cd = getCard(name);
+          if (!cd || cd.type !== "land") return false;
+          if (cd.tags?.includes("fetch")) return false;
+          // Yavimaya makes all lands Forests; otherwise only lands with forest subtype
+          const yavimaya = battlefield.some(c => c === "Yavimaya, Cradle of Growth");
+          if (forestOnly) return yavimaya || cd.tags?.includes("forest") || name === "Forest" || name === "Dryad Arbor";
+          return true;
+        });
       if (lands.length > 0) {
         setPendingAura({ name: card, lands });
         return; // AuraTargetModal will call goldfishConfirmAura when target is chosen
@@ -16120,7 +16281,13 @@ if (card === "Talon Gates of Madara") {
     const bigDorks     = bigDorkCards.length;
     // Enchant-land ramp (Utopia Sprawl, Wild Growth, Elvish Guidance): castable T1 on a Forest,
     // doubles that land's output immediately — functionally a T1 dork.
-    const enchantLandRamp = cards.filter(c => getCard(c)?.tags?.includes("enchant-land")).length;
+    // Utopia Sprawl requires a Forest target — only count it if the hand also has a Forest.
+    const hasForestInHand = cards.some(c => c === "Forest" || getCard(c)?.tags?.includes("forest"));
+    const enchantLandRamp = cards.filter(c => {
+      if (!getCard(c)?.tags?.includes("enchant-land")) return false;
+      if (c === "Utopia Sprawl") return hasForestInHand; // Forest-only target
+      return true; // Wild Growth / Elvish Guidance can enchant any land
+    }).length;
     // Mana rocks (Sol Ring, Chrome Mox, Mox Diamond, Lotus Petal).
     // Chrome Mox and Mox Diamond cost an additional card (imprint/discard) — penalise separately.
     const rockCards    = cards.filter(c => getCard(c)?.tags?.includes("rock"));
@@ -16157,8 +16324,10 @@ if (card === "Talon Gates of Madara") {
     // ── MANA AVAILABILITY ────────────────────────────────────────
     const canMakeT1Green = greenLands >= 1;
     const canMakeT1Mana  = realLands >= 1;
-    // T1 play: something castable on turn 1 (1-drop dork on green land, enchant-land on Forest,
-    // or a fast rock off any real land)
+    // T1 play: something castable on turn 1 (1-drop dork on green land, enchant-land on valid land,
+    // or a fast rock off any real land).
+    // enchantLandRamp already excludes Utopia Sprawl when no Forest in hand,
+    // so enchantLandRamp >= 1 guarantees a castable enchant-land with a valid target.
     const hasT1Play = (dorks1 >= 1 && greenLands >= 1) ||
                       (enchantLandRamp >= 1 && greenLands >= 1) ||
                       (rockCards.some(c => (getCard(c)?.cmc ?? 99) <= 1) && realLands >= 1);
@@ -21708,11 +21877,16 @@ function YevaAdvisor() {
       // Enchant-land auras: defer until user picks target land
       const isEnchantLand = getCard(card)?.tags?.includes("enchant-land");
       if (isEnchantLand) {
+        const forestOnly2 = card === "Utopia Sprawl";
         const lands = battlefield
           .map((c, i) => ({ name: c, idx: i }))
           .filter(({ name }) => {
-            const tags = getCard(name)?.tags ?? [];
-            return getCard(name)?.type === "land" && !tags.includes("fetch");
+            const cd = getCard(name);
+            if (!cd || cd.type !== "land") return false;
+            if (cd.tags?.includes("fetch")) return false;
+            const yavimaya2 = battlefield.some(c => c === "Yavimaya, Cradle of Growth");
+            if (forestOnly2) return yavimaya2 || cd.tags?.includes("forest") || name === "Forest" || name === "Dryad Arbor";
+            return true;
           });
         if (lands.length > 0) {
           setPendingAura({ name: card, lands });
