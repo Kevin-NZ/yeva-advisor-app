@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ── Sentinel for "effectively infinite mana" — used as a fallback threshold
 // when infiniteManaActive is false but the player has so much mana that all
@@ -15,9 +15,9 @@ const CARDS = {
   "Fyndhorn Elves":        { type:"creature", cmc:1, tags:["dork","elf","1drop"], tapsFor:1 , greenPips:1},
   "Boreal Druid":          { type:"creature", cmc:1, tags:["dork","elf","1drop","snow"], tapsFor:1 , greenPips:1, note:"{T}: Add {C}. Produces colorless mana, but {G} in its mana cost still contributes 1 to your devotion to green." },
   "Birds of Paradise":     { type:"creature", cmc:1, tags:["dork","1drop"], tapsFor:1 , greenPips:1},
-  "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor"], tapsFor:"arbor" , role:"dork-combo", greenPips:1},
-  "Elvish Spirit Guide":   { type:"creature", cmc:3, tags:["dork","elf","free-mana"], tapsFor:1 , role:"fast-mana", greenPips:1},
-  "Dryad Arbor":           { type:"land",    cmc:0, tags:["dork","land","forest"], tapsFor:1 },
+  "Arbor Elf":             { type:"creature", cmc:1, tags:["dork","elf","1drop","arbor","infinite-dork"], tapsFor:"arbor" , role:"dork-combo", greenPips:1},
+  "Elvish Spirit Guide":   { type:"creature", cmc:3, tags:["dork","elf","free-mana","instant-speed","ritual"], tapsFor:1 , role:"fast-mana", greenPips:1},
+  "Dryad Arbor":           { type:"land",    cmc:0, tags:["dork","land","forest","combo","sacrifice"], tapsFor:1 },
   // MANA DORKS (2-drop)
   "Quirion Ranger":        { type:"creature", cmc:1, tags:["combo","elf","untap","ranger"], tapsFor:0 , greenPips:1},
   "Scryb Ranger":          { type:"creature", cmc:2, tags:["combo","elf","untap","ranger","flash"], tapsFor:0 , greenPips:1},
@@ -27,7 +27,7 @@ const CARDS = {
   "Elvish Archdruid":      { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","pump"], tapsFor:"elves" , greenPips:2},
   "Circle of Dreams Druid":{ type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"creatures" , greenPips:3},
   "Karametra's Acolyte":   { type:"creature", cmc:4, tags:["dork","big-dork","infinite-dork","human"], tapsFor:"devotion" , greenPips:1},
-  "Fanatic of Rhonas":     { type:"creature", cmc:2, tags:["dork","big-dork"], tapsFor:"ferocious", role:"big-dork-combo", greenPips:1, note:"{T}: Add {G}. Ferocious — {T}: Add {G}{G}{G}{G} if you control a creature with power 4+. NOT an elf — Wirewood Lodge cannot untap it. Goes infinite with Ashaya+Quirion Ranger (nets {3}) or Ashaya+Scryb Ranger (nets {2}). CMC 2 — Yisan V2."},
+  "Fanatic of Rhonas":     { type:"creature", cmc:2, tags:["dork","big-dork","infinite-dork"], tapsFor:"ferocious", role:"big-dork-combo", greenPips:1, note:"{T}: Add {G}. Ferocious — {T}: Add {G}{G}{G}{G} if you control a creature with power 4+. NOT an elf — Wirewood Lodge cannot untap it. Goes infinite with Ashaya+Quirion Ranger (nets {3}) or Ashaya+Scryb Ranger (nets {2}). CMC 2 — Yisan V2."},
   "Hope Tender":           { type:"creature", cmc:2, tags:["human","untap-lands","exert"], role:"untap-combo", greenPips:1, note:"{1},{T}: Untap target land. {1},{T}, Exert: Untap two target lands (Hope Tender won't untap during your next untap step). Does NOT tap for mana. Human subtype — Kogla's {1}{G} returns it to hand, resetting the exert restriction. Best loop: Hope Tender exert + Kogla bounce + big land (producing ≥5). Note: Wirewood Lodge only untaps Elves; Hope Tender is Human and cannot be targeted by Lodge."},
   // COMBO PIECES
   "Ashaya, Soul of the Wild": { type:"creature", cmc:5, tags:["combo","key","ashaya"], tapsFor:0 , greenPips:2},
@@ -35,10 +35,10 @@ const CARDS = {
   "Hyrax Tower Scout":     { type:"creature", cmc:3, tags:["combo","scout","untap","human"] , greenPips:1},
   "Argothian Elder":       { type:"creature", cmc:4, tags:["combo","elf","untap-lands"] , greenPips:1},
   "Wirewood Lodge":        { type:"land",    cmc:0, tags:["combo","land","untap-elf"] },
-  "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft"] , greenPips:1},
+  "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft","haste-mana"] , role:"haste-mana-engine", greenPips:1},
   "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , greenPips:3},
   "Eternal Witness":       { type:"creature", cmc:3, tags:["combo","human","recursion","etb"] , greenPips:2},
-  "Disciple of Freyalise": { type:"creature", cmc:6, tags:["combo","draw","sacrifice"] , greenPips:3},
+  "Disciple of Freyalise": { type:"creature", cmc:6, tags:["combo","draw","sacrifice","mana-sink","human"] , greenPips:3},
   "Glademuse":             { type:"creature", cmc:3, tags:["combo","draw","flash-draw"] , greenPips:1},
   "Beast Whisperer":       { type:"creature", cmc:4, tags:["draw","engine"] , greenPips:2},
   "Regal Force":           { type:"creature", cmc:7, tags:["draw","finisher","etb"] , greenPips:3},
@@ -48,20 +48,20 @@ const CARDS = {
   "Gaea's Cradle":         { type:"land", cmc:0, tags:["land","combo","key","cradle"] },
   "Nykthos, Shrine to Nyx":{ type:"land", cmc:0, tags:["land","combo","nykthos"] },
   "Itlimoc, Cradle of the Sun": { type:"land", cmc:0, tags:["land","combo","itlimoc"] },
-  "Growing Rites of Itlimoc":   { type:"enchantment", cmc:3, tags:["land","combo","itlimoc","draw"] , transformsTo:"Itlimoc, Cradle of the Sun", greenPips:1},
+  "Growing Rites of Itlimoc":   { type:"enchantment", cmc:3, tags:["enchantment","land","combo","itlimoc","draw"] , transformsTo:"Itlimoc, Cradle of the Sun", greenPips:1},
   "Deserted Temple":       { type:"land", cmc:0, tags:["land","combo","untap-land"] },
   "Yavimaya, Cradle of Growth": { type:"land", cmc:0, tags:["land","combo","forestwalk","green-mana"] },
   "Ancient Tomb":          { type:"land", cmc:0, tags:["land","fast-mana"] },
-  "Misty Rainforest":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
+  "Misty Rainforest":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest","shuffle","tireless-synergy"] },
   "Verdant Catacombs":     { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
   "Windswept Heath":       { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
   "Wooded Foothills":      { type:"land", cmc:0, tags:["land","fetch","fetch-forest"] },
-  "Geier Reach Sanitarium":{ type:"land", cmc:0, tags:["land","combo","mill","sanitarium"] },
-  "Shifting Woodland":     { type:"land", cmc:0, tags:["land","utility","green-mana"] },
+  "Geier Reach Sanitarium":{ type:"land", cmc:0, tags:["land","combo","mill","sanitarium","win-con"] , role:"win-con-land" },
+  "Shifting Woodland":     { type:"land", cmc:0, tags:["land","utility","green-mana","graveyard","copy"] , role:"graveyard-copy" },
   "Emergence Zone":        { type:"land", cmc:0, tags:["land","flash","utility"] },
-  "Talon Gates of Madara": { type:"land", cmc:0, tags:["land","utility"] },
+  "Talon Gates of Madara": { type:"land", cmc:0, tags:["land","utility","combo"] , role:"phase-combo" },
   "Boseiju, Who Endures":  { type:"land", cmc:0, tags:["land","removal","utility","green-mana"] },
-  "War Room":              { type:"land", cmc:0, tags:["land","draw"] },
+  "War Room":              { type:"land", cmc:0, tags:["land","draw","win-con","untap-synergy"] , role:"draw-win-outlet" },
   "Urza's Cave":           { type:"land", cmc:0, tags:["land","tutor"] },
   "Forest":                { type:"land", cmc:0, tags:["land","basic","forest"] },
   // ACCELERANTS
@@ -74,11 +74,11 @@ const CARDS = {
   "Elvish Guidance":       { type:"enchantment", cmc:3, tags:["enchant-land","ramp","aura","elf-synergy"], role:"elf-mana", greenPips:1},
   // STAX / INTERACTION
   "Collector Ouphe":       { type:"creature", cmc:2, tags:["stax","hate"] , greenPips:1},
-  "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax"] , role:"haste-protection", greenPips:1},
+  "Destiny Spinner":       { type:"creature", cmc:2, tags:["protection","stax","elf","haste","land-animator"] , role:"haste-protection", greenPips:1},
   "Allosaurus Shepherd":   { type:"creature", cmc:1, tags:["protection","elf"] , greenPips:1},
-  "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw"] , greenPips:2},
-  "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all"] , greenPips:2},
-  "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf"] , role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine.", greenPips:2},
+  "Heartwood Storyteller": { type:"creature", cmc:3, tags:["stax","draw","human","sac-fodder"] , role:"draw-fodder" , greenPips:2},
+  "Seedborn Muse":         { type:"creature", cmc:5, tags:["engine","untap-all","human"] , greenPips:2},
+  "Eladamri, Korvecdal":   { type:"creature", cmc:3, tags:["finisher","library-cast","tutor","elf","flash-synergy","draw-synergy"] , role:"library-engine", note:"Look at top of library any time. Cast creature spells from top of library. {G},{T}, tap two untapped creatures: reveal top of library or a card from hand — if a creature, put it onto the battlefield. Powerful library-sifting and creature-cheat engine.", greenPips:2},
   // TUTORS
   "Worldly Tutor":         { type:"instant", cmc:1, tags:["tutor","instant"] , greenPips:1},
   "Chord of Calling":      { type:"instant", cmc:3, tags:["tutor","instant","convoke"] , greenPips:3},
@@ -96,22 +96,22 @@ const CARDS = {
   "Archdruid's Charm":     { type:"instant", cmc:3, tags:["tutor","land","removal","instant"] , greenPips:3},
   // INTERACTION / UTILITY
   "Beast Within":          { type:"instant", cmc:3, tags:["removal","instant"] , greenPips:1},
-  "Force of Vigor":        { type:"instant", cmc:4, tags:["removal","instant","free"] , greenPips:2},
-  "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection"] , greenPips:2},
+  "Force of Vigor":        { type:"instant", cmc:4, tags:["removal","instant","free","pitch-green"] , greenPips:2},
+  "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection","win-con","graveyard"] , greenPips:2},
   "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , greenPips:1},
   "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","split-second","untap","removal"] , greenPips:1},
   "Nature's Rhythm":       { type:"sorcery", cmc:2, tags:["tutor","sorcery","harmonize"] , role:"creature-tutor", note:"Sorcery {X, greenPips:2}{G}{G}: search your library for a creature with MV ≤ X, put it onto the battlefield. Harmonize {X}{G}{G}{G}{G}: cast from graveyard (tap creatures to reduce generic cost by their power), then exile. Effectively two creature tutors — cast normally then Harmonize once from the graveyard."},
   // OTHER UTILITY
   "Yisan, the Wanderer Bard": { type:"creature", cmc:3, tags:["tutor","engine","yisan"] , greenPips:1},
   "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , greenPips:1},
-  "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure"] , role:"ramp-combo", greenPips:1},
-  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler"] , role:"haste-combo", greenPips:1},
-  "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land"] , greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
-  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor"] , greenPips:1},
-  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , greenPips:1},
-  "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling"] , greenPips:1},
-  "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection"] , role:"protection", greenPips:1, note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
-  "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop"] , greenPips:1},
+  "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure","human","fetch-synergy"] , role:"ramp-combo", greenPips:1},
+  "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler","infinite-dork","haste","land-animator"] , role:"haste-combo", greenPips:1},
+  "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land","haste","treefolk","land-animator"] , greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
+  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor","devotion","kicker"] , greenPips:1},
+  "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf","big-dork"] , greenPips:1},
+  "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling","treefolk","removal","combo"] , role:"kogla-loop", greenPips:1},
+  "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection","legend-protection"] , role:"legend-protector", greenPips:1, note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
+  "Elvish Reclaimer":      { type:"creature", cmc:1, tags:["land-tutor","elf","1drop","combo","tutor"] , role:"land-tutor", greenPips:1},
   "Yeva, Nature's Herald": { type:"creature", cmc:4, tags:["commander","flash-enabler"] , greenPips:2},
 
   // ── VARIANT / SIDEBOARD CARDS ──────────────────────────────────────────
@@ -14869,238 +14869,406 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
   // ── HAND GRADER ─────────────────────────────────────────────
   function gradeHand(cards, advisorAnalysis) {
-    const dorks     = cards.filter(c => getCard(c)?.tags?.includes("dork")).length;
-    // 1-drop dorks are especially valuable: castable T1 with a single land, immediately ramp.
-    const dorks1    = cards.filter(c => {
-      const cd = getCard(c);
-      return cd?.tags?.includes("dork") && cd?.tags?.includes("1drop");
-    }).length;
-    // Enchant-land ramp (Utopia Sprawl, Wild Growth): functionally equivalent to dorks for mulligan purposes —
-    // castable T1 on a Forest, immediately doubles that land's output next turn.
+    // ── RAW COUNTS ───────────────────────────────────────────────
+    // All mana dorks (any creature with tapsFor mana)
+    const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
+    const dorks       = dorkCards.length;
+    // 1-drop dorks: castable T1 off a single green land — highest priority ramp
+    const dork1Cards  = dorkCards.filter(c => getCard(c)?.tags?.includes("1drop"));
+    const dorks1      = dork1Cards.length;
+    // "Big dorks": Selvala, Priest of Titania, Marwyn, Karametra's Acolyte, Wirewood Channeler,
+    // Circle of Dreams Druid, Joraga Treespeaker — tap for many mana, appear in most combo lines.
+    // Tagged "big-dork" in CARDS. Premium keeps even without a tutor.
+    const bigDorkCards = dorkCards.filter(c => getCard(c)?.tags?.includes("big-dork"));
+    const bigDorks     = bigDorkCards.length;
+    // Enchant-land ramp (Utopia Sprawl, Wild Growth, Elvish Guidance): castable T1 on a Forest,
+    // doubles that land's output immediately — functionally a T1 dork.
     const enchantLandRamp = cards.filter(c => getCard(c)?.tags?.includes("enchant-land")).length;
-    // Mana rocks (Sol Ring, Chrome Mox, Mox Diamond, Lotus Petal): all CMC 0–1, castable T1,
-    // immediately produce mana — count as ramp for mulligan purposes.
-    const rocks = cards.filter(c => getCard(c)?.tags?.includes("rock")).length;
-    // Combined ramp count used in grading rules
-    const rampCount = dorks + enchantLandRamp + rocks;
-    const lands  = cards.filter(c => getCard(c)?.type === "land").length;
-    // Cradle/Itlimoc produce 0 mana T1 with no creatures — exclude from "real" land count for T1 planning
-    const realLands = cards.filter(c => {
-      if (getCard(c)?.type !== "land") return false;
-      if (c === "Gaea's Cradle" || c === "Itlimoc, Cradle of the Sun") return false;
-      return true;
-    }).length;
-    // GREEN lands: lands that actually produce green mana T1 (tagged "forest" or "basic", or plain "Forest").
-    // Nykthos, Wirewood Lodge, Ancient Tomb, War Room etc. are colourless-only and don't count.
-    const greenLands = cards.filter(c => {
+    // Mana rocks (Sol Ring, Chrome Mox, Mox Diamond, Lotus Petal).
+    // Chrome Mox and Mox Diamond cost an additional card (imprint/discard) — penalise separately.
+    const rockCards    = cards.filter(c => getCard(c)?.tags?.includes("rock"));
+    const rocks        = rockCards.length;
+    const cardAdvRocks = rockCards.filter(c => getCard(c)?.tags?.includes("mox")).length; // net card -1 each
+    // Combined ramp count (anything that accelerates mana)
+    const rampCount    = dorks + enchantLandRamp + rocks;
+
+    // ── LAND CATEGORIES ──────────────────────────────────────────
+    const landCards  = cards.filter(c => getCard(c)?.type === "land");
+    const lands      = landCards.length;
+    // "Real" lands: exclude Cradle / Itlimoc (produce 0 mana T1 with no creatures)
+    const realLands  = landCards.filter(c =>
+      c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun"
+    ).length;
+    // Green-producing lands
+    const isGreenLand = c => {
       const cd = getCard(c);
       if (cd?.type !== "land") return false;
-      // "forest" = printed Forest subtype; "basic" = basic land; "green-mana"/"fetch-forest" = produces/finds green
-      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || cd?.tags?.includes("green-mana") || cd?.tags?.includes("fetch-forest") || c === "Forest";
-    }).length;
-    const tutors = cards.filter(c => getCard(c)?.tags?.includes("tutor")).length;
-    const combo  = cards.filter(c => getCard(c)?.tags?.some(t =>
-      ["ashaya","duskwatch","quirion","earthcraft","wirewood"].includes(t))).length;
-    const hasCradleOnly = lands > 0 && realLands === 0; // only "lands" are Cradle(s)
-    // T1 green mana: need a green-producing land. Colourless-only lands (Nykthos, Wirewood Lodge, etc.) don't enable T1 green plays.
+      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") ||
+             cd?.tags?.includes("green-mana") || cd?.tags?.includes("fetch-forest") || c === "Forest";
+    };
+    const greenLands = landCards.filter(c => isGreenLand(c)).length;
+    const fetchLands = landCards.filter(c => getCard(c)?.tags?.includes("fetch")).length;
+    const colourlessOnlyLands = landCards.filter(c =>
+      c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" && !isGreenLand(c)
+    );
+    // Cradle/Nykthos are premium with multiple dorks already in hand
+    const hasCradle    = cards.includes("Gaea's Cradle");
+    const hasNykthos   = cards.includes("Nykthos, Shrine to Nyx");
+    const cradleActive = hasCradle && bigDorks >= 2;
+    const hasCradleOnly = lands > 0 && realLands === 0;
+
+    // ── MANA AVAILABILITY ────────────────────────────────────────
     const canMakeT1Green = greenLands >= 1;
-    // T1 mana: need at least one real land. Dorks in hand cannot produce mana before being cast —
-    // "2 dorks in hand" does NOT mean T1 mana is available, only lands do.
-    const canMakeT1Mana = realLands >= 1;
-    // All ramp is slow: dorks exist but none are 1-drops or enchant-land auras castable T1.
-    // These hands can't do anything until T2+ and are much weaker than hands with a T1 play.
-    const allRampIsSlow = rampCount >= 1 && dorks1 === 0 && enchantLandRamp === 0 && rocks === 0;
+    const canMakeT1Mana  = realLands >= 1;
+    // T1 play: something castable on turn 1 (1-drop dork on green land, enchant-land on Forest,
+    // or a fast rock off any real land)
+    const hasT1Play = (dorks1 >= 1 && greenLands >= 1) ||
+                      (enchantLandRamp >= 1 && greenLands >= 1) ||
+                      (rockCards.some(c => (getCard(c)?.cmc ?? 99) <= 1) && realLands >= 1);
+    const allRampIsSlow = rampCount >= 1 && !hasT1Play;
+
+    // ── TUTORS ───────────────────────────────────────────────────
+    const tutorCards = cards.filter(c => getCard(c)?.tags?.includes("tutor"));
+    const tutors     = tutorCards.length;
+    const hasYisan   = cards.includes("Yisan, the Wanderer Bard");
+
+    // ── COMBO PIECES (expanded tag set) ──────────────────────────
+    // Includes every tag that marks a card appearing as requires/onBattlefield in 3+ combo lines.
+    const COMBO_TAGS = new Set([
+      "ashaya", "duskwatch", "quirion", "earthcraft", "wirewood",
+      "ranger", "symbiote", "sabertooth", "scout", "bounce",
+      "infinite-dork", "key", "untap", "untap-lands", "survival",
+      "land-animator",  // Destiny Spinner, Badgermole Cub, Woodcaller Automaton — animate Cradle/Nykthos
+      "haste-mana",     // Earthcraft — gives all creatures haste for mana
+      "kogla-loop",     // Chomping Changeling — loops with Kogla
+    ]);
+    const comboPieces = cards.filter(c => {
+      const cd = getCard(c);
+      return cd?.tags?.some(t => COMBO_TAGS.has(t));
+    });
+    const combo = comboPieces.length;
+
+    // ── TWO-CARD SYNERGIES ────────────────────────────────────────
+    const synergies = (() => {
+      const syns = [];
+      const has    = name => cards.includes(name);
+      const hasTag = tag  => cards.some(c => getCard(c)?.tags?.includes(tag));
+      // Ranger / Symbiote + dork = untap engine
+      if ((hasTag("ranger") || hasTag("symbiote")) && dorks >= 1) {
+        const untapper = cards.find(c => getCard(c)?.tags?.includes("ranger") || getCard(c)?.tags?.includes("symbiote"));
+        syns.push(`${untapper} + ${dorkCards[0]} → untap engine`);
+      }
+      // Earthcraft + creature = tap any creature for mana immediately
+      if (has("Earthcraft") && dorks >= 1) {
+        syns.push(`Earthcraft + ${dorkCards[0]} → all creatures tap for mana (haste)`);
+      }
+      // Land animator (Destiny Spinner / Badgermole Cub / Woodcaller Automaton) + Cradle/Nykthos
+      if (hasTag("land-animator") && (hasCradle || hasNykthos)) {
+        const animator = cards.find(c => getCard(c)?.tags?.includes("land-animator"));
+        const land = hasCradle ? "Gaea's Cradle" : "Nykthos";
+        syns.push(`${animator} + ${land} → animated land can tap immediately`);
+      }
+      // Selvala / big dork + Great Oak Guardian = draw + untap all
+      if ((has("Selvala, Heart of the Wilds") || bigDorks >= 1) && has("Great Oak Guardian")) {
+        syns.push("Big dork + Great Oak Guardian → draw + untap all creatures");
+      }
+      // Cloudstone Curio + 2 creatures = bounce-cast loop
+      if (has("Cloudstone Curio") && dorks >= 2) {
+        syns.push(`Cloudstone Curio + ${dorkCards[0]} + ${dorkCards[1]} → bounce-cast loop`);
+      }
+      // Ashaya + ranger = forests untap creatures
+      if (has("Ashaya, Soul of the Wild") && hasTag("ranger")) {
+        const ranger = cards.find(c => getCard(c)?.tags?.includes("ranger"));
+        syns.push(`Ashaya + ${ranger} → Forest taps untap your creatures`);
+      }
+      // Arbor Elf + Utopia Sprawl / Wild Growth on a Forest = 2+ mana T1
+      if (has("Arbor Elf") && (has("Utopia Sprawl") || has("Wild Growth") || has("Elvish Guidance"))) {
+        const aura = has("Utopia Sprawl") ? "Utopia Sprawl" : has("Wild Growth") ? "Wild Growth" : "Elvish Guidance";
+        syns.push(`Arbor Elf + ${aura} → 2+ mana T1, goes infinite with Ashaya`);
+      }
+      // Delighted Halfling + a legendary = legend protection
+      if (has("Delighted Halfling") && cards.some(c => {
+        const LEGENDS = new Set(["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Yisan, the Wanderer Bard","Selvala, Heart of the Wilds","Eladamri, Korvecdal","Saryth, the Viper's Fang"]);
+        return LEGENDS.has(c);
+      })) {
+        const legend = cards.find(c => {
+          const LEGENDS = new Set(["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Yisan, the Wanderer Bard","Selvala, Heart of the Wilds","Eladamri, Korvecdal","Saryth, the Viper's Fang"]);
+          return LEGENDS.has(c);
+        });
+        syns.push(`Delighted Halfling + ${legend} → legend uncounterable`);
+      }
+      // Survival / Fauna Shaman + any creature = instant creature tutor
+      if ((has("Survival of the Fittest") || has("Fauna Shaman")) && dorks >= 1) {
+        const engine = has("Survival of the Fittest") ? "Survival of the Fittest" : "Fauna Shaman";
+        syns.push(`${engine} + ${dorkCards[0]} → discard to find any creature`);
+      }
+      // Fetch land + Tireless Provisioner = treasure/food
+      if (hasTag("fetch") && has("Tireless Provisioner")) {
+        syns.push("Fetch + Tireless Provisioner → treasure on crack");
+      }
+      // Eladamri + Beast Whisperer / Glademuse = draw-chain from library casts
+      if (has("Eladamri, Korvecdal") && (has("Beast Whisperer") || has("Glademuse"))) {
+        const draw = has("Beast Whisperer") ? "Beast Whisperer" : "Glademuse";
+        syns.push(`Eladamri + ${draw} → cast from library triggers draw → chain spells`);
+      }
+      // Shifting Woodland + key piece in graveyard = recovery
+      if (has("Shifting Woodland") && cards.some(c => getCard(c)?.tags?.includes("graveyard"))) {
+        syns.push("Shifting Woodland — can copy lost combo pieces from graveyard");
+      }
+      // Cradle with 2+ big dorks is explosive
+      if (cradleActive) {
+        syns.push(`Gaea's Cradle + ${bigDorks} big dork${bigDorks > 1 ? "s" : ""} → explosive mana`);
+      }
+      // Nykthos + high devotion
+      if (hasNykthos && dorks >= 2) {
+        const devotion = dorkCards.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
+        if (devotion >= 4) syns.push(`Nykthos (${devotion} devotion) + ${dorks} dorks → mana engine`);
+      }
+      return syns;
+    })();
+
+    // ── CARD-DISADVANTAGE COST ────────────────────────────────────
+    const moxCostNotes = [];
+    if (cards.includes("Mox Diamond"))  moxCostNotes.push("Mox Diamond costs a land from hand (net card −1)");
+    if (cards.includes("Chrome Mox"))   moxCostNotes.push("Chrome Mox requires an imprinted card from hand (net card −1)");
+
+    // ── FLAGS ────────────────────────────────────────────────────
+    const isManaFlood = realLands >= 5 && tutors === 0 && rampCount === 0;
+    const isTight     = greenLands === 1 && rampCount === 1 && tutors === 0;
+
+    // ════════════════════════════════════════════════════════════
+    // HARD GATES — return immediately with forced grade
+    // ════════════════════════════════════════════════════════════
     let notes = [];
 
-    // Hard gate: no green mana source at all → always MULLIGAN regardless of other factors.
-    // Colourless lands (Nykthos, Wirewood Lodge, Ancient Tomb, etc.) cannot cast green spells.
-    // Exception: colourless fast mana (Lotus Petal, Chrome Mox, Mox Diamond) or Elvish Spirit Guide
-    // can produce {G} T1 to cast Birds of Paradise, which then becomes a green source from T2 onward.
-    // In that case grade as BORDERLINE rather than hard MULLIGAN.
+    // Gate 1: No green mana source
     if (!canMakeT1Green) {
-      // Cards that can produce {G} T1 without a green land:
-      //   Lotus Petal → sacrifice for {G}
-      //   Chrome Mox / Mox Diamond → can imprint/discard for {G}
-      //   Elvish Spirit Guide → exile for {G} (free)
-      const greenFastMana = cards.filter(c => {
-        const cd = getCard(c);
-        return (cd?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide");
-      });
+      const greenFastMana = cards.filter(c =>
+        getCard(c)?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide"
+      );
       const hasBirds = cards.includes("Birds of Paradise");
-      const hasOneDrop = dorks1 >= 1;
-      const hasColourlessLand = cards.some(c => {
-        const cd = getCard(c);
-        return cd?.type === "land" && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic") && !cd?.tags?.includes("green-mana") && !cd?.tags?.includes("fetch-forest") && c !== "Forest";
-      });
-      const colourlessLandNames = cards.filter(c => {
-        const cd = getCard(c);
-        return cd?.type === "land" && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic") && !cd?.tags?.includes("green-mana") && !cd?.tags?.includes("fetch-forest") && c !== "Forest";
-      });
-
       if (hasBirds && greenFastMana.length > 0) {
-        // Can cast BoP T1 via fast mana → produces green from T2 onward
-        const fastNames = greenFastMana.map(c => c).join(", ");
-        notes.push(`⚠️ No green land — but ${fastNames} can produce {G} T1 to cast Birds of Paradise`);
-        notes.push("Birds of Paradise on T1 provides green mana from T2 — fragile but functional");
-        notes.push("One removal spell or missed drop ends your green production entirely");
+        notes.push(`⚠️ No green land — ${greenFastMana.join(", ")} can produce {G} T1 to cast Birds of Paradise`);
+        notes.push("Birds of Paradise provides green from T2 — fragile but functional");
+        notes.push("Any removal before T2 ends your green production entirely");
         return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
       }
-
-      if (greenFastMana.length > 0 && hasOneDrop && hasColourlessLand) {
-        // Lotus Petal (or similar) + 1-drop dork + colourless land:
-        // Petal → {G} → cast dork T1. Colourless land untaps T2 and can cast further spells.
-        // The dork itself then produces green from T2 onward. Fragile but a real T1 play.
-        const petals = greenFastMana.map(c => c).join(", ");
-        const dorkName = cards.find(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.tags?.includes("1drop"));
-        const landName = colourlessLandNames[0];
-        notes.push(`⚠️ No green land — but ${petals} can produce {G} T1 to cast ${dorkName}`);
-        notes.push(`${landName} provides colourless mana from T2; ${dorkName} provides green once in play`);
-        notes.push("Fragile: if the dork is removed before T2, you lose your only green source");
+      if (greenFastMana.length > 0 && dorks1 >= 1 && colourlessOnlyLands.length > 0) {
+        notes.push(`⚠️ No green land — ${greenFastMana.join(", ")} → {G} T1 to cast ${dork1Cards[0]}`);
+        notes.push(`${colourlessOnlyLands[0]} gives colourless from T2; ${dork1Cards[0]} provides green once in play`);
+        notes.push("Fragile: dork removal before T2 = stranded");
         return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
       }
-
-      notes.push(`⚠️ No green mana source ✗ — ${colourlessLandNames.length > 0 ? colourlessLandNames.join(", ") + " produce" + (colourlessLandNames.length === 1 ? "s" : "") + " no green" : "0 lands that tap for {G}"}`);
-      notes.push("Cannot cast any spell T1 or T2 without a green-producing land.");
+      const landDesc = colourlessOnlyLands.length > 0
+        ? `${colourlessOnlyLands.join(", ")} produce${colourlessOnlyLands.length === 1 ? "s" : ""} no green`
+        : "0 lands that tap for {G}";
+      notes.push(`⚠️ No green mana source ✗ — ${landDesc}`);
+      notes.push("Cannot cast any spell T1 or T2 without a green-producing land");
       return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
     }
 
-    // Rule 1: ramp (dork or enchant-land) + tutor = keep (core game plan)
-    if (rampCount >= 1 && tutors >= 1) {
-      if (canMakeT1Mana) {
-        const rampLabel = (() => {
-          const parts = [];
-          if (dorks >= 1) parts.push(`${dorks} dork${dorks>1?"s":""}`);
-          if (enchantLandRamp >= 1) parts.push(`${enchantLandRamp} enchant-land`);
-          if (rocks >= 1) parts.push(`${rocks} rock${rocks>1?"s":""}`);
-          return parts.join(" + ") || "ramp";
-        })();
-        notes.push(`${rampLabel} + ${tutors} tutor${tutors > 1 ? "s" : ""} ✓✓ — core game plan`);
-        if (dorks1 >= 1 && greenLands >= 1) notes.push(`1-drop dork T1 ✓ — can play ${cards.find(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork"))} turn 1`);
-        if (enchantLandRamp >= 1 && greenLands >= 1) notes.push(`Enchant-land ramp T1 ✓ — ${cards.find(c => getCard(c)?.tags?.includes("enchant-land"))} on a Forest`);
-        if (realLands === 0 && lands === 0) notes.push("0 lands — dork must stick T1");
-        if (hasCradleOnly) notes.push("⚠️ Gaea's Cradle only — no T1 mana without a dork first");
-        if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} in hand`);
-        // Downgrade to BORDERLINE if all ramp is slow (no 1-drop dork, no enchant-land) —
-        // hand passes T1 with nothing happening and is a full turn behind fast openers.
-        if (allRampIsSlow) {
-          const slowDorkNames = cards.filter(c => {
-            const cd = getCard(c);
-            return cd?.tags?.includes("dork") && !cd?.tags?.includes("1drop");
-          }).map(c => `${c} (${getCard(c)?.cmc})`).join(", ");
-          notes.push(`⚠️ No 1-drop dork or T1 enchant-land — earliest ramp is T2 (${slowDorkNames})`);
-          notes.push("Keepable but one turn slower than ideal — consider mulliganing for a 1-drop dork");
-          return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
-        }
-        return enrichWithAnalysis({ grade: { label: "KEEP", color: COLORS.green2 }, notes }, advisorAnalysis);
+    // Gate 2: 0 real lands + 0 rocks → dorks can't cast themselves
+    if (realLands === 0 && rocks === 0) {
+      if (dorks >= 1 || enchantLandRamp >= 1) {
+        notes.push("⚠️ 0 mana sources (lands/rocks) ✗ — dorks in hand cannot cast themselves");
+        if (hasCradleOnly) notes.push("Gaea's Cradle produces 0 mana T1 with no creatures already in play");
       } else {
-        if (hasCradleOnly) notes.push("⚠️ Gaea's Cradle is your only land — produces 0 mana T1 with no creatures");
-        notes.push("ramp + tutor but no mana to cast them ✗");
-        return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
+        notes.push("0 lands, 0 ramp, 0 rocks ✗ — completely stranded");
       }
+      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
     }
 
-    // Rule 2: no ramp at all = can't execute game plan
+    // Gate 3: No ramp of any kind → can't execute game plan
     if (rampCount === 0) {
       if (tutors >= 1) {
-        notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no ramp ✗ — can find a dork but can't cast it T1`);
+        notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no ramp ✗ — can find a dork but nothing to cast it T1`);
+      } else if (isManaFlood) {
+        notes.push(`⚠️ Mana flood: ${realLands} lands with no acceleration or tutors`);
       } else {
-        notes.push("no ramp, no tutors ✗ — can't execute game plan");
-        if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} with no way to find the rest`);
+        notes.push("No ramp, no tutors ✗ — can't execute the game plan");
+        if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} present but no way to develop the board`);
       }
       return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes }, advisorAnalysis);
     }
 
-    // Remaining: ramp but no tutor
-    let score = 0;
-    if (greenLands >= 2 && greenLands <= 4)          { score += 2; notes.push(`${greenLands} green lands ✓`); }
-    else if (greenLands === 1 && rampCount >= 2)      { score += 2; notes.push("1 green land + 2+ ramp ✓"); }
-    else if (greenLands === 1 && dorks1 >= 1)         { score += 1; notes.push("1 green land + 1-drop dork ✓ — T1 play available"); }
-    else if (greenLands === 1 && enchantLandRamp >= 1){ score += 1; notes.push("1 green land + enchant-land ramp ✓ — T1 play available"); }
-    else if (greenLands === 1)                        { score += 0; notes.push("1 green land, 1 dork — tight"); }
-    else if (greenLands === 0 && hasCradleOnly)       { score -= 2; notes.push("⚠️ Cradle only — no T1 mana without creatures"); }
-    else if (greenLands === 0)                        { score -= 2; notes.push("no green lands ✗"); }
-    else                                              { score += 1; notes.push(`${greenLands} green lands (mana-heavy)`); }
+    // ════════════════════════════════════════════════════════════
+    // RUBRIC — six named pillars, each independently evaluated
+    // ════════════════════════════════════════════════════════════
+    // A: T1 play available
+    // B: T2 follow-up exists
+    // C: Has a tutor (or Yisan)
+    // D: Healthy land count (2–4 real lands)
+    // E: At least one combo piece or big dork
+    // F: Two-card synergy present
+    const criteria = {
+      A: hasT1Play,
+      B: rampCount >= 2 || (rampCount >= 1 && tutors >= 1) || bigDorks >= 1,
+      C: tutors >= 1 || hasYisan,
+      D: realLands >= 2 && realLands <= 4,
+      E: combo >= 1 || bigDorks >= 1,
+      F: synergies.length >= 1,
+    };
+    const passCount = Object.values(criteria).filter(Boolean).length;
 
-    // Note colourless-only lands separately (they're not useless, just can't cast green spells)
-    const colourlessOnlyLands = cards.filter(c => {
-      const cd = getCard(c);
-      return cd?.type === "land"
-        && c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" // already excluded from realLands
-        && !cd?.tags?.includes("forest") && !cd?.tags?.includes("basic")
-        && !cd?.tags?.includes("green-mana") && c !== "Forest";
-    });
-    if (colourlessOnlyLands.length > 0) notes.push(`${colourlessOnlyLands.length} colourless-only land${colourlessOnlyLands.length > 1 ? "s" : ""} (${colourlessOnlyLands.join(", ")}) — no T1 green`);
+    // ── Build human-readable notes ────────────────────────────────
 
-    // 1-drop dorks are much stronger than generic dorks: castable T1, unlock T2 plays immediately
-    if (dorks1 >= 2)           { score += 4; notes.push(`${dorks1} 1-drop dorks ✓✓ — explosive T1/T2`); }
-    else if (dorks1 >= 1)      { score += 2; notes.push(`1-drop dork ✓ — T1 ${cards.find(c => getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("dork")) ?? "dork"}`); }
-    else if (enchantLandRamp >= 1 && dorks >= 1) { score += 2; notes.push(`${dorks} dork${dorks>1?"s":""} + enchant-land ramp ✓`); }
-    else if (enchantLandRamp >= 2) { score += 3; notes.push(`${enchantLandRamp} enchant-land ramp ✓✓ — T1 plays on Forest`); }
-    else if (enchantLandRamp >= 1) { score += 2; notes.push(`enchant-land ramp ✓ — T1 ${cards.find(c => getCard(c)?.tags?.includes("enchant-land")) ?? "enchantment"} on a Forest`); }
-    else if (dorks >= 2)       { score += 2; notes.push(`${dorks} dorks ✓ — but no T1 play`); }
-    else                       { score += 1; notes.push("1 dork (not a 1-drop) — slow start"); }
-
-    if (combo >= 1 && (rampCount >= 1 || lands >= 2)) {
-      score += 1; notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} in hand`);
+    // Land count
+    if (hasCradleOnly) {
+      notes.push("⚠️ Gaea's Cradle only — produces 0 mana T1 with no creatures");
+    } else if (isManaFlood) {
+      notes.push(`⚠️ Mana flood: ${realLands} lands, no tutors or acceleration`);
+    } else if (greenLands >= 2 && greenLands <= 4) {
+      notes.push(`${greenLands} green land${greenLands > 1 ? "s" : ""} ✓`);
+    } else if (greenLands === 1 && rampCount >= 1) {
+      notes.push("1 green land + ramp ✓ — T1 green play available");
+    } else if (greenLands === 1) {
+      notes.push("1 green land — tight, no backup");
     }
-    notes.push("no tutor — relying on draw steps");
+    if (colourlessOnlyLands.length > 0) {
+      notes.push(`${colourlessOnlyLands.length} colourless land${colourlessOnlyLands.length > 1 ? "s" : ""} (${colourlessOnlyLands.join(", ")}) — no T1 green`);
+    }
+    if (fetchLands > 0) {
+      notes.push(`${fetchLands} fetch land${fetchLands > 1 ? "s" : ""} — fixing, but enters tapped until cracked`);
+    }
 
-    const grade = score >= 5 ? { label: "KEEP",       color: COLORS.green2 }
-                : score >= 2 ? { label: "BORDERLINE", color: COLORS.gold   }
-                :              { label: "MULLIGAN",    color: COLORS.red    };
+    // T1 play
+    if (criteria.A) {
+      if (dorks1 >= 2) {
+        notes.push(`${dorks1}× 1-drop dork ✓✓ — ${dork1Cards.join(" + ")} — explosive T1/T2`);
+      } else if (dorks1 === 1) {
+        notes.push(`1-drop dork ✓ — ${dork1Cards[0]} T1 on ${greenLands === 1 ? "the green land" : "a green land"}`);
+      } else if (enchantLandRamp >= 1) {
+        const aura = cards.find(c => getCard(c)?.tags?.includes("enchant-land"));
+        notes.push(`Enchant-land T1 ✓ — ${aura} on a Forest`);
+      } else {
+        const fastRock = rockCards.find(c => (getCard(c)?.cmc ?? 99) <= 1);
+        if (fastRock) notes.push(`Fast rock T1 ✓ — ${fastRock}`);
+      }
+    } else {
+      notes.push("⚠️ No T1 play — earliest action is T2");
+    }
+
+    // Big dorks
+    if (bigDorks >= 2) {
+      notes.push(`${bigDorks} big dork${bigDorks > 1 ? "s" : ""} ✓✓ — ${bigDorkCards.join(", ")} — high mana output`);
+    } else if (bigDorks === 1) {
+      notes.push(`Big dork ✓ — ${bigDorkCards[0]} — powerful mana engine`);
+    } else if (dorks >= 2) {
+      notes.push(`${dorks} dorks ✓ — ${dorkCards.join(", ")}`);
+    } else if (dorks === 1) {
+      notes.push(`${dorkCards[0]} — 1 dork${allRampIsSlow ? " (not a 1-drop)" : ""}`);
+    }
+
+    // Tutor
+    if (tutors >= 1 && rampCount >= 1) {
+      notes.push(`Tutor${tutors > 1 ? "s" : ""} ✓ — ${tutorCards.join(", ")}`);
+    } else if (hasYisan) {
+      notes.push("Yisan ✓ — tutor-on-a-clock (charge on T3+)");
+    } else {
+      notes.push("No tutor — relying on draw steps to find combo pieces");
+    }
+
+    // Synergies
+    synergies.forEach(s => notes.push(`⚡ Synergy: ${s}`));
+
+    // Premium land combos
+    if (cradleActive) {
+      notes.push(`Gaea's Cradle ✓✓ — ${bigDorks} big dork${bigDorks > 1 ? "s" : ""} in hand, explosive mana once active`);
+    } else if (hasCradle && dorks >= 1) {
+      notes.push("Gaea's Cradle — productive once board develops");
+    }
+    if (hasNykthos && dorks >= 2) {
+      const devotion = dorkCards.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
+      notes.push(`Nykthos — ${devotion} devotion from dorks in hand`);
+    }
+
+    // Card-disadvantage warnings
+    moxCostNotes.forEach(n => notes.push(`⚠️ ${n}`));
+    if (cards.includes("Sol Ring")) {
+      notes.push("Sol Ring — strong T1 rock but doesn't contribute to Cradle/devotion value");
+    }
+
+    // Miscellaneous flags
+    if (isTight) notes.push("⚠️ Tight mana: 1 green land, 1 dork, no tutors — screw risk");
+    if (realLands >= 5 && !isManaFlood) notes.push(`⚠️ ${realLands} lands — mana-heavy, watch for flood`);
+    if (allRampIsSlow) {
+      const slowNames = dorkCards
+        .filter(c => !getCard(c)?.tags?.includes("1drop"))
+        .map(c => `${c} (CMC ${getCard(c)?.cmc ?? "?"})`).join(", ");
+      notes.push(`⚠️ All ramp is slow — earliest T2 (${slowNames || "2-drop dork"})`);
+    }
+
+    // ── Final grade from rubric ───────────────────────────────────
+    // KEEP:       5–6 criteria met
+    // BORDERLINE: 3–4 criteria met
+    // MULLIGAN:   0–2 criteria met
+    // Override: mana flood always mulligans; ramp+tutor+T1 always keeps.
+    let grade;
+    if (isManaFlood) {
+      grade = { label: "MULLIGAN", color: COLORS.red };
+    } else if (passCount >= 5) {
+      grade = { label: "KEEP", color: COLORS.green2 };
+    } else if (passCount >= 3) {
+      if (!criteria.A && !criteria.C && !criteria.D) {
+        // Missing T1 play, tutor, AND good land count simultaneously = too many holes
+        grade = { label: "MULLIGAN", color: COLORS.red };
+      } else {
+        grade = { label: "BORDERLINE", color: COLORS.gold };
+      }
+    } else {
+      grade = { label: "MULLIGAN", color: COLORS.red };
+    }
+
+    // Sharpen BORDERLINE → KEEP if core plan is fully operational:
+    // ramp + tutor + T1 play + not-all-slow = this is the target opening hand
+    if (grade.label === "BORDERLINE" && rampCount >= 1 && tutors >= 1 && criteria.A && !allRampIsSlow) {
+      grade = { label: "KEEP", color: COLORS.green2 };
+    }
+
     return enrichWithAnalysis({ grade, notes }, advisorAnalysis);
   }
 
   // Layer advisor analysis signals on top of the structural hand grade
   function enrichWithAnalysis({ grade, notes }, analysis) {
     if (!analysis) return { grade, notes };
-    const results = analysis.results ?? [];
-    const live = results.filter(r => !r.isSuppressed);
+    const results    = analysis.results ?? [];
+    const live       = results.filter(r => !r.isSuppressed);
     const suppressed = results.filter(r => r.isSuppressed);
-    const topCat = live[0]?.category ?? "";
+    const topCat     = live[0]?.category ?? "";
     const advisorNotes = [];
 
-    // Infinite mana somehow in hand — override to KEEP
     if (analysis.infiniteManaActive) {
-      advisorNotes.push("∞ Infinite mana line available in hand");
+      advisorNotes.push("∞ Infinite mana line available in opening hand");
       grade = { label: "KEEP", color: COLORS.green2 };
-    }
-    // WIN NOW
-    else if (topCat.includes("WIN NOW") || topCat.includes("INSTANT SPEED WIN")) {
+    } else if (topCat.includes("WIN NOW") || topCat.includes("INSTANT SPEED WIN")) {
       advisorNotes.push("🔥 WIN NOW line in opening hand");
       grade = { label: "KEEP", color: COLORS.green2 };
-    }
-    // WIN NEXT TURN
-    else if (topCat.includes("WIN NEXT")) {
+    } else if (topCat.includes("WIN NEXT")) {
       advisorNotes.push("⚡ WIN NEXT TURN line available");
       if (grade.label === "MULLIGAN") grade = { label: "BORDERLINE", color: COLORS.gold };
-    }
-    // Suppressed wins = one piece away — surface the missing piece
-    else if (suppressed.length > 0) {
+    } else if (suppressed.length > 0) {
+      // A suppressed line means a piece is MISSING — upgrade to BORDERLINE at most, never KEEP
       const s = suppressed[0];
-      // Reason is after the colon in the headline
       const reasonRaw = (s.headline ?? "").replace(/^[^:]+:\s*/, "");
-      const reason = reasonRaw.length > 60 ? reasonRaw.slice(0, 57) + "…" : reasonRaw;
+      const reason    = reasonRaw.length > 60 ? reasonRaw.slice(0, 57) + "…" : reasonRaw;
       if (reason) {
-        advisorNotes.push(`1 piece away — need: ${reason}`);
+        advisorNotes.push(`1 piece away from combo — need: ${reason}`);
         if (grade.label === "MULLIGAN") grade = { label: "BORDERLINE", color: COLORS.gold };
       }
       if (suppressed.length > 1) {
-        advisorNotes.push(`(+${suppressed.length - 1} other suppressed line${suppressed.length > 2 ? "s" : ""})`);
+        advisorNotes.push(`(+${suppressed.length - 1} other near-combo line${suppressed.length > 2 ? "s" : ""})`);
       }
     }
 
-    // High-confidence lines (engine/loop/tutor plays)
     const highConf = live.filter(r => r.confidence === "certain" || r.confidence === "high");
     if (highConf.length >= 2) {
-      advisorNotes.push(`${highConf.length} high-value advisor lines`);
+      advisorNotes.push(`${highConf.length} high-confidence advisor lines`);
     } else if (highConf.length === 1 && advisorNotes.length === 0) {
       advisorNotes.push(`Advisor: ${(live[0].category ?? live[0].headline ?? "").slice(0, 55)}`);
     }
 
     return { grade, notes: [...notes, ...advisorNotes] };
   }
-
 
   // Close context menu on any mousedown outside it
   useEffect(() => {
@@ -19813,6 +19981,18 @@ function YevaAdvisor() {
   const [collapseKey, setCollapseKey] = useState(0);
   const advicePanelRef = useRef(null);
   const zoneInputRefs = useRef({}); // populated by CardInput via onRef prop
+  const isIdleAuto = useIdleTimer(IDLE_MS);
+  const [isIdleManual, setIsIdleManual] = useState(false);
+  const isIdle = isIdleAuto || isIdleManual;
+
+  // Shift+L toggles the screensaver manually
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "L" && e.shiftKey) setIsIdleManual(v => !v);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Preserve scroll position when advice updates
   const scrollPosRef = useRef(0);
@@ -20020,6 +20200,7 @@ function YevaAdvisor() {
 
   return (
     <>
+      {isIdle && <MatrixScreensaver deckCards={activeDeck ? activeDeck.cards : Object.keys(CARDS)} onDismiss={() => setIsIdleManual(false)} />}
       <style>{fonts}</style>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -20782,6 +20963,196 @@ function YevaAdvisor() {
         </div>
       </div>
     </>
+  );
+}
+
+// ============================================================
+// MATRIX SCREENSAVER — MTG card names cascade + glow pulses
+// Activates after IDLE_MS of no user interaction.
+// ============================================================
+
+const IDLE_MS = 180_000; // 3 minutes
+
+function useIdleTimer(idleMs) {
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    let timer;
+    const reset = () => {
+      setIdle(false);
+      clearTimeout(timer);
+      timer = setTimeout(() => setIdle(true), idleMs);
+    };
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    timer = setTimeout(() => setIdle(true), idleMs);
+    return () => {
+      clearTimeout(timer);
+      events.forEach(e => window.removeEventListener(e, reset));
+    };
+  }, [idleMs]);
+  return idle;
+}
+
+function MatrixScreensaver({ deckCards, onDismiss }) {
+  // Any interaction clears the manual flag so Shift+L toggle works correctly
+  const handleDismiss = () => { if (onDismiss) onDismiss(); };
+  const canvasRef = useRef(null);
+  const animRef   = useRef(null);
+  const glowRef   = useRef([]);
+
+  // Character pool: deck card name letters + katakana
+  const charPool = useMemo(() => {
+    const names = (deckCards && deckCards.length > 0 ? deckCards : Object.keys(CARDS))
+      .flatMap(n => n.replace(/[',]/g, "").split(""));
+    const katakana = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン";
+    return [...new Set([...names, ...katakana.split("")])].filter(c => c.trim());
+  }, [deckCards]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+
+    const FONT_SZ = 20;
+    const GREEN1  = "#4a9e4a";
+    const GREEN2  = "#6abf6a";
+    const GREEN3  = "#a8e6a8";
+    const GLOW_COL = "#8ed88e";
+
+    let W, H, cols, drops, colSpeeds, colBrightness;
+
+    // Each column cycles through letters of a card name — strip everything non-alpha so no blank frames
+    const cardNames = (deckCards && deckCards.length > 0 ? deckCards : Object.keys(CARDS))
+      .map(n => n.toUpperCase().replace(/[^A-Z]/g, ""))
+      .filter(n => n.length >= 3);
+    // colSequence[i] = { name: string, pos: number }
+    let colSequence, colChars;
+    function randomSeq() {
+      const name = cardNames[Math.floor(Math.random() * cardNames.length)];
+      return { name, pos: 0 };
+    }
+    function initColData() {
+      colSequence = Array.from({ length: cols }, () => randomSeq());
+      colChars    = colSequence.map(s => s.name[s.pos] || s.name[0]);
+    }
+
+    let lastGlow = 0;
+    let lastCharUpdate = 0;
+    const CHAR_UPDATE_MS = 800;
+
+    function init() {
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      cols          = Math.floor(W / FONT_SZ);
+      drops         = Array.from({ length: cols }, () => Math.random() * -H / FONT_SZ);
+      colSpeeds     = Array.from({ length: cols }, () => 0.08 + Math.random() * 0.18);
+      colBrightness = Array.from({ length: cols }, () => Math.random());
+      glowRef.current = [];
+      initColData();
+    }
+
+    function draw(ts) {
+      // Fade trail
+      ctx.fillStyle = "rgba(10,18,10,0.18)";
+      ctx.fillRect(0, 0, W, H);
+
+      // Faint watermark drawn directly onto canvas so it shows through the rain
+      const wFontSize = Math.max(28, Math.min(96, W * 0.075));
+      ctx.save();
+      ctx.font = `700 ${wFontSize}px 'Cinzel', serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(74,158,74,0.07)";
+      ctx.shadowColor = "rgba(74,158,74,0.12)";
+      ctx.shadowBlur = 60;
+      ctx.fillText("• YEVA · DRAW-GO •", W / 2, H / 2);
+      ctx.restore();
+
+      // Advance each column one letter through its card name
+      if (ts - lastCharUpdate > CHAR_UPDATE_MS) {
+        lastCharUpdate = ts;
+        for (let i = 0; i < cols; i++) {
+          const seq = colSequence[i];
+          seq.pos++;
+          // When we've shown all letters, pick a new card name
+          if (seq.pos >= seq.name.length) {
+            colSequence[i] = randomSeq();
+          }
+          colChars[i] = colSequence[i].name[colSequence[i].pos] || colSequence[i].name[0];
+        }
+      }
+
+      // Spawn random glow pulse every ~1.8–3s
+      if (ts - lastGlow > 1800 + Math.random() * 1200) {
+        lastGlow = ts;
+        const col = Math.floor(Math.random() * cols);
+        glowRef.current.push({ col, life: 1.0 });
+      }
+      // Age glow pulses
+      glowRef.current = glowRef.current
+        .map(g => ({ ...g, life: g.life - 0.018 }))
+        .filter(g => g.life > 0);
+
+      for (let i = 0; i < cols; i++) {
+        const ch = colChars[i] || "ア";
+        const x  = i * FONT_SZ;
+        const y  = drops[i] * FONT_SZ;
+
+        const glow = glowRef.current.find(g => g.col === i);
+
+        if (glow) {
+          ctx.shadowColor = GLOW_COL;
+          ctx.shadowBlur  = 18 * glow.life;
+          ctx.fillStyle   = `rgba(200,240,200,${glow.life})`;
+        } else if (colBrightness[i] > 0.75) {
+          ctx.shadowColor = GREEN2;
+          ctx.shadowBlur  = 8;
+          ctx.fillStyle   = GREEN3;
+        } else {
+          ctx.shadowBlur  = 0;
+          ctx.fillStyle   = colBrightness[i] > 0.4 ? GREEN2 : GREEN1;
+        }
+
+        ctx.font = `${FONT_SZ}px monospace`;
+        if (y > 0) ctx.fillText(ch, x, y);
+        ctx.shadowBlur = 0;
+
+        if (y > H && Math.random() > 0.975) {
+          drops[i]         = 0;
+          colBrightness[i] = Math.random();
+          colSpeeds[i]     = 0.08 + Math.random() * 0.18;
+        }
+        drops[i] += colSpeeds[i];
+      }
+
+      animRef.current = requestAnimationFrame(draw);
+    }
+
+    init();
+    animRef.current = requestAnimationFrame(draw);
+
+    const onResize = () => init();
+    window.addEventListener("resize", onResize);
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [charPool]);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "#0a120a",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      cursor: "none",
+    }} onClick={handleDismiss} onKeyDown={e => { if(e.key==="Escape") handleDismiss(); }}>
+      <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, zIndex: 1 }} />
+      {/* Radial vignette for depth */}
+      <div style={{
+        position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2,
+        background: "radial-gradient(ellipse at center, transparent 40%, #0a120acc 100%)",
+      }} />
+    </div>
   );
 }
 
