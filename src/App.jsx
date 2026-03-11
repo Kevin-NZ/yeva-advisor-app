@@ -20354,7 +20354,7 @@ function YevaAdvisor() {
   const [collapseKey, setCollapseKey] = useState(0);
   const advicePanelRef = useRef(null);
   const zoneInputRefs = useRef({}); // populated by CardInput via onRef prop
-  const isIdleAuto = useIdleTimer(IDLE_MS);
+  const isIdleAuto = false; // auto-timer disabled — use Shift+L to activate
   const [isIdleManual, setIsIdleManual] = useState(false);
   const isIdle = isIdleAuto || isIdleManual;
 
