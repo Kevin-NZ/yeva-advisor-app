@@ -3703,6 +3703,50 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- DRYAD ARBOR FETCH SUGGESTION ----
+  // When any fetch land is available (hand or battlefield) and Dryad Arbor is not yet on
+  // the battlefield, always suggest fetching it — it's a creature + elf + forest in one,
+  // enabling Natural Order sacrifice, elf count for Cradle/Priest, and convoke for Chord.
+  {
+    const fetchesOnBattlefield = battlefield.filter(c => getCard(c)?.tags?.includes("fetch"));
+    const fetchesInHandArr     = hand.filter(c => getCard(c)?.tags?.includes("fetch"));
+    const hasFetch             = fetchesOnBattlefield.length > 0 || fetchesInHandArr.length > 0;
+    const dryadOnBoard         = board.has("Dryad Arbor");
+    const dryadInHand          = inHand.has("Dryad Arbor");
+    // Only suggest if: we have a fetch, Dryad is not yet on the battlefield,
+    // not already in hand (where it's a free land play anyway), and not already infinite.
+    if (hasFetch && !dryadOnBoard && !dryadInHand && !infiniteManaActive) {
+      const fetchSource = fetchesOnBattlefield.length > 0 ? fetchesOnBattlefield[0] : fetchesInHandArr[0];
+      const fromBf      = fetchesOnBattlefield.length > 0;
+      const extraBenefits = [
+        board.has("Natural Order")          && "sacrifice to Natural Order",
+        inHand.has("Natural Order")         && "sacrifice target for Natural Order cast",
+        inHand.has("Chord of Calling")      && "convoke target for Chord of Calling",
+        inHand.has("Eldritch Evolution")    && "sacrifice for Eldritch Evolution",
+        board.has("Gaea's Cradle")          && "adds 1 mana to Cradle output",
+        board.has("Priest of Titania")      && "adds 1 to Priest of Titania tap",
+        board.has("Elvish Archdruid")       && "adds 1 to Archdruid tap",
+        board.has("Circle of Dreams Druid") && "adds 1 to Circle of Dreams Druid tap",
+        board.has("Earthcraft")             && "taps for {G} immediately via Earthcraft",
+        inHand.has("Mox Diamond")           && "pitch to Mox Diamond",
+        inHand.has("Force of Vigor")        && "pitch to Force of Vigor (free interaction)",
+      ].filter(Boolean);
+      results.push({
+        priority: 6,
+        category: "🌿 FETCH DRYAD ARBOR",
+        headline: `Crack ${fetchSource} → Dryad Arbor (creature + elf + forest in one)`,
+        detail: `Dryad Arbor is simultaneously a Forest land, a 1/1 green creature, and a Dryad Elf. Fetching it instead of a basic Forest provides all the same mana production but with significant creature-based upside. It enters tapped (summoning sick), but all its non-mana uses are available immediately.`,
+        steps: [
+          `${fromBf ? "Crack" : "Play and crack"} ${fetchSource}${fromBf ? " (sacrifice it)" : ""} → search library for Dryad Arbor → battlefield (tapped).`,
+          "Dryad Arbor counts as a creature immediately — untap next turn to tap for {G}.",
+          ...(extraBenefits.length > 0 ? [`Immediate upside: ${extraBenefits.join("; ")}.`] : []),
+          "Note: Dryad Arbor has summoning sickness — it cannot tap for mana until your next untap step.",
+        ],
+        color: COLORS.green1,
+      });
+    }
+  }
+
   // ---- REGAL FORCE DRAW ENGINE ----
   // Regal Force ETB: draw cards equal to the number of green creatures you control.
   // With infinite mana + bouncer: bounce and recast repeatedly to draw your entire deck.
@@ -10790,9 +10834,31 @@ function buildLibrary(deckCards) {
 }
 
 // Card image shown during mulligan — fetches from Scryfall, shows spinner while loading.
+// Role badge config for mulligan cards
+function getMulliganRoleBadge(card) {
+  const cd = getCard(card);
+  if (!cd) return null;
+  const tags = cd.tags || [];
+  const type = cd.type || "";
+  if (tags.includes("dork") && tags.includes("big-dork")) return { label: "BIG DORK", color: "#a78bfa" };
+  if (tags.includes("dork"))        return { label: "DORK",     color: "#6abf6a" };
+  if (tags.includes("combo"))       return { label: "COMBO",    color: "#f97316" };
+  if (tags.includes("tutor"))       return { label: "TUTOR",    color: "#5dade2" };
+  if (tags.includes("rock") || tags.includes("fast-mana")) return { label: "MANA",  color: "#f4d03f" };
+  if (tags.includes("draw"))        return { label: "DRAW",     color: "#a569bd" };
+  if (tags.includes("stax") || tags.includes("hate")) return { label: "STAX", color: "#e74c3c" };
+  if (tags.includes("protection"))  return { label: "PROTECT",  color: "#5dade2" };
+  if (tags.includes("removal"))     return { label: "REMOVAL",  color: "#e74c3c" };
+  if (type === "land")              return { label: "LAND",     color: "#8ed88e" };
+  return null;
+}
+
 function MulliganCard({ card, toBottom, selectable, onClick }) {
   const url = useScryfallImage(card);
   const [hovered, setHovered] = useState(false);
+  const badge = getMulliganRoleBadge(card);
+  const cd = getCard(card);
+  const cmc = cd?.cmc ?? null;
 
   const cardW = 130;
   const cardH = 181; // standard MTG aspect ratio ~1.39
@@ -10824,11 +10890,11 @@ function MulliganCard({ card, toBottom, selectable, onClick }) {
           : hovered && selectable ? "0 8px 24px rgba(0,0,0,0.8)" : "0 2px 8px rgba(0,0,0,0.6)",
         background: "#0d1a0d",
         transition: "border 0.15s, box-shadow 0.15s",
+        position: "relative",
       }}>
         {url && url !== "error" ? (
           <img src={url} alt={card} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         ) : url === "error" ? (
-          // Fallback card back
           <div style={{
             width: "100%", height: "100%", display: "flex", flexDirection: "column",
             alignItems: "center", justifyContent: "center", padding: "8px",
@@ -10838,13 +10904,32 @@ function MulliganCard({ card, toBottom, selectable, onClick }) {
             <div style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", textAlign: "center", lineHeight: 1.3 }}>{card}</div>
           </div>
         ) : (
-          // Loading spinner
           <div style={{
             width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
             background: "linear-gradient(160deg, #0a1a0a, #162816)",
           }}>
             <div style={{ width: 24, height: 24, border: `2px solid ${COLORS.border}`, borderTopColor: COLORS.green2, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
           </div>
+        )}
+        {/* CMC pip — top-left corner */}
+        {cmc !== null && (
+          <div style={{
+            position: "absolute", top: 4, left: 4,
+            background: "rgba(0,0,0,0.75)", borderRadius: "50%",
+            width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "9px", fontWeight: "bold", color: COLORS.text, fontFamily: "'Cinzel', serif",
+            border: `1px solid ${COLORS.border}`,
+          }}>{cmc}</div>
+        )}
+        {/* Role badge — bottom of image */}
+        {badge && (
+          <div style={{
+            position: "absolute", bottom: 0, left: 0, right: 0,
+            background: `${badge.color}22`,
+            borderTop: `1px solid ${badge.color}66`,
+            padding: "2px 4px", textAlign: "center",
+            fontSize: "8px", color: badge.color, fontFamily: "'Cinzel', serif", letterSpacing: "1px",
+          }}>{badge.label}</div>
         )}
       </div>
       {/* Bottom indicator */}
@@ -12056,11 +12141,14 @@ function simPlayCard(card, idx, simState, manaPool = null) {
           if (li >= 0) { targetIdx = li; break; }
         }
       }
-      // Default (or no utility found): prefer Forest, fall back to any non-fetch land
+      // Default (or no utility found): prefer Dryad Arbor (creature + elf + forest),
+      // then Forest, then any non-fetch land.
       if (targetIdx === -1) {
+        const boardBf = new Set(battlefield);
+        const dryadSimIdx = !boardBf.has("Dryad Arbor") ? library.findIndex(c => c === "Dryad Arbor") : -1;
         const forestIdx = library.findIndex(c => c === "Forest" || (getCard(c)?.tags?.includes("forest") && !getCard(c)?.tags?.includes("fetch")));
         const anyLandIdx = library.findIndex(c => getCard(c)?.type === "land" && !getCard(c)?.tags?.includes("fetch"));
-        targetIdx = forestIdx >= 0 ? forestIdx : anyLandIdx;
+        targetIdx = dryadSimIdx >= 0 ? dryadSimIdx : forestIdx >= 0 ? forestIdx : anyLandIdx;
       }
       if (targetIdx >= 0) {
         const found = library.splice(targetIdx, 1)[0];
@@ -14699,6 +14787,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       setTapped(prev => { const next = new Set(prev); next.delete(card + ":" + battlefield.indexOf(card)); return next; });
     }
     setGraveyard(prev => [...prev, card]);
+    // Prefer Dryad Arbor (land-creature, can be Natural Order fodder, elf count, etc.)
+    // over a plain Forest — unless we already have it on the battlefield.
+    const hasDryadOnBoard = battlefield.includes("Dryad Arbor");
+    const dryadIdx = (!hasDryadOnBoard) ? library.findIndex(c => c === "Dryad Arbor") : -1;
     // Find a Forest in library — exclude fetch lands (they have "fetch" tag) which happen to also carry "forest"
     const forestIdx = library.findIndex(c => {
       const cd = getCard(c);
@@ -14706,14 +14798,17 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       if (cd.tags?.includes("fetch")) return false; // never fetch a fetchland
       return cd.tags?.includes("forest") || cd.tags?.includes("basic") || c === "Forest";
     });
-    if (forestIdx === -1) {
+    // Dryad Arbor wins unless we already have one — it's a creature, an elf, and a forest all in one
+    const bestIdx = dryadIdx >= 0 ? dryadIdx : forestIdx;
+    if (bestIdx === -1) {
       addLog(`Cracked ${card} → graveyard, but no Forest found in library.`, COLORS.red);
     } else {
-      const found = library[forestIdx];
-      setLibrary(prev => [...prev.slice(0, forestIdx), ...prev.slice(forestIdx + 1)]);
+      const found = library[bestIdx];
+      setLibrary(prev => [...prev.slice(0, bestIdx), ...prev.slice(bestIdx + 1)]);
       setBattlefield(prev => [...prev, found]);
       setLandPlayed(true);
-      addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).`, COLORS.green1);
+      const dryadNote = found === "Dryad Arbor" ? " (Dryad Arbor preferred — creature + elf + forest)" : "";
+      addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${dryadNote}`, COLORS.green1);
       // Fetched land enters tapped
       setBattlefield(prev => {
         const newIdx = prev.length; // will be appended
@@ -14868,7 +14963,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   }
 
   // ── HAND GRADER ─────────────────────────────────────────────
-  function gradeHand(cards, advisorAnalysis) {
+  function gradeHand(cards, advisorAnalysis, handSize = 7) {
     // ── RAW COUNTS ───────────────────────────────────────────────
     // All mana dorks (any creature with tapsFor mana)
     const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
@@ -15199,18 +15294,20 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     }
 
     // ── Final grade from rubric ───────────────────────────────────
-    // KEEP:       5–6 criteria met
-    // BORDERLINE: 3–4 criteria met
-    // MULLIGAN:   0–2 criteria met
-    // Override: mana flood always mulligans; ramp+tutor+T1 always keeps.
+    // Thresholds scale with hand size (Improvement 7):
+    // 7-card: KEEP ≥5, BORDERLINE 3-4, MULLIGAN <3
+    // 6-card: KEEP ≥4, BORDERLINE 3,   MULLIGAN <3
+    // 5-card: KEEP ≥3, BORDERLINE 2,   MULLIGAN <2
+    // 4-card: KEEP ≥2, BORDERLINE 1,   MULLIGAN <1  (desperation keep)
+    const keepThreshold       = Math.max(2, 5 - (7 - handSize));
+    const borderlineThreshold = Math.max(1, keepThreshold - 2);
     let grade;
     if (isManaFlood) {
       grade = { label: "MULLIGAN", color: COLORS.red };
-    } else if (passCount >= 5) {
+    } else if (passCount >= keepThreshold) {
       grade = { label: "KEEP", color: COLORS.green2 };
-    } else if (passCount >= 3) {
+    } else if (passCount >= borderlineThreshold) {
       if (!criteria.A && !criteria.C && !criteria.D) {
-        // Missing T1 play, tutor, AND good land count simultaneously = too many holes
         grade = { label: "MULLIGAN", color: COLORS.red };
       } else {
         grade = { label: "BORDERLINE", color: COLORS.gold };
@@ -15219,9 +15316,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       grade = { label: "MULLIGAN", color: COLORS.red };
     }
 
-    // Sharpen BORDERLINE → KEEP if core plan is fully operational:
-    // ramp + tutor + T1 play + not-all-slow = this is the target opening hand
+    // Sharpen BORDERLINE → KEEP if core plan is fully operational
     if (grade.label === "BORDERLINE" && rampCount >= 1 && tutors >= 1 && criteria.A && !allRampIsSlow) {
+      grade = { label: "KEEP", color: COLORS.green2 };
+    }
+    // Small hands (≤5): upgrade a functional hand to KEEP even without tutor
+    if (handSize <= 5 && grade.label === "BORDERLINE" && criteria.A && rampCount >= 1) {
       grade = { label: "KEEP", color: COLORS.green2 };
     }
 
@@ -15395,13 +15495,19 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           </div>
         )}
         {/* Fetch crack */}
-        {canFetch && (
-          <div onClick={() => crackFetch(card, zone)} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
-            onMouseEnter={e => { e.currentTarget.style.background = "#1a1a0a"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-            🌊 Crack Fetch → Forest
-          </div>
-        )}
+        {canFetch && (() => {
+          const hasDryadOnBoard = battlefield.includes("Dryad Arbor");
+          const dryadInLib = library.includes("Dryad Arbor");
+          const fetchTarget = (!hasDryadOnBoard && dryadInLib) ? "Dryad Arbor" : "Forest";
+          const fetchNote = fetchTarget === "Dryad Arbor" ? " (creature + elf + forest)" : "";
+          return (
+            <div onClick={() => crackFetch(card, zone)} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1a1a0a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              🌊 Crack Fetch → {fetchTarget}{fetchNote}
+            </div>
+          );
+        })()}
         {/* Survival of the Fittest / Fauna Shaman: tap to activate from battlefield */}
         {isBF && (card === "Survival of the Fittest" || card === "Fauna Shaman") && (() => {
           const handCreatures = hand.filter(c => getCard(c)?.type === "creature");
@@ -17283,6 +17389,20 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   };
 
   // ── Keyboard shortcuts ───────────────────────────────────────
+  // Improvement 9: K = Keep, M = Mulligan during mulligan phase
+  useEffect(() => {
+    if (phase !== "mulligan") return;
+    const handler = (e) => {
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (phase2 === "bottoming") return; // don't fire during bottoming selection
+      if (e.key === "k" || e.key === "K") { e.preventDefault(); keepHand(); }
+      if (e.key === "m" || e.key === "M") { e.preventDefault(); doMulligan(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [phase, phase2, hand]);
+
   useEffect(() => {
     if (phase !== "playing") return;
     const handler = (e) => {
@@ -18104,14 +18224,74 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
         {phase === "mulligan" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "16px", overflow: "hidden" }}>
-            <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px", marginBottom: "12px", flexShrink: 0 }}>
-              OPENING HAND {mulliganCount > 0 ? `(Mulligan #${mulliganCount})` : ""} · {hand.length} CARDS
-              {phase2 === "bottoming" && (
-                <span style={{ marginLeft: "16px", color: COLORS.textDim, fontSize: "11px" }}>
-                  — click cards to send to bottom
-                </span>
+
+            {/* ── Improvement 10: Mulligan depth indicator ── */}
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px", flexShrink: 0 }}>
+              <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px" }}>
+                OPENING HAND{mulliganCount > 0 ? ` · MULLIGAN #${mulliganCount}` : ""} · {hand.length} CARDS
+              </div>
+              <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <div key={i} style={{
+                    width: 10, height: 10, borderRadius: "50%",
+                    background: i < hand.length ? COLORS.green1 : COLORS.border,
+                    border: `1px solid ${i < hand.length ? COLORS.green2 : COLORS.border}`,
+                    transition: "background 0.2s",
+                  }} />
+                ))}
+              </div>
+              {mulliganCount > 0 && (
+                <div style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>
+                  {7 - hand.length} card{7 - hand.length !== 1 ? "s" : ""} short of 7
+                </div>
               )}
             </div>
+
+            {/* ── Improvement 2: Hand composition summary ── */}
+            {(() => {
+              const summary = hand.reduce((acc, c) => {
+                const badge = getMulliganRoleBadge(c);
+                const key = badge ? badge.label : "OTHER";
+                const col = badge ? badge.color : COLORS.textDim;
+                if (!acc[key]) acc[key] = { count: 0, color: col };
+                acc[key].count++;
+                return acc;
+              }, {});
+              const ORDER = ["LAND","DORK","BIG DORK","MANA","TUTOR","COMBO","DRAW","PROTECT","STAX","REMOVAL","OTHER"];
+              const chips = ORDER.filter(k => summary[k]).map(k => ({ label: k, ...summary[k] }));
+              return chips.length > 0 ? (
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px", flexShrink: 0 }}>
+                  {chips.map(chip => (
+                    <div key={chip.label} style={{
+                      padding: "2px 8px", borderRadius: "12px",
+                      background: `${chip.color}18`,
+                      border: `1px solid ${chip.color}55`,
+                      fontSize: "10px", color: chip.color,
+                      fontFamily: "'Cinzel', serif", letterSpacing: "0.5px",
+                    }}>{chip.count}× {chip.label}</div>
+                  ))}
+                </div>
+              ) : null;
+            })()}
+
+            {/* ── Improvement 4: Bottoming instruction banner ── */}
+            {phase2 === "bottoming" && (
+              <div style={{
+                marginBottom: "10px", padding: "8px 14px", flexShrink: 0,
+                background: "#1a1a0a", border: `1px solid ${COLORS.gold}88`,
+                borderRadius: "8px", display: "flex", alignItems: "center", gap: "10px",
+              }}>
+                <span style={{ fontSize: "16px" }}>👇</span>
+                <div>
+                  <div style={{ fontSize: "11px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
+                    CLICK CARDS TO SEND TO BOTTOM
+                  </div>
+                  <div style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginTop: "2px" }}>
+                    Choose {Math.max(0, mulliganCount - 1)} card{Math.max(0, mulliganCount - 1) !== 1 ? "s" : ""} to bottom before seeing the rest of your hand. Click again to undo.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Card image row — scrolls horizontally on mobile */}
             <div style={{
@@ -18136,6 +18316,41 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 );
               })}
             </div>
+
+            {/* ── Improvement 6: Mana curve mini bar chart ── */}
+            {(() => {
+              const cmcBuckets = { "0": 0, "1": 0, "2": 0, "3": 0, "4+": 0 };
+              hand.forEach(c => {
+                const cd = getCard(c);
+                if (!cd || cd.type === "land") return;
+                const cmc = cd.cmc ?? 0;
+                const key = cmc === 0 ? "0" : cmc === 1 ? "1" : cmc === 2 ? "2" : cmc === 3 ? "3" : "4+";
+                cmcBuckets[key]++;
+              });
+              const maxVal = Math.max(...Object.values(cmcBuckets), 1);
+              const bucketColor = { "0": COLORS.textDim, "1": COLORS.green2, "2": COLORS.green1, "3": COLORS.gold, "4+": COLORS.accent };
+              return (
+                <div style={{ display: "flex", alignItems: "flex-end", gap: "6px", marginBottom: "10px", flexShrink: 0 }}>
+                  <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginRight: "4px", alignSelf: "center" }}>CMC</div>
+                  {Object.entries(cmcBuckets).map(([label, count]) => (
+                    <div key={label} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+                      {count > 0 && (
+                        <div style={{ fontSize: "9px", color: bucketColor[label], fontFamily: "'Cinzel', serif" }}>{count}</div>
+                      )}
+                      <div style={{
+                        width: 22,
+                        height: Math.max(4, (count / maxVal) * 40),
+                        background: count > 0 ? `${bucketColor[label]}88` : COLORS.border,
+                        border: `1px solid ${count > 0 ? bucketColor[label] : COLORS.border}`,
+                        borderRadius: "3px 3px 0 0",
+                        transition: "height 0.3s",
+                      }} />
+                      <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {phase2 === "bottoming" && (
               <div style={{ marginTop: "8px", marginBottom: "8px", padding: "12px 16px", background: "#1a1a0a", border: `1px solid ${COLORS.gold}`, borderRadius: "8px", fontSize: "12px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "16px", position: "relative", zIndex: 10 }}>
@@ -18181,7 +18396,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             })()}
 
             {phase2 !== "bottoming" && (() => {
-              // Run advisor on opening hand (empty battlefield, 0 mana) to enrich grade
               let mulliganAnalysis = null;
               try {
                 mulliganAnalysis = analyzeGameState({
@@ -18190,10 +18404,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                   deckList: activeDeck ? new Set(deckCards) : null,
                 });
               } catch (e) {}
-              const { grade, notes } = gradeHand(hand, mulliganAnalysis);
+              // Improvement 7: pass hand size so grader adjusts threshold for small hands
+              const { grade, notes } = gradeHand(hand, mulliganAnalysis, hand.length);
               return (
-                <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "flex-start", marginTop: "16px" }}>
-                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px" }}>
+                  {/* Improvement 3: action buttons on their own row, full-width, no collision */}
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
                     <button onClick={keepHand} style={{
                       background: "#1a3a1a", border: `1px solid ${COLORS.green1}`, borderRadius: "8px",
                       padding: "10px 28px", color: COLORS.green2, cursor: "pointer",
@@ -18201,8 +18417,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     }}
                       onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
                       onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
-                    >✓ KEEP</button>
-                    {hand.length > 0 && (
+                    >✓ KEEP (K)</button>
+                    {hand.length > 0 && mulliganCount < 7 && (
                       <button onClick={doMulligan} style={{
                         background: "none", border: `1px solid ${COLORS.gold}`, borderRadius: "8px",
                         padding: "10px 24px", color: COLORS.gold, cursor: "pointer",
@@ -18210,7 +18426,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                       }}
                         onMouseEnter={e => { e.target.style.background = "#1a1a0a"; }}
                         onMouseLeave={e => { e.target.style.background = "transparent"; }}
-                      >↺ MULLIGAN TO {Math.max(0, 7 - mulliganCount)}</button>
+                      >↺ MULLIGAN TO {Math.max(0, 7 - mulliganCount)} (M)</button>
                     )}
                     <button onClick={() => setPhase("setup")} style={{
                       background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "8px",
@@ -18218,13 +18434,14 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                       fontFamily: "'Cinzel', serif", fontSize: "13px",
                     }}>✕ ABANDON</button>
                   </div>
+                  {/* Improvement 3: grade panel on its own row beneath */}
                   <div style={{
                     background: "#0d1a0d", border: `1px solid ${grade.color}44`,
                     borderLeft: `3px solid ${grade.color}`, borderRadius: "8px",
-                    padding: "10px 16px", minWidth: "200px",
+                    padding: "10px 16px",
                   }}>
                     <div style={{ fontSize: "11px", color: grade.color, fontFamily: "'Cinzel', serif", letterSpacing: "1.5px", marginBottom: "6px" }}>
-                      ★ {grade.label}
+                      ★ {grade.label}{hand.length < 7 ? ` (${hand.length}-card hand)` : ""}
                     </div>
                     {notes.map((n, i) => (
                       <div key={i} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.4 }}>{n}</div>
