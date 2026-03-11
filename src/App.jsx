@@ -1822,7 +1822,8 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     } else {
       amt = 1 + badgermoleBonus;
     }
-    return { green: amt, colorless: 0 }; // all dorks produce {G}
+    if (card === "Boreal Druid") return { green: 0, colorless: amt }; // {T}: Add {C}
+    return { green: amt, colorless: 0 }; // all other dorks produce {G}
 
   } else if (data.tags?.includes("rock")) {
     if (card === "Sol Ring")    return { green: 0, colorless: 2 };
