@@ -6155,6 +6155,74 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
 
+  // ---- FIND INFINITE MANA / WIN-NOW PATH PLANNER -------------------------
+  // Delegates entirely to findReachableLines() which does depth-3 forward-chain
+  // search over all infinite-mana and win-now combos using the tutor registry.
+  // Top 3 reachable lines are surfaced as high-priority advice cards.
+  if (!infiniteManaActive && isMyTurn) {
+    const deckSet = deckList ? new Set(deckList) : null;
+    const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet);
+    const topLines = lines.slice(0, 3);
+    topLines.forEach((l, idx) => {
+      const isFirst = idx === 0;
+      const color   = l.winNow ? "#ff6b35" : l.sameTurn ? "#e67e22" : l.nextTurnOnly ? "#c8a800" : COLORS.blue;
+      const cat     = l.winNow
+        ? (isFirst ? "🔥 WIN NOW" : "🔥 WIN NOW — ALT LINE")
+        : l.sameTurn
+        ? (isFirst ? "⚡ FIND INFINITE MANA" : "⚡ ALT MANA LINE")
+        : l.nextTurnOnly
+        ? (isFirst ? "⚡ FIND INFINITE MANA — NEXT TURN" : "⚡ ALT MANA LINE — NEXT TURN")
+        : (isFirst ? `⚡ FIND INFINITE MANA — NEED ${l.totalMana} MANA` : `⚡ ALT MANA LINE — NEED ${l.totalMana} MANA`);
+      const pri = l.winNow ? 15 - idx : 13 - idx;
+
+      const stepSummary = l.tutorSteps.length === 0
+        ? "All pieces available — cast to assemble."
+        : l.tutorSteps.map((s, i) =>
+            `${i+1}. ${s.tutor} → ${s.target}` +
+            (s.constraint === "discard" ? " [discard]" :
+             s.constraint === "sacrifice-land" ? " [sac land]" :
+             s.constraint === "sacrifice" || s.constraint === "sacrifice-green" ? " [sac creature]" : "") +
+            (s.isPreExist ? " ⚠ summ. sick → next turn" : "") +
+            (s.isExtra ? ` (${s.label})` : "")
+          ).join("  •  ");
+
+      const alreadyHave = l.available.join(", ") || "—";
+      const badgeStr = l.badges.join(" · ");
+
+      results.push({
+        priority: pri,
+        category: cat,
+        headline: l.tutorSteps.length === 0
+          ? `Cast pieces → ${l.combo.name}`
+          : l.tutorSteps.length === 1
+          ? `${l.tutorSteps[0].tutor} → ${l.tutorSteps[0].target} → ${l.combo.name}`
+          : `${l.tutorSteps.length} steps → ${l.combo.name}`,
+        detail: `[${badgeStr}] ${l.combo.name}. Have: ${alreadyHave}. Need: ${l.needed.join(", ") || "nothing"}.` +
+          (l.totalMana > 0 ? ` Estimated cost: ~${l.totalMana} mana (tutor activations + casting pieces).` : "") +
+          (!l.canAfford ? ` ⚠ You have ${mana} mana — need ~${l.totalMana - mana} more to execute this turn.` : ""),
+        steps: [
+          ...(l.tutorSteps.length > 0 ? ["── PATH TO ASSEMBLE ──"] : []),
+          ...l.tutorSteps.map(s =>
+            `${s.tutor} → ${s.target}` +
+            (s.note ? ` (${s.note})` : "") +
+            (s.constraint === "discard" ? " — discard a card" :
+             s.constraint === "sacrifice-land" ? " — sacrifice a land" :
+             s.constraint === "sacrifice" || s.constraint === "sacrifice-green" ? " — sacrifice a creature" : "") +
+            (s.isPreExist ? " ⚠ summoning sickness — usable next turn" : "") +
+            (s.isExtra ? ` [extra: ${s.label}]` : "")
+          ),
+          "── EXECUTE COMBO ──",
+          ...l.combo.lines,
+          ...(l.outletSteps?.length > 0 ? ["── WIN OUTLET ──", ...l.outletSteps] : []),
+          ...(l.winNow && l.outletNote ? [`Win: ${l.outletNote} → activate with infinite mana → draw entire library → win.`] : []),
+        ],
+        color,
+        combo: l.combo.id,
+      });
+    });
+  }
+
+
   // ---- CHECK ACTIVE COMBOS ----
   // Tutor option cache: getTutorOptions is pure for a given target within this analyzeGameState
   // call. Cache results to avoid O(combos × board) duplicate calls across the loop.
@@ -8616,6 +8684,437 @@ function buildMillSequence(board, hand, pileNeeded = []) {
   ];
   return { variant: "generic", steps: [...pileSteps, ...enduranceCheck, ...sanitariumFetch, ...untapGuide] };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// findReachableLines — Forward-chain path planner (depth ≤ 3)
+//
+// Models the board as a resource pool. Each "tutor" is a typed resolver that
+// can add a card to the pool at a cost. We BFS up to 3 resolver steps to find
+// which infinite-mana and win-now combos are reachable, then rank by:
+//   1. Same-turn feasibility  2. Step count  3. Mana cost  4. Combo priority
+// ─────────────────────────────────────────────────────────────────────────────
+function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
+  const board    = new Set(battlefield);
+  const inHand   = new Set(hand);
+  const inDeckFn = deckList ? (c) => deckList.has(c) : () => true;
+
+  // ── Derived counts ─────────────────────────────────────────────────────────
+  const elvesNow     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+  const creaturesNow = battlefield.filter(c => getCard(c)?.type === "creature").length;
+  const devotionNow  = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
+
+  // ── Tutor registry ─────────────────────────────────────────────────────────
+  // Each entry: { name, finds, baseCost, usable, putsToBattlefield, constraint,
+  //               note, sorcerySpeed, nextTurnIfBoard }
+  // "finds" can be: "creature" | "creature-green" | "creature-elf" | "creature-cmc6+"
+  //               | "creature-non-human" | "creature×2" | "land" | "land-forest"
+  const TUTOR_DEFS = [
+    // ── On-board activated tutors (always available if on board) ────────────
+    { name:"Fauna Shaman",         finds:"creature",       baseCost:1,  usable: board.has("Fauna Shaman"),
+      note:"{G}, tap, discard: find creature → hand",           constraint:"discard", sorcerySpeed:true },
+    { name:"Survival of the Fittest", finds:"creature",    baseCost:1,  usable: board.has("Survival of the Fittest"),
+      note:"{G}, discard: find creature → hand",                constraint:"discard" },
+    { name:"Skyshroud Poacher",    finds:"creature-elf",   baseCost:3,  usable: board.has("Skyshroud Poacher"),
+      note:"{3}: find Forest Elf → battlefield",                putsToBattlefield:true, sorcerySpeed:true },
+    { name:"Eladamri, Korvecdal",  finds:"creature",       baseCost:0,  usable: board.has("Eladamri, Korvecdal"),
+      note:"cast creature from top of library",                 putsToBattlefield:true },
+    { name:"Yisan, the Wanderer Bard", finds:"creature",   baseCost:2,  usable: board.has("Yisan, the Wanderer Bard"),
+      note:"{2}{G}, tap: find creature with MV = verse counter → battlefield", putsToBattlefield:true, sorcerySpeed:true },
+    { name:"Elvish Reclaimer",     finds:"land",           baseCost:1,  usable: board.has("Elvish Reclaimer"),
+      note:"{T}, sacrifice a land: find any land → battlefield (tapped)", putsToBattlefield:true, constraint:"sacrifice-land", sorcerySpeed:true },
+    // ── Hand spells ─────────────────────────────────────────────────────────
+    { name:"Summoner's Pact",      finds:"creature-green", baseCost:0,  usable: inHand.has("Summoner's Pact"),
+      note:"free — pay {2}{G}{G} next upkeep or lose",          nextTurnCost:4 },
+    { name:"Green Sun's Zenith",   finds:"creature-green", baseCost:"cmc+2", usable: inHand.has("Green Sun's Zenith"),
+      note:"{X}{G}{G}: find green creature MV≤X → battlefield", putsToBattlefield:true },
+    { name:"Nature's Rhythm",      finds:"creature",       baseCost:"cmc+2", usable: inHand.has("Nature's Rhythm"),
+      note:"{X}{G}{G}: find creature MV≤X → battlefield",       putsToBattlefield:true, sorcerySpeed:true,
+      harmonizetoo:true }, // also usable from graveyard via Harmonize
+    { name:"Chord of Calling",     finds:"creature",       baseCost:"cmc+3", usable: inHand.has("Chord of Calling"),
+      note:"{X}{G}{G}{G} (convoke): find creature → battlefield",putsToBattlefield:true },
+    { name:"Shared Summons",       finds:"creature×2",     baseCost:5,  usable: inHand.has("Shared Summons"),
+      note:"{3}{G}{G}: find up to 2 creatures → hand",          sorcerySpeed:true },
+    { name:"Natural Order",        finds:"creature-green", baseCost:4,  usable: inHand.has("Natural Order"),
+      note:"{2}{G}{G}, sacrifice green creature → find any green creature → battlefield",
+      putsToBattlefield:true, constraint:"sacrifice-green", sorcerySpeed:true },
+    { name:"Eldritch Evolution",   finds:"creature",       baseCost:3,  usable: inHand.has("Eldritch Evolution"),
+      note:"{1}{G}{G}, sacrifice creature → find creature MV≤(sac+2) → battlefield",
+      putsToBattlefield:true, constraint:"sacrifice", sorcerySpeed:true },
+    { name:"Finale of Devastation",finds:"creature",       baseCost:"cmc+2", usable: inHand.has("Finale of Devastation"),
+      note:"{X}{G}{G}: find creature MV≤X from library/graveyard → battlefield", putsToBattlefield:true, sorcerySpeed:true },
+    { name:"Worldly Tutor",        finds:"creature",       baseCost:1,  usable: inHand.has("Worldly Tutor"),
+      note:"{G}: find any creature → top of library" },
+    { name:"Fierce Empath",        finds:"creature-cmc6+", baseCost:3,  usable: inHand.has("Fierce Empath"),
+      note:"{2}{G}: ETB find creature MV≥6 → hand",             putsToBattlefield:true, sorcerySpeed:true },
+    { name:"Elvish Harbinger",     finds:"creature-elf",   baseCost:3,  usable: inHand.has("Elvish Harbinger"),
+      note:"{2}{G}: ETB find Elf → top of library",             putsToBattlefield:true, sorcerySpeed:true },
+    { name:"Invasion of Ikoria",   finds:"creature-non-human", baseCost:4, usable: inHand.has("Invasion of Ikoria"),
+      note:"{3}{G}: find non-Human creature → hand",            sorcerySpeed:true },
+    { name:"Formidable Speaker",   finds:"creature",       baseCost:4,  usable: inHand.has("Formidable Speaker") || board.has("Formidable Speaker"),
+      note:"ETB: discard → find creature → hand",               constraint:"discard", putsToBattlefield:true, sorcerySpeed:true },
+    { name:"Crop Rotation",        finds:"land",           baseCost:1,  usable: inHand.has("Crop Rotation"),
+      note:"{G}, instant, sacrifice a land → find any land → battlefield", putsToBattlefield:true, constraint:"sacrifice-land" },
+    { name:"Sylvan Scrying",       finds:"land",           baseCost:2,  usable: inHand.has("Sylvan Scrying"),
+      note:"{1}{G}: find any land → hand",                      sorcerySpeed:true },
+    { name:"Archdruid's Charm",    finds:"land-forest",    baseCost:3,  usable: inHand.has("Archdruid's Charm"),
+      note:"{G}{G}{G}: find Forest land → battlefield",          putsToBattlefield:true, sorcerySpeed:true },
+  ];
+
+  const activeTutors = TUTOR_DEFS.filter(t => t.usable);
+
+  // ── Can tutor T find card C? ───────────────────────────────────────────────
+  function tutorCanFind(t, cardName) {
+    const cd = getCard(cardName);
+    if (!cd) return false;
+    switch (t.finds) {
+      case "creature":           return cd.type === "creature";
+      case "creature-green":     return cd.type === "creature" && (cd.greenPips ?? 0) > 0;
+      case "creature-elf":       return cd.type === "creature" && cd.tags?.includes("elf");
+      case "creature-cmc6+":     return cd.type === "creature" && (cd.cmc ?? 0) >= 6;
+      case "creature-non-human": return cd.type === "creature" && !cd.tags?.includes("human");
+      case "creature×2":         return cd.type === "creature";
+      case "land":               return cd.type === "land";
+      case "land-forest":        return cd.type === "land" && (cd.tags?.includes("forest") || cardName === "Forest");
+      default: return false;
+    }
+  }
+
+  // Cost to use tutor T for card C
+  function tutorCost(t, cardName) {
+    const cmc = getCard(cardName)?.cmc ?? 0;
+    if (t.baseCost === "cmc+2") return cmc + 2;
+    if (t.baseCost === "cmc+3") return cmc + 3;
+    return t.baseCost;
+  }
+
+  // ── Pool model ─────────────────────────────────────────────────────────────
+  // A Pool captures what's "available" after a sequence of steps.
+  // We track: set of cards available (board+hand+fetched), mana spent, step list.
+  function makePool() {
+    return {
+      have: new Set([...battlefield, ...hand]),  // cards accessible
+      manaSpent: 0,
+      steps: [],       // { tutor, target, mana, note, putsToBattlefield, constraint, nextTurn }
+      nextTurnPieces: new Set(), // pieces that have summoning sickness
+      discards: 0,     // how many discard constraints fired
+    };
+  }
+  function clonePool(p) {
+    return {
+      have: new Set(p.have),
+      manaSpent: p.manaSpent,
+      steps: [...p.steps],
+      nextTurnPieces: new Set(p.nextTurnPieces),
+      discards: p.discards,
+    };
+  }
+
+  // Apply one tutor step to a pool, returning new pool (or null if impossible)
+  function applyStep(pool, tutor, target) {
+    if (!tutorCanFind(tutor, target)) return null;
+    if (!inDeckFn(target)) return null;
+    if (pool.have.has(target)) return null; // already have it
+    const cost = tutorCost(tutor, target);
+    const np = clonePool(pool);
+    np.manaSpent += cost;
+    np.have.add(target);
+    const step = {
+      tutor: tutor.name,
+      target,
+      mana: cost,
+      note: tutor.note,
+      putsToBattlefield: tutor.putsToBattlefield ?? false,
+      constraint: tutor.constraint,
+    };
+    // mustPreExist / summoning sickness: piece needs to be on board before it can tap
+    const cd = getCard(target);
+    const isTapper = cd?.tags?.includes("infinite-dork") || cd?.tags?.includes("big-dork");
+    if (!tutor.putsToBattlefield) {
+      // goes to hand — need another step or cast cost to put on board
+      // just note it's in hand for now
+    }
+    np.steps.push(step);
+    if (tutor.constraint === "discard") np.discards++;
+    return np;
+  }
+
+  // ── Extras evaluation ──────────────────────────────────────────────────────
+  // Given a pool, does the combo's extra conditions hold (or can they be satisfied)?
+  function extrasForCombo(combo, pool, depth) {
+    const extraSteps = [];
+    let extraMana = 0;
+
+    // Big dork requirement
+    if (combo.needsBigDork) {
+      const min = combo.needsBigDork;
+      const poolArr = [...pool.have];
+      const hasDork = poolArr.some(c => {
+        const cd = getCard(c);
+        if (!cd || cd.type !== "creature") return false;
+        if (typeof cd.tapsFor === "number") return cd.tapsFor >= min;
+        if (cd.tapsFor === "elves")     return cd.tags?.includes("big-dork") && elvesNow >= min;
+        if (cd.tapsFor === "creatures") return cd.tags?.includes("big-dork") && creaturesNow >= min;
+        if (cd.tapsFor === "devotion")  return cd.tags?.includes("big-dork") && devotionNow >= min;
+        return false;
+      });
+      if (!hasDork && depth < 3) {
+        // Try to find one via remaining tutors
+        const candidates = ["Elvish Archdruid","Priest of Titania","Circle of Dreams Druid",
+          "Selvala, Heart of the Wilds","Karametra's Acolyte","Wirewood Channeler","Marwyn, the Nurturer"]
+          .filter(c => !pool.have.has(c) && inDeckFn(c));
+        const found = candidates.find(c =>
+          activeTutors.some(t => t.usable && tutorCanFind(t, c)));
+        if (!found) return null; // can't satisfy
+        const tutor = activeTutors.find(t => t.usable && tutorCanFind(t, found));
+        extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
+          note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
+          isExtra: true, label: `big dork (≥${min} mana)` });
+        extraMana += tutorCost(tutor, found);
+      } else if (!hasDork) return null;
+    }
+
+    // Bouncer requirement
+    if (combo.needsAlsoBouncer) {
+      const hasBouncer = pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape");
+      if (!hasBouncer && depth < 3) {
+        const bouncers = ["Temur Sabertooth","Kogla, the Titan Ape"].filter(c => !pool.have.has(c) && inDeckFn(c));
+        const found = bouncers.find(c => activeTutors.some(t => tutorCanFind(t, c)));
+        if (!found) return null;
+        const tutor = activeTutors.find(t => tutorCanFind(t, found));
+        extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
+          note: tutor.note, isExtra: true, label: "bouncer" });
+        extraMana += tutorCost(tutor, found);
+      } else if (!hasBouncer) return null;
+    }
+
+    // Ranger requirement
+    if (combo.needsRanger) {
+      const rangers = ["Quirion Ranger","Scryb Ranger"];
+      const hasRanger = rangers.some(r => pool.have.has(r));
+      if (!hasRanger && depth < 3) {
+        const found = rangers.find(c => !pool.have.has(c) && inDeckFn(c) && activeTutors.some(t => tutorCanFind(t, c)));
+        if (!found) return null;
+        const tutor = activeTutors.find(t => tutorCanFind(t, found));
+        extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
+          note: tutor.note, isExtra: true, label: "ranger" });
+        extraMana += tutorCost(tutor, found);
+      } else if (!hasRanger) return null;
+    }
+
+    // One-drop elf requirement
+    if (combo.needsOneDrop) {
+      const hasOne = [...pool.have].some(c =>
+        getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("elf"));
+      if (!hasOne) return null; // not worth searching at depth 3+
+    }
+
+    return { extraSteps, extraMana };
+  }
+
+  // ── mustPreExist check ─────────────────────────────────────────────────────
+  // mustPreExist pieces need to already be on the battlefield (tapping implies summoning sickness).
+  // If they need to be tutored, that adds a "next turn" flag.
+  function mustPreExistStatus(combo, pool) {
+    const mustPre = combo.mustPreExist ?? [];
+    const alreadyOnBoard = mustPre.every(r => board.has(r));
+    if (alreadyOnBoard) return { ok: true, nextTurn: false, preSteps: [] };
+    // Some must-pre-exist pieces are missing from board but may be in pool (hand/tutored)
+    const preSteps = [];
+    for (const r of mustPre) {
+      if (board.has(r)) continue; // fine
+      if (!pool.have.has(r)) {
+        // Need to tutor for it — it'll have summoning sickness
+        const tutor = activeTutors.find(t => tutorCanFind(t, r) && inDeckFn(r));
+        if (!tutor) return null; // can't get this piece at all
+        preSteps.push({ tutor: tutor.name, target: r, mana: tutorCost(tutor, r),
+          note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
+          isPreExist: true });
+      }
+    }
+    // Has summoning sickness — usable next turn
+    return { ok: true, nextTurn: true, preSteps };
+  }
+
+  // ── BFS up to depth 3 over needed pieces ──────────────────────────────────
+  // For each combo, we need to find a pool-building path that satisfies all requires.
+  // We enumerate subsets of missing pieces and find tutor sequences for each.
+  function findPathForCombo(combo, maxDepth) {
+    const needed = (combo.requires ?? []).filter(r => !board.has(r) && !inHand.has(r));
+    if (needed.some(r => !inDeckFn(r))) return null;
+
+    // Already have everything named
+    if (needed.length === 0) {
+      return { pool: makePool(), needed: [], tutorSteps: [], depth: 0 };
+    }
+
+    // BFS: try all orderings of tutor steps up to maxDepth
+    // State: current pool after some steps
+    // We want to find a pool where all needed cards are in pool.have
+    const queue = [{ pool: makePool(), remaining: [...needed], depth: 0 }];
+    const visited = new Set();
+
+    while (queue.length > 0) {
+      // Sort by remaining count then mana spent (greedy)
+      queue.sort((a, b) => a.remaining.length - b.remaining.length || a.pool.manaSpent - b.pool.manaSpent);
+      const { pool, remaining, depth } = queue.shift();
+
+      if (remaining.length === 0) {
+        // All named pieces reachable — return this path
+        return { pool, needed, tutorSteps: pool.steps, depth };
+      }
+      if (depth >= maxDepth) continue;
+
+      // Try to resolve each remaining piece
+      for (const target of remaining) {
+        for (const tutor of activeTutors) {
+          if (!tutorCanFind(tutor, target)) continue;
+          const key = `${depth}:${tutor.name}:${target}`;
+          if (visited.has(key)) continue;
+          visited.add(key);
+          const np = applyStep(pool, tutor, target);
+          if (!np) continue;
+          const newRemaining = remaining.filter(r => np.have.has(r) ? false : true);
+          // Also remove items now covered by the new piece (e.g. Shared Summons gets 2)
+          queue.push({ pool: np, remaining: newRemaining, depth: depth + 1 });
+        }
+      }
+    }
+    return null; // not reachable within maxDepth
+  }
+
+  // ── Win-outlet check ───────────────────────────────────────────────────────
+  // After assembling infinite mana, can we also reach a win outlet this turn?
+  // Win outlets (in priority order):
+  //   1. Duskwatch Recruiter already on board/hand
+  //   2. Finale of Devastation in hand
+  //   3. Duskwatch reachable via any tutor in activeTutors
+  //   4. Nature's Rhythm in hand → after casting it goes to graveyard →
+  //      Harmonize (recast from graveyard) → Duskwatch (X=2, trivial with infinite mana)
+  //   5. Formidable Speaker reachable → ETB finds Duskwatch
+  function findWinOutlet(poolAfterInfinite, nrWasInHand) {
+    // Already on board/hand
+    if (poolAfterInfinite.have.has("Duskwatch Recruiter")) return {
+      outlet: "Duskwatch Recruiter", steps: [], note: "already available" };
+    if (poolAfterInfinite.have.has("Finale of Devastation")) return {
+      outlet: "Finale of Devastation", steps: [], note: "cast X≥10 to win" };
+    // Nature's Rhythm → Harmonize for Duskwatch
+    // NR must have been in hand at start (goes to graveyard after casting for Ashaya)
+    if (nrWasInHand && !poolAfterInfinite.have.has("Duskwatch Recruiter")) return {
+      outlet: "Duskwatch Recruiter via Harmonize",
+      steps: ["Nature's Rhythm is now in graveyard — Harmonize it (X=2, {2}{G}{G}{G}{G}) to find Duskwatch Recruiter → battlefield."],
+      note: "Harmonize Nature's Rhythm → Duskwatch" };
+    // Tutor for Duskwatch
+    const duskwatchTutor = activeTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter"));
+    if (duskwatchTutor) return {
+      outlet: "Duskwatch Recruiter",
+      steps: [`${duskwatchTutor.name} → Duskwatch Recruiter (${duskwatchTutor.note ?? ""})`],
+      note: `tutor via ${duskwatchTutor.name}` };
+    // Tutor for Formidable Speaker → finds Duskwatch
+    const speakerTutor = activeTutors.find(t => tutorCanFind(t, "Formidable Speaker"));
+    if (speakerTutor && inDeckFn("Formidable Speaker") && inDeckFn("Duskwatch Recruiter")) return {
+      outlet: "Duskwatch Recruiter via Formidable Speaker",
+      steps: [`${speakerTutor.name} → Formidable Speaker → ETB: discard → find Duskwatch Recruiter.`],
+      note: "Speaker chain → Duskwatch" };
+    return null;
+  }
+
+  // ── Main loop ──────────────────────────────────────────────────────────────
+  const TARGET_TYPES = new Set(["infinite-mana", "win-now", "win-mill", "win-poison", "win-combat", "win-draw"]);
+  const results = [];
+  const nrInHand = inHand.has("Nature's Rhythm");
+
+  for (const combo of COMBOS) {
+    if (!TARGET_TYPES.has(combo.type)) continue;
+    // Only surface infinite-mana and win-now in the path planner
+    if (combo.type !== "infinite-mana" && combo.type !== "win-now") continue;
+
+    const path = findPathForCombo(combo, 3);
+    if (!path) continue;
+
+    const preStatus = mustPreExistStatus(combo, path.pool);
+    if (!preStatus) continue;
+
+    const extrasResult = extrasForCombo(combo, path.pool, path.depth + preStatus.preSteps.length);
+    if (!extrasResult) continue;
+
+    const allSteps = [...path.tutorSteps, ...preStatus.preSteps, ...extrasResult.extraSteps];
+
+    // ── True mana cost ────────────────────────────────────────────────────
+    // totalMana = tutor activation costs + cast costs for pieces that go to hand
+    // (pieces put directly to battlefield by the tutor don't need a separate cast).
+    // Also add the minimum execution cost: the combo's first untap loop costs {G}
+    // (recast the ranger), which sets up infinite mana — after that cost is trivial.
+    const castCostForHand = path.tutorSteps
+      .filter(s => !s.putsToBattlefield)
+      .reduce((sum, s) => sum + (getCard(s.target)?.cmc ?? 0), 0);
+    const extraCastCost = extrasResult.extraSteps
+      .filter(s => !s.putsToBattlefield)
+      .reduce((sum, s) => sum + (getCard(s.target)?.cmc ?? 0), 0);
+    // Minimum loop startup: cast the ranger once ({G} for Quirion, {1}{G} for Scryb)
+    const rangerInNeeded = path.needed.includes("Quirion Ranger") || path.needed.includes("Scryb Ranger");
+    const rangersAlreadyCounted = path.tutorSteps.some(s =>
+      s.target === "Quirion Ranger" || s.target === "Scryb Ranger");
+    // If ranger goes to hand (not battlefield), its cast cost is already in castCostForHand
+    const loopStartCost = 0; // already included in cast costs above
+
+    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost;
+    const canAfford = totalMana <= mana;
+    const nextTurn  = preStatus.nextTurn;
+    const stepCount = allSteps.length;
+
+    // ── Win outlet check for infinite-mana combos ────────────────────────
+    // With infinite mana, mana is no longer a constraint for the outlet search.
+    // NR in hand → it will be in graveyard after casting it to find a combo piece.
+    const nrUsedForCombo = nrInHand && path.tutorSteps.some(s => s.tutor === "Nature's Rhythm");
+    const outlet = combo.type === "infinite-mana"
+      ? findWinOutlet(path.pool, nrInHand && !nrUsedForCombo ? false : nrUsedForCombo || nrInHand)
+      : { outlet: "win condition", steps: [], note: "win-now combo" };
+    const hasWinOutlet = outlet !== null;
+    const winNow = hasWinOutlet && !nextTurn && canAfford;
+
+    // Scoring: lower = better
+    const sameTurnBonus = winNow ? -5 : (!nextTurn && canAfford) ? 0 : nextTurn ? 10 : 5;
+    const score = sameTurnBonus
+      + stepCount * 3
+      + extrasResult.extraSteps.length * 2
+      + totalMana * 0.1
+      - combo.priority * 0.5;
+
+    const badges = [];
+    if ((combo.requires ?? []).length <= 2 && stepCount <= 1) badges.push("2-card");
+    if (winNow) badges.push("win-now");
+    else if (!nextTurn && canAfford) badges.push("same-turn");
+    else if (nextTurn) badges.push("next-turn");
+    else badges.push("need-mana");
+    if (combo.priority >= 10) badges.push("premium");
+
+    results.push({
+      combo,
+      tutorSteps: allSteps,
+      outletSteps: outlet?.steps ?? [],
+      outletNote: outlet?.note ?? "",
+      stepCount,
+      available: (combo.requires ?? []).filter(r => board.has(r) || inHand.has(r)),
+      needed: path.needed,
+      totalMana,
+      canAfford,
+      winNow,
+      sameTurn: !nextTurn && canAfford,
+      nextTurnOnly: nextTurn,
+      score,
+      badges,
+      depth: path.depth,
+    });
+  }
+
+  results.sort((a, b) => a.score - b.score);
+  const seen = new Set();
+  return results.filter(r => {
+    if (seen.has(r.combo.id)) return false;
+    seen.add(r.combo.id); return true;
+  });
+}
+
 
 function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = []) {
   const options = [];
@@ -14310,6 +14809,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [expandedSteps, setExpandedSteps] = useState(new Set());
   const [expandedSuppressed, setExpandedSuppressed] = useState(new Set());
   const [showAllResults, setShowAllResults] = useState(false);
+  const [advisorTab, setAdvisorTab] = useState("advice"); // "advice" | "lines"
+  const [linesExpanded, setLinesExpanded] = useState(new Set()); // expanded combo ids in Lines tab
+  const [linesFilter, setLinesFilter] = useState("all"); // "all" | "same-turn" | "next-turn"
+  const [linesType, setLinesType] = useState("infinite-mana"); // combo type filter
   const [showLibraryTop, setShowLibraryTop] = useState(false);
   const [gameNotes, setGameNotes] = useState(""); // scratchpad for current game
   const [mulliganCount, setMulliganCount] = useState(0);
@@ -20260,22 +20763,178 @@ if (card === "Talon Gates of Madara") {
             {/* MIDDLE: advisor */}
             <div data-gtour="gtour-advisor" style={{ flex: 1, display: isMobile && mobileTab !== "advisor" ? "none" : "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, width: isMobile ? "100%" : undefined }}>
               <div style={{
-                padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}`,
+                padding: "6px 16px", borderBottom: `1px solid ${COLORS.border}`,
                 fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px",
                 fontFamily: "'Cinzel', serif", flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "space-between",
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px",
               }}>
-                <span>ADVISOR · TURN {turnNumber}</span>
+                <span style={{ flexShrink: 0 }}>ADVISOR · T{turnNumber}</span>
+                {/* Sub-tabs: Advice | Lines */}
+                <div style={{ display: "flex", gap: "2px", flex: 1 }}>
+                  {[["advice","✦ ADVICE"],["lines","⎇ LINES"]].map(([tab, label]) => (
+                    <button key={tab} onClick={() => setAdvisorTab(tab)} style={{
+                      padding: "3px 10px", border: "none", borderBottom: `2px solid ${advisorTab === tab ? COLORS.green1 : "transparent"}`,
+                      background: "none", color: advisorTab === tab ? COLORS.green2 : COLORS.textDim,
+                      fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px", cursor: "pointer",
+                    }}>{label}</button>
+                  ))}
+                </div>
                 {analysis?.infiniteManaActive && (
-                  <span style={{ color: "#c084fc", letterSpacing: "1px", fontSize: "10px" }}>⚡ ∞ INFINITE MANA</span>
+                  <span style={{ color: "#c084fc", letterSpacing: "1px", fontSize: "9px", flexShrink: 0 }}>⚡ ∞</span>
                 )}
               </div>
               <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
-                {(hand.length + battlefield.length === 0) ? (
+                {/* ── LINES TAB ── */}
+                {advisorTab === "lines" && (() => {
+                  const deckSet = deckList ? new Set(deckList) : null;
+                  const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet);
+                  const typeOpts = [
+                    ["all", "All"],
+                    ["infinite-mana", "∞ Mana"],
+                    ["win-now", "Win Now"],
+                    ["win-mill", "Mill"],
+                    ["win-poison", "Poison"],
+                    ["engine", "Engine"],
+                  ];
+                  const filtered = lines.filter(l => {
+                    if (linesFilter === "same-turn" && !l.sameTurn) return false;
+                    if (linesFilter === "next-turn" && !l.nextTurnOnly) return false;
+                    if (linesType !== "all" && l.combo.type !== linesType) return false;
+                    return true;
+                  });
+                  const badgeStyle = (b) => ({
+                    display: "inline-block", padding: "1px 6px", borderRadius: "3px", fontSize: "9px",
+                    fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", marginRight: "4px",
+                    background: b === "win-now" ? "#3a1a0a" : b === "same-turn" ? "#1a3a1a" : b === "next-turn" ? "#2a2a0a" : b === "2-card" ? "#1a1a3a" : b === "premium" ? "#2a1a0a" : "#1a1a1a",
+                    color: b === "win-now" ? "#ff6b35" : b === "same-turn" ? COLORS.green2 : b === "next-turn" ? "#c8a800" : b === "2-card" ? "#7090e0" : b === "premium" ? "#e09050" : COLORS.textDim,
+                    border: `1px solid ${b === "win-now" ? "#c04010" : b === "same-turn" ? COLORS.green1 : b === "next-turn" ? "#604a00" : b === "2-card" ? "#4060b0" : b === "premium" ? "#804020" : COLORS.border}`,
+                  });
+                  return (
+                    <div>
+                      {/* Filter bar */}
+                      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "10px" }}>
+                        <div style={{ display: "flex", gap: "2px", flexWrap: "wrap" }}>
+                          {[["all","All turns"],["same-turn","Same turn"],["next-turn","Next turn"]].map(([f,l]) => (
+                            <button key={f} onClick={() => setLinesFilter(f)} style={{
+                              padding: "2px 8px", border: `1px solid ${linesFilter===f ? COLORS.green1 : COLORS.border}`,
+                              borderRadius: "3px", background: linesFilter===f ? "#1a2a1a" : "none",
+                              color: linesFilter===f ? COLORS.green2 : COLORS.textDim,
+                              fontFamily: "'Cinzel', serif", fontSize: "8px", letterSpacing: "1px", cursor: "pointer",
+                            }}>{l}</button>
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", gap: "2px", flexWrap: "wrap" }}>
+                          {typeOpts.map(([f,l]) => (
+                            <button key={f} onClick={() => setLinesType(f)} style={{
+                              padding: "2px 8px", border: `1px solid ${linesType===f ? "#7090e0" : COLORS.border}`,
+                              borderRadius: "3px", background: linesType===f ? "#1a1a2a" : "none",
+                              color: linesType===f ? "#9ab0f0" : COLORS.textDim,
+                              fontFamily: "'Cinzel', serif", fontSize: "8px", letterSpacing: "1px", cursor: "pointer",
+                            }}>{l}</button>
+                          ))}
+                        </div>
+                      </div>
+                      {/* Summary line */}
+                      <div style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginBottom: "8px", letterSpacing: "0.5px" }}>
+                        {filtered.length} line{filtered.length !== 1 ? "s" : ""} found
+                        {filtered.filter(l => l.sameTurn).length > 0 && ` · ${filtered.filter(l=>l.sameTurn).length} same-turn`}
+                        {filtered.filter(l => l.badges.includes("2-card")).length > 0 && ` · ${filtered.filter(l=>l.badges.includes("2-card")).length} two-card`}
+                      </div>
+                      {filtered.length === 0 && (
+                        <div style={{ color: COLORS.textDim, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
+                          No reachable lines found with current filter.
+                        </div>
+                      )}
+                      {filtered.map((l, i) => {
+                        const isOpen = linesExpanded.has(l.combo.id);
+                        const allSteps = [...l.tutorSteps, ...l.extraSteps];
+                        const lineColor = l.sameTurn ? COLORS.green1 : l.nextTurnOnly ? "#c8a800" : COLORS.blue;
+                        return (
+                          <div key={l.combo.id} style={{
+                            background: COLORS.bgCard, border: `1px solid ${lineColor}44`,
+                            borderLeft: `3px solid ${lineColor}`, borderRadius: "6px",
+                            marginBottom: "6px", overflow: "hidden",
+                          }}>
+                            {/* Header row */}
+                            <div
+                              onClick={() => setLinesExpanded(prev => { const next = new Set(prev); next.has(l.combo.id) ? next.delete(l.combo.id) : next.add(l.combo.id); return next; })}
+                              style={{ padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "flex-start", gap: "8px" }}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: "11px", color: COLORS.text, fontFamily: "'Crimson Text', serif", lineHeight: 1.4 }}>
+                                  <HighlightWithPopups text={l.combo.name} />
+                                </div>
+                                <div style={{ marginTop: "4px", display: "flex", flexWrap: "wrap", gap: "2px", alignItems: "center" }}>
+                                  {l.badges.map(b => <span key={b} style={badgeStyle(b)}>{b}</span>)}
+                                  {allSteps.length > 0 && (
+                                    <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>
+                                      {allSteps.length} tutor step{allSteps.length !== 1 ? "s" : ""}
+                                      {l.totalCost > 0 ? ` · ~${l.totalCost} mana` : ""}
+                                    </span>
+                                  )}
+                                  {l.available.length > 0 && (
+                                    <span style={{ fontSize: "9px", color: "#5a8a5a", fontFamily: "'Crimson Text', serif" }}>
+                                      have: {l.available.join(", ")}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: "9px", color: COLORS.textDim, flexShrink: 0, paddingTop: "2px" }}>
+                                {isOpen ? "▲" : "▼"}
+                              </div>
+                            </div>
+                            {/* Expanded steps */}
+                            {isOpen && (
+                              <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: "8px 12px", background: "#0d120d" }}>
+                                {/* Tutor steps */}
+                                {allSteps.length > 0 && (
+                                  <div style={{ marginBottom: "8px" }}>
+                                    <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "4px" }}>PATH TO ASSEMBLE</div>
+                                    {allSteps.map((s, j) => (
+                                      <div key={j} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${lineColor}66`, lineHeight: 1.4 }}>
+                                        <span style={{ color: lineColor, marginRight: "4px" }}>{j + 1}.</span>
+                                        {s.tutor && <span style={{ color: "#9ab0f0" }}>{s.tutor}</span>}
+                                        {s.target && <span style={{ color: COLORS.textDim }}> → </span>}
+                                        {s.target && <HighlightWithPopups text={s.target} />}
+                                        {s.note && <span style={{ color: COLORS.textDim, fontSize: "10px" }}> ({s.note})</span>}
+                                        {s.constraint === "discard" && <span style={{ color: "#e09050", fontSize: "10px" }}> [discard required]</span>}
+                                        {s.constraint === "sacrifice" && <span style={{ color: "#e09050", fontSize: "10px" }}> [sacrifice required]</span>}
+                                        {s.constraint === "sacrifice-land" && <span style={{ color: "#e09050", fontSize: "10px" }}> [sacrifice a land]</span>}
+                                        {s.nextTurn && <span style={{ color: "#c8a800", fontSize: "10px" }}> ⚠ next turn</span>}
+                                        {s.isExtra && <span style={{ color: COLORS.textDim, fontSize: "9px" }}> (extra: {s.label})</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {allSteps.length === 0 && (
+                                  <div style={{ fontSize: "11px", color: COLORS.green2, fontFamily: "'Crimson Text', serif", marginBottom: "8px" }}>
+                                    ✓ All pieces already in hand or on battlefield
+                                  </div>
+                                )}
+                                {/* Combo execution steps */}
+                                <div>
+                                  <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "4px" }}>EXECUTION</div>
+                                  {l.combo.lines.map((s, j) => (
+                                    <div key={j} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${COLORS.border}`, lineHeight: 1.4 }}>
+                                      {j + 1}. <HighlightWithPopups text={s} />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+                {/* ── ADVICE TAB ── */}
+                {advisorTab === "advice" && (hand.length + battlefield.length === 0) ? (
                   <div style={{ color: COLORS.textDim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
                     Play some cards to see advice.
                   </div>
-                ) : analysis?.error ? (
+                ) : advisorTab === "advice" ? (
+                  analysis?.error ? (
                   <div style={{ color: COLORS.red, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
                     ⚠ Advisor error: {analysis.error}
                   </div>
@@ -20337,7 +20996,8 @@ if (card === "Talon Gates of Madara") {
                     </div>
                   )}
                   </div>
-                )}
+                )
+                ) : null}
               </div>
             </div>
 
