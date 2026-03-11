@@ -3370,14 +3370,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (gsTargets.length > 0) {
       const best = gsTargets[0];
 
-      // Priority boost: GSZ X=0 → Dryad Arbor fetches a Forest that taps for {G},
-      // which can immediately unlock other plays this same turn (e.g. lets Arbor Elf untap it,
-      // or provides the mana needed to cast a ramp spell that was just out of reach).
-      // In this case GSZ should be ordered first even if other advice has equal priority.
-      const gszUnlocksThisTurn = best.name === "Dryad Arbor" && (() => {
-        // Does Dryad Arbor's {G} enable something else in hand?
+      // Priority boost: GSZ X=0 → Dryad Arbor. Dryad Arbor has summoning sickness, so it
+      // cannot tap for mana the turn it enters UNLESS Earthcraft is in play (which lets
+      // creatures tap immediately). Only flag "unlocks this turn" in that case.
+      const earthcraftActive = board.has("Earthcraft");
+      const gszUnlocksThisTurn = best.name === "Dryad Arbor" && earthcraftActive && (() => {
+        // With Earthcraft, Dryad Arbor can tap for {G} immediately — does that enable another play?
         const manaAfterGSZ = mana - 1; // paid {G} for X=0
-        const arborMana = manaAfterGSZ + 1; // Dryad Arbor enters and can tap for {G}
+        const arborMana = manaAfterGSZ + 1; // Dryad Arbor taps for {G} via Earthcraft
         return hand.some(c => {
           if (c === "Green Sun's Zenith") return false;
           const cmc = getCard(c)?.cmc ?? 99;
@@ -3385,6 +3385,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           return cmc <= arborMana && greenPips <= arborMana;
         });
       })();
+
+      const arborNote = best.name === "Dryad Arbor"
+        ? earthcraftActive
+          ? "Dryad Arbor enters as a Forest and taps for {G} immediately via Earthcraft (no summoning sickness)."
+          : "Dryad Arbor has summoning sickness — it cannot tap for mana until your next untap step. It is still immediately a creature and elf for synergy purposes."
+        : null;
 
       results.push({
         priority: gszUnlocksThisTurn ? 8 : 7,
@@ -3394,7 +3400,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         steps: [
           `Cast Green Sun's Zenith with X=${best.xCost}: pay {${best.xCost}}{G}, find ${best.name} → battlefield.`,
           `${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}.`,
-          ...(gszUnlocksThisTurn ? ["Dryad Arbor enters as a Forest — tap it for {G} to cast additional spells this turn."] : []),
+          ...(arborNote ? [arborNote] : []),
+          ...(gszUnlocksThisTurn ? ["With Earthcraft active, tap Dryad Arbor for {G} to cast additional spells this turn."] : []),
           ...(gsTargets.length > 1 ? [`Other options: ${gsTargets.slice(1,3).map(t => `X=${t.xCost} → ${t.name}`).join(", ")}.`] : []),
           "Zenith shuffles back into library — retrievable via Eternal Witness for repeat use.",
         ],
@@ -3599,6 +3606,33 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ],
         color: "#5dade2",
       });
+    } else if (!board.has("Dryad Arbor") && !inHand.has("Dryad Arbor")) {
+      // All priority lands already in hand/play — Dryad Arbor is the best remaining target
+      // over a basic Forest: same {G} next turn but also a creature/elf immediately.
+      // Exception: if the mana is urgently needed this turn for a specific play, fetch Forest.
+      const needsManaThisTurn = isMyTurn && !board.has("Earthcraft") && hand.some(c => {
+        const cd = getCard(c);
+        if (!cd || cd.type === "land" || c === "Sylvan Scrying") return false;
+        const cmc = cd.cmc ?? 0;
+        const alreadyCastable = mana >= cmc;
+        const castableWithLand = (mana - 2 + 1) >= cmc; // Scrying costs {1}{G}, land enters tapped
+        return !alreadyCastable && castableWithLand;
+      });
+      if (!needsManaThisTurn) {
+        results.push({
+          priority: 4,
+          category: "🌿 LAND TUTOR",
+          headline: "Sylvan Scrying → Dryad Arbor (prefer over Forest)",
+          detail: "All your priority lands are already assembled. When tutoring a basic land with Sylvan Scrying, prefer Dryad Arbor over a Forest — it produces the same {G} next turn but also enters as a 1/1 Dryad Elf creature immediately, boosting elf synergies and enabling creature-based lines.",
+          steps: [
+            "Cast Sylvan Scrying ({1}{G}): search for Dryad Arbor → hand.",
+            "Play Dryad Arbor as your land drop for the turn (enters tapped).",
+            "Untaps next turn — provides {G} plus elf count for Cradle, Priest of Titania, and Archdruid.",
+            "Immediate upside: Natural Order sacrifice target, Chord of Calling convoke, Eldritch Evolution fodder.",
+          ],
+          color: COLORS.green1,
+        });
+      }
     }
   }
 
@@ -3704,20 +3738,42 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- DRYAD ARBOR FETCH SUGGESTION ----
-  // When any fetch land is available (hand or battlefield) and Dryad Arbor is not yet on
-  // the battlefield, always suggest fetching it — it's a creature + elf + forest in one,
-  // enabling Natural Order sacrifice, elf count for Cradle/Priest, and convoke for Chord.
+  // Prefer Dryad Arbor over a plain Forest when cracking a fetch, UNLESS the extra {G}
+  // from a Forest is needed this turn to cast something important (Arbor has summoning sickness).
+  // "Needs mana now" = there is a spell in hand that is exactly 1 mana short without the fetch,
+  // and that spell is worth casting this turn (CMC ≤ mana+1, castable after fetch).
   {
     const fetchesOnBattlefield = battlefield.filter(c => getCard(c)?.tags?.includes("fetch"));
     const fetchesInHandArr     = hand.filter(c => getCard(c)?.tags?.includes("fetch"));
     const hasFetch             = fetchesOnBattlefield.length > 0 || fetchesInHandArr.length > 0;
     const dryadOnBoard         = board.has("Dryad Arbor");
     const dryadInHand          = inHand.has("Dryad Arbor");
-    // Only suggest if: we have a fetch, Dryad is not yet on the battlefield,
-    // not already in hand (where it's a free land play anyway), and not already infinite.
+
     if (hasFetch && !dryadOnBoard && !dryadInHand && !infiniteManaActive) {
       const fetchSource = fetchesOnBattlefield.length > 0 ? fetchesOnBattlefield[0] : fetchesInHandArr[0];
       const fromBf      = fetchesOnBattlefield.length > 0;
+
+      // Detect if the Forest's {G} is needed immediately to cast something this turn.
+      // A spell "needs the mana" if: currently uncastable, but becomes castable with +1{G} from Forest.
+      const manaWithForest = mana + 1;
+      const spellsNeedingForestMana = isMyTurn ? hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd || cd.type === "land") return false;
+        const cmc = cd.cmc ?? 0;
+        const pips = cd.greenPips ?? 0;
+        const alreadyCastable = mana >= cmc && (mana >= pips);
+        const castableWithForest = manaWithForest >= cmc && (manaWithForest >= pips);
+        return !alreadyCastable && castableWithForest;
+      }) : [];
+
+      // Earthcraft lets Arbor tap immediately (it's a creature), so no sick penalty there
+      const earthcraftOnBoard = board.has("Earthcraft");
+      // If Earthcraft is out, Dryad Arbor taps for mana immediately — treat as no sickness
+      const arborEffectivelySick = !earthcraftOnBoard;
+
+      const needsManaThisTurn = arborEffectivelySick && spellsNeedingForestMana.length > 0;
+      const urgentSpell = needsManaThisTurn ? spellsNeedingForestMana[0] : null;
+
       const extraBenefits = [
         board.has("Natural Order")          && "sacrifice to Natural Order",
         inHand.has("Natural Order")         && "sacrifice target for Natural Order cast",
@@ -3727,23 +3783,42 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         board.has("Priest of Titania")      && "adds 1 to Priest of Titania tap",
         board.has("Elvish Archdruid")       && "adds 1 to Archdruid tap",
         board.has("Circle of Dreams Druid") && "adds 1 to Circle of Dreams Druid tap",
-        board.has("Earthcraft")             && "taps for {G} immediately via Earthcraft",
+        earthcraftOnBoard                   && "taps for {G} immediately via Earthcraft (no summoning sickness!)",
         inHand.has("Mox Diamond")           && "pitch to Mox Diamond",
         inHand.has("Force of Vigor")        && "pitch to Force of Vigor (free interaction)",
       ].filter(Boolean);
-      results.push({
-        priority: 6,
-        category: "🌿 FETCH DRYAD ARBOR",
-        headline: `Crack ${fetchSource} → Dryad Arbor (creature + elf + forest in one)`,
-        detail: `Dryad Arbor is simultaneously a Forest land, a 1/1 green creature, and a Dryad Elf. Fetching it instead of a basic Forest provides all the same mana production but with significant creature-based upside. It enters tapped (summoning sick), but all its non-mana uses are available immediately.`,
-        steps: [
-          `${fromBf ? "Crack" : "Play and crack"} ${fetchSource}${fromBf ? " (sacrifice it)" : ""} → search library for Dryad Arbor → battlefield (tapped).`,
-          "Dryad Arbor counts as a creature immediately — untap next turn to tap for {G}.",
-          ...(extraBenefits.length > 0 ? [`Immediate upside: ${extraBenefits.join("; ")}.`] : []),
-          "Note: Dryad Arbor has summoning sickness — it cannot tap for mana until your next untap step.",
-        ],
-        color: COLORS.green1,
-      });
+
+      if (needsManaThisTurn) {
+        // Forest is better right now — but note that Dryad is the default preference
+        results.push({
+          priority: 5,
+          category: "🌿 FETCH LAND",
+          headline: `Crack ${fetchSource} → Forest (need the mana for ${urgentSpell} this turn)`,
+          detail: `You need the extra {G} from a basic Forest to cast ${urgentSpell} this turn. Dryad Arbor has summoning sickness and cannot tap for mana until your next untap step — fetch a Forest instead. Consider fetching Dryad Arbor on a future fetch when mana isn't tight.`,
+          steps: [
+            `${fromBf ? "Crack" : "Play and crack"} ${fetchSource} → search for a basic Forest → battlefield (tapped).`,
+            `Tap the Forest for {G} — you now have ${manaWithForest} mana total.`,
+            `Cast ${urgentSpell} (${getCard(urgentSpell)?.cmc ?? "?"}  mana).`,
+            `Note: future fetches should prefer Dryad Arbor when mana isn't tight.`,
+          ],
+          color: COLORS.green1,
+        });
+      } else {
+        // Dryad Arbor is the better choice
+        results.push({
+          priority: 6,
+          category: "🌿 FETCH DRYAD ARBOR",
+          headline: `Crack ${fetchSource} → Dryad Arbor (creature + elf + forest in one)`,
+          detail: `Dryad Arbor is simultaneously a Forest land, a 1/1 green creature, and a Dryad Elf. You don't need the mana immediately this turn, so the summoning sickness is irrelevant — Arbor untaps next turn and provides all the same {G} production but with significant creature-based upside.`,
+          steps: [
+            `${fromBf ? "Crack" : "Play and crack"} ${fetchSource}${fromBf ? " (sacrifice it)" : ""} → search library for Dryad Arbor → battlefield (tapped).`,
+            "Dryad Arbor counts as a creature immediately — untap next turn to tap for {G}.",
+            ...(extraBenefits.length > 0 ? [`Immediate upside: ${extraBenefits.join("; ")}.`] : []),
+            "Note: Dryad Arbor has summoning sickness — it cannot tap for mana until your next untap step.",
+          ],
+          color: COLORS.green1,
+        });
+      }
     }
   }
 
@@ -5662,6 +5737,31 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ].filter(Boolean),
         color: "#5dade2",
       });
+    } else if (mana >= 1 && !board.has("Dryad Arbor") && !inHand.has("Dryad Arbor")) {
+      // All key lands are already in play — but Dryad Arbor still outperforms a basic Forest
+      // as a fetch target: it's a creature + elf + forest in one. Only prefer Forest if the
+      // extra {G} is needed immediately this turn (Arbor has summoning sickness).
+      const manaWithLand = mana - 1 + 1; // Crop Rotation costs {G}, land enters tapped
+      const needsManaThisTurn = isMyTurn && !board.has("Earthcraft") && hand.some(c => {
+        const cd = getCard(c);
+        if (!cd || cd.type === "land") return false;
+        const cmc = cd.cmc ?? 0;
+        return (mana - 1) < cmc && manaWithLand >= cmc;
+      });
+      if (!needsManaThisTurn) {
+        results.push({
+          priority: 4,
+          category: "🌿 LAND TUTOR",
+          headline: "Crop Rotation → Dryad Arbor (creature + elf + forest)",
+          detail: "All your key lands are already in play. When you need to crack Crop Rotation for a Forest, prefer Dryad Arbor — it's a Forest that also counts as a creature and a Dryad Elf, boosting elf synergies, enabling Natural Order sacrifice, and adding to Gaea's Cradle / Priest of Titania. You don't need the mana immediately this turn, so its summoning sickness is irrelevant.",
+          steps: [
+            "Sacrifice a tapped land. Search for Dryad Arbor → battlefield (tapped).",
+            "Dryad Arbor untaps next turn to tap for {G} — same as a Forest, but also a creature and elf immediately.",
+            "Upside: elf count for Cradle/Priest/Archdruid, Natural Order sacrifice target, Chord of Calling convoke.",
+          ],
+          color: COLORS.green1,
+        });
+      }
     }
   }
 
@@ -14975,6 +15075,41 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     closeContextMenu();
   }
 
+  // crackFetchFor: like crackFetch but forces a specific target ("Dryad Arbor" or "Forest")
+  function crackFetchFor(card, fromZone, forcedTarget) {
+    if (fromZone === "hand") setHand(prev => { const i = prev.indexOf(card); return [...prev.slice(0,i), ...prev.slice(i+1)]; });
+    else if (fromZone === "battlefield") {
+      setBattlefield(prev => { const i = prev.indexOf(card); return [...prev.slice(0,i), ...prev.slice(i+1)]; });
+      setTapped(prev => { const next = new Set(prev); next.delete(card + ":" + battlefield.indexOf(card)); return next; });
+    }
+    setGraveyard(prev => [...prev, card]);
+    const targetIdx = library.findIndex(c => {
+      if (forcedTarget === "Dryad Arbor") return c === "Dryad Arbor";
+      // Forest: any forest-type non-fetch land — explicitly exclude Dryad Arbor
+      if (c === "Dryad Arbor") return false;
+      const cd = getCard(c);
+      if (!cd) return c === "Forest";
+      if (cd.tags?.includes("fetch")) return false;
+      return cd.tags?.includes("forest") || cd.tags?.includes("basic") || c === "Forest";
+    });
+    if (targetIdx === -1) {
+      addLog(`Cracked ${card} → graveyard, but no ${forcedTarget} found in library.`, COLORS.red);
+    } else {
+      const found = library[targetIdx];
+      setLibrary(prev => [...prev.slice(0, targetIdx), ...prev.slice(targetIdx + 1)]);
+      setBattlefield(prev => [...prev, found]);
+      setLandPlayed(true);
+      const note = found === "Dryad Arbor" ? " (creature + elf + forest)" : "";
+      addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${note}`, COLORS.green1);
+      setBattlefield(prev => {
+        const newIdx = prev.length;
+        setTapped(t => { const next = new Set(t); next.add(`${found}:${newIdx}`); return next; });
+        return prev;
+      });
+    }
+    closeContextMenu();
+  }
+
   // ── MOVE CARD (context menu) ─────────────────────────────────
   function openContextMenu(card, index, zone, e) {
     e.preventDefault(); e.stopPropagation();
@@ -15650,18 +15785,41 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             ⟳ Transform → {getCard(card)?.transformsTo ?? getCard(card)?.transformsFrom}
           </div>
         )}
-        {/* Fetch crack */}
+        {/* Fetch crack — two explicit options */}
         {canFetch && (() => {
           const hasDryadOnBoard = battlefield.includes("Dryad Arbor");
           const dryadInLib = library.includes("Dryad Arbor");
-          const fetchTarget = (!hasDryadOnBoard && dryadInLib) ? "Dryad Arbor" : "Forest";
-          const fetchNote = fetchTarget === "Dryad Arbor" ? " (creature + elf + forest)" : "";
+          const forestInLib = library.some(c => {
+            const cd = getCard(c);
+            if (!cd) return c === "Forest";
+            if (cd.tags?.includes("fetch")) return false;
+            return cd.tags?.includes("forest") || cd.tags?.includes("basic") || c === "Forest";
+          });
+          const menuItemStyle = { padding: "6px 14px", cursor: "pointer", letterSpacing: "1px" };
+          const hoverIn  = e => { e.currentTarget.style.background = "#1a1a0a"; };
+          const hoverOut = e => { e.currentTarget.style.background = "transparent"; };
           return (
-            <div onClick={() => crackFetch(card, zone)} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
-              onMouseEnter={e => { e.currentTarget.style.background = "#1a1a0a"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              🌊 Crack Fetch → {fetchTarget}{fetchNote}
-            </div>
+            <>
+              {dryadInLib && !hasDryadOnBoard && (
+                <div onClick={() => crackFetchFor(card, zone, "Dryad Arbor")}
+                  style={{ ...menuItemStyle, color: COLORS.green2 }}
+                  onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+                  🌊 Crack Fetch → Dryad Arbor <span style={{ fontSize: "9px", color: COLORS.textDim }}>(creature + elf + forest)</span>
+                </div>
+              )}
+              {forestInLib && (
+                <div onClick={() => crackFetchFor(card, zone, "Forest")}
+                  style={{ ...menuItemStyle, color: COLORS.gold }}
+                  onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+                  🌊 Crack Fetch → Forest
+                </div>
+              )}
+              {!dryadInLib && !forestInLib && (
+                <div style={{ ...menuItemStyle, color: COLORS.textDim, cursor: "default", fontSize: "10px" }}>
+                  🌊 Crack Fetch — no Forest in library
+                </div>
+              )}
+            </>
           );
         })()}
         {/* Survival of the Fittest / Fauna Shaman: tap to activate from battlefield */}
@@ -18379,10 +18537,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         )}
 
         {phase === "mulligan" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "16px", overflow: "hidden" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "4px 16px 10px", overflow: "auto" }}>
 
             {/* ── Improvement 10: Mulligan depth indicator + CMC chart top-right ── */}
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px", flexShrink: 0 }}>
               <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: COLORS.gold, letterSpacing: "2px" }}>
                 OPENING HAND{mulliganCount > 0 ? ` · MULLIGAN #${mulliganCount}` : ""} · {hand.length} CARDS
               </div>
@@ -18422,7 +18580,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                         {count > 0 && <div style={{ fontSize: "8px", color: bucketColor[label], fontFamily: "'Cinzel', serif" }}>{count}</div>}
                         <div style={{
                           width: 18,
-                          height: Math.max(3, (count / maxVal) * 32),
+                          height: Math.max(3, (count / maxVal) * 24),
                           background: count > 0 ? `${bucketColor[label]}88` : COLORS.border,
                           border: `1px solid ${count > 0 ? bucketColor[label] : COLORS.border}`,
                           borderRadius: "2px 2px 0 0",
@@ -18450,7 +18608,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
               const ORDER = ["LAND","DORK","BIG DORK","MANA","TUTOR","COMBO","DRAW","PROTECT","STAX","REMOVAL","OTHER"];
               const chips = ORDER.filter(k => summary[k]).map(k => ({ label: k, ...summary[k] }));
               return chips.length > 0 ? (
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px", flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "6px", flexShrink: 0 }}>
                   {chips.map(chip => (
                     <div key={chip.label} style={{
                       padding: "2px 8px", borderRadius: "12px",
@@ -18463,25 +18621,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 </div>
               ) : null;
             })()}
-
-            {/* ── Improvement 4: Bottoming instruction banner ── */}
-            {phase2 === "bottoming" && (
-              <div style={{
-                marginBottom: "10px", padding: "8px 14px", flexShrink: 0,
-                background: "#1a1a0a", border: `1px solid ${COLORS.gold}88`,
-                borderRadius: "8px", display: "flex", alignItems: "center", gap: "10px",
-              }}>
-                <span style={{ fontSize: "16px" }}>👇</span>
-                <div>
-                  <div style={{ fontSize: "11px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
-                    CLICK CARDS TO SEND TO BOTTOM
-                  </div>
-                  <div style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginTop: "2px" }}>
-                    Choose {Math.max(0, mulliganCount - 1)} card{Math.max(0, mulliganCount - 1) !== 1 ? "s" : ""} to bottom before seeing the rest of your hand. Click again to undo.
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Card image row — scrolls horizontally on mobile */}
             <div style={{
@@ -18521,6 +18660,25 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
                   }}>✓ CONFIRM</button>
                 )}
+              </div>
+            )}
+
+            {/* ── Bottoming instruction banner — above suggestion ── */}
+            {phase2 === "bottoming" && (
+              <div style={{
+                marginBottom: "8px", padding: "8px 14px", flexShrink: 0,
+                background: "#1a1a0a", border: `1px solid ${COLORS.gold}88`,
+                borderRadius: "8px", display: "flex", alignItems: "center", gap: "10px",
+              }}>
+                <span style={{ fontSize: "16px" }}>👇</span>
+                <div>
+                  <div style={{ fontSize: "11px", color: COLORS.gold, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
+                    CLICK CARDS TO SEND TO BOTTOM
+                  </div>
+                  <div style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", marginTop: "2px" }}>
+                    Choose {Math.max(0, mulliganCount - 1)} card{Math.max(0, mulliganCount - 1) !== 1 ? "s" : ""} to bottom before seeing the rest of your hand. Click again to undo.
+                  </div>
+                </div>
               </div>
             )}
 
@@ -18639,11 +18797,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 <button onClick={nextTurn} style={{ ...btnStyle(COLORS.green2), background: "#1a3a1a" }}
                   onMouseEnter={e => { e.target.style.background = "#1f4a1f"; }}
                   onMouseLeave={e => { e.target.style.background = "#1a3a1a"; }}
-                  title="Untap all, draw a card, advance turn">▶ NEXT TURN</button>
-                <button onClick={() => drawCard(1)} style={btnStyle(COLORS.green1)} title="Draw the top card of your library into your hand (D)">+ DRAW 1</button>
+                  title="Untap all, draw a card, advance turn">▶ <span style={{textDecoration:"underline"}}>N</span>EXT TURN</button>
+                <button onClick={() => drawCard(1)} style={btnStyle(COLORS.green1)} title="Draw the top card of your library into your hand">+ <span style={{textDecoration:"underline"}}>D</span>RAW 1</button>
                 <button onClick={() => drawCard(3)} style={btnStyle(COLORS.border)} title="Draw the top 3 cards of your library">+ DRAW 3</button>
-                <button onClick={untapAll} style={btnStyle(COLORS.border)} title="Untap all permanents without advancing the turn or drawing (U)">↺ UNTAP</button>
-                <button onClick={openTutor} style={btnStyle(COLORS.purple)} title="Search your library by card name, type, or tag — e.g. type 'dork' to find mana creatures (T)">🔍 TUTOR</button>
+                <button onClick={untapAll} style={btnStyle(COLORS.border)} title="Untap all permanents without advancing the turn or drawing">↺ <span style={{textDecoration:"underline"}}>U</span>NTAP</button>
+                <button onClick={openTutor} style={btnStyle(COLORS.purple)} title="Search your library by card name, type, or tag — e.g. type 'dork' to find mana creatures">🔍 <span style={{textDecoration:"underline"}}>T</span>UTOR</button>
                 <button onClick={() => openScry(3)} style={btnStyle(COLORS.blue)} title="Look at the top 3 cards of your library. Choose which to keep on top and which to send to the bottom.">👁 SCRY 3</button>
                 <button onClick={() => openScry(1)} style={btnStyle(COLORS.border)} title="Look at the top card of your library and keep or bottom it.">👁 1</button>
                 {battlefield.includes("Nissa, Resurgent Animist") && (
