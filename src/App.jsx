@@ -11522,6 +11522,35 @@ function HelpModal({ onClose, onStartTour }) {
     changelog: (() => {
       const versions = [
         {
+          version: "2.0.0", date: "2026-03-11", title: "Tutor Chains, Win Detection & Goldfish Polish",
+          added: [
+            "WIN NOW tutor chain detection — advisor detects multi-step sequences (Bellower → Speaker → Ashaya → Elder, Pact chains, etc.) and surfaces them as priority 15 🔥 WIN NOW cards",
+            "Bellower → Temur Sabertooth win line: Bellower ETB finds Speaker → Speaker finds Temur → Temur bounces Hope Tender (infinite mana) → bounces Speaker (repeating ETB) → Duskwatch → win",
+            "Survival of the Fittest discard picker — context menu opens a creature picker before the tutor modal; Fauna Shaman taps on activation, Survival does not",
+            "Survival of the Fittest rich advisor: context-aware prioritised target list (combo pieces → big dorks → draw → protection) with chaining advice",
+            "Duskwatch Mill Win pile: correct assembly shown when infinite mana active — Destiny Spinner + Ashaya + Elvish Reclaimer + Temur + Endurance + Geier Reach Sanitarium + best untapper",
+            "Saved states deck association — states tagged with deckId/deckName, orange ⚠ warning when loading cross-deck state",
+            "Hand graying with infinite mana — all cards in hand fully clickable when infinite mana active",
+            "Hard mulligan gate — gates with no green source or no ramp can never be upgraded past MULLIGAN by combo nearness",
+            "Matrix screensaver — idle card-name rain effect (Shift+L to activate)",
+            "Mulligan CMC curve chart, composition chips, depth indicator, hotkey underlines",
+            "fireETB refactor — ETB triggers now fire consistently from both castFromHand and all tutor-to-battlefield paths",
+            "Lotus Petal sacrifice flow: toggleTap intercepts to sacrifice for {G}; context menu confirms",
+            "Dryad Arbor summoning sickness applied correctly via GSZ (both X=0 auto and X>0 modal paths)",
+          ],
+          fixed: [
+            "Bellower → Speaker → Kogla win detection: Kogla cannot bounce Speaker (not a Human) — two separate blocks now handle Temur vs Kogla paths correctly",
+            "Formidable Speaker big-dork tag removed (no tapsFor — was causing false ramp advice)",
+            "Pact upkeep trigger suppressed when infinite mana is active",
+            "Tour ? button hidden during mulligan and stats phases",
+            "Argothian Elder cast-from-hand advice fires at correct priority with Deserted Temple / Wirewood Lodge context",
+            "Tutor onSelect race condition fixed: callback saved before state reset, then called in setTimeout",
+            "handRef stale closure fixed with useRef + useEffect sync",
+            "Chord of Calling convoke cost correctly calculated for Formidable Speaker",
+            "Eternal Witness deprioritised from tutor targets unless graveyard has high-value pieces",
+          ],
+        },
+        {
           version: "1.9.0", date: "2026-03-07", title: "Card Image Playfield View",
           added: [
             "Card image playfield view in Goldfish — toggle with the 🃏 IMAGE button in the controls strip. Displays hand, battlefield, graveyard, and exile as real Scryfall card art. Click to cast/tap, right-click for context menu, hover for a full-size preview. Images load live from Scryfall and are cached for the session.",
