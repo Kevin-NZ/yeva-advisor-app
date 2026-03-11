@@ -488,6 +488,8 @@ const COMBOS = [
     requires: ["Ashaya, Soul of the Wild"],
     needsAlso: ["Circle of Dreams Druid", "Karametra's Acolyte"],
     needsBigDork: 5,
+    // Untapper required: Quirion/Scryb Ranger (self-bounce via Ashaya), Wirewood Symbiote, or Hyrax Scout + bouncer
+    needsAnyUntapper: true,
     priority: 8,
     type: "infinite-mana",
     lines: [
@@ -2248,6 +2250,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (!hasOne) return { ok: false, missing: combo.needsAnyOf.join(" or ") };
     }
 
+    // needsAnyUntapper: combo needs at least one creature-untap mechanism on board.
+    // Valid untappers for Ashaya loops:
+    //   • Quirion Ranger or Scryb Ranger (return themselves as Forests to untap)
+    //   • Wirewood Symbiote (bounce an elf to untap)
+    //   • Hyrax Tower Scout + a bouncer (Temur Sabertooth or Kogla)
+    //   • Argothian Elder + Wirewood Lodge (untap Elder, then untap the big dork)
+    if (combo.needsAnyUntapper) {
+      const hasQuirionOrScryb = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+      const hasSymbiote = board.has("Wirewood Symbiote");
+      const hasHyraxLoop = board.has("Hyrax Tower Scout") && (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape"));
+      const hasElderLoop = board.has("Argothian Elder") && board.has("Wirewood Lodge");
+      if (!hasQuirionOrScryb && !hasSymbiote && !hasHyraxLoop && !hasElderLoop) {
+        return { ok: false, missing: "an untapper: Quirion Ranger, Scryb Ranger, Wirewood Symbiote, or Hyrax Tower Scout + Temur Sabertooth" };
+      }
+    }
+
     // needsAlso / needsAuraLand: combo needs one of the named lands OR an enchanted Forest.
     // For Hope Tender + Lodge we need ≥3 mana output — needsAuraLand3 flag.
     // When attachments are known, we check precisely whether an aura is on a Forest.
@@ -2578,6 +2596,31 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- CAST FAUNA SHAMAN FROM HAND ----
+  // Fauna Shaman is a repeatable creature tutor. Not tagged big-dork, so needs its own block.
+  // {1}{G} = 2 mana. Activate {G}: discard a creature → search for any creature.
+  if ((isMyTurn || yevaAvailable) && !infiniteManaActive
+      && inHand.has("Fauna Shaman") && !board.has("Fauna Shaman")) {
+    if (canAfford(2, 1) && !results.some(r => r.headline?.includes("Fauna Shaman") && r.priority >= 6)) {
+      const survivalTargets = getSurvivalTargets(battlefield, hand);
+      const topTarget = survivalTargets[0] ?? "a combo piece";
+      results.push({
+        priority: 8,
+        category: "🌱 RAMP",
+        combo: "cast_fauna_shaman",
+        headline: `Cast Fauna Shaman ({1}{G}) — repeatable creature tutor, find ${topTarget} next turn`,
+        detail: `Fauna Shaman is a powerful engine piece. Each turn: tap + discard any creature → search library for any creature and put it into your hand. With enough mana this acts as a tutor every single turn. Priority targets: ${survivalTargets.slice(0,3).join(", ")}.`,
+        steps: [
+          `Cast Fauna Shaman ({1}{G}).`,
+          `Next turn: tap Fauna Shaman + discard a creature → search your library for ${topTarget}.`,
+          `Priority tutoring order: ${survivalTargets.slice(0,4).join(" → ")}.`,
+          "With infinite mana: activate every turn for free — assembles the entire combo pile.",
+        ],
+        color: "#52be80",
+      });
+    }
+  }
+
   // ---- CAST BIG DORK FROM HAND ----
   // When a big mana dork is in hand, affordable this turn, and not yet on the board,
   // advise casting it. This is the primary ramp action in the mid-game.
@@ -2696,9 +2739,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
                      : inHand.has("Wild Growth")   ? "Wild Growth"
                      : inHand.has("Elvish Guidance") ? "Elvish Guidance"
                      : null;
-    const hasForestTarget = battlefield.some(c =>
-      getCard(c)?.type === "land" && (c === "Forest" || getCard(c)?.tags?.includes("forest"))
-    );
+    const hasForestTarget = battlefield.some(c => {
+      const cd = getCard(c);
+      if (cd?.type !== "land") return false;
+      if (c === "Forest" || cd?.tags?.includes("forest")) return true;
+      // Yavimaya, Cradle of Growth makes all lands Forests — it is itself a Forest
+      if (c === "Yavimaya, Cradle of Growth") return true;
+      // Shifting Woodland can be a Forest
+      if (c === "Shifting Woodland") return true;
+      return false;
+    });
     const auraAlreadyOnBoard = auraInHand === "Elvish Guidance"
       ? board.has("Elvish Guidance")                              // only suppress if Guidance itself is already on board
       : board.has("Utopia Sprawl") || board.has("Wild Growth");   // Sprawl/Growth: one is enough
@@ -3522,12 +3572,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Hyrax Tower Scout",        xCost: 3, reason: "untaps a land on ETB — combo piece with Temur Sabertooth" },
       { name: "Seedborn Muse",            xCost: 5, reason: "untaps all permanents each opponent's turn — game-changing engine" },
       { name: "Kogla, the Titan Ape",     xCost: 6, reason: "bouncer + removal, returns humans on attack" },
-    ].filter(t => !board.has(t.name) && !inHand.has(t.name) && effectiveMana >= t.xCost + 1);
+    // Chord costs {X}{G}{G}{G}: three mandatory green pips + X generic (paid by convoke or mana).
+    // Minimum mana to cast Chord for target with CMC=X: X + 3 total (minus convoke creatures).
+    ].filter(t => !board.has(t.name) && !inHand.has(t.name) && effectiveMana >= t.xCost + 3);
 
     if (chordTargets.length > 0) {
       const best = chordTargets[0];
-      const convokeCost = Math.min(convokeTap, best.xCost + 1);
-      const payMana     = Math.max(0, best.xCost + 1 - convokeTap);
+      const totalChordCost = best.xCost + 3; // X + {G}{G}{G}
+      const convokeCost = Math.min(convokeTap, totalChordCost);
+      const payMana     = Math.max(0, totalChordCost - convokeTap);
       const canFlash    = !isMyTurn; // Chord is instant — most powerful at flash timing
 
       results.push({
@@ -13871,6 +13924,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [mobileTab, setMobileTab] = useState("advisor"); // "zones" | "advisor" | "log"
   const [library, setLibrary] = useState([]);
   const [hand, setHand] = useState([]);
+  const handRef = useRef([]); // always-current ref so ETB callbacks read fresh hand
+  useEffect(() => { handRef.current = hand; }, [hand]);
   const [battlefield, setBattlefield] = useState([]);
   const [graveyard, setGraveyard] = useState([]);
   // attachments: Map<auraIndex, targetLandIndex> — which land each enchant-land aura enchants
@@ -14627,6 +14682,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 if (getCard(chosen)?.type === "creature") setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
                 return [...prev, chosen];
               });
+              fireETB(chosen);
             }
             shuffleGSZBack();
             addLog(`Green Sun's Zenith (X=${gszX}) → ${chosen} onto battlefield. GSZ shuffled back.`, COLORS.green2);
@@ -14654,6 +14710,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             return without;
           });
           goldfishAddToBattlefield(chosen);
+          fireETB(chosen);
           addLog(`Nature's Rhythm (X=${rhythmX}) → ${chosen} onto battlefield. Library shuffled. (Harmonize now available from graveyard.)`, COLORS.green2);
         });
         setShowTutor(true); setTutorQuery("");
@@ -14698,6 +14755,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             return without;
           });
           goldfishAddToBattlefield(chosen);
+          fireETB(chosen);
           // Chord's X = creature's CMC; deduct that from the pool (castFromHand already deducted Chord's own cmc:3)
           setManaPool(p => Math.max(0, p - chosenCmc));
           flashMana(-chosenCmc);
@@ -14826,6 +14884,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             setGraveyard(prev => prev.filter(c => c !== chosen));
           }
           goldfishAddToBattlefield(chosen);
+          fireETB(chosen);
           if (finaleX >= 10) addLog(`Finale of Devastation (X=${finaleX}) → ${chosen} onto battlefield. X≥10: all your creatures get haste and +${finaleX}/+${finaleX} this turn!`, COLORS.green3);
           else addLog(`Finale of Devastation (X=${finaleX}) → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
         });
@@ -15094,414 +15153,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       goldfishAddToBattlefield(card);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
       // ── Insidious Fungus: 1/1 creature for {G}. No ETB. Sacrifice ability: {2}, sac → destroy artifact, destroy enchantment, or draw+land ──
-      if (card === "Insidious Fungus") {
-        addLog(`Insidious Fungus enters as a 1/1 creature. Activated ability: pay {2} and sacrifice it to destroy an artifact, destroy an enchantment, OR draw a card and put a land from your hand onto the battlefield tapped.`, COLORS.textMid);
-      }
-      if (card === "Chrome Mox") {
-        const imprintTargets = hand.filter(c => getCard(c)?.type !== "land");
-        if (imprintTargets.length > 0) {
-          setPendingImprint({ moxCard: card });
-          addLog(`Chrome Mox ETB — choose a card to imprint (exile from hand for colored mana).`, COLORS.gold);
-        } else {
-          addLog(`Chrome Mox ETB — no non-land cards in hand to imprint. Mox produces no mana.`, COLORS.textDim);
-        }
-      }
-      // ── Lotus Petal: sacrifice for {G} ──
-      if (card === "Lotus Petal") {
-        // Lotus Petal enters then immediately sacrifices for 1 mana
-        setBattlefield(prev => prev.filter(c => c !== "Lotus Petal"));
-        setGraveyard(prev => [...prev, "Lotus Petal"]);
-        setManaPool(p => p + 1); flashMana(1);
-        addLog(`Lotus Petal: sacrificed for {G} (+1 mana).`, COLORS.green1);
-      }
-      // ── Mox Diamond: discard a land from hand, or exile if no land ──
-      if (card === "Mox Diamond") {
-        const landInHand = hand.find(c => getCard(c)?.type === "land");
-        if (landInHand) {
-          setPendingPicker({ label: "MOX DIAMOND — DISCARD A LAND (or Mox goes to graveyard)", color: COLORS.gold,
-            items: hand.filter(c => getCard(c)?.type === "land").map(c => ({ label: c, sub: "land · discard", key: c, c })),
-            onSelect: ({ c: discardCard }) => {
-              setHand(prev => { const i = prev.indexOf(discardCard); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
-              setGraveyard(prev => [...prev, discardCard]);
-              addLog(`Mox Diamond: discarded ${discardCard} — Mox stays in play, taps for {G}.`, COLORS.gold);
-            },
-            onSkip: () => {
-              setBattlefield(prev => prev.filter(c => c !== "Mox Diamond"));
-              setGraveyard(prev => [...prev, "Mox Diamond"]);
-              addLog(`Mox Diamond: no land to discard — Mox goes to graveyard.`, COLORS.textDim);
-            },
-          });
-          setPickerSelected([]);
-        } else {
-          // No land in hand — Mox goes to graveyard
-          setBattlefield(prev => prev.filter(c => c !== "Mox Diamond"));
-          setGraveyard(prev => [...prev, "Mox Diamond"]);
-          addLog(`Mox Diamond: no land in hand to discard — Mox goes to graveyard.`, COLORS.textDim);
-        }
-      }
-      // Sowing Mycospawn on-cast trigger: search library for any land → put onto battlefield. Library shuffled.
-      if (card === "Sowing Mycospawn") {
-        setTutorLandsOnly(true);
-        setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return without;
-          });
-          setBattlefield(prev => [...prev, chosen]); // land goes directly onto battlefield
-          addLog(`Sowing Mycospawn on-cast → ${chosen} onto battlefield. Library shuffled.`, COLORS.purple);
-        });
-        setShowTutor(true); setTutorQuery("");
-        setTimeout(() => tutorInputRef.current?.focus(), 50);
-        addLog(`Sowing Mycospawn cast — search for a land to put onto the battlefield.`, COLORS.purple);
-      }
-      // Treefolk Harbinger ETB: search for a Treefolk or Forest card, put on top of shuffled library.
-      if (card === "Woodland Bellower") {
-        // ETB: search for a non-legendary green creature with CMC ≤ 3, put onto battlefield. Library shuffled.
-        setTutorMaxCmc(3);
-        setTutorCreaturesOnly(true);
-        setTutorNonLegendary(true);
-        setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return without;
-          });
-          setBattlefield(prev => {
-            const newIdx = prev.length;
-            setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
-            return [...prev, chosen];
-          });
-          addLog(`Woodland Bellower ETB → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
-        });
-        setShowTutor(true); setTutorQuery("");
-        setTimeout(() => tutorInputRef.current?.focus(), 50);
-        addLog(`Woodland Bellower ETB — search for a non-legendary creature with CMC ≤ 3.`, COLORS.green2);
-      }
-
-      if (card === "Treefolk Harbinger") {
-        setTutorTreefolk(true);
-        setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return [chosen, ...without]; // chosen goes on top
-          });
-          addLog(`Treefolk Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.purple);
-        });
-        setShowTutor(true); setTutorQuery("");
-        setTimeout(() => tutorInputRef.current?.focus(), 50);
-        addLog(`Treefolk Harbinger ETB — search for a Treefolk or Forest card.`, COLORS.purple);
-      }
-
-      // ── Elvish Harbinger: ETB puts any Elf card on top of library ──
-      if (card === "Elvish Harbinger") {
-        setTutorElvesOnly(true);
-        setTutorCreaturesOnly(false);
-        setTutorLandsOnly(false);
-        setTutorTreefolk(false);
-        setTutorNonLegendary(false);
-        setTutorMinCmc(null);
-        setTutorMaxCmc(null);
-        setTutorFromGraveyard(false);
-        setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return [chosen, ...without]; // chosen goes on top
-          });
-          addLog(`Elvish Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.green2);
-        });
-        setShowTutor(true); setTutorQuery("elf");
-        setTimeout(() => tutorInputRef.current?.focus(), 50);
-        addLog(`Elvish Harbinger ETB — search for any Elf card → top of library.`, COLORS.green2);
-      }
-
-      // ── Growing Rites of Itlimoc: ETB — look at top 4, may take a creature to hand, rest go to bottom ──
-      if (card === "Growing Rites of Itlimoc") {
-        const top4 = library.slice(0, 4);
-        if (top4.length > 0) {
-          setGrowingRitesCards({ cards: top4, selected: null });
-          addLog(`Growing Rites of Itlimoc ETB — looking at top ${top4.length} card${top4.length !== 1 ? "s" : ""}...`, COLORS.green2);
-        } else {
-          addLog(`Growing Rites of Itlimoc ETB — library is empty.`, COLORS.textDim);
-        }
-      }
-
-      if (card === "Eternal Witness") {
-        if (graveyard.length > 0) {
-          setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "ETERNAL WITNESS — RETURN A CARD FROM GRAVEYARD TO HAND" });
-        } else {
-          addLog(`Eternal Witness ETB — graveyard is empty, no card to return.`, COLORS.textDim);
-        }
-      }
-
-      // ── Skullwinder: return any card from graveyard to hand, then choose opponent to also return from their GY ──
-      if (card === "Skullwinder") {
-        if (graveyard.length > 0) {
-          setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "SKULLWINDER — RETURN A CARD FROM GRAVEYARD TO HAND" });
-          addLog(`Skullwinder ETB — after returning your card, choose an opponent. That opponent also returns a card from their graveyard to their hand.`, COLORS.textMid);
-        } else {
-          addLog(`Skullwinder ETB — graveyard is empty, but you still choose an opponent who returns a card from their graveyard.`, COLORS.textDim);
-        }
-      }
-
-      // ── Reclamation Sage: destroy target artifact or enchantment (opponent's — just log) ──
-      if (card === "Reclamation Sage") {
-        addLog(`Reclamation Sage ETB — destroy target artifact or enchantment.`, COLORS.green1);
-      }
-
-      // ── Manglehorn: destroy target artifact ──
-      if (card === "Manglehorn") {
-        addLog(`Manglehorn ETB — destroy target artifact. Also: artifacts enter tapped.`, COLORS.green1);
-      }
-
-      // ── King of the Coldblood Curse: ETB — up to one other target creature loses all abilities, becomes 4/4 green Lizard ──
-      if (card === "King of the Coldblood Curse") {
-        addLog(`King of the Coldblood Curse ETB — up to one other target creature loses all abilities and becomes a green Lizard creature with base 4/4. (No ETB triggers when it enters as a copy or when abilities are lost.)`, COLORS.green1);
-      }
-
-      // ── Hyrax Tower Scout: untap target creature ──
-      if (card === "Hyrax Tower Scout") {
-        const untapTargets = battlefield.filter(c => getCard(c)?.type === "creature");
-        if (untapTargets.length > 0) {
-          setPendingHyraxUntap(true);
-          addLog(`Hyrax Tower Scout ETB — choose a creature to untap.`, COLORS.green1);
-        } else {
-          addLog(`Hyrax Tower Scout ETB — no creatures to untap.`, COLORS.textDim);
-        }
-      }
-
-      // ── Fierce Empath: search library for creature with CMC ≥ 6 → hand ──
-      if (card === "Fierce Empath") {
-        setTutorCreaturesOnly(true);
-        setTutorMinCmc(6);
-        setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return without;
-          });
-          setHand(prev => [...prev, chosen]);
-          addLog(`Fierce Empath ETB → ${chosen} → hand. Library shuffled.`, COLORS.green2);
-        });
-        setShowTutor(true); setTutorQuery("");
-        setTimeout(() => tutorInputRef.current?.focus(), 50);
-        addLog(`Fierce Empath ETB — search for a creature with CMC ≥ 6.`, COLORS.purple);
-      }
-
-      // ── Disciple of Freyalise: ETB — you may sacrifice another creature, gain X life + draw X (X = that creature's power) ──
-      if (card === "Disciple of Freyalise") {
-        const sacrificeCandidates = battlefield.filter(c => c !== "Disciple of Freyalise").filter(c => getCard(c)?.type === "creature");
-        if (sacrificeCandidates.length > 0) {
-          // Auto-sacrifice the smallest power creature (simulate optimal play: sacrifice biggest for max draw, but in goldfish just pick first)
-          // Show picker so user can choose
-          setPendingPicker({
-            label: "DISCIPLE OF FREYALISE — SACRIFICE A CREATURE (OPTIONAL)", color: COLORS.green2,
-            items: [
-              { label: "(Skip — don't sacrifice)", key: "__skip__", c: "__skip__", i: -1 },
-              ...sacrificeCandidates.map((c, i) => {
-                const cd = getCard(c); const pw = cd?.power ?? cd?.cmc ?? 1;
-                return { label: c, sub: `power ${pw} → draw ${pw} cards`, key: `${c}:${i}`, c, i };
-              }),
-            ],
-            onSelect: ({ c: sc, i: si }) => {
-              if (sc === "__skip__") { addLog("Disciple of Freyalise ETB — chose not to sacrifice.", COLORS.textDim); return; }
-              // Sacrifice the chosen creature
-              setBattlefield(prev => { const idx = prev.indexOf(sc); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
-              setGraveyard(prev => [...prev, sc]);
-              const cd = getCard(sc); const pw = cd?.power ?? cd?.cmc ?? 1;
-              if (pw > 0 && library.length >= pw) {
-                setHand(prev => [...prev, ...library.slice(0, pw)]);
-                setLibrary(prev => prev.slice(pw));
-                addLog(`Disciple of Freyalise ETB — sacrificed ${sc} (power ${pw}): gained ${pw} life, drew ${pw} cards.`, COLORS.blue);
-              } else if (library.length > 0) {
-                setHand(prev => [...prev, ...library]);
-                setLibrary([]);
-                addLog(`Disciple of Freyalise ETB — sacrificed ${sc}: gained ${pw} life, drew ${library.length} cards (library exhausted).`, COLORS.blue);
-              } else {
-                addLog(`Disciple of Freyalise ETB — sacrificed ${sc}: gained ${pw} life, library empty.`, COLORS.textDim);
-              }
-            },
-          });
-          setPickerSelected([]);
-        } else {
-          addLog("Disciple of Freyalise ETB — no other creatures to sacrifice.", COLORS.textDim);
-        }
-      }
-
-      // ── Regal Force: draw cards equal to the number of green creatures you control ──
-      if (card === "Regal Force") {
-        // Count green creatures (devotion > 0 or greenPips > 0) on battlefield including Regal Force itself
-        const greenCreatures = battlefield.filter(c => {
-          const cd = getCard(c);
-          return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.greenPips ?? 0) > 0);
-        }).length;
-        const drawCount = greenCreatures; // Regal Force itself was just added and has greenPips:3
-        if (drawCount > 0 && library.length >= drawCount) {
-          setHand(prev => [...prev, ...library.slice(0, drawCount)]);
-          setLibrary(prev => prev.slice(drawCount));
-          addLog(`Regal Force ETB — drew ${drawCount} cards (${drawCount} green creatures).`, COLORS.blue);
-        } else if (library.length > 0) {
-          setHand(prev => [...prev, ...library]);
-          setLibrary([]);
-          addLog(`Regal Force ETB — drew ${library.length} cards (library exhausted).`, COLORS.blue);
-        } else {
-          addLog(`Regal Force ETB — library empty, no cards drawn.`, COLORS.textDim);
-        }
-      }
-      if (card === "Genesis Hydra") {
-        // After castFromHand deducted the full cost (2 + X), manaPool = 0 (or close to it).
-        // We can't recover X from manaPool here. Instead, estimate X as what was available
-        // before casting minus the base cost of 2. We use the pre-cast manaPool snapshot.
-        // Since we can't easily snapshot pre-cast, use a reasonable approximation:
-        // X = total mana available at cast time - 2. Stored as hydraX via a pre-cast read.
-        // NOTE: hydraX is computed in the line that calls castFromHand in the UI via totalMana.
-        // For now, derive X as: whatever was in manaPool before auto-tap ran + currentMana - 2,
-        // but since we're inside the handler after deduction, use: X = manaPool (remaining after {G}{G} base paid).
-        const hydraX = Math.max(0, manaPool); // manaPool after full deduction = remaining = X
-        const revealed = library.slice(0, hydraX);
-        if (revealed.length > 0) {
-          setPendingGenesisHydra({ x: hydraX, revealed });
-          addLog(`Genesis Hydra (X=${hydraX}) ETB — reveal top ${revealed.length} cards. Choose a non-land permanent with CMC ≤ ${hydraX}.`, COLORS.green2);
-        } else {
-          addLog(`Genesis Hydra ETB — library empty or X=0, nothing to reveal.`, COLORS.textDim);
-        }
-      }
-
-      // ── Invasion of Ikoria: ETB — search for a non-Human creature and put it into your hand ──
-      if (card === "Invasion of Ikoria") {
-        setTutorCreaturesOnly(true);
-        setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return without;
-          });
-          setHand(prev => [...prev, chosen]);
-          addLog(`Invasion of Ikoria ETB → ${chosen} → hand. Library shuffled.`, COLORS.purple);
-        });
-        setShowTutor(true); setTutorQuery("");
-        setTimeout(() => tutorInputRef.current?.focus(), 50);
-        addLog(`Invasion of Ikoria ETB — search for a non-Human creature card.`, COLORS.purple);
-      }
-      if (card === "Nissa, Resurgent Animist") {
-        addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a land enters, add mana of any color; second landfall each turn: search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
-      }
-
-      // ── Tireless Provisioner: landfall — when a land enters, create a Food or Treasure (+1 mana) ──
-      if (card === "Tireless Provisioner") {
-        addLog(`Tireless Provisioner ETB — landfall active: when a land enters the battlefield, create a Food or Treasure token (use + MANA button to add +1 mana each time you play a land).`, COLORS.green2);
-      }
-
-      // ── Kogla, the Titan Ape: ETB — fights up to one target creature you don't control ──
-      if (card === "Kogla, the Titan Ape") {
-        addLog(`Kogla ETB — fights up to one target creature you don't control (each deals damage equal to its power to the other).`, COLORS.green1);
-      }
-
-      // ── Great Oak Guardian: ETB — creatures you control get +2/+2 until EOT and untap ──
-      if (card === "Great Oak Guardian") {
-        const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
-        setTapped(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
-        setSickCreatures(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
-        addLog(`Great Oak Guardian ETB — all ${creatures.length} creature${creatures.length !== 1 ? "s" : ""} get +2/+2 until EOT and untap.`, COLORS.green2);
-      }
-
-      // ── Formidable Speaker: ETB — may discard a card; if you do, search library for any creature → hand ──
-      if (card === "Formidable Speaker") {
-        if (hand.length > 0) {
-          setPendingPicker({
-            label: "FORMIDABLE SPEAKER — DISCARD A CARD TO SEARCH FOR A CREATURE (or skip)",
-            color: COLORS.green2,
-            items: hand.filter(c => c !== "Formidable Speaker").map(c => ({ label: c, sub: `${getCard(c)?.type ?? ""} · CMC ${getCard(c)?.cmc ?? "?"}`, key: c })),
-            onSkip: () => addLog(`Formidable Speaker ETB — no discard. No tutor.`, COLORS.textDim),
-            onSelect: ({ key: discarded }) => {
-              setHand(prev => { const i = prev.indexOf(discarded); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
-              addLog(`Formidable Speaker ETB — discarded ${discarded}. Searching for a creature...`, COLORS.green2);
-              setTutorCreaturesOnly(true);
-              setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false);
-              setTutorNonLegendary(false); setTutorMinCmc(null); setTutorMaxCmc(null); setTutorFromGraveyard(false);
-              setTutorOnSelect(() => (chosen) => {
-                setLibrary(prev => {
-                  const idx = prev.indexOf(chosen); if (idx === -1) return prev;
-                  const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-                  for (let ii = without.length - 1; ii > 0; ii--) { const j = Math.floor(Math.random() * (ii + 1)); [without[ii], without[j]] = [without[j], without[ii]]; }
-                  return without;
-                });
-                setHand(prev => [...prev, chosen]);
-                addLog(`Formidable Speaker ETB → ${chosen} to hand. Library shuffled.`, COLORS.green2);
-              });
-              setShowTutor(true); setTutorQuery("");
-              setTimeout(() => tutorInputRef.current?.focus(), 50);
-            },
-          });
-          setPickerSelected([]);
-        } else {
-          addLog(`Formidable Speaker ETB — no cards in hand to discard.`, COLORS.textDim);
-        }
-      }
-
-      // ── Ley Weaver: Partner with Lore Weaver — target player may search for Lore Weaver ──
-      // Lore Weaver is not in this deck, so just log the trigger.
-      if (card === "Ley Weaver") {
-        addLog(`Ley Weaver ETB — partner trigger: target player may search library for Lore Weaver. (Lore Weaver not in deck — no effect.)`, COLORS.textDim);
-      }
-
-      // ── Woodcaller Automaton: ETB (if cast) — untap target land; it becomes a Treefolk with haste ──
-      if (card === "Woodcaller Automaton") {
-        const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
-        if (lands.length > 0) {
-          setPendingPicker({
-            label: "WOODCALLER AUTOMATON — UNTAP TARGET LAND (becomes Treefolk with haste)",
-            color: COLORS.green2,
-            items: lands.map(({ c, i }) => ({ label: c, sub: "land", key: `${c}:${i}`, c, i })),
-            onSkip: () => addLog(`Woodcaller Automaton ETB — no land untapped.`, COLORS.textDim),
-            onSelect: ({ c, i }) => {
-              const k = cardKey(c, i);
-              setTapped(prev => { const next = new Set(prev); next.delete(k); return next; });
-              addLog(`Woodcaller Automaton ETB — untapped ${c}. It becomes a Treefolk creature with haste (base P/T = Automaton's P/T). Still a land.`, COLORS.green2);
-            },
-          });
-          setPickerSelected([]);
-        } else {
-          addLog(`Woodcaller Automaton ETB — no lands to untap.`, COLORS.textDim);
-        }
-      }
-
-      // ── Talon Gates of Madara: land ETB — up to one target creature phases out ──
-      if (card === "Talon Gates of Madara") {
-        addLog(`Talon Gates of Madara ETB — up to one target creature phases out until your next untap step. (In goldfish: no opponent creatures to phase out — use context menu to phase out one of your own if needed.)`, COLORS.textDim);
-      }
+      fireETB(card);
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
       goldfishAddToBattlefield(card);
@@ -15510,6 +15162,421 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   }
 
   // ── YEVA ────────────────────────────────────────────────────
+  // ── fireETB: run ETB triggers for a card that just entered the battlefield ──
+  // Called from castFromHand AND from tutors that put creatures directly onto the battlefield
+  // (Chord of Calling, Woodland Bellower, Natural Order, Eldritch Evolution, etc.)
+  function fireETB(card) {
+if (card === "Insidious Fungus") {
+  addLog(`Insidious Fungus enters as a 1/1 creature. Activated ability: pay {2} and sacrifice it to destroy an artifact, destroy an enchantment, OR draw a card and put a land from your hand onto the battlefield tapped.`, COLORS.textMid);
+}
+if (card === "Chrome Mox") {
+  const imprintTargets = hand.filter(c => getCard(c)?.type !== "land");
+  if (imprintTargets.length > 0) {
+    setPendingImprint({ moxCard: card });
+    addLog(`Chrome Mox ETB — choose a card to imprint (exile from hand for colored mana).`, COLORS.gold);
+  } else {
+    addLog(`Chrome Mox ETB — no non-land cards in hand to imprint. Mox produces no mana.`, COLORS.textDim);
+  }
+}
+// ── Lotus Petal: sacrifice for {G} ──
+if (card === "Lotus Petal") {
+  // Lotus Petal enters then immediately sacrifices for 1 mana
+  setBattlefield(prev => prev.filter(c => c !== "Lotus Petal"));
+  setGraveyard(prev => [...prev, "Lotus Petal"]);
+  setManaPool(p => p + 1); flashMana(1);
+  addLog(`Lotus Petal: sacrificed for {G} (+1 mana).`, COLORS.green1);
+}
+// ── Mox Diamond: discard a land from hand, or exile if no land ──
+if (card === "Mox Diamond") {
+  const landInHand = hand.find(c => getCard(c)?.type === "land");
+  if (landInHand) {
+    setPendingPicker({ label: "MOX DIAMOND — DISCARD A LAND (or Mox goes to graveyard)", color: COLORS.gold,
+      items: hand.filter(c => getCard(c)?.type === "land").map(c => ({ label: c, sub: "land · discard", key: c, c })),
+      onSelect: ({ c: discardCard }) => {
+        setHand(prev => { const i = prev.indexOf(discardCard); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
+        setGraveyard(prev => [...prev, discardCard]);
+        addLog(`Mox Diamond: discarded ${discardCard} — Mox stays in play, taps for {G}.`, COLORS.gold);
+      },
+      onSkip: () => {
+        setBattlefield(prev => prev.filter(c => c !== "Mox Diamond"));
+        setGraveyard(prev => [...prev, "Mox Diamond"]);
+        addLog(`Mox Diamond: no land to discard — Mox goes to graveyard.`, COLORS.textDim);
+      },
+    });
+    setPickerSelected([]);
+  } else {
+    // No land in hand — Mox goes to graveyard
+    setBattlefield(prev => prev.filter(c => c !== "Mox Diamond"));
+    setGraveyard(prev => [...prev, "Mox Diamond"]);
+    addLog(`Mox Diamond: no land in hand to discard — Mox goes to graveyard.`, COLORS.textDim);
+  }
+}
+// Sowing Mycospawn on-cast trigger: search library for any land → put onto battlefield. Library shuffled.
+if (card === "Sowing Mycospawn") {
+  setTutorLandsOnly(true);
+  setTutorOnSelect(() => (chosen) => {
+    setLibrary(prev => {
+      const idx = prev.indexOf(chosen);
+      if (idx === -1) return prev;
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return without;
+    });
+    setBattlefield(prev => [...prev, chosen]); // land goes directly onto battlefield
+    addLog(`Sowing Mycospawn on-cast → ${chosen} onto battlefield. Library shuffled.`, COLORS.purple);
+  });
+  setShowTutor(true); setTutorQuery("");
+  setTimeout(() => tutorInputRef.current?.focus(), 50);
+  addLog(`Sowing Mycospawn cast — search for a land to put onto the battlefield.`, COLORS.purple);
+}
+// Treefolk Harbinger ETB: search for a Treefolk or Forest card, put on top of shuffled library.
+if (card === "Woodland Bellower") {
+  // ETB: search for a non-legendary green creature with CMC ≤ 3, put onto battlefield. Library shuffled.
+  setTutorMaxCmc(3);
+  setTutorCreaturesOnly(true);
+  setTutorNonLegendary(true);
+  setTutorOnSelect(() => (chosen) => {
+    setLibrary(prev => {
+      const idx = prev.indexOf(chosen);
+      if (idx === -1) return prev;
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return without;
+    });
+    setBattlefield(prev => {
+      const newIdx = prev.length;
+      setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
+      return [...prev, chosen];
+    });
+    addLog(`Woodland Bellower ETB → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+  });
+  setShowTutor(true); setTutorQuery("");
+  setTimeout(() => tutorInputRef.current?.focus(), 50);
+  addLog(`Woodland Bellower ETB — search for a non-legendary creature with CMC ≤ 3.`, COLORS.green2);
+}
+
+if (card === "Treefolk Harbinger") {
+  setTutorTreefolk(true);
+  setTutorOnSelect(() => (chosen) => {
+    setLibrary(prev => {
+      const idx = prev.indexOf(chosen);
+      if (idx === -1) return prev;
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return [chosen, ...without]; // chosen goes on top
+    });
+    addLog(`Treefolk Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.purple);
+  });
+  setShowTutor(true); setTutorQuery("");
+  setTimeout(() => tutorInputRef.current?.focus(), 50);
+  addLog(`Treefolk Harbinger ETB — search for a Treefolk or Forest card.`, COLORS.purple);
+}
+
+// ── Elvish Harbinger: ETB puts any Elf card on top of library ──
+if (card === "Elvish Harbinger") {
+  setTutorElvesOnly(true);
+  setTutorCreaturesOnly(false);
+  setTutorLandsOnly(false);
+  setTutorTreefolk(false);
+  setTutorNonLegendary(false);
+  setTutorMinCmc(null);
+  setTutorMaxCmc(null);
+  setTutorFromGraveyard(false);
+  setTutorOnSelect(() => (chosen) => {
+    setLibrary(prev => {
+      const idx = prev.indexOf(chosen);
+      if (idx === -1) return prev;
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return [chosen, ...without]; // chosen goes on top
+    });
+    addLog(`Elvish Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.green2);
+  });
+  setShowTutor(true); setTutorQuery("elf");
+  setTimeout(() => tutorInputRef.current?.focus(), 50);
+  addLog(`Elvish Harbinger ETB — search for any Elf card → top of library.`, COLORS.green2);
+}
+
+// ── Growing Rites of Itlimoc: ETB — look at top 4, may take a creature to hand, rest go to bottom ──
+if (card === "Growing Rites of Itlimoc") {
+  const top4 = library.slice(0, 4);
+  if (top4.length > 0) {
+    setGrowingRitesCards({ cards: top4, selected: null });
+    addLog(`Growing Rites of Itlimoc ETB — looking at top ${top4.length} card${top4.length !== 1 ? "s" : ""}...`, COLORS.green2);
+  } else {
+    addLog(`Growing Rites of Itlimoc ETB — library is empty.`, COLORS.textDim);
+  }
+}
+
+if (card === "Eternal Witness") {
+  if (graveyard.length > 0) {
+    setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "ETERNAL WITNESS — RETURN A CARD FROM GRAVEYARD TO HAND" });
+  } else {
+    addLog(`Eternal Witness ETB — graveyard is empty, no card to return.`, COLORS.textDim);
+  }
+}
+
+// ── Skullwinder: return any card from graveyard to hand, then choose opponent to also return from their GY ──
+if (card === "Skullwinder") {
+  if (graveyard.length > 0) {
+    setPendingGraveyardPick({ card, mode: "hand", filter: null, label: "SKULLWINDER — RETURN A CARD FROM GRAVEYARD TO HAND" });
+    addLog(`Skullwinder ETB — after returning your card, choose an opponent. That opponent also returns a card from their graveyard to their hand.`, COLORS.textMid);
+  } else {
+    addLog(`Skullwinder ETB — graveyard is empty, but you still choose an opponent who returns a card from their graveyard.`, COLORS.textDim);
+  }
+}
+
+// ── Reclamation Sage: destroy target artifact or enchantment (opponent's — just log) ──
+if (card === "Reclamation Sage") {
+  addLog(`Reclamation Sage ETB — destroy target artifact or enchantment.`, COLORS.green1);
+}
+
+// ── Manglehorn: destroy target artifact ──
+if (card === "Manglehorn") {
+  addLog(`Manglehorn ETB — destroy target artifact. Also: artifacts enter tapped.`, COLORS.green1);
+}
+
+// ── King of the Coldblood Curse: ETB — up to one other target creature loses all abilities, becomes 4/4 green Lizard ──
+if (card === "King of the Coldblood Curse") {
+  addLog(`King of the Coldblood Curse ETB — up to one other target creature loses all abilities and becomes a green Lizard creature with base 4/4. (No ETB triggers when it enters as a copy or when abilities are lost.)`, COLORS.green1);
+}
+
+// ── Hyrax Tower Scout: untap target creature ──
+if (card === "Hyrax Tower Scout") {
+  const untapTargets = battlefield.filter(c => getCard(c)?.type === "creature");
+  if (untapTargets.length > 0) {
+    setPendingHyraxUntap(true);
+    addLog(`Hyrax Tower Scout ETB — choose a creature to untap.`, COLORS.green1);
+  } else {
+    addLog(`Hyrax Tower Scout ETB — no creatures to untap.`, COLORS.textDim);
+  }
+}
+
+// ── Fierce Empath: search library for creature with CMC ≥ 6 → hand ──
+if (card === "Fierce Empath") {
+  setTutorCreaturesOnly(true);
+  setTutorMinCmc(6);
+  setTutorOnSelect(() => (chosen) => {
+    setLibrary(prev => {
+      const idx = prev.indexOf(chosen);
+      if (idx === -1) return prev;
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return without;
+    });
+    setHand(prev => [...prev, chosen]);
+    addLog(`Fierce Empath ETB → ${chosen} → hand. Library shuffled.`, COLORS.green2);
+  });
+  setShowTutor(true); setTutorQuery("");
+  setTimeout(() => tutorInputRef.current?.focus(), 50);
+  addLog(`Fierce Empath ETB — search for a creature with CMC ≥ 6.`, COLORS.purple);
+}
+
+// ── Disciple of Freyalise: ETB — you may sacrifice another creature, gain X life + draw X (X = that creature's power) ──
+if (card === "Disciple of Freyalise") {
+  const sacrificeCandidates = battlefield.filter(c => c !== "Disciple of Freyalise").filter(c => getCard(c)?.type === "creature");
+  if (sacrificeCandidates.length > 0) {
+    // Auto-sacrifice the smallest power creature (simulate optimal play: sacrifice biggest for max draw, but in goldfish just pick first)
+    // Show picker so user can choose
+    setPendingPicker({
+      label: "DISCIPLE OF FREYALISE — SACRIFICE A CREATURE (OPTIONAL)", color: COLORS.green2,
+      items: [
+        { label: "(Skip — don't sacrifice)", key: "__skip__", c: "__skip__", i: -1 },
+        ...sacrificeCandidates.map((c, i) => {
+          const cd = getCard(c); const pw = cd?.power ?? cd?.cmc ?? 1;
+          return { label: c, sub: `power ${pw} → draw ${pw} cards`, key: `${c}:${i}`, c, i };
+        }),
+      ],
+      onSelect: ({ c: sc, i: si }) => {
+        if (sc === "__skip__") { addLog("Disciple of Freyalise ETB — chose not to sacrifice.", COLORS.textDim); return; }
+        // Sacrifice the chosen creature
+        setBattlefield(prev => { const idx = prev.indexOf(sc); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
+        setGraveyard(prev => [...prev, sc]);
+        const cd = getCard(sc); const pw = cd?.power ?? cd?.cmc ?? 1;
+        if (pw > 0 && library.length >= pw) {
+          setHand(prev => [...prev, ...library.slice(0, pw)]);
+          setLibrary(prev => prev.slice(pw));
+          addLog(`Disciple of Freyalise ETB — sacrificed ${sc} (power ${pw}): gained ${pw} life, drew ${pw} cards.`, COLORS.blue);
+        } else if (library.length > 0) {
+          setHand(prev => [...prev, ...library]);
+          setLibrary([]);
+          addLog(`Disciple of Freyalise ETB — sacrificed ${sc}: gained ${pw} life, drew ${library.length} cards (library exhausted).`, COLORS.blue);
+        } else {
+          addLog(`Disciple of Freyalise ETB — sacrificed ${sc}: gained ${pw} life, library empty.`, COLORS.textDim);
+        }
+      },
+    });
+    setPickerSelected([]);
+  } else {
+    addLog("Disciple of Freyalise ETB — no other creatures to sacrifice.", COLORS.textDim);
+  }
+}
+
+// ── Regal Force: draw cards equal to the number of green creatures you control ──
+if (card === "Regal Force") {
+  // Count green creatures (devotion > 0 or greenPips > 0) on battlefield including Regal Force itself
+  const greenCreatures = battlefield.filter(c => {
+    const cd = getCard(c);
+    return cd?.type === "creature" && ((cd.greenPips ?? 0) > 0 || (cd.greenPips ?? 0) > 0);
+  }).length;
+  const drawCount = greenCreatures; // Regal Force itself was just added and has greenPips:3
+  if (drawCount > 0 && library.length >= drawCount) {
+    setHand(prev => [...prev, ...library.slice(0, drawCount)]);
+    setLibrary(prev => prev.slice(drawCount));
+    addLog(`Regal Force ETB — drew ${drawCount} cards (${drawCount} green creatures).`, COLORS.blue);
+  } else if (library.length > 0) {
+    setHand(prev => [...prev, ...library]);
+    setLibrary([]);
+    addLog(`Regal Force ETB — drew ${library.length} cards (library exhausted).`, COLORS.blue);
+  } else {
+    addLog(`Regal Force ETB — library empty, no cards drawn.`, COLORS.textDim);
+  }
+}
+if (card === "Genesis Hydra") {
+  // After castFromHand deducted the full cost (2 + X), manaPool = 0 (or close to it).
+  // We can't recover X from manaPool here. Instead, estimate X as what was available
+  // before casting minus the base cost of 2. We use the pre-cast manaPool snapshot.
+  // Since we can't easily snapshot pre-cast, use a reasonable approximation:
+  // X = total mana available at cast time - 2. Stored as hydraX via a pre-cast read.
+  // NOTE: hydraX is computed in the line that calls castFromHand in the UI via totalMana.
+  // For now, derive X as: whatever was in manaPool before auto-tap ran + currentMana - 2,
+  // but since we're inside the handler after deduction, use: X = manaPool (remaining after {G}{G} base paid).
+  const hydraX = Math.max(0, manaPool); // manaPool after full deduction = remaining = X
+  const revealed = library.slice(0, hydraX);
+  if (revealed.length > 0) {
+    setPendingGenesisHydra({ x: hydraX, revealed });
+    addLog(`Genesis Hydra (X=${hydraX}) ETB — reveal top ${revealed.length} cards. Choose a non-land permanent with CMC ≤ ${hydraX}.`, COLORS.green2);
+  } else {
+    addLog(`Genesis Hydra ETB — library empty or X=0, nothing to reveal.`, COLORS.textDim);
+  }
+}
+
+// ── Invasion of Ikoria: ETB — search for a non-Human creature and put it into your hand ──
+if (card === "Invasion of Ikoria") {
+  setTutorCreaturesOnly(true);
+  setTutorOnSelect(() => (chosen) => {
+    setLibrary(prev => {
+      const idx = prev.indexOf(chosen);
+      if (idx === -1) return prev;
+      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      for (let i = without.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [without[i], without[j]] = [without[j], without[i]];
+      }
+      return without;
+    });
+    setHand(prev => [...prev, chosen]);
+    addLog(`Invasion of Ikoria ETB → ${chosen} → hand. Library shuffled.`, COLORS.purple);
+  });
+  setShowTutor(true); setTutorQuery("");
+  setTimeout(() => tutorInputRef.current?.focus(), 50);
+  addLog(`Invasion of Ikoria ETB — search for a non-Human creature card.`, COLORS.purple);
+}
+if (card === "Nissa, Resurgent Animist") {
+  addLog(`Nissa, Resurgent Animist ETB — landfall ability active: when a land enters, add mana of any color; second landfall each turn: search for an Elf or Elemental → hand. Use the NISSA TUTOR button in controls when a land enters.`, COLORS.green3);
+}
+
+// ── Tireless Provisioner: landfall — when a land enters, create a Food or Treasure (+1 mana) ──
+if (card === "Tireless Provisioner") {
+  addLog(`Tireless Provisioner ETB — landfall active: when a land enters the battlefield, create a Food or Treasure token (use + MANA button to add +1 mana each time you play a land).`, COLORS.green2);
+}
+
+// ── Kogla, the Titan Ape: ETB — fights up to one target creature you don't control ──
+if (card === "Kogla, the Titan Ape") {
+  addLog(`Kogla ETB — fights up to one target creature you don't control (each deals damage equal to its power to the other).`, COLORS.green1);
+}
+
+// ── Great Oak Guardian: ETB — creatures you control get +2/+2 until EOT and untap ──
+if (card === "Great Oak Guardian") {
+  const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+  setTapped(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+  setSickCreatures(prev => { const next = new Set(prev); creatures.forEach(({ c, i }) => next.delete(cardKey(c, i))); return next; });
+  addLog(`Great Oak Guardian ETB — all ${creatures.length} creature${creatures.length !== 1 ? "s" : ""} get +2/+2 until EOT and untap.`, COLORS.green2);
+}
+
+// ── Formidable Speaker: ETB — may discard a card; if you do, search library for any creature → hand ──
+if (card === "Formidable Speaker") {
+  const currentHand = handRef.current; // use ref so we get the post-cast hand, not the stale closure
+  if (currentHand.length > 0) {
+    setPendingPicker({
+      label: "FORMIDABLE SPEAKER — DISCARD A CARD TO SEARCH FOR A CREATURE (or skip)",
+      color: COLORS.green2,
+      items: currentHand.filter(c => c !== "Formidable Speaker").map(c => ({ label: c, sub: `${getCard(c)?.type ?? ""} · CMC ${getCard(c)?.cmc ?? "?"}`, key: c })),
+      onSkip: () => addLog(`Formidable Speaker ETB — no discard. No tutor.`, COLORS.textDim),
+      onSelect: ({ key: discarded }) => {
+        setHand(prev => { const i = prev.indexOf(discarded); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
+        addLog(`Formidable Speaker ETB — discarded ${discarded}. Searching for a creature...`, COLORS.green2);
+        setTutorCreaturesOnly(true);
+        setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false);
+        setTutorNonLegendary(false); setTutorMinCmc(null); setTutorMaxCmc(null); setTutorFromGraveyard(false);
+        setTutorOnSelect(() => (chosen) => {
+          setLibrary(prev => {
+            const idx = prev.indexOf(chosen); if (idx === -1) return prev;
+            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            for (let ii = without.length - 1; ii > 0; ii--) { const j = Math.floor(Math.random() * (ii + 1)); [without[ii], without[j]] = [without[j], without[ii]]; }
+            return without;
+          });
+          setHand(prev => [...prev, chosen]);
+          addLog(`Formidable Speaker ETB → ${chosen} to hand. Library shuffled.`, COLORS.green2);
+        });
+        setShowTutor(true); setTutorQuery("");
+        setTimeout(() => tutorInputRef.current?.focus(), 50);
+      },
+    });
+    setPickerSelected([]);
+  } else {
+    addLog(`Formidable Speaker ETB — no cards in hand to discard.`, COLORS.textDim);
+  }
+}
+
+// ── Ley Weaver: Partner with Lore Weaver — target player may search for Lore Weaver ──
+// Lore Weaver is not in this deck, so just log the trigger.
+if (card === "Ley Weaver") {
+  addLog(`Ley Weaver ETB — partner trigger: target player may search library for Lore Weaver. (Lore Weaver not in deck — no effect.)`, COLORS.textDim);
+}
+
+// ── Woodcaller Automaton: ETB (if cast) — untap target land; it becomes a Treefolk with haste ──
+if (card === "Woodcaller Automaton") {
+  const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+  if (lands.length > 0) {
+    setPendingPicker({
+      label: "WOODCALLER AUTOMATON — UNTAP TARGET LAND (becomes Treefolk with haste)",
+      color: COLORS.green2,
+      items: lands.map(({ c, i }) => ({ label: c, sub: "land", key: `${c}:${i}`, c, i })),
+      onSkip: () => addLog(`Woodcaller Automaton ETB — no land untapped.`, COLORS.textDim),
+      onSelect: ({ c, i }) => {
+        const k = cardKey(c, i);
+        setTapped(prev => { const next = new Set(prev); next.delete(k); return next; });
+        addLog(`Woodcaller Automaton ETB — untapped ${c}. It becomes a Treefolk creature with haste (base P/T = Automaton's P/T). Still a land.`, COLORS.green2);
+      },
+    });
+    setPickerSelected([]);
+  } else {
+    addLog(`Woodcaller Automaton ETB — no lands to untap.`, COLORS.textDim);
+  }
+}
+
+// ── Talon Gates of Madara: land ETB — up to one target creature phases out ──
+if (card === "Talon Gates of Madara") {
+  addLog(`Talon Gates of Madara ETB — up to one target creature phases out until your next untap step. (In goldfish: no opponent creatures to phase out — use context menu to phase out one of your own if needed.)`, COLORS.textDim);
+}
+  }
+
   function castYeva() {
     pushUndo();
     const inHand = hand.includes("Yeva, Nature's Herald");
@@ -15551,8 +15618,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   function tutorCard(card) {
     if (tutorOnSelect) {
       // GSZ mode: callback handles where the card goes
-      tutorOnSelect(card);
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
+      const selectCb = tutorOnSelect;
+      // Reset tutor state FIRST so any fireETB inside the callback can open a new picker/tutor cleanly
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setTutorSpellName("");
+      // Run the callback after state is cleared so ETB triggers (e.g. Formidable Speaker) can set fresh state
+      setTimeout(() => selectCb(card), 0);
       return;
     }
     const idx = library.indexOf(card);
@@ -15631,10 +15701,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       setLandPlayed(true);
       const dryadNote = found === "Dryad Arbor" ? " (Dryad Arbor preferred — creature + elf + forest)" : "";
       addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${dryadNote}`, COLORS.green1);
-      // Fetched land enters tapped
+      // Fetched land enters tapped; Dryad Arbor also has summoning sickness (it's a creature)
       setBattlefield(prev => {
         const newIdx = prev.length; // will be appended
         setTapped(t => { const next = new Set(t); next.add(`${found}:${newIdx}`); return next; });
+        if (found === "Dryad Arbor") setSickCreatures(s => new Set([...s, `${found}:${newIdx}`]));
         return prev;
       });
     }
@@ -15665,11 +15736,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       setLibrary(prev => [...prev.slice(0, targetIdx), ...prev.slice(targetIdx + 1)]);
       setBattlefield(prev => [...prev, found]);
       setLandPlayed(true);
-      const note = found === "Dryad Arbor" ? " (creature + elf + forest)" : "";
+      const note = found === "Dryad Arbor" ? " (creature + elf + forest — summoning sick)" : "";
       addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${note}`, COLORS.green1);
       setBattlefield(prev => {
         const newIdx = prev.length;
         setTapped(t => { const next = new Set(t); next.add(`${found}:${newIdx}`); return next; });
+        if (found === "Dryad Arbor") setSickCreatures(s => new Set([...s, `${found}:${newIdx}`]));
         return prev;
       });
     }
@@ -16460,6 +16532,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                   return without;
                 });
                 goldfishAddToBattlefield(chosen);
+                fireETB(chosen);
                 addLog(`Yisan verse ${nextVerse} → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
               });
               setShowTutor(true); setTutorQuery("");
@@ -16771,6 +16844,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                   return without;
                 });
                 goldfishAddToBattlefield(chosen);
+                fireETB(chosen);
                 addLog(`Skyshroud Poacher → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
               });
               setShowTutor(true); setTutorQuery("elf");
@@ -17333,6 +17407,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 onSelect: ({ c: chosen }) => {
                   setHand(prev => { const i = prev.indexOf(chosen); return i === -1 ? prev : [...prev.slice(0, i), ...prev.slice(i + 1)]; });
                   goldfishAddToBattlefield(chosen);
+                  fireETB(chosen);
                   addLog(`Nylea, Keen-Eyed: paid {3}{G} — ${chosen} onto battlefield.`, COLORS.green3);
                 },
               });
@@ -17554,6 +17629,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                     return without;
                   });
                   goldfishAddToBattlefield(chosen);
+                  fireETB(chosen);
                   setExile(prev => [...prev, "Nature's Rhythm"]);
                   addLog(`Harmonize (X=${harmonizeX}) → ${chosen} onto battlefield. Nature's Rhythm exiled. Library shuffled.`, COLORS.green2);
                 });
@@ -18666,6 +18742,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             return without;
           });
           goldfishAddToBattlefield(chosen);
+          fireETB(chosen);
           addLog(`${noCard} → sacrificed ${sacCard} → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
         });
         setShowTutor(true); setTutorQuery("");
