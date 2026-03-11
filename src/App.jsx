@@ -11522,7 +11522,7 @@ function HelpModal({ onClose, onStartTour }) {
     changelog: (() => {
       const versions = [
         {
-          version: "2.0.0", date: "2026-03-11", title: "Tutor Chains, Win Detection & Goldfish Polish",
+          version: "1.10.0", date: "2026-03-11", title: "Tutor Chains, Win Detection & Goldfish Polish",
           added: [
             "WIN NOW tutor chain detection — advisor detects multi-step sequences (Bellower → Speaker → Ashaya → Elder, Pact chains, etc.) and surfaces them as priority 15 🔥 WIN NOW cards",
             "Bellower → Temur Sabertooth win line: Bellower ETB finds Speaker → Speaker finds Temur → Temur bounces Hope Tender (infinite mana) → bounces Speaker (repeating ETB) → Duskwatch → win",
