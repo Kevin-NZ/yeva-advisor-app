@@ -2903,7 +2903,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         steps: [
           `Cast Badgermole Cub ({1}{G}).`,
           `ETB: target a land you control — it becomes a 1/1 creature with haste (keeps being a land).`,
-          ...(hasCropRot ? [`Cast Crop Rotation ({G}): sacrifice a tapped land, fetch Gaea's Cradle → battlefield.`,
+          ...(hasCropRot ? [`Tap the animated land (or another) for mana, then cast Crop Rotation ({G}) — sacrifice it → fetch Gaea's Cradle → battlefield.`,
             `Tap Gaea's Cradle for ${creaturesAfter}{G} (${creaturesAfter} creatures: Badgermole + animated land + existing creatures).`] : []),
           `Next turn: find Temur Sabertooth or Kogla to enable the Badgermole infinite loop.`,
         ],
@@ -3082,6 +3082,102 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       ],
       color: "#52be80",
     });
+  }
+
+  // ---- CAST MAGUS OF THE CANDELABRA FROM HAND ----
+  // Magus of the Candelabra: {G} creature, {X},{T}: untap X target lands.
+  // With Gaea's Cradle / Nykthos on board this is often +N mana immediately:
+  //   cast Magus ({G}), tap Cradle for N, pay {1} + tap Magus to untap Cradle, retap Cradle.
+  //   Net: N-1 extra mana per activation (Magus has summoning sickness so it activates next turn
+  //   unless Thousand-Year Elixir or haste source is available).
+  // Exception: if Ashaya is on board and a non-sick dork exists, Magus can untap it as a land
+  //   (it's a Forest via Ashaya) and go infinite with ≥3 mana dork.
+  if (inHand.has("Magus of the Candelabra") && !board.has("Magus of the Candelabra")
+      && canAfford(1, 1) && !infiniteManaActive) {
+    const hasCradle    = board.has("Gaea's Cradle");
+    const hasNykthos   = board.has("Nykthos, Shrine to Nyx");
+    const hasItlimoc   = board.has("Itlimoc, Cradle of the Sun");
+    const hasBigLand   = hasCradle || hasNykthos || hasItlimoc;
+    const hasAshaya    = board.has("Ashaya, Soul of the Wild");
+    const hasElixir    = board.has("Thousand-Year Elixir");
+    // Magus combos instantly if Ashaya + big dork (≥3) already on board.
+    // sickCreatures is React UI state; conservatively assume not sick (dork was cast last turn).
+    const bigDorkNow   = battlefield.some(c => {
+      const cd = getCard(c);
+      return cd?.tags?.includes("big-dork");
+    });
+    const canGoInfiniteNow = hasAshaya && bigDorkNow;
+
+    // Cradle mana after adding Magus as a creature (creaturesOnBoard + 1)
+    const cradleManaWithMagus = hasCradle ? creaturesOnBoard + 1 : 0;
+    // Net mana if we tap Cradle, then pay {cradleManaWithMagus-1} to untap it with Magus next turn
+    const cradleNetNextTurn   = hasCradle ? cradleManaWithMagus - 1 : 0;
+
+    const bigLand = hasCradle ? "Gaea's Cradle" : hasNykthos ? "Nykthos, Shrine to Nyx" : hasItlimoc ? "Itlimoc, Cradle of the Sun" : null;
+
+    if (hasBigLand || hasAshaya || canGoInfiniteNow) {
+      // Magus has summoning sickness when cast — loop needs it ready.
+      // Thousand-Year Elixir negates sickness → WIN NOW same turn.
+      const canWinNow = canGoInfiniteNow && hasElixir;
+      const priority = canWinNow                      ? 15
+        : canGoInfiniteNow                            ? 13  // cast now, loop starts next turn
+        : (hasBigLand && hasAshaya)                   ? 11
+        : hasBigLand                                  ? 10
+        : hasAshaya                                   ? 9
+        : 7;
+
+      const headline = canWinNow
+        ? `Cast Magus of the Candelabra ({G}) → Ashaya + big dork + Elixir → INFINITE MANA NOW`
+        : canGoInfiniteNow
+        ? `Cast Magus of the Candelabra ({G}) → Ashaya + big dork → infinite mana next turn`
+        : hasBigLand && hasElixir
+        ? `Cast Magus ({G}) → immediately untap ${bigLand} for +${cradleManaWithMagus - 1} mana (Elixir)`
+        : hasBigLand
+        ? `Cast Magus of the Candelabra ({G}) → untap ${bigLand} next turn (+${cradleNetNextTurn} mana)`
+        : `Cast Magus of the Candelabra ({G}) — untap engine for ${hasAshaya ? "Ashaya loops (find big dork)" : "big lands"}`;
+
+      const detail = canGoInfiniteNow
+        ? canWinNow
+          ? `Thousand-Year Elixir lets Magus activate immediately — no summoning sickness. Ashaya makes all creatures Forests. Tap big dork for ≥3 mana. Pay {2}, tap Magus (X=2): untap Magus + big dork. Net +{G} per loop → infinite mana THIS turn.`
+          : `Cast Magus now ({G}) — it enters with summoning sickness but untaps next turn. Ashaya makes all creatures Forests, so Magus targets the big dork as if it were a land. Next turn: tap big dork ≥3 mana, pay {2} Magus (X=2): untap both → infinite mana loop.`
+        : hasBigLand
+        ? `Cast Magus ({G}). Magus has summoning sickness this turn${hasElixir ? " — but Thousand-Year Elixir lets it activate immediately" : ""}. ${hasElixir ? `Activate Magus (X=${cradleManaWithMagus - 1}): untap ${bigLand} → retap for ${cradleManaWithMagus} mana. Net +${cradleManaWithMagus - 1} this turn.` : `Next turn: pay {${cradleManaWithMagus - 1}}, tap Magus: untap ${bigLand} → retap for ${cradleManaWithMagus} mana (${cradleManaWithMagus} creatures by then). Net +${cradleNetNextTurn} mana per activation.`} Magus also enables infinite mana with Ashaya once you find a big dork.`
+        : `Cast Magus of the Candelabra ({G}). With Ashaya on board, Magus can untap your creatures as if they were lands — enabling infinite mana loops with any dork producing ≥3 mana. Find a big dork next.`;
+
+      results.push({
+        priority,
+        category: canWinNow ? "🔥 WIN NOW" : canGoInfiniteNow ? "🌱 RAMP" : "🌱 RAMP",
+        headline,
+        detail,
+        steps: [
+          `Cast Magus of the Candelabra ({G}).`,
+          ...(canWinNow ? [
+            `Thousand-Year Elixir: Magus can activate immediately.`,
+            `Ashaya makes all creatures Forests — Magus can untap them.`,
+            `Tap your big dork for ≥3 mana.`,
+            `Pay {2}, tap Magus (X=2): untap Magus + big dork. Net +{G} per loop → infinite mana.`,
+          ] : canGoInfiniteNow ? [
+            `Magus has summoning sickness this turn — the loop starts next turn.`,
+            `Next turn: Ashaya makes all creatures Forests — Magus targets the big dork.`,
+            `Tap big dork for ≥3 mana → pay {2}, tap Magus (X=2): untap both. Net +{G} per loop → infinite mana.`,
+          ] : hasBigLand && hasElixir ? [
+            `Thousand-Year Elixir lets Magus activate immediately (ignores summoning sickness).`,
+            `Pay {${cradleManaWithMagus - 1}}, tap Magus (X=${cradleManaWithMagus - 1}): untap ${bigLand}.`,
+            `Retap ${bigLand} for ${cradleManaWithMagus}{G} (now ${creaturesOnBoard + 1} creatures). Net +${cradleManaWithMagus - 1} mana.`,
+          ] : hasBigLand ? [
+            `Magus has summoning sickness — activates starting next turn.`,
+            `Next turn: tap ${bigLand} first, then pay {${cradleNetNextTurn}}, tap Magus (X=${cradleNetNextTurn}): untap ${bigLand}.`,
+            `Retap ${bigLand} for ${cradleManaWithMagus}{G}. Net +${cradleNetNextTurn} mana (Magus adds a creature, boosting Cradle count).`,
+            ...(hasAshaya ? [`With Ashaya on board: Magus can also untap big dorks (they're Forests) — find Priest of Titania or Archdruid for infinite mana.`] : [`Find Ashaya, Soul of the Wild to enable Magus + big dork infinite loop.`]),
+          ] : [
+            `Find a big dork (Priest of Titania, Circle of Dreams Druid, Elvish Archdruid) to go infinite.`,
+            `Ashaya on board: tap dork for ≥3 mana → pay {2} Magus (X=2) → untap Magus + dork. Repeat → infinite.`,
+          ]),
+        ],
+        color: canWinNow ? "#ff6b35" : "#52be80",
+        combo: "magus_ashaya_dork",
+      });
+    }
   }
 
   // ---- HOPE TENDER + BIG LAND ----
@@ -6312,7 +6408,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         headline: "Crop Rotation → Gaea's Cradle → Nature's Rhythm (X=5) → Ashaya → infinite mana" + (hasWinOutlet ? " → WIN" : ""),
         detail: `Crop Rotation fetches Gaea's Cradle (taps for ${cradleManaAfterFetch} mana with ${creaturesOnBoard} creatures). That gives you ${manaAfterCradleForRhythm} total mana — enough to cast Nature's Rhythm for X=5 (cost: {5}{G}{G}=7), putting Ashaya onto the battlefield. With Ashaya in play, ${rangerName} + any tapping dork creates an infinite mana loop. ${outletNote}`,
         steps: [
-          `Cast Crop Rotation ({G}): sacrifice a tapped land, fetch Gaea's Cradle → battlefield.`,
+          `Tap the animated land (or another) for mana, then cast Crop Rotation ({G}) — sacrifice it → fetch Gaea's Cradle → battlefield.`,
           `Tap Gaea's Cradle for ${cradleManaAfterFetch} mana (${creaturesOnBoard} creatures). Total mana: ${manaAfterCradleForRhythm}.`,
           `Cast Nature's Rhythm with X=5 (cost {5}{G}{G}=7 mana): find Ashaya, Soul of the Wild → battlefield.`,
           `Ashaya makes all your creatures into Forests. ${rangerName} can now return a creature-Forest to untap a tapping dork.`,
@@ -6331,7 +6427,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         headline: "Crop Rotation → Geier Reach Sanitarium — WIN THIS TURN",
         detail: "Infinite mana is established, Endurance is ready, and an untap method is in place. Sanitarium is the only missing piece. Crop Rotation fetches it at instant speed — execute the mill win immediately.",
         steps: [
-          "Sacrifice a tapped land. Search for Geier Reach Sanitarium and put it onto the battlefield.",
+          "Tap a land for mana first, then cast Crop Rotation ({G}) — sacrifice that now-tapped land. Search for Geier Reach Sanitarium → battlefield.",
           "Sanitarium enters tapped — untap it with your chosen method.",
           "Begin the Sanitarium mill loop: activate repeatedly, resetting your graveyard with Endurance ETB each cycle.",
           "Opponents draw from an empty library — state-based loss.",
@@ -6370,9 +6466,32 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       //   Early game (ramp insufficient)   → 12 (concrete action, do it now)
       //   Normal (≥2 lands)                → 7
       //   Only 1 land to sac               → 6
+      //
+      // HOWEVER: early-game boost requires the fetch to actually gain mana.
       const cropRotEarlyGame = !rampIsSufficient && !badgermoleOnBoard;
+      // Fetching Cradle when it will tap for 0-1 (≤ the land being sacrificed) is
+      // not a concrete gain — especially when sacrificing the only land.
+      // In that case defer to castable dorks in hand (priority 8, below 1-drop ramp at 10).
+      const cradleNetGain = target === "Gaea's Cradle"
+        ? cradleManaAfterFetch - 1   // Cradle mana minus the land we sac (which tapped for 1)
+        : target === "Nykthos, Shrine to Nyx"
+        ? nykthosNetAfterFetch - 1
+        : 1; // other targets (Deserted Temple, Emergence Zone etc.) — small but fine
+      const sacOnlyLand  = landsOnBoard <= 1;  // Dryad Arbor may be the only land
+      const hasCastableDorkInHand = hand.some(c => {
+        const cd = getCard(c);
+        return cd?.tags?.includes("dork") && cd?.type === "creature" && canAfford(cd.cmc ?? 0, 1);
+      });
+      // Suppress early-game boost if the fetch gains no mana AND we're sacrificing our only land
+      // or a dork in hand is a better immediate play.
+      const earlyGameBoostValid = cropRotEarlyGame
+        && cradleNetGain >= 1          // fetch actually nets mana over what we sac
+        && !(sacOnlyLand && hasCastableDorkInHand); // don't sac sole land when a dork is castable
+
       const cropRotPriority = badgermoleOnBoard && !bouncerAvailable ? 5
-                            : cropRotEarlyGame                       ? 12
+                            : earlyGameBoostValid                    ? 12
+                            : cropRotEarlyGame && sacOnlyLand        ? 5   // only land, bad sac → deprioritise
+                            : cropRotEarlyGame                       ? 8   // early but net-zero fetch
                             : landsOnBoard >= 2                      ? 7
                             :                                          6;
 
@@ -6386,9 +6505,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         priority: cropRotPriority,
         category: "🏔️ LAND TUTOR",
         headline: `Crop Rotation → ${target}${target === "Gaea's Cradle" && cradleManaAfterFetch >= 4 ? ` (+${cradleManaAfterFetch} mana)` : target === "Nykthos, Shrine to Nyx" && nykthosNetAfterFetch >= 3 ? ` (+${nykthosNetAfterFetch} net)` : ""}`,
-        detail: `Crop Rotation sacrifices a land at instant speed to fetch ${target}. ${targetNote}${badgermoleNote}`,
+        detail: `Crop Rotation sacrifices a land at instant speed to fetch ${target}. 💡 Tip: tap the land you intend to sacrifice for mana before casting Rotation — you get the mana and lose the land. ${targetNote}${badgermoleNote}`,
         steps: [
-          `Sacrifice a tapped land. Search for ${target} and put it onto the battlefield.`,
+          `Tap the land you plan to sacrifice for mana first — Crop Rotation's cost removes it before it can tap.`,
+          `Cast Crop Rotation ({G}): sacrifice a (now-tapped) land. Search for ${target} → battlefield.`,
           targetNote,
           ...(badgermoleOnBoard && !bouncerAvailable ? [`⚠ Badgermole Cub is on board — find Temur Sabertooth or Kogla first to set up the infinite loop.`] : []),
           ...(reachablePieces.length > 0 && target === "Gaea's Cradle" ? [`With ${manaAfterCradle} mana total, you can immediately cast: ${reachablePieces.map(p => `${p.name} (${p.cmc})`).join(", ")}.`] : []),
@@ -6414,7 +6534,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           headline: "Crop Rotation → Dryad Arbor (creature + elf + forest)",
           detail: "All your key lands are already in play. When you need to crack Crop Rotation for a Forest, prefer Dryad Arbor — it's a Forest that also counts as a creature and a Dryad Elf, boosting elf synergies, enabling Natural Order sacrifice, and adding to Gaea's Cradle / Priest of Titania. You don't need the mana immediately this turn, so its summoning sickness is irrelevant.",
           steps: [
-            "Sacrifice a tapped land. Search for Dryad Arbor → battlefield (tapped).",
+            "Tap the land you plan to sacrifice for mana first, then cast Crop Rotation ({G}) — sacrifice it and search for Dryad Arbor → battlefield (tapped).",
             "Dryad Arbor untaps next turn to tap for {G} — same as a Forest, but also a creature and elf immediately.",
             "Upside: elf count for Cradle/Priest/Archdruid, Natural Order sacrifice target, Chord of Calling convoke.",
           ],
@@ -6450,7 +6570,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const spentTutor = TUTOR_PRIORITY.find(t => hand.includes(t));
     const nextHand = spentTutor ? hand.filter(c => c !== spentTutor) : hand;
     // Run the path planner on the projected state
-    const lines = findReachableLines(nextHand, nextBf, graveyard, nextMana, null);
+    const lines = findReachableLines(nextHand, nextBf, graveyard, nextMana, null, yisanCounters);
     let bonus = 0;
     if (lines.length > 0) {
       const best = lines[0];
@@ -6474,7 +6594,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // that winNow lines (e.g. cast Ashaya → immediate infinite → win) are surfaced.
   if ((!infiniteManaActive || !trueInfiniteManaActive) && isMyTurn) {
     const deckSet = deckList ? new Set(deckList) : null;
-    const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet);
+    const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
       const isFirst = idx === 0;
@@ -6521,22 +6641,52 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         detail: `[${badgeStr}] ${l.combo.name}. Have: ${alreadyHave}. Need: ${l.needed.join(", ") || "nothing"}.` +
           (l.totalMana > 0 ? ` Estimated cost: ~${l.totalMana} mana (tutor activations + casting pieces).` : "") +
           (!l.canAfford ? ` ⚠ You have ${mana} mana — need ~${l.totalMana - mana} more to execute this turn.` : ""),
-        steps: [
-          ...(l.tutorSteps.length > 0 ? ["── PATH TO ASSEMBLE ──"] : []),
-          ...l.tutorSteps.map(s =>
-            `${s.tutor} → ${s.target}` +
-            (s.note ? ` (${s.note})` : "") +
-            (s.constraint === "discard" ? " — discard a card" :
-             s.constraint === "sacrifice-land" ? " — sacrifice a land" :
-             s.constraint === "sacrifice" || s.constraint === "sacrifice-green" ? " — sacrifice a creature" : "") +
-            (s.isPreExist ? " ⚠ summoning sickness — usable next turn" : "") +
-            (s.isExtra ? ` [extra: ${s.label}]` : "")
-          ),
-          "── EXECUTE COMBO ──",
-          ...l.combo.lines,
-          ...(l.outletSteps?.length > 0 ? ["── WIN OUTLET ──", ...l.outletSteps] : []),
-          ...(l.winNow && l.outletNote ? [`Win: ${l.outletNote} → activate with infinite mana → draw entire library → win.`] : []),
-        ],
+        steps: (() => {
+          // Build assembly steps, injecting an untap note between consecutive activations
+          // of the same tapping on-board tutor (e.g. Fauna Shaman used twice needs Lodge/Elixir).
+          const TAPPING_BOARD_TUTORS = new Set([
+            "Fauna Shaman", "Survival of the Fittest", "Skyshroud Poacher",
+            "Yisan, the Wanderer Bard", "Elvish Reclaimer",
+          ]);
+          const lodgeOnBoard  = board.has("Wirewood Lodge");
+          const elixirOnBoard = board.has("Thousand-Year Elixir");
+          // Wirewood Lodge only untaps Elves
+          const LODGE_ELVES = new Set([
+            "Fauna Shaman", "Elvish Reclaimer", "Yisan, the Wanderer Bard", "Skyshroud Poacher",
+          ]);
+          const assemblySteps = [];
+          if (l.tutorSteps.length > 0) assemblySteps.push("── PATH TO ASSEMBLE ──");
+          for (let si = 0; si < l.tutorSteps.length; si++) {
+            const s = l.tutorSteps[si];
+            const stepStr = `${s.tutor} → ${s.target}` +
+              (s.note ? ` (${s.note})` : "") +
+              (s.constraint === "discard" ? " — discard a card" :
+               s.constraint === "sacrifice-land" ? " — sacrifice a land" :
+               s.constraint === "sacrifice" || s.constraint === "sacrifice-green" ? " — sacrifice a creature" : "") +
+              (s.isPreExist ? " ⚠ summoning sickness — usable next turn" : "") +
+              (s.isExtra ? ` [extra: ${s.label}]` : "");
+            assemblySteps.push(stepStr);
+            // If the NEXT step reuses the same tapping on-board tutor, inject an untap note
+            const next = l.tutorSteps[si + 1];
+            if (next && next.tutor === s.tutor && TAPPING_BOARD_TUTORS.has(s.tutor)) {
+              const isElf = LODGE_ELVES.has(s.tutor);
+              if (lodgeOnBoard && isElf) {
+                assemblySteps.push(`↳ Tap Wirewood Lodge ({G}): untap ${s.tutor} (Elf) — ready for next activation.`);
+              } else if (elixirOnBoard) {
+                assemblySteps.push(`↳ Thousand-Year Elixir: ${s.tutor} can activate again immediately.`);
+              } else {
+                assemblySteps.push(`↳ ⚠ ${s.tutor} is now tapped — find a way to untap it (Wirewood Lodge, Thousand-Year Elixir) before the next activation.`);
+              }
+            }
+          }
+          return [
+            ...assemblySteps,
+            "── EXECUTE COMBO ──",
+            ...l.combo.lines,
+            ...(l.outletSteps?.length > 0 ? ["── WIN OUTLET ──", ...l.outletSteps] : []),
+            ...(l.winNow && l.outletNote ? [`Win: ${l.outletNote} → activate with infinite mana → draw entire library → win.`] : []),
+          ];
+        })(),
         color,
         combo: l.combo.id,
       });
@@ -9268,7 +9418,7 @@ function buildMillSequence(board, hand, pileNeeded = []) {
 // which infinite-mana and win-now combos are reachable, then rank by:
 //   1. Same-turn feasibility  2. Step count  3. Mana cost  4. Combo priority
 // ─────────────────────────────────────────────────────────────────────────────
-function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
+function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0) {
   const board    = new Set(battlefield);
   const inHand   = new Set(hand);
   const inDeckFn = deckList ? (c) => deckList.has(c) : () => true;
@@ -9293,8 +9443,13 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
       note:"{3}: find Forest Elf → battlefield",                putsToBattlefield:true, sorcerySpeed:true },
     // Eladamri, Korvecdal is NOT a tutor — he casts from top of library, not search.
     // Handled by the bespoke ENGINE READY block. Including him here generates false WIN NOW lines.
-    { name:"Yisan, the Wanderer Bard", finds:"creature",   baseCost:2,  usable: board.has("Yisan, the Wanderer Bard"),
-      note:"{2}{G}, tap: find creature with MV = verse counter → battlefield", putsToBattlefield:true, sorcerySpeed:true },
+    // Yisan can only fetch CMC = (yisanCounters + 1) per activation, one activation per turn
+    // (no chaining unless an untap engine is on board). Track verse so tutorCanFind enforces it.
+    { name:"Yisan, the Wanderer Bard", finds:"creature-yisan", baseCost:2,
+      usable: board.has("Yisan, the Wanderer Bard"),
+      yisanVerse: yisanCounters + 1,  // CMC of creature Yisan fetches on next activation
+      note:`{2}{G}, tap: find creature with MV=${yisanCounters + 1} → battlefield`,
+      putsToBattlefield:true, sorcerySpeed:true },
     { name:"Elvish Reclaimer",     finds:"land",           baseCost:1,  usable: board.has("Elvish Reclaimer"),
       note:"{T}, sacrifice a land: find any land → battlefield (tapped)", putsToBattlefield:true, constraint:"sacrifice-land", sorcerySpeed:true },
     // ── Hand spells ─────────────────────────────────────────────────────────
@@ -9358,6 +9513,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
     if (t.maxTargetCmc !== undefined && (cd.cmc ?? 0) > t.maxTargetCmc) return false;
     switch (t.finds) {
       case "creature":           return cd.type === "creature";
+      case "creature-yisan":     return cd.type === "creature" && (cd.cmc ?? 0) === (t.yisanVerse ?? 99);
       case "creature-green":     return cd.type === "creature" && (cd.greenPips ?? 0) > 0;
       case "creature-elf":       return cd.type === "creature" && cd.tags?.includes("elf");
       case "creature-cmc6+":     return cd.type === "creature" && (cd.cmc ?? 0) >= 6;
