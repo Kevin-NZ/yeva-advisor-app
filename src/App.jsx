@@ -2471,16 +2471,167 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- T1 LAND-DROP SETUP ADVICE ----
+  // When the player has 0 mana (no land played yet) and has a land in hand on their turn,
+  // surface explicit advice to play the land — especially Dryad Arbor, which doubles as
+  // a creature. Also detect compound lines: land + Lotus Petal → enables casting ramp
+  // dorks this turn or T2. This fires before the generic ramp advice so the sequencing
+  // advice (land THEN Lotus THEN dork) appears with clear priority.
+  if (isMyTurn && !infiniteManaActive && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && cd?.type === "creature"; }).length === 0) {
+    const landsToDrop = hand.filter(c => getCard(c)?.type === "land");
+    const hasDryadArbor = inHand.has("Dryad Arbor");
+    const hasLotusPetalInHand = inHand.has("Lotus Petal");
+
+    // ── FAST MANA UNLOCKS A RAMP DORK THIS TURN ──────────────────────────────
+    // When we already have some mana and Lotus Petal bridges the gap to a castable
+    // dork, surface this as high-priority actionable advice (not just "fast mana").
+    if (hasLotusPetalInHand && totalMana > 0) {
+      const withPetal = totalMana + 1;
+      const unlocked = hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd || c === "Lotus Petal" || cd.type === "land") return false;
+        return cd.tags?.includes("dork") && cd.cmc <= withPetal && cd.cmc > totalMana
+          && (cd.greenPips ?? 0) <= Math.min(availGreen + 1, withPetal);
+      });
+      if (unlocked.length > 0) {
+        const target = unlocked[0];
+        const alreadyCoveredByT1 = results.some(r => r.combo === "t1_land_cast" && r.headline?.includes(target));
+        if (!alreadyCoveredByT1) {
+          results.push({
+            priority: 14,
+            category: "🌱 T1 SETUP",
+            combo: `t1_petal_unlock_${target.toLowerCase().replace(/[^a-z]/g,"_")}`,
+            headline: `Lotus Petal (free) → sacrifice for {G} → cast ${target} ({${getCard(target)?.cmc}}) this turn`,
+            detail: `You have ${totalMana} mana. Lotus Petal adds a free {G}, bringing you to ${withPetal} — exactly enough to cast ${target} ({${getCard(target)?.cmc}}). Getting ${target} down now is the highest-priority play: it untaps next turn and immediately starts generating mana toward your combo threshold.`,
+            steps: [
+              `Cast Lotus Petal ({0}) — enters immediately.`,
+              `Tap and sacrifice Lotus Petal → add {G} (now at ${withPetal} mana).`,
+              `Cast ${target} ({${getCard(target)?.cmc}}).`,
+              `${target} untaps next turn — tap for mana to accelerate toward your combo threshold.`,
+            ],
+            color: "#52be80",
+          });
+        }
+      }
+    }
+
+    if (landsToDrop.length > 0) {
+      // Choose the best land drop: prefer a green-mana land if it enables a T1 cast
+      // (Boseiju, Forest, etc. tap for {G} immediately). Only fall back to Dryad Arbor
+      // when no green land is available — Dryad Arbor has summoning sickness T1.
+      const greenLandsAvailable = landsToDrop.filter(c =>
+        c !== "Dryad Arbor" && (c === "Forest" || getCard(c)?.tags?.includes("green-mana"))
+      );
+      const bestLand = greenLandsAvailable.length > 0 ? greenLandsAvailable[0]
+                     : hasDryadArbor ? "Dryad Arbor"
+                     : landsToDrop[0];
+      const isDryad = bestLand === "Dryad Arbor";
+
+      // What can we cast THIS turn after playing land + any free mana artifacts?
+      // Dryad Arbor has summoning sickness → 0 mana from it this turn.
+      // Lotus Petal → +1 green this turn.
+      const thisLandMana  = isDryad ? 0 : (getCard(bestLand)?.tags?.includes("produces-green") ? 1 : (bestLand === "Ancient Tomb" ? 0 : 1));
+      // Use the card database tag "green-mana" to detect green-producing lands dynamically.
+      // This covers Forest, Boseiju, Yavimaya, Castle Garenbrig, Shifting Woodland, etc.
+      // Emergence Zone, War Room, Ancient Tomb etc. are NOT tagged green-mana → 0 green.
+      const greenFromLand = isDryad ? 0 : (
+        bestLand === "Forest" ||
+        (getCard(bestLand)?.tags?.includes("green-mana"))
+          ? 1 : 0
+      );
+      const petalBonus    = hasLotusPetalInHand ? 1 : 0;
+      const thisTurnMana  = greenFromLand + petalBonus;
+
+      // Cards castable this turn with land + Lotus Petal
+      const castableNow = hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd || cd.type === "land" || c === "Lotus Petal") return false;
+        return cd.cmc <= thisTurnMana && (cd.greenPips ?? 0) <= (greenFromLand + petalBonus);
+      });
+
+      // What ramp dorks could be cast T2 (land untaps for {G} + Lotus Petal this turn,
+      // OR Dryad Arbor untaps next turn for {G})?
+      // T2 available mana: 1 (land untap or Dryad Arbor untap) + whatever else is in hand
+      const t2MinGreen = 1; // at minimum the land or Dryad Arbor taps next turn
+      const rampDorksForT2 = hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd || c === "Lotus Petal" || cd.type === "land") return false;
+        return cd.tags?.includes("dork") && cd.cmc <= (t2MinGreen + 2) && (cd.greenPips ?? 0) <= t2MinGreen;
+      });
+
+      // Build the compound advice
+      if (isDryad && hasLotusPetalInHand && rampDorksForT2.length > 0) {
+        // Special compound line: Dryad Arbor (land) + Lotus Petal → T2 cast ramp dork
+        const t2Dork = rampDorksForT2[0];
+        const t2DorkCmc = getCard(t2Dork)?.cmc ?? 2;
+        const needsMoreT2 = t2DorkCmc > 2 ? ` + 1 more mana source` : "";
+        results.push({
+          priority: 8,
+          category: "🌱 T1 SETUP",
+          combo: "t1_dryad_petal_setup",
+          headline: `T1: Play Dryad Arbor (land drop) → Lotus Petal (free) → T2: cast ${t2Dork} for early ramp`,
+          detail: `Dryad Arbor enters as a 1/1 Elf Dryad Forest — immediately a creature and elf for synergy (Gaea's Cradle, Priest of Titania, convoke). It has summoning sickness so can't tap for {G} this turn, but untaps on T2. Lotus Petal gives {G} this turn. Together they set up a T2 ${t2Dork} (costs {${t2DorkCmc}}) with ${isDryad ? "Dryad Arbor + any second source" : "your land + Lotus Petal"}${needsMoreT2}. Getting ${t2Dork} down T2 is a strong ramp start — it taps for mana from T3 onward and enables combo lines.`,
+          steps: [
+            "Play Dryad Arbor as your land drop — enters as a 1/1 Elf Dryad Forest (summoning sickness: can't tap for mana this turn).",
+            "Cast Lotus Petal ({0}) — free, enters immediately.",
+            "Tap and sacrifice Lotus Petal → add {G} to your pool (1 mana available this turn).",
+            `T2 (after Dryad Arbor untaps): tap Dryad Arbor for {G}${t2DorkCmc > 1 ? " + additional sources" : ""} → cast ${t2Dork} ({${t2DorkCmc}}).`,
+            `${t2Dork} untaps T3 — tap for mana to accelerate toward your combo threshold.`,
+          ],
+          color: "#52be80",
+        });
+      } else if (!isDryad && greenFromLand > 0) {
+        // Forest or other green land: can tap same turn (land taps immediately for {G})
+        if (castableNow.length > 0) {
+          const target = castableNow[0];
+          results.push({
+            priority: 14,   // Outranks path-planner "NEED X MANA" lines (pri 13-11) — this is actionable NOW
+            category: "🌱 T1 SETUP",
+            combo: "t1_land_cast",
+            headline: `T1: Play ${bestLand} → ${hasLotusPetalInHand ? "Lotus Petal → " : ""}cast ${target} ({${getCard(target)?.cmc}})`,
+            detail: `Play your land drop first to access mana this turn.${hasLotusPetalInHand ? " Lotus Petal adds a free {G}." : ""} Casting ${target} establishes early ramp — untaps next turn and begins generating mana.`,
+            steps: [
+              `Play ${bestLand} as your land drop — tap for {G}.`,
+              ...(hasLotusPetalInHand ? ["Cast Lotus Petal ({0}) → tap and sacrifice for {G}."] : []),
+              `Cast ${target} ({${getCard(target)?.cmc}}).`,
+            ],
+            color: "#52be80",
+          });
+        } else if (hasLotusPetalInHand && rampDorksForT2.length > 0) {
+          const t2Dork = rampDorksForT2[0];
+          results.push({
+            priority: 7,
+            category: "🌱 T1 SETUP",
+            combo: "t1_land_petal_t2",
+            headline: `T1: Play ${bestLand} + Lotus Petal → T2: cast ${t2Dork}`,
+            detail: `Play your land and Lotus Petal this turn to bank {G} and set up an accelerated T2. ${t2Dork} on T2 gets your ramp engine online ahead of curve.`,
+            steps: [
+              `Play ${bestLand} as your land drop.`,
+              "Cast Lotus Petal ({0}) — sacrifice for {G} this turn.",
+              `T2: tap land + any source → cast ${t2Dork} ({${getCard(t2Dork)?.cmc}}).`,
+            ],
+            color: "#52be80",
+          });
+        }
+      }
+    }
+  }
+
   // ---- EARLY GAME RAMP ADVICE ----
   // Dryad Arbor is a land-dork — it doesn't produce mana past the turn it enters.
-  // Only suppress this advice if there's a *creature* dork already on board.
+  // Suppress 1-drop dork advice only when we already have sufficient ramp:
+  //   ≥2 creature dorks on board, OR the board already taps for ≥4 mana naturally.
+  // One dork is never enough — always worth adding another.
   const creatureDorksOnBoard = battlefield.filter(c => {
     const cd = getCard(c);
     return cd?.tags?.includes("dork") && cd?.type === "creature";
   }).length;
-  // No mana cap — with fast mana (Mox Diamond, Wild Growth) you can have 3+ mana and still want a 1-drop dork.
-  // Suppress only when: a creature dork is already on board, or infinite mana is active.
-  if (creatureDorksOnBoard === 0 && !infiniteManaActive) {
+  const boardManaOutput = sumManaPool(battlefield).green + sumManaPool(battlefield).colorless;
+  const rampIsSufficient = creatureDorksOnBoard >= 2 || boardManaOutput >= 4;
+  // Also suppress 1-drop ramp advice if Survival of the Fittest is active on board —
+  // Survival can tutor a better target than a 1-drop dork and should be prioritised.
+  const survivalActive = board.has("Survival of the Fittest");
+  if (!rampIsSufficient && !infiniteManaActive && !survivalActive) {
     const dorks1 = hand.filter(c => {
       const cd = getCard(c);
       return cd?.tags?.includes("1drop") && cd?.tags?.includes("dork") && canAfford(cd.cmc ?? 0, 1);
@@ -2494,7 +2645,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? ` Also: tap when casting ${legendsInHand[0]} to make it uncounterable.`
         : isHalfling ? " Also shields legendary spells from counterspells when used to cast them." : "";
       results.push({
-        priority: 7,
+        priority: 10,  // Castable this turn — beats NEXT TURN path planner lines (pri 9-7)
         category: "🌱 RAMP",
         headline: `Cast ${dork} ({1}) — establishes early mana ramp${isHalfling ? " + counterspell protection" : ""}`,
         detail: `Mana dorks are the engine of this deck. Getting one down now accelerates you towards your 5-6 mana threshold where the deck becomes explosive.${halflingHint}`,
@@ -2537,30 +2688,44 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // we lack the mana to execute it), Elder deserves top billing.
       const elderPriorityBoost = !hasAshaya && !infiniteManaActive
         && results.filter(r => r.priority >= 8).length === 0;
+      // Elder has summoning sickness the turn it's cast — its tap ability can't be used
+      // until next turn even though Ashaya makes it a Forest. Category and steps must reflect this.
+      const elderAlreadyOnBoard = board.has("Argothian Elder");
+      const elderWinsNow = hasAshaya && elderAlreadyOnBoard; // already untapped, no sickness
       results.push({
         priority: hasAshaya ? 12 : (elderPriorityBoost ? 9 : 7),
-        category: hasAshaya ? "⚡ CAST TO WIN" : "🌱 RAMP",
-        headline: hasAshaya
-          ? "Cast Argothian Elder → enters as Forest via Ashaya → untaps itself → infinite mana"
+        category: elderWinsNow ? "⚡ CAST TO WIN"
+                : hasAshaya   ? "⚡ CAST TO ENABLE MANA LOOP"
+                :               "🌱 RAMP",
+        headline: elderWinsNow
+          ? "Argothian Elder → tap as Forest via Ashaya → untaps itself → infinite mana NOW"
+          : hasAshaya
+          ? "Cast Argothian Elder → NEXT TURN: enters as Forest via Ashaya → infinite mana"
           : "Cast Argothian Elder ({3}{G}) — untaps two lands each activation (ramp + combo setup)",
         detail: hasAshaya
-          ? "Argothian Elder + Ashaya, Soul of the Wild = infinite mana. Elder enters as a Forest via Ashaya. Tap Elder as a Forest for {G}, activate Elder's ability: untap Elder + any other land. Elder re-untaps itself → loop infinitely."
+          ? elderWinsNow
+            ? "Argothian Elder + Ashaya, Soul of the Wild = infinite mana. Tap Elder as a Forest for {G}, activate Elder's ability: untap Elder + any other land. Elder re-untaps itself → loop infinitely."
+            : "Cast Argothian Elder this turn. ⚠ Summoning sickness: Elder can't tap its ability the turn it enters. Next turn: tap Elder as a Forest for {G}, activate Elder's untap ability targeting Elder + any other land — Elder re-untaps itself → loop infinitely."
           : `Argothian Elder's tap ability untaps any two lands you control. ${infiniteNote} Key combo piece with Ashaya (infinite mana) and Wirewood Lodge (repeated activations).`,
         steps: [
-          `Cast Argothian Elder ({3}{G}).`,
-          ...(hasAshaya ? [
-            "Elder enters as a Forest via Ashaya, Soul of the Wild.",
-            "Tap Elder as a Forest for {G}. Activate Elder's tap ability: untap Elder + any other land.",
-            "Elder untaps itself → repeat → infinite mana.",
+          ...(elderWinsNow ? [
+            "Tap Argothian Elder as a Forest for {G} (via Ashaya).",
+            "Activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → repeat → infinite mana.",
+          ] : hasAshaya ? [
+            `Cast Argothian Elder ({3}{G}).`,
+            "⚠ Summoning sickness: Elder cannot use its tap ability this turn.",
+            "Next turn: untap Elder. Tap Elder as a Forest for {G} (Ashaya makes all creatures Forests).",
+            "Activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → infinite mana.",
           ] : [
+            `Cast Argothian Elder ({3}{G}).`,
             "Tap ability ({T}): untap two target lands you control.",
             bigLands.length >= 1
               ? `Untap ${bigLands.slice(0,2).join(" + ")} — nets significant extra mana each turn.`
               : "Use each turn to untap your two biggest mana producers.",
-            "Once Ashaya is in play: Elder + Ashaya = infinite mana immediately.",
+            "Once Ashaya is in play: Elder + Ashaya = infinite mana (next turn after Elder enters).",
           ]),
         ],
-        color: hasAshaya ? "#e67e22" : "#52be80",
+        color: elderWinsNow ? "#ff6b35" : hasAshaya ? "#e67e22" : "#52be80",
       });
     }
   }
@@ -2703,7 +2868,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const cd = getCard(c);
       return cd?.type === "land" && (cd?.tags?.includes("basic") || cd?.tags?.includes("forest") || c === "Forest");
     }).length;
-    const tappableCreatures = battlefield.filter(c => getCard(c)?.type === "creature").length;
+    const tappableCreatures = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
     const extraMana = Math.min(tappableCreatures, basicLands); // each creature can untap one basic
 
     if (basicLands > 0 && tappableCreatures > 0) {
@@ -3009,7 +3174,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (!hasAshaya && !inHand.has("Ashaya, Soul of the Wild"))
       survTargets.push({ name: "Ashaya, Soul of the Wild", reason: "makes all creatures Forests — unlocks every infinite mana loop", priority: 12 });
     if (hasAshaya && !hasElder && !inHand.has("Argothian Elder"))
-      survTargets.push({ name: "Argothian Elder", reason: "becomes a Forest via Ashaya → untaps itself → infinite mana", priority: 13 });
+      survTargets.push({ name: "Argothian Elder", reason: "becomes a Forest via Ashaya → next turn: untaps itself → infinite mana (summoning sickness)", priority: 13 });
     if (hasAshaya && !hasQuirion && !inHand.has("Quirion Ranger") && !inHand.has("Scryb Ranger"))
       survTargets.push({ name: "Quirion Ranger", reason: "bounces itself as a Forest to untap a big dork — infinite mana loop", priority: 11 });
     if (!hasTemur && !inHand.has("Temur Sabertooth"))
@@ -3474,8 +3639,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         follow: "",
       };
 
+      // Natural Order is an immediately castable tutor that puts a major piece onto battlefield.
+      // Raise priority above lookahead-boosted ONE PIECE AWAY (cap 12) when it's a clear direct play.
+      const noPriority = infiniteManaActive ? 11 : 13;
       results.push({
-        priority: 9,
+        priority: noPriority,
         category: "🎯 NATURAL ORDER",
         headline: `Natural Order → ${best.name}`,
         detail: `Sacrifice a green creature to put ${best.name} directly onto the battlefield. ${best.why}. Natural Order costs {2}{G}{G} — pay 4 total.`,
@@ -6155,11 +6323,40 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
 
+  // ── Next-turn lookahead ───────────────────────────────────────────────────
+  // Given a card that would be added to the battlefield next turn, simulate the
+  // resulting game state and run findReachableLines to score the resulting position.
+  // Returns a priority bonus: +3 WIN NOW next turn, +2 same-turn line, +1 any reachable
+  // line, 0 nothing changes. Used to rank ONE PIECE AWAY advice cards.
+  const _nextTurnLookaheadCache = new Map();
+  function nextTurnLookahead(addCard) {
+    if (_nextTurnLookaheadCache.has(addCard)) return _nextTurnLookaheadCache.get(addCard);
+    // Projected board next turn: current battlefield + the found card
+    const nextBf = [...battlefield, addCard];
+    // Project mana: current sumManaPool on the new board (untap step resets all sources)
+    const nextPool = sumManaPool(nextBf);
+    const nextMana = nextPool.green + nextPool.colorless;
+    // Run the path planner on the projected state
+    const lines = findReachableLines(hand, nextBf, graveyard, nextMana, null);
+    let bonus = 0;
+    if (lines.length > 0) {
+      const best = lines[0];
+      if (best.winNow)          bonus = 3;  // Wins immediately next turn
+      else if (best.sameTurn)   bonus = 2;  // Affordable same-turn combo line
+      else if (best.canAfford)  bonus = 1;  // Reachable line
+      else                      bonus = 0;  // Still missing pieces
+    }
+    _nextTurnLookaheadCache.set(addCard, bonus);
+    return bonus;
+  }
+
   // ---- FIND INFINITE MANA / WIN-NOW PATH PLANNER -------------------------
   // Delegates entirely to findReachableLines() which does depth-3 forward-chain
   // search over all infinite-mana and win-now combos using the tutor registry.
   // Top 3 reachable lines are surfaced as high-priority advice cards.
-  if (!infiniteManaActive && isMyTurn) {
+  // Also runs in bootstrap mode (infiniteManaActive but !trueInfiniteManaActive) so
+  // that winNow lines (e.g. cast Ashaya → immediate infinite → win) are surfaced.
+  if ((!infiniteManaActive || !trueInfiniteManaActive) && isMyTurn) {
     const deckSet = deckList ? new Set(deckList) : null;
     const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet);
     const topLines = lines.slice(0, 3);
@@ -6173,7 +6370,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : l.nextTurnOnly
         ? (isFirst ? "⚡ FIND INFINITE MANA — NEXT TURN" : "⚡ ALT MANA LINE — NEXT TURN")
         : (isFirst ? `⚡ FIND INFINITE MANA — NEED ${l.totalMana} MANA` : `⚡ ALT MANA LINE — NEED ${l.totalMana} MANA`);
-      const pri = l.winNow ? 15 - idx : 13 - idx;
+      // Priority tiers for path planner lines:
+      // • WIN NOW (all pieces castable this turn)          → 15, 14, 13
+      // • FIND INFINITE MANA (affordable same turn)        → 13, 12, 11
+      // • NEXT TURN lines (one step away, have the mana)  →  9,  8,  7  (below castable ramp ~9)
+      // • NEED X MANA lines (can't afford yet)            →  6,  5,  4  (informational only)
+      const pri = l.winNow    ? 15 - idx
+                : l.sameTurn  ? 13 - idx
+                : l.nextTurnOnly ? 9 - idx
+                : 6 - idx;
 
       const stepSummary = l.tutorSteps.length === 0
         ? "All pieces available — cast to assemble."
@@ -6362,8 +6567,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         } else {
         const tutorOptions = tutorOptionsEarly;
         const speakerIsTutor = tutorOptions.length > 0 && tutorOptions[0].startsWith("Formidable Speaker");
+        // Next-turn lookahead: score how good the board becomes if we find this piece.
+        // Only run when not already in infinite mana (lookahead is noise when infinite is active —
+        // every line looks like WIN NOW). Cap at 12 so OPA never beats:
+        //   - INFINITE MANA ONLINE / CAST TO ENABLE (priority 13+)
+        //   - Path-planner WIN NOW (priority 15)
+        //   - NATURAL ORDER bespoke (priority 11-12) when it's a direct play
+        // Lookahead is a tiebreaker within the ONE PIECE AWAY tier only.
+        const lookaheadBonus = (isMyTurn && !infiniteManaActive) ? nextTurnLookahead(missingCard) : 0;
+        const opaPriority = Math.min(12, combo.priority + 1 + lookaheadBonus);
         results.push({
-          priority: combo.priority + 1,
+          priority: opaPriority,
           category: "🎯 ONE PIECE AWAY",
           headline: speakerIsTutor
             ? `Cast Formidable Speaker → ETB finds ${missingCard} → enables ${combo.name}`
@@ -8169,20 +8383,34 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // Lotus Petal — free, sacrifice for {G}. Always net-positive to play.
     if (inHand.has("Lotus Petal") && !infiniteManaActive) {
-      const newMana = mana + 1;
-      // Find the best thing we can now cast with the extra mana
+      // Factor in mana from a green land drop this turn (not Dryad Arbor — summoning sickness).
+      // Use the "green-mana" tag from CARDS to detect green-producing lands dynamically.
+      const _greenLandsInHand = hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd || cd.type !== "land" || c === "Dryad Arbor") return false;
+        return c === "Forest" || cd.tags?.includes("green-mana");
+      });
+      const _landDropGreen = isMyTurn && _greenLandsInHand.length > 0 ? 1 : 0;
+      const newMana = mana + 1 + _landDropGreen;
+      // Find the best thing we can now cast with the extra mana (Petal + optional land drop)
       const nowAffordable = hand.filter(c => {
         const cd = getCard(c);
-        if (!cd || c === "Lotus Petal") return false;
-        return cd.cmc <= newMana && cd.cmc > mana && cd.type !== "land";
+        if (!cd || c === "Lotus Petal" || cd.type === "land") return false;
+        return cd.cmc <= newMana && cd.cmc > (mana + _landDropGreen) && (cd.greenPips ?? 0) <= (1 + _landDropGreen);
       });
       const unlocks = nowAffordable.length > 0
         ? ` — enables casting ${nowAffordable.map(c => `${c} ({${getCard(c).cmc}})`).join(", ")}`
         : "";
+      const _hasDryadOnly = isMyTurn && inHand.has("Dryad Arbor") && _greenLandsInHand.length === 0;
+      const _sequencingTip = _hasDryadOnly
+        ? "Dryad Arbor has summoning sickness — play it as your land drop for the creature/elf benefit, then sacrifice Lotus Petal for {G} this turn."
+        : _landDropGreen > 0
+          ? "Play your green land first, then sacrifice Lotus Petal for {G} — together they maximise mana this turn."
+          : "A free +1 mana that accelerates your turn. Play it before your land drop to maximise mana.";
       fastManaInHand.push({
         name: "Lotus Petal",
         headline: `Play Lotus Petal (free) → sacrifice for {G}${unlocks}`,
-        detail: "Lotus Petal enters for free and taps to add {G} of any colour (then sacrifices). A free +1 mana that accelerates your turn. Play it before your land drop to maximise mana this turn.",
+        detail: `Lotus Petal enters for free and taps to add {G} of any colour (then sacrifices). ${_sequencingTip}`,
         steps: [
           "Cast Lotus Petal ({0}) — it enters the battlefield immediately.",
           "Tap and sacrifice Lotus Petal to add {G} to your mana pool.",
@@ -8469,6 +8697,223 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   return { results: [...normal, ...suppressed], infiniteManaActive, activeComboName };
 }
 
+// ============================================================
+// NEXT-TURN SIMULATOR
+//
+// For each top advice result from the current turn, this function:
+//   1. Clones the current board state
+//   2. Executes the suggested play (card cast + tutor ETBs) using
+//      the same simPlayCard engine the goldfish simulator uses
+//   3. Keeps executing affordable follow-up plays in the same turn
+//      (e.g. cast the tutor target once it's in hand)
+//   4. Simulates the untap step (sickness cleared, mana recalculated)
+//   5. Runs analyzeGameState on the resulting board to see what's
+//      available next turn
+//
+// Returns an array of branches sorted by next-turn outcome quality:
+//   [{ actionLabel, actionDescription, nextAdvice, topResult, score }]
+//
+// No draw step — we only work with known cards (deterministic).
+// ============================================================
+function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], attachments = null, yisanCounters = 0, deckList = null, threatLevel = "low", opponentOpenMana = false }) {
+
+  // Score a next-turn analysis result for branch comparison.
+  // Higher = better outcome.
+  function scoreOutcome(analysis) {
+    if (!analysis || !analysis.results) return -999;
+    const top = analysis.results.filter(r => !r.isSuppressed)[0];
+    if (!top) return -10;
+    const p = top.priority ?? 0;
+    // Bonus for win-now outcomes
+    const isWin = top.category && (
+      top.category.includes("WIN NOW") || top.category.includes("CAST TO WIN") ||
+      top.category.includes("WIN PILE") || top.category.includes("POISON WIN")
+    );
+    return p + (isWin ? 100 : 0) + (analysis.infiniteManaActive ? 20 : 0);
+  }
+
+  // Execute a single branch: clone state, run plays, untap, analyze.
+  // `primaryAdvice` is the advice item whose play we're trying to action first.
+  function executeBranch(primaryAdvice) {
+    // Deep-clone mutable state (arrays only — no library needed)
+    const bf   = [...battlefield];
+    const h    = [...hand];
+    const gy   = [...graveyard];
+    const sick = new Set(); // nothing is sick at start of our turn (untap step already happened)
+    const simAttachments = attachments ? new Map(attachments) : new Map();
+
+    // Minimal library stub — only needed for tutor ETBs. We use a fake library
+    // containing all CARDS keys not currently on battlefield or hand/grave, so
+    // tutors can find their targets deterministically.
+    const knownCards = new Set([...bf, ...h, ...gy]);
+    const library = Object.keys(CARDS).filter(c => !knownCards.has(c) && !getCard(c)?.tags?.includes("basic") && !getCard(c)?.tags?.includes("commander"));
+    // Add a few Forests to the library so fetch/land tutors work
+    library.push("Forest", "Forest", "Forest");
+
+    const castLog = new Set();
+    const simState = {
+      get hand()        { return h; },
+      battlefield:      bf,
+      graveyard:        gy,
+      library,
+      get sickSet()     { return sick; },
+      get landPlayed()  { return _landPlayed; },
+      set landPlayed(v) { _landPlayed = v; },
+      simAttachments,
+      castLog,
+    };
+    let _landPlayed = false;
+    const playCard = (card, idx, mp = null) => simPlayCard(card, idx, simState, mp);
+
+    // Recalculate available mana from the fully untapped board
+    let manaPool = sumManaPool(bf, null, simAttachments.size > 0 ? simAttachments : null);
+
+    // ── Try to execute the primary advice play ──────────────────
+    const cardToPlay = extractPlayableCard(primaryAdvice, h, bf);
+    let actionDescription = primaryAdvice.headline;
+    let actionedSomething = false;
+
+    if (cardToPlay) {
+      const idx = h.indexOf(cardToPlay);
+      if (idx >= 0 && simCanCast(cardToPlay, manaPool, bf)) {
+        const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
+          !bf.some(c => getCard(c)?.type === "creature" && !sick.has(c));
+        if (!sacNeedsCreature) {
+          playCard(cardToPlay, idx, manaPool);
+          actionedSomething = true;
+          // Recalculate mana after the play
+          manaPool = sumManaPool(bf, sick, simAttachments.size > 0 ? simAttachments : null);
+        }
+      }
+    }
+
+    // ── Execute affordable follow-up plays (same turn) ──────────
+    // Mirror the goldfish sim's inner loop: keep casting until nothing affordable remains.
+    let madePlay = true;
+    let safetyLimit = 15;
+    while (madePlay && safetyLimit-- > 0) {
+      madePlay = false;
+      manaPool = sumManaPool(bf, sick, simAttachments.size > 0 ? simAttachments : null);
+
+      // Play a land if available
+      if (!_landPlayed) {
+        const landIdx = h.findIndex(c => getCard(c)?.type === "land");
+        if (landIdx >= 0) {
+          const land = h[landIdx];
+          if (getCard(land)?.tags?.includes("fetch")) {
+            playCard(land, landIdx);
+          } else {
+            h.splice(landIdx, 1);
+            bf.push(land);
+            _landPlayed = true;
+          }
+          madePlay = true;
+          manaPool = sumManaPool(bf, sick, simAttachments.size > 0 ? simAttachments : null);
+          continue;
+        }
+      }
+
+      // Re-run advisor on current in-progress state to find next play
+      let nextAnalysis;
+      try {
+        nextAnalysis = analyzeGameState({
+          hand: h, battlefield: bf, graveyard: gy,
+          manaAvailable: { green: manaPool.green, colorless: manaPool.colorless },
+          isMyTurn: true, yisanCounters, deckList,
+          attachments: simAttachments.size > 0 ? simAttachments : null,
+          threatLevel, opponentOpenMana,
+        });
+      } catch { break; }
+
+      const liveResults = (nextAnalysis.results ?? []).filter(r => !r.isSuppressed);
+      const top = liveResults[0];
+      if (!top) break;
+
+      // Stop if we've hit a win — no more plays needed
+      if (top.category && (top.category.includes("WIN NOW") || top.category.includes("CAST TO WIN"))) break;
+
+      const nextCard = extractPlayableCard(top, h, bf);
+      if (!nextCard) break;
+
+      const nextIdx = h.indexOf(nextCard);
+      if (nextIdx < 0) break;
+      if (!simCanCast(nextCard, manaPool, bf)) break;
+
+      const sacCheck = (nextCard === "Natural Order" || nextCard === "Eldritch Evolution") &&
+        !bf.some(c => getCard(c)?.type === "creature" && !sick.has(c));
+      if (sacCheck) break;
+
+      playCard(nextCard, nextIdx, manaPool);
+      madePlay = true;
+      actionedSomething = true;
+    }
+
+    // ── Simulate untap step ─────────────────────────────────────
+    // All creatures and lands untap; summoning sickness clears
+    sick.clear();
+    const untappedPool = sumManaPool(bf, null, simAttachments.size > 0 ? simAttachments : null);
+
+    // ── Analyze resulting board state ───────────────────────────
+    let nextTurnAnalysis;
+    try {
+      nextTurnAnalysis = analyzeGameState({
+        hand: h, battlefield: bf, graveyard: gy,
+        manaAvailable: { green: untappedPool.green, colorless: untappedPool.colorless },
+        isMyTurn: true, yisanCounters, deckList,
+        attachments: simAttachments.size > 0 ? simAttachments : null,
+        threatLevel, opponentOpenMana,
+      });
+    } catch {
+      return null;
+    }
+
+    return {
+      actionLabel: cardToPlay || primaryAdvice.category,
+      actionDescription,
+      boardAfter: { hand: h, battlefield: bf, graveyard: gy },
+      nextAdvice: nextTurnAnalysis.results.filter(r => !r.isSuppressed),
+      topResult: nextTurnAnalysis.results.filter(r => !r.isSuppressed)[0] ?? null,
+      score: scoreOutcome(nextTurnAnalysis),
+      infiniteMana: nextTurnAnalysis.infiniteManaActive,
+      actioned: actionedSomething,
+    };
+  }
+
+  // ── Try each of the top non-suppressed advice items as a branch ─
+  const candidates = currentAdvice
+    .filter(a => !a.isSuppressed)
+    .slice(0, 6); // evaluate top 6 plays max
+
+  // Also add a "pass turn" branch (no plays, just untap)
+  const passBranch = {
+    priority: -1,
+    category: "⏳ PASS",
+    headline: "Pass turn — play nothing this turn",
+    steps: [],
+    color: "#555",
+  };
+
+  const branches = [];
+  for (const advice of [...candidates, passBranch]) {
+    try {
+      const result = executeBranch(advice);
+      if (result) branches.push(result);
+    } catch { /* skip failed branches */ }
+  }
+
+  // Sort by outcome score descending
+  branches.sort((a, b) => b.score - a.score);
+
+  // Deduplicate branches with identical top results (same headline = same outcome)
+  const seen = new Set();
+  return branches.filter(b => {
+    const key = b.topResult?.headline ?? b.score;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ── buildMillSequence ─────────────────────────────────────────────────────────
 // Given the post-Duskwatch board state, returns precise ordered steps for the
 // Sanitarium mill kill. Picks the best available untap variant and generates
@@ -8716,8 +9161,8 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
       note:"{G}, discard: find creature → hand",                constraint:"discard" },
     { name:"Skyshroud Poacher",    finds:"creature-elf",   baseCost:3,  usable: board.has("Skyshroud Poacher"),
       note:"{3}: find Forest Elf → battlefield",                putsToBattlefield:true, sorcerySpeed:true },
-    { name:"Eladamri, Korvecdal",  finds:"creature",       baseCost:0,  usable: board.has("Eladamri, Korvecdal"),
-      note:"cast creature from top of library",                 putsToBattlefield:true },
+    // Eladamri, Korvecdal is NOT a tutor — he casts from top of library, not search.
+    // Handled by the bespoke ENGINE READY block. Including him here generates false WIN NOW lines.
     { name:"Yisan, the Wanderer Bard", finds:"creature",   baseCost:2,  usable: board.has("Yisan, the Wanderer Bard"),
       note:"{2}{G}, tap: find creature with MV = verse counter → battlefield", putsToBattlefield:true, sorcerySpeed:true },
     { name:"Elvish Reclaimer",     finds:"land",           baseCost:1,  usable: board.has("Elvish Reclaimer"),
@@ -8750,7 +9195,12 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
       note:"{2}{G}: ETB find Elf → top of library",             putsToBattlefield:true, sorcerySpeed:true },
     { name:"Invasion of Ikoria",   finds:"creature-non-human", baseCost:4, usable: inHand.has("Invasion of Ikoria"),
       note:"{3}{G}: find non-Human creature → hand",            sorcerySpeed:true },
-    { name:"Formidable Speaker",   finds:"creature",       baseCost:4,  usable: inHand.has("Formidable Speaker") || board.has("Formidable Speaker"),
+    // Formidable Speaker: ETB only fires on entry. Already-on-board Speaker can only
+    // be re-used as a tutor if a bouncer (Temur Sabertooth) is also available to
+    // return it to hand. Kogla bounces Humans only — Speaker is not a Human.
+    { name:"Formidable Speaker",   finds:"creature",       baseCost:4,
+      usable: inHand.has("Formidable Speaker") ||
+              (board.has("Formidable Speaker") && board.has("Temur Sabertooth")),
       note:"ETB: discard → find creature → hand",               constraint:"discard", putsToBattlefield:true, sorcerySpeed:true },
     { name:"Crop Rotation",        finds:"land",           baseCost:1,  usable: inHand.has("Crop Rotation"),
       note:"{G}, instant, sacrifice a land → find any land → battlefield", putsToBattlefield:true, constraint:"sacrifice-land" },
@@ -9050,6 +9500,32 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
     const extraCastCost = extrasResult.extraSteps
       .filter(s => !s.putsToBattlefield)
       .reduce((sum, s) => sum + (getCard(s.target)?.cmc ?? 0), 0);
+    // Also count cast cost of combo pieces already in hand (not on board, not put to battlefield
+    // by a tutor). These must be cast manually to assemble the combo — the path planner
+    // excludes them from "needed" because they're reachable, but their mana cost is real.
+    const tutoredToBattlefield = new Set(
+      [...path.tutorSteps, ...extrasResult.extraSteps]
+        .filter(s => s.putsToBattlefield).map(s => s.target)
+    );
+    const handPieces = (combo.requires ?? [])
+      .filter(r => inHand.has(r) && !board.has(r) && !tutoredToBattlefield.has(r));
+    const handCastCost = handPieces.reduce((sum, r) => sum + (getCard(r)?.cmc ?? 0), 0);
+
+    // Mana delta: if Ashaya is among the hand pieces being cast mid-sequence, all untapped
+    // creatures on the current board become Forests (tap for {G}). This generates extra mana
+    // that makes subsequent steps (e.g. Shared Summons) affordable.
+    // Compute extra mana unlocked when Ashaya enters: each untapped non-land creature
+    // that doesn't already tap for mana (not a dork) becomes a Forest tapping for {G}.
+    // Dorks already contribute to sumManaPool; Ashaya adds the non-dork creatures + herself.
+    let ashayaMidSequenceMana = 0;
+    if (handPieces.includes("Ashaya, Soul of the Wild")) {
+      const preBfPool = sumManaPool(battlefield);
+      const postBfPool = sumManaPool([...battlefield, "Ashaya, Soul of the Wild"]);
+      // Extra mana = the difference (Ashaya makes non-dork creatures tap for {G})
+      ashayaMidSequenceMana = Math.max(0,
+        (postBfPool.green + postBfPool.colorless) - (preBfPool.green + preBfPool.colorless)
+      );
+    }
     // Minimum loop startup: cast the ranger once ({G} for Quirion, {1}{G} for Scryb)
     const rangerInNeeded = path.needed.includes("Quirion Ranger") || path.needed.includes("Scryb Ranger");
     const rangersAlreadyCounted = path.tutorSteps.some(s =>
@@ -9057,7 +9533,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
     // If ranger goes to hand (not battlefield), its cast cost is already in castCostForHand
     const loopStartCost = 0; // already included in cast costs above
 
-    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost;
+    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost - ashayaMidSequenceMana;
     const canAfford = totalMana <= mana;
     const nextTurn  = preStatus.nextTurn;
     const stepCount = allSteps.length;
@@ -9114,6 +9590,13 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
     seen.add(r.combo.id); return true;
   });
 }
+
+
+const fonts = `
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap');
+`;
+
+
 
 
 function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = []) {
@@ -9316,418 +9799,6 @@ const TOUR_STEPS = [
     icon: "📦",
   },
 ];
-
-function useTour() {
-  const [active, setActive] = useState(false);
-  const [step, setStep]     = useState(0);
-
-  useEffect(() => {
-    try {
-      const seen = localStorage.getItem("yeva-tour-seen");
-      if (!seen) { setActive(true); setStep(0); }
-    } catch {}
-  }, []);
-
-  const finish = () => {
-    setActive(false);
-    try { localStorage.setItem("yeva-tour-seen", "1"); } catch {}
-  };
-
-  const next = () => {
-    if (step >= TOUR_STEPS.length - 1) { finish(); return; }
-    setStep(s => s + 1);
-  };
-
-  const prev  = () => setStep(s => Math.max(0, s - 1));
-  const start = () => { setStep(0); setActive(true); };
-  const skip  = () => finish();
-
-  return { active, step, next, prev, start, skip, total: TOUR_STEPS.length };
-}
-
-function TourOverlay({ active, step, next, prev, skip, total }) {
-  const [targetRect, setTargetRect] = useState(null);
-  const [visible, setVisible] = useState(false);
-  const [transitioning, setTransitioning] = useState(false);
-
-  useEffect(() => {
-    if (!active) { setVisible(false); setTargetRect(null); return; }
-    // Small delay so DOM is ready
-    const t = setTimeout(() => {
-      const el = document.querySelector(`[data-tour="${TOUR_STEPS[step].target}"]`);
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        setTargetRect(rect);
-      } else {
-        setTargetRect(null);
-      }
-      setVisible(true);
-      setTransitioning(false);
-    }, 80);
-    return () => clearTimeout(t);
-  }, [active, step]);
-
-  const handleNext = () => {
-    setTransitioning(true);
-    setVisible(false);
-    setTimeout(next, 180);
-  };
-  const handlePrev = () => {
-    setTransitioning(true);
-    setVisible(false);
-    setTimeout(prev, 180);
-  };
-
-  if (!active) return null;
-
-  const tourStep = TOUR_STEPS[step];
-  const PAD = 8; // spotlight padding
-
-  // Compute spotlight rect
-  const spot = targetRect ? {
-    x: targetRect.left - PAD,
-    y: targetRect.top - PAD,
-    w: targetRect.width + PAD * 2,
-    h: targetRect.height + PAD * 2,
-  } : null;
-
-  // Compute tooltip position
-  const tooltipW = 320;
-  const tooltipH = 200;
-  let tipX = 0, tipY = 0;
-  if (spot) {
-    const placement = tourStep.placement;
-    if (placement === "right") {
-      tipX = spot.x + spot.w + 16;
-      tipY = spot.y + spot.h / 2 - tooltipH / 2;
-    } else if (placement === "left") {
-      tipX = spot.x - tooltipW - 16;
-      tipY = spot.y + spot.h / 2 - tooltipH / 2;
-    } else if (placement === "bottom") {
-      tipX = spot.x + spot.w / 2 - tooltipW / 2;
-      tipY = spot.y + spot.h + 16;
-    } else {
-      tipX = spot.x + spot.w / 2 - tooltipW / 2;
-      tipY = spot.y - tooltipH - 16;
-    }
-    // Clamp to viewport
-    tipX = Math.max(12, Math.min(window.innerWidth - tooltipW - 12, tipX));
-    tipY = Math.max(12, Math.min(window.innerHeight - tooltipH - 12, tipY));
-  } else {
-    // Fallback: center
-    tipX = window.innerWidth / 2 - tooltipW / 2;
-    tipY = window.innerHeight / 2 - tooltipH / 2;
-  }
-
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "all" }}>
-      {/* Dimming overlay using SVG clip path for spotlight */}
-      <svg
-        width={vw} height={vh}
-        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-      >
-        <defs>
-          <mask id="tour-mask">
-            <rect width={vw} height={vh} fill="white" />
-            {spot && (
-              <rect
-                x={spot.x} y={spot.y} width={spot.w} height={spot.h}
-                rx={8} fill="black"
-              />
-            )}
-          </mask>
-        </defs>
-        <rect
-          width={vw} height={vh}
-          fill="rgba(0,0,0,0.72)"
-          mask="url(#tour-mask)"
-        />
-        {/* Spotlight border glow */}
-        {spot && (
-          <rect
-            x={spot.x} y={spot.y} width={spot.w} height={spot.h}
-            rx={8} fill="none"
-            stroke="#4a9e4a" strokeWidth={2}
-            style={{ opacity: visible ? 1 : 0, transition: "opacity 0.2s" }}
-          />
-        )}
-      </svg>
-
-      {/* Click-through area over spotlight so user can interact if needed */}
-      {spot && (
-        <div style={{
-          position: "absolute",
-          left: spot.x, top: spot.y, width: spot.w, height: spot.h,
-          borderRadius: 8,
-          pointerEvents: "none",
-        }} />
-      )}
-
-      {/* Backdrop click to advance */}
-      <div style={{ position: "absolute", inset: 0 }} onClick={handleNext} />
-
-      {/* Tooltip card */}
-      <div style={{
-        position: "absolute",
-        left: tipX, top: tipY,
-        width: tooltipW,
-        background: "linear-gradient(135deg, #0f1e0f 0%, #0a160a 100%)",
-        border: "1px solid #4a9e4a",
-        borderRadius: 12,
-        boxShadow: "0 0 0 1px #4a9e4a22, 0 24px 60px rgba(0,0,0,0.9), 0 0 40px #4a9e4a18",
-        padding: "20px 22px",
-        pointerEvents: "all",
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(6px) scale(0.97)",
-        transition: "opacity 0.2s ease, transform 0.2s ease",
-      }}>
-        {/* Step indicator */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 14, alignItems: "center" }}>
-          {Array.from({ length: total }).map((_, i) => (
-            <div key={i} style={{
-              height: 3, flex: 1,
-              borderRadius: 2,
-              background: i <= step ? "#4a9e4a" : "#1e3a1e",
-              transition: "background 0.3s",
-            }} />
-          ))}
-        </div>
-
-        {/* Icon + title */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <span style={{ fontSize: 22, lineHeight: 1 }}>{tourStep.icon}</span>
-          <div style={{
-            fontFamily: "'Cinzel', serif", fontSize: 13, fontWeight: 600,
-            color: "#c8e6c8", letterSpacing: "0.5px",
-          }}>{tourStep.title}</div>
-        </div>
-
-        {/* Body */}
-        <p style={{
-          fontFamily: "'Crimson Text', serif", fontSize: 14, lineHeight: 1.6,
-          color: "#a0cda0", margin: "0 0 18px",
-        }}>{tourStep.body}</p>
-
-        {/* Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {step > 0 && (
-            <button onClick={e => { e.stopPropagation(); handlePrev(); }} style={{
-              background: "none", border: "1px solid #1e3a1e",
-              borderRadius: 6, padding: "6px 14px",
-              color: "#7aad7a", cursor: "pointer",
-              fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px",
-            }}>← BACK</button>
-          )}
-          <div style={{ flex: 1 }} />
-          <button onClick={e => { e.stopPropagation(); skip(); }} style={{
-            background: "none", border: "none",
-            color: "#4a6a4a", cursor: "pointer",
-            fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px",
-            padding: "6px 8px",
-          }}>SKIP</button>
-          <button onClick={e => { e.stopPropagation(); handleNext(); }} style={{
-            background: "linear-gradient(135deg, #2d5a2d, #1e3a1e)",
-            border: "1px solid #4a9e4a",
-            borderRadius: 6, padding: "7px 18px",
-            color: "#c8e6c8", cursor: "pointer",
-            fontFamily: "'Cinzel', serif", fontSize: 11, letterSpacing: "1px",
-            fontWeight: 600,
-            boxShadow: "0 0 12px #4a9e4a22",
-          }}>
-            {step === total - 1 ? "DONE ✓" : "NEXT →"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Goldfish tour steps ──────────────────────────────────────
-const GOLDFISH_TOUR_STEPS = [
-  {
-    target: "gtour-header",
-    title: "Welcome to Goldfish Mode",
-    body: "Goldfish mode lets you pilot the deck hand-by-hand, turn-by-turn. Cast spells, tap lands, track mana — and the live advisor watches every move and tells you when a win is available.",
-    placement: "bottom",
-    icon: "🐟",
-  },
-  {
-    target: "gtour-controls",
-    title: "Turn Controls",
-    body: "▶ NEXT TURN untaps everything and draws a card. + DRAW 1 draws without advancing. ↺ UNTAP untaps without drawing. ⚡ TAP ALL taps every untapped mana source and fills your pool in one click. Keyboard shortcuts: N (next turn), D (draw), U (untap), M (tap all).",
-    placement: "bottom",
-    icon: "⏱",
-  },
-  {
-    target: "gtour-mana",
-    title: "Mana Pool",
-    body: "Your current floating mana is shown here. TAP ALL fills it automatically. You can also tap individual lands and dorks by clicking them, or use − / + to adjust manually. The number updates in real time as you tap permanents.",
-    placement: "bottom",
-    icon: "💎",
-  },
-  {
-    target: "gtour-hand",
-    title: "Your Hand",
-    body: "Cards here are drawn from your shuffled library. Click a card to cast it — lands drop onto the battlefield, spells resolve with their ETB effects (draw triggers, tutor windows, mana boosts). Dimmed cards are unaffordable this turn.",
-    placement: "right",
-    icon: "🃏",
-  },
-  {
-    target: "gtour-battlefield",
-    title: "Battlefield — Click to Tap",
-    body: "Click any permanent to tap or untap it. Right-click for activated abilities: Yisan verse counters, Nykthos devotion mana, Selvala draw, Magus untap X lands, and much more. Drag cards between zones to move them manually.",
-    placement: "right",
-    icon: "⚔️",
-  },
-  {
-    target: "gtour-advisor",
-    title: "Live Advisor",
-    body: "The advisor re-evaluates your position after every action. 🔥 WIN NOW means a line is available right now with your current mana and board. Click any result to expand step-by-step instructions. It knows about summoning sickness, what's tapped, and your floating mana.",
-    placement: "left",
-    icon: "📋",
-  },
-  {
-    target: "gtour-log",
-    title: "Game Log",
-    body: "Every action is recorded here — casts, ETBs, mana gained, tutor choices. Use it to trace your line or review what happened. Ctrl+Z (or the ↩ UNDO button) walks back any mistake up to 20 steps.",
-    placement: "left",
-    icon: "📜",
-  },
-];
-
-function useGoldfishTour() {
-  const [active, setActive] = useState(false);
-  const [step, setStep]     = useState(0);
-
-  const finish = () => {
-    setActive(false);
-    try { localStorage.setItem("yeva-goldfish-tour-seen", "1"); } catch {}
-  };
-
-  const next  = () => { if (step >= GOLDFISH_TOUR_STEPS.length - 1) { finish(); return; } setStep(s => s + 1); };
-  const prev  = () => setStep(s => Math.max(0, s - 1));
-  const start = () => { setStep(0); setActive(true); };
-  const skip  = () => finish();
-
-  return { active, step, next, prev, start, skip, total: GOLDFISH_TOUR_STEPS.length };
-}
-
-function GoldfishTourOverlay({ active, step, next, prev, skip, total }) {
-  const [targetRect, setTargetRect] = useState(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (!active) { setVisible(false); setTargetRect(null); return; }
-    const t = setTimeout(() => {
-      const el = document.querySelector(`[data-gtour="${GOLDFISH_TOUR_STEPS[step].target}"]`);
-      if (el) setTargetRect(el.getBoundingClientRect());
-      else setTargetRect(null);
-      setVisible(true);
-    }, 80);
-    return () => clearTimeout(t);
-  }, [active, step]);
-
-  const handleNext = () => { setVisible(false); setTimeout(next, 160); };
-  const handlePrev = () => { setVisible(false); setTimeout(prev, 160); };
-
-  if (!active) return null;
-
-  const tourStep = GOLDFISH_TOUR_STEPS[step];
-  const PAD = 8;
-  const spot = targetRect ? { x: targetRect.left - PAD, y: targetRect.top - PAD, w: targetRect.width + PAD * 2, h: targetRect.height + PAD * 2 } : null;
-  const tooltipW = 300; const tooltipH = 210;
-  const vw = window.innerWidth; const vh = window.innerHeight;
-  let tipX = vw / 2 - tooltipW / 2, tipY = vh / 2 - tooltipH / 2;
-  if (spot) {
-    const p = tourStep.placement;
-    if (p === "right")       { tipX = spot.x + spot.w + 16; tipY = spot.y + spot.h / 2 - tooltipH / 2; }
-    else if (p === "left")   { tipX = spot.x - tooltipW - 16; tipY = spot.y + spot.h / 2 - tooltipH / 2; }
-    else if (p === "bottom") { tipX = spot.x + spot.w / 2 - tooltipW / 2; tipY = spot.y + spot.h + 16; }
-    else                     { tipX = spot.x + spot.w / 2 - tooltipW / 2; tipY = spot.y - tooltipH - 16; }
-    tipX = Math.max(12, Math.min(vw - tooltipW - 12, tipX));
-    tipY = Math.max(12, Math.min(vh - tooltipH - 12, tipY));
-  }
-
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 9500, pointerEvents: "all" }}>
-      <svg width={vw} height={vh} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-        <defs>
-          <mask id="gtour-mask">
-            <rect width={vw} height={vh} fill="white" />
-            {spot && <rect x={spot.x} y={spot.y} width={spot.w} height={spot.h} rx={8} fill="black" />}
-          </mask>
-        </defs>
-        <rect width={vw} height={vh} fill="rgba(0,0,0,0.78)" mask="url(#gtour-mask)" />
-        {spot && <rect x={spot.x} y={spot.y} width={spot.w} height={spot.h} rx={8} fill="none" stroke="#4a9e4a" strokeWidth={2} style={{ opacity: visible ? 1 : 0, transition: "opacity 0.2s" }} />}
-      </svg>
-      {/* Backdrop click advances */}
-      <div style={{ position: "absolute", inset: 0 }} onClick={handleNext} />
-      {/* Tooltip */}
-      <div style={{
-        position: "absolute", left: tipX, top: tipY, width: tooltipW,
-        background: "linear-gradient(135deg, #0f1e0f 0%, #0a160a 100%)",
-        border: "1px solid #4a9e4a", borderRadius: 12,
-        boxShadow: "0 0 0 1px #4a9e4a22, 0 24px 60px rgba(0,0,0,0.95), 0 0 40px #4a9e4a18",
-        padding: "18px 20px", pointerEvents: "all",
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(6px) scale(0.97)",
-        transition: "opacity 0.2s ease, transform 0.2s ease",
-      }}>
-        {/* Progress dots */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 14, alignItems: "center" }}>
-          {Array.from({ length: total }).map((_, i) => (
-            <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i <= step ? "#4a9e4a" : "#1e3a1e", transition: "background 0.3s" }} />
-          ))}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <span style={{ fontSize: 20, lineHeight: 1 }}>{tourStep.icon}</span>
-          <div style={{ fontFamily: "'Cinzel', serif", fontSize: 12, fontWeight: 600, color: "#c8e6c8", letterSpacing: "0.5px" }}>{tourStep.title}</div>
-        </div>
-        <p style={{ fontFamily: "'Crimson Text', serif", fontSize: 13, lineHeight: 1.6, color: "#a0cda0", margin: "0 0 16px" }}>{tourStep.body}</p>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {step > 0 && (
-            <button onClick={e => { e.stopPropagation(); handlePrev(); }} style={{ background: "none", border: "1px solid #1e3a1e", borderRadius: 6, padding: "5px 12px", color: "#7aad7a", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px" }}>← BACK</button>
-          )}
-          <div style={{ flex: 1 }} />
-          <button onClick={e => { e.stopPropagation(); skip(); }} style={{ background: "none", border: "none", color: "#4a6a4a", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px", padding: "5px 8px" }}>SKIP</button>
-          <button onClick={e => { e.stopPropagation(); handleNext(); }} style={{ background: "linear-gradient(135deg, #2d5a2d, #1e3a1e)", border: "1px solid #4a9e4a", borderRadius: 6, padding: "6px 16px", color: "#c8e6c8", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 11, letterSpacing: "1px", fontWeight: 600, boxShadow: "0 0 12px #4a9e4a22" }}>
-            {step === total - 1 ? "DONE ✓" : "NEXT →"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// UI COMPONENTS
-// ============================================================
-const COLORS = {
-  bg:       "#0a120a",
-  bgCard:   "#0f1e0f",
-  bgHover:  "#152615",
-  border:   "#1e3a1e",
-  borderBright: "#2d5a2d",
-  green1:   "#4a9e4a",
-  green2:   "#6abf6a",
-  green3:   "#8ed88e",
-  text:     "#c8e6c8",
-  textDim:  "#7aad7a",
-  textMid:  "#a0cda0",
-  accent:   "#ff6b35",
-  gold:     "#f4d03f",
-  blue:     "#5dade2",
-  purple:   "#a569bd",
-  red:      "#e74c3c",
-};
-
-const fonts = `
-  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap');
-`;
-
 function Tag({ label, color }) {
   return (
     <span style={{
@@ -14753,6 +14824,469 @@ function ScryRow({ card, i, toBottom, onMoveUp, onMoveDown, onToggleBottom, move
   );
 }
 
+
+// ── Pure hand grader (module-level, no React deps) ─────────────────────────
+// Returns "KEEP" | "BORDERLINE" | "MULLIGAN" for a given list of card names.
+// Mirrors the gate logic inside GoldfishModal gradeHand(). Used for testing.
+function gradeHandLabel(cards) {
+  const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
+  const rockCards   = cards.filter(c => getCard(c)?.tags?.includes("rock"));
+  const hasForestInHand = cards.some(c => c === "Forest" || getCard(c)?.tags?.includes("forest"));
+  const enchantLandRamp = cards.filter(c => {
+    if (!getCard(c)?.tags?.includes("enchant-land")) return false;
+    if (c === "Utopia Sprawl") return hasForestInHand;
+    return true;
+  }).length;
+  const rampCount   = dorkCards.length + enchantLandRamp + rockCards.length;
+  const tutorCards  = cards.filter(c => getCard(c)?.tags?.includes("tutor"));
+  const tutors      = tutorCards.length;
+  const landCards   = cards.filter(c => getCard(c)?.type === "land");
+  const realLands   = landCards.filter(c =>
+    c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun").length;
+  const isGreenLand = c => {
+    const cd = getCard(c);
+    if (cd?.type !== "land") return false;
+    return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") ||
+           cd?.tags?.includes("green-mana") || cd?.tags?.includes("fetch-forest") || c === "Forest";
+  };
+  const greenLands  = landCards.filter(c => isGreenLand(c)).length;
+  const colourlessOnlyLands = landCards.filter(c =>
+    c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" && !isGreenLand(c));
+  const dork1Cards  = dorkCards.filter(c => getCard(c)?.tags?.includes("1drop"));
+  const COMBO_TAGS  = new Set(["ashaya","duskwatch","quirion","earthcraft","wirewood","ranger",
+    "symbiote","sabertooth","scout","bounce","infinite-dork","key","untap","untap-lands",
+    "survival","land-animator","haste-mana","kogla-loop"]);
+  const combo = cards.filter(c => getCard(c)?.tags?.some(t => COMBO_TAGS.has(t))).length;
+  // Gate 1: no green source
+  if (greenLands === 0) {
+    const greenFastMana = cards.filter(c =>
+      getCard(c)?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide");
+    if (cards.includes("Birds of Paradise") && greenFastMana.length > 0) return "BORDERLINE";
+    if (greenFastMana.length > 0 && dork1Cards.length >= 1 && colourlessOnlyLands.length > 0) return "BORDERLINE";
+    return "MULLIGAN";
+  }
+  // Gate 2: 0 real lands + 0 rocks
+  if (realLands === 0 && rockCards.length === 0) return "MULLIGAN";
+  // Gate 3: no ramp — but Crop Rotation / multiple tutors can ramp out by T2
+  if (rampCount === 0) {
+    const tutorRampOut = (tutors >= 2 || cards.includes("Crop Rotation")) && realLands >= 2 && combo >= 1;
+    if (tutorRampOut) return "BORDERLINE";
+    return "MULLIGAN";
+  }
+  // Simplified keep/borderline for passing hands
+  const hasT1Play = (dork1Cards.length >= 1 && greenLands >= 1) || (enchantLandRamp >= 1 && greenLands >= 1);
+  if (realLands >= 2 && rampCount >= 1 && tutors >= 1 && hasT1Play) return "KEEP";
+  if (realLands >= 1 && rampCount >= 1) return "BORDERLINE";
+  return "MULLIGAN";
+}
+
+function useTour() {
+  const [active, setActive] = useState(false);
+  const [step, setStep]     = useState(0);
+
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem("yeva-tour-seen");
+      if (!seen) { setActive(true); setStep(0); }
+    } catch {}
+  }, []);
+
+  const finish = () => {
+    setActive(false);
+    try { localStorage.setItem("yeva-tour-seen", "1"); } catch {}
+  };
+
+  const next = () => {
+    if (step >= TOUR_STEPS.length - 1) { finish(); return; }
+    setStep(s => s + 1);
+  };
+
+  const prev  = () => setStep(s => Math.max(0, s - 1));
+  const start = () => { setStep(0); setActive(true); };
+  const skip  = () => finish();
+
+  return { active, step, next, prev, start, skip, total: TOUR_STEPS.length };
+}
+
+function TourOverlay({ active, step, next, prev, skip, total }) {
+  const [targetRect, setTargetRect] = useState(null);
+  const [visible, setVisible] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
+
+  useEffect(() => {
+    if (!active) { setVisible(false); setTargetRect(null); return; }
+    // Small delay so DOM is ready
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-tour="${TOUR_STEPS[step].target}"]`);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        setTargetRect(rect);
+      } else {
+        setTargetRect(null);
+      }
+      setVisible(true);
+      setTransitioning(false);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [active, step]);
+
+  const handleNext = () => {
+    setTransitioning(true);
+    setVisible(false);
+    setTimeout(next, 180);
+  };
+  const handlePrev = () => {
+    setTransitioning(true);
+    setVisible(false);
+    setTimeout(prev, 180);
+  };
+
+  if (!active) return null;
+
+  const tourStep = TOUR_STEPS[step];
+  const PAD = 8; // spotlight padding
+
+  // Compute spotlight rect
+  const spot = targetRect ? {
+    x: targetRect.left - PAD,
+    y: targetRect.top - PAD,
+    w: targetRect.width + PAD * 2,
+    h: targetRect.height + PAD * 2,
+  } : null;
+
+  // Compute tooltip position
+  const tooltipW = 320;
+  const tooltipH = 200;
+  let tipX = 0, tipY = 0;
+  if (spot) {
+    const placement = tourStep.placement;
+    if (placement === "right") {
+      tipX = spot.x + spot.w + 16;
+      tipY = spot.y + spot.h / 2 - tooltipH / 2;
+    } else if (placement === "left") {
+      tipX = spot.x - tooltipW - 16;
+      tipY = spot.y + spot.h / 2 - tooltipH / 2;
+    } else if (placement === "bottom") {
+      tipX = spot.x + spot.w / 2 - tooltipW / 2;
+      tipY = spot.y + spot.h + 16;
+    } else {
+      tipX = spot.x + spot.w / 2 - tooltipW / 2;
+      tipY = spot.y - tooltipH - 16;
+    }
+    // Clamp to viewport
+    tipX = Math.max(12, Math.min(window.innerWidth - tooltipW - 12, tipX));
+    tipY = Math.max(12, Math.min(window.innerHeight - tooltipH - 12, tipY));
+  } else {
+    // Fallback: center
+    tipX = window.innerWidth / 2 - tooltipW / 2;
+    tipY = window.innerHeight / 2 - tooltipH / 2;
+  }
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9000, pointerEvents: "all" }}>
+      {/* Dimming overlay using SVG clip path for spotlight */}
+      <svg
+        width={vw} height={vh}
+        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      >
+        <defs>
+          <mask id="tour-mask">
+            <rect width={vw} height={vh} fill="white" />
+            {spot && (
+              <rect
+                x={spot.x} y={spot.y} width={spot.w} height={spot.h}
+                rx={8} fill="black"
+              />
+            )}
+          </mask>
+        </defs>
+        <rect
+          width={vw} height={vh}
+          fill="rgba(0,0,0,0.72)"
+          mask="url(#tour-mask)"
+        />
+        {/* Spotlight border glow */}
+        {spot && (
+          <rect
+            x={spot.x} y={spot.y} width={spot.w} height={spot.h}
+            rx={8} fill="none"
+            stroke="#4a9e4a" strokeWidth={2}
+            style={{ opacity: visible ? 1 : 0, transition: "opacity 0.2s" }}
+          />
+        )}
+      </svg>
+
+      {/* Click-through area over spotlight so user can interact if needed */}
+      {spot && (
+        <div style={{
+          position: "absolute",
+          left: spot.x, top: spot.y, width: spot.w, height: spot.h,
+          borderRadius: 8,
+          pointerEvents: "none",
+        }} />
+      )}
+
+      {/* Backdrop click to advance */}
+      <div style={{ position: "absolute", inset: 0 }} onClick={handleNext} />
+
+      {/* Tooltip card */}
+      <div style={{
+        position: "absolute",
+        left: tipX, top: tipY,
+        width: tooltipW,
+        background: "linear-gradient(135deg, #0f1e0f 0%, #0a160a 100%)",
+        border: "1px solid #4a9e4a",
+        borderRadius: 12,
+        boxShadow: "0 0 0 1px #4a9e4a22, 0 24px 60px rgba(0,0,0,0.9), 0 0 40px #4a9e4a18",
+        padding: "20px 22px",
+        pointerEvents: "all",
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0) scale(1)" : "translateY(6px) scale(0.97)",
+        transition: "opacity 0.2s ease, transform 0.2s ease",
+      }}>
+        {/* Step indicator */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 14, alignItems: "center" }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <div key={i} style={{
+              height: 3, flex: 1,
+              borderRadius: 2,
+              background: i <= step ? "#4a9e4a" : "#1e3a1e",
+              transition: "background 0.3s",
+            }} />
+          ))}
+        </div>
+
+        {/* Icon + title */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 22, lineHeight: 1 }}>{tourStep.icon}</span>
+          <div style={{
+            fontFamily: "'Cinzel', serif", fontSize: 13, fontWeight: 600,
+            color: "#c8e6c8", letterSpacing: "0.5px",
+          }}>{tourStep.title}</div>
+        </div>
+
+        {/* Body */}
+        <p style={{
+          fontFamily: "'Crimson Text', serif", fontSize: 14, lineHeight: 1.6,
+          color: "#a0cda0", margin: "0 0 18px",
+        }}>{tourStep.body}</p>
+
+        {/* Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {step > 0 && (
+            <button onClick={e => { e.stopPropagation(); handlePrev(); }} style={{
+              background: "none", border: "1px solid #1e3a1e",
+              borderRadius: 6, padding: "6px 14px",
+              color: "#7aad7a", cursor: "pointer",
+              fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px",
+            }}>← BACK</button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={e => { e.stopPropagation(); skip(); }} style={{
+            background: "none", border: "none",
+            color: "#4a6a4a", cursor: "pointer",
+            fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px",
+            padding: "6px 8px",
+          }}>SKIP</button>
+          <button onClick={e => { e.stopPropagation(); handleNext(); }} style={{
+            background: "linear-gradient(135deg, #2d5a2d, #1e3a1e)",
+            border: "1px solid #4a9e4a",
+            borderRadius: 6, padding: "7px 18px",
+            color: "#c8e6c8", cursor: "pointer",
+            fontFamily: "'Cinzel', serif", fontSize: 11, letterSpacing: "1px",
+            fontWeight: 600,
+            boxShadow: "0 0 12px #4a9e4a22",
+          }}>
+            {step === total - 1 ? "DONE ✓" : "NEXT →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Goldfish tour steps ──────────────────────────────────────
+const GOLDFISH_TOUR_STEPS = [
+  {
+    target: "gtour-header",
+    title: "Welcome to Goldfish Mode",
+    body: "Goldfish mode lets you pilot the deck hand-by-hand, turn-by-turn. Cast spells, tap lands, track mana — and the live advisor watches every move and tells you when a win is available.",
+    placement: "bottom",
+    icon: "🐟",
+  },
+  {
+    target: "gtour-controls",
+    title: "Turn Controls",
+    body: "▶ NEXT TURN untaps everything and draws a card. + DRAW 1 draws without advancing. ↺ UNTAP untaps without drawing. ⚡ TAP ALL taps every untapped mana source and fills your pool in one click. Keyboard shortcuts: N (next turn), D (draw), U (untap), M (tap all).",
+    placement: "bottom",
+    icon: "⏱",
+  },
+  {
+    target: "gtour-mana",
+    title: "Mana Pool",
+    body: "Your current floating mana is shown here. TAP ALL fills it automatically. You can also tap individual lands and dorks by clicking them, or use − / + to adjust manually. The number updates in real time as you tap permanents.",
+    placement: "bottom",
+    icon: "💎",
+  },
+  {
+    target: "gtour-hand",
+    title: "Your Hand",
+    body: "Cards here are drawn from your shuffled library. Click a card to cast it — lands drop onto the battlefield, spells resolve with their ETB effects (draw triggers, tutor windows, mana boosts). Dimmed cards are unaffordable this turn.",
+    placement: "right",
+    icon: "🃏",
+  },
+  {
+    target: "gtour-battlefield",
+    title: "Battlefield — Click to Tap",
+    body: "Click any permanent to tap or untap it. Right-click for activated abilities: Yisan verse counters, Nykthos devotion mana, Selvala draw, Magus untap X lands, and much more. Drag cards between zones to move them manually.",
+    placement: "right",
+    icon: "⚔️",
+  },
+  {
+    target: "gtour-advisor",
+    title: "Live Advisor",
+    body: "The advisor re-evaluates your position after every action. 🔥 WIN NOW means a line is available right now with your current mana and board. Click any result to expand step-by-step instructions. It knows about summoning sickness, what's tapped, and your floating mana.",
+    placement: "left",
+    icon: "📋",
+  },
+  {
+    target: "gtour-log",
+    title: "Game Log",
+    body: "Every action is recorded here — casts, ETBs, mana gained, tutor choices. Use it to trace your line or review what happened. Ctrl+Z (or the ↩ UNDO button) walks back any mistake up to 20 steps.",
+    placement: "left",
+    icon: "📜",
+  },
+];
+
+function useGoldfishTour() {
+  const [active, setActive] = useState(false);
+  const [step, setStep]     = useState(0);
+
+  const finish = () => {
+    setActive(false);
+    try { localStorage.setItem("yeva-goldfish-tour-seen", "1"); } catch {}
+  };
+
+  const next  = () => { if (step >= GOLDFISH_TOUR_STEPS.length - 1) { finish(); return; } setStep(s => s + 1); };
+  const prev  = () => setStep(s => Math.max(0, s - 1));
+  const start = () => { setStep(0); setActive(true); };
+  const skip  = () => finish();
+
+  return { active, step, next, prev, start, skip, total: GOLDFISH_TOUR_STEPS.length };
+}
+
+function GoldfishTourOverlay({ active, step, next, prev, skip, total }) {
+  const [targetRect, setTargetRect] = useState(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!active) { setVisible(false); setTargetRect(null); return; }
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-gtour="${GOLDFISH_TOUR_STEPS[step].target}"]`);
+      if (el) setTargetRect(el.getBoundingClientRect());
+      else setTargetRect(null);
+      setVisible(true);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [active, step]);
+
+  const handleNext = () => { setVisible(false); setTimeout(next, 160); };
+  const handlePrev = () => { setVisible(false); setTimeout(prev, 160); };
+
+  if (!active) return null;
+
+  const tourStep = GOLDFISH_TOUR_STEPS[step];
+  const PAD = 8;
+  const spot = targetRect ? { x: targetRect.left - PAD, y: targetRect.top - PAD, w: targetRect.width + PAD * 2, h: targetRect.height + PAD * 2 } : null;
+  const tooltipW = 300; const tooltipH = 210;
+  const vw = window.innerWidth; const vh = window.innerHeight;
+  let tipX = vw / 2 - tooltipW / 2, tipY = vh / 2 - tooltipH / 2;
+  if (spot) {
+    const p = tourStep.placement;
+    if (p === "right")       { tipX = spot.x + spot.w + 16; tipY = spot.y + spot.h / 2 - tooltipH / 2; }
+    else if (p === "left")   { tipX = spot.x - tooltipW - 16; tipY = spot.y + spot.h / 2 - tooltipH / 2; }
+    else if (p === "bottom") { tipX = spot.x + spot.w / 2 - tooltipW / 2; tipY = spot.y + spot.h + 16; }
+    else                     { tipX = spot.x + spot.w / 2 - tooltipW / 2; tipY = spot.y - tooltipH - 16; }
+    tipX = Math.max(12, Math.min(vw - tooltipW - 12, tipX));
+    tipY = Math.max(12, Math.min(vh - tooltipH - 12, tipY));
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9500, pointerEvents: "all" }}>
+      <svg width={vw} height={vh} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        <defs>
+          <mask id="gtour-mask">
+            <rect width={vw} height={vh} fill="white" />
+            {spot && <rect x={spot.x} y={spot.y} width={spot.w} height={spot.h} rx={8} fill="black" />}
+          </mask>
+        </defs>
+        <rect width={vw} height={vh} fill="rgba(0,0,0,0.78)" mask="url(#gtour-mask)" />
+        {spot && <rect x={spot.x} y={spot.y} width={spot.w} height={spot.h} rx={8} fill="none" stroke="#4a9e4a" strokeWidth={2} style={{ opacity: visible ? 1 : 0, transition: "opacity 0.2s" }} />}
+      </svg>
+      {/* Backdrop click advances */}
+      <div style={{ position: "absolute", inset: 0 }} onClick={handleNext} />
+      {/* Tooltip */}
+      <div style={{
+        position: "absolute", left: tipX, top: tipY, width: tooltipW,
+        background: "linear-gradient(135deg, #0f1e0f 0%, #0a160a 100%)",
+        border: "1px solid #4a9e4a", borderRadius: 12,
+        boxShadow: "0 0 0 1px #4a9e4a22, 0 24px 60px rgba(0,0,0,0.95), 0 0 40px #4a9e4a18",
+        padding: "18px 20px", pointerEvents: "all",
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0) scale(1)" : "translateY(6px) scale(0.97)",
+        transition: "opacity 0.2s ease, transform 0.2s ease",
+      }}>
+        {/* Progress dots */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 14, alignItems: "center" }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <div key={i} style={{ height: 3, flex: 1, borderRadius: 2, background: i <= step ? "#4a9e4a" : "#1e3a1e", transition: "background 0.3s" }} />
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 20, lineHeight: 1 }}>{tourStep.icon}</span>
+          <div style={{ fontFamily: "'Cinzel', serif", fontSize: 12, fontWeight: 600, color: "#c8e6c8", letterSpacing: "0.5px" }}>{tourStep.title}</div>
+        </div>
+        <p style={{ fontFamily: "'Crimson Text', serif", fontSize: 13, lineHeight: 1.6, color: "#a0cda0", margin: "0 0 16px" }}>{tourStep.body}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {step > 0 && (
+            <button onClick={e => { e.stopPropagation(); handlePrev(); }} style={{ background: "none", border: "1px solid #1e3a1e", borderRadius: 6, padding: "5px 12px", color: "#7aad7a", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px" }}>← BACK</button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={e => { e.stopPropagation(); skip(); }} style={{ background: "none", border: "none", color: "#4a6a4a", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 10, letterSpacing: "1px", padding: "5px 8px" }}>SKIP</button>
+          <button onClick={e => { e.stopPropagation(); handleNext(); }} style={{ background: "linear-gradient(135deg, #2d5a2d, #1e3a1e)", border: "1px solid #4a9e4a", borderRadius: 6, padding: "6px 16px", color: "#c8e6c8", cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: 11, letterSpacing: "1px", fontWeight: 600, boxShadow: "0 0 12px #4a9e4a22" }}>
+            {step === total - 1 ? "DONE ✓" : "NEXT →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// UI COMPONENTS
+// ============================================================
+const COLORS = {
+  bg:       "#0a120a",
+  bgCard:   "#0f1e0f",
+  bgHover:  "#152615",
+  border:   "#1e3a1e",
+  borderBright: "#2d5a2d",
+  green1:   "#4a9e4a",
+  green2:   "#6abf6a",
+  green3:   "#8ed88e",
+  text:     "#c8e6c8",
+  textDim:  "#7aad7a",
+  textMid:  "#a0cda0",
+  accent:   "#ff6b35",
+  gold:     "#f4d03f",
+  blue:     "#5dade2",
+  purple:   "#a569bd",
+  red:      "#e74c3c",
+};
+
 function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // ── state ──────────────────────────────────────────────────
   const goldfishTour = useGoldfishTour();
@@ -16230,7 +16764,7 @@ if (card === "King of the Coldblood Curse") {
 
 // ── Hyrax Tower Scout: untap target creature ──
 if (card === "Hyrax Tower Scout") {
-  const untapTargets = battlefield.filter(c => getCard(c)?.type === "creature");
+  const untapTargets = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor");
   if (untapTargets.length > 0) {
     setPendingHyraxUntap(true);
     addLog(`Hyrax Tower Scout ETB — choose a creature to untap.`, COLORS.green1);
@@ -16432,12 +16966,17 @@ if (card === "Woodcaller Automaton") {
     setPendingPicker({
       label: "WOODCALLER AUTOMATON — UNTAP TARGET LAND (becomes Treefolk with haste)",
       color: COLORS.green2,
-      items: lands.map(({ c, i }) => ({ label: c, sub: "land", key: `${c}:${i}`, c, i })),
+      items: lands.map(({ c, i }) => {
+        const k = cardKey(c, i);
+        const isTappedLand = tapped.has(k);
+        return { label: c, sub: isTappedLand ? "⟳ tapped — will untap" : "untapped",
+          subColor: isTappedLand ? COLORS.green2 : COLORS.textDim, key: k, c, i };
+      }),
       onSkip: () => addLog(`Woodcaller Automaton ETB — no land untapped.`, COLORS.textDim),
       onSelect: ({ c, i }) => {
         const k = cardKey(c, i);
         setTapped(prev => { const next = new Set(prev); next.delete(k); return next; });
-        addLog(`Woodcaller Automaton ETB — untapped ${c}. It becomes a Treefolk creature with haste (base P/T = Automaton's P/T). Still a land.`, COLORS.green2);
+        addLog(`Woodcaller Automaton ETB — untapped ${c}. It becomes a 3/3 Treefolk creature with haste (still a land).`, COLORS.green2);
       },
     });
     setPickerSelected([]);
@@ -16449,6 +16988,17 @@ if (card === "Woodcaller Automaton") {
 // ── Talon Gates of Madara: land ETB — up to one target creature phases out ──
 if (card === "Talon Gates of Madara") {
   addLog(`Talon Gates of Madara ETB — up to one target creature phases out until your next untap step. (In goldfish: no opponent creatures to phase out — use context menu to phase out one of your own if needed.)`, COLORS.textDim);
+}
+
+// ── Beast Whisperer: whenever a creature you cast enters the battlefield, draw a card ──
+// Beast Whisperer itself entering does not trigger its own ability.
+if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefield.includes("Beast Whisperer")) {
+  const drawn = library[0] ?? null;
+  if (drawn) {
+    setHand(prev => [...prev, drawn]);
+    setLibrary(prev => prev.slice(1));
+  }
+  addLog(`Beast Whisperer — ${card} entered: drew a card${drawn ? " (" + drawn + ")" : " (library empty)"}.`, COLORS.blue);
 }
   }
 
@@ -16989,7 +17539,26 @@ if (card === "Talon Gates of Madara") {
     }
 
     // Gate 3: No ramp of any kind → can't execute game plan
+    // Exception: instant-speed land tutor (Crop Rotation) can find Dryad Arbor T1 as a
+    // functional ramp play, and multiple tutors can chain into ramp by T2.
     if (rampCount === 0) {
+      const hasCropRotation = cards.includes("Crop Rotation");
+      const hasSylvanScrying = cards.includes("Sylvan Scrying");
+      const instantLandTutor = hasCropRotation; // Can fetch Dryad Arbor T1
+      // Borderline exception: ≥2 tutors OR instant land tutor (Crop Rotation → Dryad Arbor T1)
+      // with enough lands to cast them and meaningful combo/card quality to justify the slow start.
+      const tutorRampOut = (tutors >= 2 || instantLandTutor) && realLands >= 2 && combo >= 1;
+      if (tutorRampOut) {
+        if (hasCropRotation) {
+          notes.push("⚠️ No ramp in hand — but Crop Rotation T1 can fetch Dryad Arbor (creature-land) as a functional ramp substitute");
+          notes.push("Dryad Arbor has summoning sickness but counts as a creature and sets up T2 combo lines");
+        } else {
+          notes.push(`⚠️ No ramp in hand — ${tutors} tutors can find a dork by T2 (${tutorCards.map(c=>c).join(", ")})`);
+          notes.push("Slow start: no T1 play, but tutors give strong T2 recovery");
+        }
+        if (combo >= 2) notes.push(`${combo} combo pieces present (${comboPieces.slice(0,2).join(", ")}) — hand has strategic depth despite slow ramp`);
+        return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+      }
       if (tutors >= 1) {
         notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no ramp ✗ — can find a dork but nothing to cast it T1`);
       } else if (isManaFlood) {
@@ -18027,7 +18596,12 @@ if (card === "Talon Gates of Madara") {
         {/* ── Eladamri, Korvecdal: {G},{T}, tap two untapped creatures → put creature from top of library onto battlefield ── */}
         {isBF && card === "Eladamri, Korvecdal" && (() => {
           const cost = 1;
-          const untappedCreatures = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.type === "creature" && !tapped.has(cardKey(c,i)) && c !== "Eladamri, Korvecdal");
+          const untappedCreatures = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => {
+            const cd = getCard(c);
+            // Dryad Arbor is a land but also a 1/1 creature — include all creature-lands
+            const isCreature = cd?.type === "creature" || c === "Dryad Arbor";
+            return isCreature && !tapped.has(cardKey(c,i)) && c !== "Eladamri, Korvecdal";
+          });
           const canPay = manaPool >= cost && !isCardTapped && untappedCreatures.length >= 2;
           if (!canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -18624,7 +19198,11 @@ if (card === "Talon Gates of Madara") {
           const harmonizeBase = 4; // {G}{G}{G}{G} = 4 coloured pips (paid separately); generic = X
           const untappedCreatures = battlefield
             .map((c, i) => ({ c, i }))
-            .filter(({ c, i }) => getCard(c)?.type === "creature" && !tapped.has(cardKey(c, i)) && !sickCreatures.has(cardKey(c, i)));
+            .filter(({ c, i }) => {
+              const cd = getCard(c);
+              const isCreature = cd?.type === "creature" || c === "Dryad Arbor";
+              return isCreature && !tapped.has(cardKey(c, i)) && !sickCreatures.has(cardKey(c, i));
+            });
           const canAfford = manaPool >= harmonizeBase; // need at least 4 for the green pips
           if (!canAfford) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -20040,7 +20618,7 @@ if (card === "Talon Gates of Madara") {
                   onMouseEnter={e => { if (!isDisabled) { e.currentTarget.style.borderColor = color; e.currentTarget.style.background = "#162616"; }}}
                   onMouseLeave={e => { if (!isDisabled) { e.currentTarget.style.borderColor = isChosen ? color : COLORS.border; e.currentTarget.style.background = isChosen ? "#1e3a1e" : "#0a1a0a"; }}}>
                     {item.label}
-                    {item.sub && <span style={{ color:COLORS.textDim, fontSize:"10px", marginLeft:"8px" }}>{item.sub}</span>}
+                    {item.sub && <span style={{ color: item.subColor ?? COLORS.textDim, fontSize:"10px", marginLeft:"8px" }}>{item.sub}</span>}
                     {isChosen && <span style={{ color, fontSize:"10px", marginLeft:"8px" }}>✓</span>}
                   </button>
                 );
@@ -22409,6 +22987,8 @@ function YevaAdvisor() {
   const [opponentOpenMana, setOpponentOpenMana] = useState(false); // opponents have open blue/interaction mana
   const [yisanCounters, setYisanCounters] = useState(0);
   const [advice, setAdvice] = useState([]);
+  const [nextTurnAdvice, setNextTurnAdvice] = useState([]);
+  const [showNextTurn, setShowNextTurn] = useState(false);
   const [infiniteMana, setInfiniteMana] = useState(false);
   const [activeComboName, setActiveComboName] = useState(null);
   const [collapseKey, setCollapseKey] = useState(0);
@@ -22599,6 +23179,7 @@ function YevaAdvisor() {
   const reset = () => {
     setHand([]); setBattlefield([]); setGraveyard([]); setAttachments(new Map());
     setGreenMana("3"); setColorlessMana("0"); setIsMyTurn(false); setAdvice([]);
+    setNextTurnAdvice([]); setShowNextTurn(false);
     setYisanCounters(0); setInfiniteMana(false); setActiveComboName(null);
   };
 
@@ -22625,6 +23206,15 @@ function YevaAdvisor() {
         setAdvice(results);
         setInfiniteMana(infiniteManaActive);
         setActiveComboName(comboName);
+
+        // Next-turn simulation: try each current advice play, project forward, compare outcomes
+        try {
+          const branches = simulateNextTurn({ hand, battlefield, graveyard, currentAdvice: results, attachments, yisanCounters, deckList, threatLevel, opponentOpenMana });
+          setNextTurnAdvice(branches);
+        } catch (ntErr) {
+          console.warn("Next-turn simulation error:", ntErr);
+          setNextTurnAdvice([]);
+        }
       } catch (err) {
         console.error("analyzeGameState crash:", err);
         setAdvice([{ priority: 0, category: "⚠️ ERROR", headline: err.message, detail: err.stack, steps: [], color: "#e74c3c" }]);
@@ -23381,6 +23971,141 @@ function YevaAdvisor() {
                 {advice.map((a, i) => (
                   <AdviceCard key={i} advice={a} index={i} activeCards={new Set([...hand, ...battlefield])} collapseKey={collapseKey} />
                 ))}
+
+                {/* ── NEXT-TURN SIMULATION SECTION ── */}
+                {nextTurnAdvice.length > 0 && (
+                  <div style={{ marginTop: "24px" }}>
+                    <button
+                      onClick={() => setShowNextTurn(v => !v)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "10px", width: "100%",
+                        background: showNextTurn ? "#0d1f0d" : "#090f09",
+                        border: `1px solid ${showNextTurn ? "#3a7a3a" : "#1a3a1a"}`,
+                        borderRadius: "8px", padding: "10px 16px",
+                        cursor: "pointer", color: "#7ecb7e",
+                        fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "2px",
+                        textAlign: "left",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <span style={{ fontSize: "14px" }}>⏭️</span>
+                      <span>NEXT TURN LOOKAHEAD</span>
+                      <span style={{
+                        background: "#1a4a1a", border: "1px solid #2d6b2d",
+                        borderRadius: "10px", padding: "1px 8px",
+                        fontSize: "10px", color: "#7ecb7e",
+                      }}>{nextTurnAdvice.length} path{nextTurnAdvice.length !== 1 ? "s" : ""} evaluated</span>
+                      <span style={{ marginLeft: "auto", color: "#3a6a3a", fontSize: "12px" }}>
+                        {showNextTurn ? "▾" : "▸"}
+                      </span>
+                    </button>
+                    {showNextTurn && (
+                      <div style={{
+                        marginTop: "10px",
+                        background: "#070f07",
+                        border: "1px solid #1a3a1a",
+                        borderRadius: "8px",
+                        borderTop: "2px solid #2d5a2d",
+                        overflow: "hidden",
+                      }}>
+                        <div style={{
+                          fontSize: "12px", color: "#4a7a4a", lineHeight: 1.6,
+                          padding: "12px 16px 10px",
+                          fontFamily: "'Crimson Text', serif", fontStyle: "italic",
+                          borderBottom: "1px solid #1a3a1a",
+                        }}>
+                          Each current play was simulated and the board re-analyzed after untapping. Paths ranked by next-turn outcome — no draw step assumed.
+                        </div>
+                        {nextTurnAdvice.map((branch, i) => {
+                          const isWin = branch.topResult?.category && (
+                            branch.topResult.category.includes("WIN NOW") ||
+                            branch.topResult.category.includes("CAST TO WIN") ||
+                            branch.topResult.category.includes("POISON WIN")
+                          );
+                          const isPass = branch.actionLabel === null || branch.actionDescription?.includes("Pass turn");
+                          const borderColor = isWin ? "#c0392b" : branch.infiniteMana ? "#f39c12" : i === 0 ? "#27ae60" : "#1a3a1a";
+                          const rankLabel = i === 0 ? "★ BEST PATH" : isPass ? "PASS" : `PATH ${i + 1}`;
+                          return (
+                            <div key={i} style={{
+                              borderLeft: `3px solid ${borderColor}`,
+                              borderBottom: i < nextTurnAdvice.length - 1 ? "1px solid #111a11" : "none",
+                              padding: "14px 16px",
+                            }}>
+                              {/* Action taken this turn */}
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "10px" }}>
+                                <span style={{
+                                  fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1.5px",
+                                  color: borderColor, whiteSpace: "nowrap", paddingTop: "2px",
+                                  minWidth: "80px",
+                                }}>{rankLabel}</span>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{
+                                    fontSize: "11px", color: "#5a8a5a",
+                                    fontFamily: "'Cinzel', serif", letterSpacing: "0.5px",
+                                    marginBottom: "3px",
+                                  }}>THIS TURN →</div>
+                                  <div style={{
+                                    fontSize: "13px", color: isPass ? "#555" : "#9ecb9e",
+                                    fontFamily: "'Crimson Text', serif", lineHeight: 1.4,
+                                    fontStyle: isPass ? "italic" : "normal",
+                                  }}>
+                                    {branch.actionDescription}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Arrow */}
+                              <div style={{
+                                fontSize: "11px", color: "#2a4a2a",
+                                paddingLeft: "90px", marginBottom: "8px",
+                              }}>↓ next turn</div>
+
+                              {/* Next-turn outcome */}
+                              {branch.topResult ? (
+                                <div style={{
+                                  background: isWin ? "#1a0808" : branch.infiniteMana ? "#1a1500" : "#0a140a",
+                                  border: `1px solid ${borderColor}44`,
+                                  borderRadius: "6px", padding: "10px 12px",
+                                  marginLeft: "0",
+                                }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                                    <Tag label={branch.topResult.category} color={branch.topResult.color} />
+                                    {branch.infiniteMana && !isWin && (
+                                      <span style={{
+                                        fontSize: "9px", color: "#f39c12",
+                                        fontFamily: "'Cinzel', serif", letterSpacing: "1px",
+                                      }}>∞ MANA</span>
+                                    )}
+                                  </div>
+                                  <div style={{
+                                    fontSize: "13px", color: isWin ? "#e74c3c" : "#ccc",
+                                    fontFamily: "'Crimson Text', serif", lineHeight: 1.4,
+                                    fontWeight: isWin ? "bold" : "normal",
+                                  }}>
+                                    {branch.topResult.headline}
+                                  </div>
+                                  {branch.nextAdvice.length > 1 && (
+                                    <div style={{
+                                      marginTop: "6px", fontSize: "11px", color: "#3a5a3a",
+                                      fontFamily: "'Crimson Text', serif",
+                                    }}>
+                                      +{branch.nextAdvice.length - 1} more line{branch.nextAdvice.length > 2 ? "s" : ""} available
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div style={{
+                                  fontSize: "12px", color: "#3a4a3a", fontStyle: "italic",
+                                  paddingLeft: "0", fontFamily: "'Crimson Text', serif",
+                                }}>No strong plays identified next turn</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Philosophy reminder */}
                 <div style={{
