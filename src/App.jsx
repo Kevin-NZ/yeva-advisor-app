@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import ReactDOM from "react-dom";
 
 // ── Sentinel for "effectively infinite mana" — used as a fallback threshold
 // when infiniteManaActive is false but the player has so much mana that all
@@ -2853,6 +2854,52 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             : `Cast ${dork} ({${cd.cmc ?? "?"}}).`,
           `Next turn: tap ${dork} for ${projectedOutput}{G} (${cd.tapsFor === "elves" ? "one {G} per elf you control" : cd.tapsFor === "creatures" ? "one {G} per creature you control" : cd.tapsFor === "devotion" ? "one {G} per green devotion" : "its normal output"}).`,
           ...(enablesCombo.length > 0 ? [`Pair with ${enablesCombo[0]} for infinite mana.`] : []),
+        ],
+        color: "#52be80",
+      });
+    }
+  }
+
+  // ---- CAST BADGERMOLE CUB FROM HAND ----
+  // Badgermole Cub ETB animates a land into a creature with haste (+1/+1 counter each bounce).
+  // Even without a bouncer (no infinite loop yet), casting it serves as a ramp/setup play:
+  //   • Adds a second creature body (boosts Cradle, Priest of Titania, elf synergies)
+  //   • Enables land-animate haste for untap combos with Ashaya / Earthcraft
+  //   • Signals Crop Rotation → Cradle as a strong follow-up line
+  // Surface this when it's castable, no bouncer is available yet (otherwise it's a combo card),
+  // and we're still in the early ramp phase (no infinite mana yet).
+  if ((isMyTurn || yevaAvailable) && !infiniteManaActive
+      && inHand.has("Badgermole Cub") && !board.has("Badgermole Cub")
+      && canAfford(2, 1)) {
+    const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    const hasLandToAnimate = battlefield.some(c => getCard(c)?.type === "land");
+    if (!hasBouncer && hasLandToAnimate) {
+      // Estimate how much Cradle would produce after Badgermole adds a creature body
+      const creaturesAfter = creaturesOnBoard + 1; // +1 for Badgermole itself
+      const cradleOnBoard  = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+      const cradleMissing  = !cradleOnBoard && !board.has("Nykthos, Shrine to Nyx");
+      const hasCropRot     = inHand.has("Crop Rotation");
+      // Is Crop Rotation → Cradle a realistic follow-up this turn?
+      const cradleInLib    = true; // we can't know without sim, assume it might be there
+      const cradleNote = cradleMissing && hasCropRot
+        ? ` Then Crop Rotation → Gaea's Cradle: with ${creaturesAfter} creatures (including the animated land) Cradle taps for ${creaturesAfter}{G}.`
+        : cradleOnBoard
+        ? ` Gaea's Cradle now sees ${creaturesAfter} creatures → taps for ${creaturesAfter}{G}.`
+        : "";
+      const ashayaNote = board.has("Ashaya, Soul of the Wild")
+        ? " Ashaya makes the animated land a Forest — it can untap itself via Earthcraft or ranger loops."
+        : "";
+      results.push({
+        priority: 7,
+        category: "🌱 RAMP",
+        headline: `Cast Badgermole Cub ({1}{G}) — animates a land, adds creature body${hasCropRot ? " → then Crop Rotation → Cradle" : ""}`,
+        detail: `Badgermole Cub ETB: target a land — it becomes a 0/0 Badger creature with haste and a +1/+1 counter (a 1/1). This adds a second creature to your board for Cradle/elf synergies and sets up future bouncer combos.${cradleNote}${ashayaNote}`,
+        steps: [
+          `Cast Badgermole Cub ({1}{G}).`,
+          `ETB: target a land you control — it becomes a 1/1 creature with haste (keeps being a land).`,
+          ...(hasCropRot ? [`Cast Crop Rotation ({G}): sacrifice a tapped land, fetch Gaea's Cradle → battlefield.`,
+            `Tap Gaea's Cradle for ${creaturesAfter}{G} (${creaturesAfter} creatures: Badgermole + animated land + existing creatures).`] : []),
+          `Next turn: find Temur Sabertooth or Kogla to enable the Badgermole infinite loop.`,
         ],
         color: "#52be80",
       });
@@ -6149,9 +6196,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (inHand.has("Crop Rotation")) {
     // Crop Rotation sacrifices a land as part of the cost — never advise it when you only
     // have 1 land on the battlefield (you'd sacrifice your only mana source and be stranded).
-    // Exception: infinite mana active — losing a land is irrelevant when you're already winning.
+    // Exception 1: infinite mana active — losing a land is irrelevant when you're already winning.
+    // Exception 2: at least one mana dork is on the battlefield — the dork covers mana production
+    //   after the land is sacrificed, so it's safe to fetch a key land like Gaea's Cradle.
     const landsOnBoard = battlefield.filter(c => getCard(c)?.type === "land").length;
-    if ((landsOnBoard < 2 && !infiniteManaActive) || mana < 1) { /* skip — can't safely sacrifice a land */ } else {
+    const hasDorkOnBoard = battlefield.some(c => {
+      const cd = getCard(c);
+      return cd?.tags?.includes("dork") || cd?.tags?.includes("big-dork");
+    });
+    const safeToSacLand = landsOnBoard >= 2 || infiniteManaActive || (hasDorkOnBoard && landsOnBoard >= 1);
+    if (!safeToSacLand || mana < 1) { /* skip — can't safely sacrifice a land */ } else {
     const keyLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Geier Reach Sanitarium","Wirewood Lodge","Deserted Temple"];
     const missingKeyLands = keyLands.filter(l => !board.has(l));
 
@@ -6295,18 +6349,39 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           ? "Temple untaps a land — doubles Cradle/Nykthos output and enables loops with Hope Tender."
           : "This land is key to your next combo line.";
 
+      // When Badgermole Cub is on board: every dork already taps for +1{G} extra, so the
+      // mana situation is less urgent. More importantly, the key play is now finding a bouncer
+      // (Temur Sabertooth / Kogla) for the Badgermole infinite loop — Cradle is secondary.
+      const badgermoleOnBoard = board.has("Badgermole Cub");
+      const bouncerAvailable  = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")
+                              || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
+      // Priority scale:
+      //   7  — normal (≥2 lands available to sacrifice)
+      //   6  — only 1 land available (risky sac)
+      //   5  — Badgermole on board and no bouncer yet (find the bouncer first)
+      const cropRotPriority = badgermoleOnBoard && !bouncerAvailable ? 5
+                            : landsOnBoard >= 2                      ? 7
+                            :                                          6;
+
+      const badgermoleNote = badgermoleOnBoard && !bouncerAvailable
+        ? ` ⚠ Badgermole Cub is on board — every dork already taps for +1{G}. Priority: find Temur Sabertooth or Kogla for the Badgermole infinite loop before fetching Cradle.`
+        : badgermoleOnBoard && bouncerAvailable
+        ? ` Note: Badgermole Cub gives all dorks +1{G} — Cradle synergises with your expanded mana output.`
+        : "";
+
       results.push({
-        priority: 7,
+        priority: cropRotPriority,
         category: "🏔️ LAND TUTOR",
         headline: `Crop Rotation → ${target}${target === "Gaea's Cradle" && cradleManaAfterFetch >= 4 ? ` (+${cradleManaAfterFetch} mana)` : target === "Nykthos, Shrine to Nyx" && nykthosNetAfterFetch >= 3 ? ` (+${nykthosNetAfterFetch} net)` : ""}`,
-        detail: `Crop Rotation sacrifices a land at instant speed to fetch ${target}. ${targetNote}`,
+        detail: `Crop Rotation sacrifices a land at instant speed to fetch ${target}. ${targetNote}${badgermoleNote}`,
         steps: [
           `Sacrifice a tapped land. Search for ${target} and put it onto the battlefield.`,
           targetNote,
+          ...(badgermoleOnBoard && !bouncerAvailable ? [`⚠ Badgermole Cub is on board — find Temur Sabertooth or Kogla first to set up the infinite loop.`] : []),
           ...(reachablePieces.length > 0 && target === "Gaea's Cradle" ? [`With ${manaAfterCradle} mana total, you can immediately cast: ${reachablePieces.map(p => `${p.name} (${p.cmc})`).join(", ")}.`] : []),
           ...(missingKeyLands.length > 1 ? [`Other available fetch targets: ${missingKeyLands.slice(1, 3).join(", ")}.`] : []),
         ].filter(Boolean),
-        color: "#5dade2",
+        color: badgermoleOnBoard && !bouncerAvailable ? "#8e6bbf" : "#5dade2",
       });
     } else if (mana >= 1 && !board.has("Dryad Arbor") && !inHand.has("Dryad Arbor")) {
       // All key lands are already in play — but Dryad Arbor still outperforms a basic Forest
@@ -10218,16 +10293,20 @@ function CardTooltip({ name, anchorRect }) {
   let left = anchorRect.right + 8;
   if (left + tipW > viewW - 8) left = anchorRect.left - tipW - 8;
   const top = Math.min(anchorRect.top, window.innerHeight - tipH - 8);
-  return (
+  // Render into document.body via portal so the tooltip escapes any parent
+  // overflow:hidden / transform / contain stacking contexts — this prevents
+  // the image being clipped inside scrollable panels (e.g. Goldfish image mode).
+  return ReactDOM.createPortal(
     <div style={{
-      position: "fixed", left, top, zIndex: 9999,
+      position: "fixed", left, top, zIndex: 99999,
       width: tipW, borderRadius: 8,
       boxShadow: "0 8px 32px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.08)",
       pointerEvents: "none", overflow: "hidden",
       transition: "opacity 0.1s",
     }}>
       <img src={url} alt={name} style={{ width: "100%", display: "block" }} />
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -16062,8 +16141,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       }
     }
     setBattlefield(prev => [...prev, card]);
-    // Mark creatures as sick using their new index key (so bounce+recast gets sickness again)
-    if (getCard(card)?.type === "creature") {
+    // Mark creatures as sick using their new index key (so bounce+recast gets sickness again).
+    // Dryad Arbor has type "land" but is also a creature — it gets summoning sickness too.
+    if (getCard(card)?.type === "creature" || card === "Dryad Arbor") {
       setBattlefield(prev2 => {
         const newIdx = prev2.length - 1; // card was just appended
         setSickCreatures(prev => new Set([...prev, `${card}:${newIdx}`]));
@@ -16256,9 +16336,17 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     if (cmc > 0) { setManaPool(p => Math.max(0, p - cmc)); flashMana(-cmc); }
     if (type === "land") {
       if (landPlayed) { addLog(`Already played a land this turn — ${card} returned to hand.`, COLORS.red); setHand(prev => [...prev, card]); return; }
-      setBattlefield(prev => [...prev, card]);
+      setBattlefield(prev => {
+        const newIdx = prev.length;
+        // Dryad Arbor is a land-creature — it enters with summoning sickness like any creature.
+        // Apply sickness immediately so it cannot tap for {G} this turn.
+        if (card === "Dryad Arbor") {
+          setSickCreatures(s => new Set([...s, `Dryad Arbor:${newIdx}`]));
+        }
+        return [...prev, card];
+      });
       setLandPlayed(true);
-      addLog(`Played ${card}.`, COLORS.green1);
+      addLog(`Played ${card}.${card === "Dryad Arbor" ? " (summoning sickness — cannot tap for {G} this turn)" : ""}`, COLORS.green1);
     } else if (type === "instant" || type === "sorcery") {
       // GSZ: T1 (manaPool=1 after auto-tap) → auto-find Dryad Arbor; else open tutor modal
       if (card === "Green Sun's Zenith") {
@@ -17318,18 +17406,25 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     }
     setGraveyard(prev => [...prev, card]);
     // Prefer Dryad Arbor (land-creature, can be Natural Order fodder, elf count, etc.)
-    // over a plain Forest — unless we already have it on the battlefield.
+    // over a plain Forest — UNLESS:
+    //   (a) we already have one on the battlefield, OR
+    //   (b) it's T1 and we have a 1-drop dork in hand — Dryad Arbor has summoning sickness
+    //       and produces 0 mana this turn, so a plain Forest is strictly better here.
     const hasDryadOnBoard = battlefield.includes("Dryad Arbor");
     const dryadIdx = (!hasDryadOnBoard) ? library.findIndex(c => c === "Dryad Arbor") : -1;
     // Find a Forest in library — exclude fetch lands (they have "fetch" tag) which happen to also carry "forest"
     const forestIdx = library.findIndex(c => {
+      if (c === "Dryad Arbor") return false; // never pick Dryad Arbor via the Forest path
       const cd = getCard(c);
       if (!cd) return c === "Forest";
       if (cd.tags?.includes("fetch")) return false; // never fetch a fetchland
       return cd.tags?.includes("forest") || cd.tags?.includes("basic") || c === "Forest";
     });
-    // Dryad Arbor wins unless we already have one — it's a creature, an elf, and a forest all in one
-    const bestIdx = dryadIdx >= 0 ? dryadIdx : forestIdx;
+    // T1 with a castable 1-drop dork in hand → we need mana this turn → fetch Forest, not Dryad Arbor
+    const hasOneDrop = hand.some(c => getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 0) === 1);
+    const needsManaThisTurn = !landPlayed && turnNumber === 1 && hasOneDrop;
+    // Dryad Arbor wins unless we already have one or need mana urgently this turn
+    const bestIdx = (dryadIdx >= 0 && !needsManaThisTurn) ? dryadIdx : forestIdx;
     if (bestIdx === -1) {
       addLog(`Cracked ${card} → graveyard, but no Forest found in library.`, COLORS.red);
     } else {
@@ -17337,7 +17432,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       setLibrary(prev => [...prev.slice(0, bestIdx), ...prev.slice(bestIdx + 1)]);
       setBattlefield(prev => [...prev, found]);
       setLandPlayed(true);
-      const dryadNote = found === "Dryad Arbor" ? " (Dryad Arbor preferred — creature + elf + forest)" : "";
+      const dryadNote = found === "Dryad Arbor"
+        ? " (Dryad Arbor preferred — creature + elf + forest)"
+        : (needsManaThisTurn && dryadIdx >= 0)
+          ? " (Forest fetched — Dryad Arbor has summoning sickness, need {G} to cast 1-drop this turn)"
+          : "";
       addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${dryadNote}`, COLORS.green1);
       // Fetched land enters tapped; Dryad Arbor also has summoning sickness (it's a creature)
       setBattlefield(prev => {
@@ -17982,6 +18081,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
   const renderCard = (card, i, zone, { isTap = false, curCount = 0, onClick, style: extraStyle } = {}) => {
     const isLand = getCard(card)?.type === "land";
     const fetch = isFetch(card);
+    const key = cardKey(card, i);
+    const isSick = zone === "battlefield" && sickCreatures.has(key);
     // Show attachment target for enchant-land auras
     const targetIdx = zone === "battlefield" ? attachments.get(i) : undefined;
     const attachedTo = targetIdx != null ? battlefield[targetIdx] : undefined;
@@ -17994,7 +18095,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             onDragEnd={onDragEnd}
             onClick={onClick}
             onContextMenu={e => openContextMenu(card, i, zone, e)}
-            style={{ ...cardPillStyle(isTap, false), ...extraStyle }}>
+            style={{ ...cardPillStyle(isTap, false, isSick), ...extraStyle }}>
             {isTap ? "↷ " : ""}{card}
             {attachedTo && (
               <span style={{ fontSize: "9px", color: COLORS.green3, opacity: 0.8 }}>↠{attachedTo}</span>
@@ -18004,6 +18105,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 {curCount}
               </span>
             )}
+            {isSick && <span style={{ fontSize: "9px", opacity: 0.7, marginLeft: "1px" }} title="Summoning sickness">💤</span>}
             {isLand && zone === "hand" && <span style={{ fontSize: "9px", color: COLORS.textDim }}>🌲</span>}
             {fetch && <span style={{ fontSize: "9px", color: COLORS.blue }}>⚓</span>}
             {(getCard(card)?.transformsTo || getCard(card)?.transformsFrom) && zone === "battlefield" && (
@@ -18019,16 +18121,16 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
   // ── render helpers ──────────────────────────────────────────
   const isFetch = (card) => getCard(card)?.tags?.includes("fetch");
 
-  const cardPillStyle = (isTapped, isSelected) => ({
+  const cardPillStyle = (isTapped, isSelected, isSick = false) => ({
     display: "inline-flex", alignItems: "center", gap: "4px",
     padding: "3px 7px", margin: "2px",
-    background: isSelected ? "#1a3a1a" : isTapped ? "#150f05" : "#0f1e0f",
-    border: `1px solid ${isSelected ? COLORS.green1 : isTapped ? "#5a4010" : COLORS.border}`,
+    background: isSelected ? "#1a3a1a" : isTapped ? "#150f05" : isSick ? "#1a1510" : "#0f1e0f",
+    border: `1px solid ${isSelected ? COLORS.green1 : isTapped ? "#5a4010" : isSick ? "#5a4a20" : COLORS.border}`,
     borderRadius: "4px", fontSize: "11px",
-    color: isSelected ? COLORS.green2 : isTapped ? "#9a7830" : COLORS.textMid,
+    color: isSelected ? COLORS.green2 : isTapped ? "#9a7830" : isSick ? "#8a7840" : COLORS.textMid,
     cursor: "pointer", userSelect: "none",
     fontFamily: "'Crimson Text', serif",
-    opacity: isTapped ? 0.75 : 1,
+    opacity: isTapped ? 0.75 : isSick ? 0.8 : 1,
     fontStyle: isTapped ? "italic" : "normal",
     transition: "all 0.1s",
   });
