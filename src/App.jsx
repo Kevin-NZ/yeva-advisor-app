@@ -6138,6 +6138,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- CROP ROTATION FOR KEY LAND ----
 
   if (inHand.has("Crop Rotation")) {
+    // Crop Rotation sacrifices a land as part of the cost — never advise it when you only
+    // have 1 land on the battlefield (you'd sacrifice your only mana source and be stranded).
+    // Exception: infinite mana active — losing a land is irrelevant when you're already winning.
+    const landsOnBoard = battlefield.filter(c => getCard(c)?.type === "land").length;
+    if ((landsOnBoard < 2 && !infiniteManaActive) || mana < 1) { /* skip — can't safely sacrifice a land */ } else {
     const keyLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Geier Reach Sanitarium","Wirewood Lodge","Deserted Temple"];
     const missingKeyLands = keyLands.filter(l => !board.has(l));
 
@@ -6320,7 +6325,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         });
       }
     }
-  }
+  } // end landsOnBoard >= 2 else block
+  } // end Crop Rotation
 
 
   // ── Next-turn lookahead ───────────────────────────────────────────────────
@@ -11738,6 +11744,7 @@ function DeckCompareModal({ decks, onClose }) {
 }
 
 function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose }) {
+  useEscapeStack(onClose);
   const [showImport, setShowImport]     = useState(false);
   const [importText, setImportText]     = useState("");
   const [viewingDeck, setViewingDeck]   = useState(null);
@@ -12041,14 +12048,47 @@ function useSavedStates() {
   return { states, save };
 }
 
+// ── Modal escape stack ──────────────────────────────────────────────────────
+// Tracks open modals in order. Escape always closes the most-recently-opened one.
+// Usage: call useEscapeStack(onClose) inside any modal component.
+// The stack lives on window so it works across component boundaries.
+if (!window.__modalEscapeStack) {
+  window.__modalEscapeStack = [];
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const stack = window.__modalEscapeStack;
+    if (stack.length === 0) return;
+    e.stopPropagation();
+    // Call the topmost (most recently pushed) close handler
+    const top = stack[stack.length - 1];
+    top();
+  });
+}
+
+function useEscapeStack(onClose) {
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose; // always latest without re-registering
+  useEffect(() => {
+    const handler = () => onCloseRef.current();
+    window.__modalEscapeStack.push(handler);
+    return () => {
+      const idx = window.__modalEscapeStack.lastIndexOf(handler);
+      if (idx !== -1) window.__modalEscapeStack.splice(idx, 1);
+    };
+  }, []); // register once on mount, unregister on unmount
+}
+
+// Sentinel component: mount inside any modal JSX to register it on the escape stack.
+// Use when the modal is a conditional block rather than its own component.
+function EscapeHandler({ onClose }) {
+  useEscapeStack(onClose);
+  return null;
+}
+
 // ── HelpModal ──────────────────────────────────────────────────────────────────
 function HelpModal({ onClose, onStartTour }) {
   const [tab, setTab] = useState("overview");
-  useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+  useEscapeStack(onClose);
 
   const TABS = [
     { id: "overview",   label: "Overview" },
@@ -14282,15 +14322,17 @@ function ReplayModal({ game, onClose }) {
   const [step, setStep] = useState(0);
   const snapshots = game.replay || [];
 
+  useEscapeStack(onClose);
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === "ArrowLeft") setStep(s => Math.max(0, s - 1));
-      if (e.key === "ArrowRight") setStep(s => Math.min(snapshots.length - 1, s + 1));
-      if (e.key === "Escape") onClose();
+      const tag = document.activeElement?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (e.key === "ArrowLeft" && !inInput) setStep(s => Math.max(0, s - 1));
+      if (e.key === "ArrowRight" && !inInput) setStep(s => Math.min(snapshots.length - 1, s + 1));
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [snapshots.length, onClose]);
+  }, [snapshots.length]);
 
   if (snapshots.length === 0) return (
     <div style={{ position:"fixed", inset:0, background:"#000c", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center" }} onClick={onClose}>
@@ -15288,6 +15330,7 @@ const COLORS = {
 };
 
 function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
+  useEscapeStack(onClose);
   // ── state ──────────────────────────────────────────────────
   const goldfishTour = useGoldfishTour();
   const [phase, setPhase] = useState("setup"); // setup | mulligan | playing | stats
@@ -16085,6 +16128,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           // X>0: open tutor modal filtered to creatures with CMC ≤ X, put to battlefield on select
           setTutorMaxCmc(gszX);
           setTutorOnSelect(() => (chosen) => {
+            // Deduct X (the chosen creature's CMC) from the mana pool — castFromHand only deducted {G}
+            const chosenCmc = getCard(chosen)?.cmc ?? 0;
+            setManaPool(p => Math.max(0, p - chosenCmc)); flashMana(-chosenCmc);
             const idx = library.indexOf(chosen);
             if (idx !== -1) {
               setLibrary(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
@@ -16513,7 +16559,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 setHand(prev => [...prev, chosen]);
                 addLog(`Archdruid's Charm → ${chosen} → hand. Library shuffled.`, COLORS.green2);
               });
-              setShowTutor(true); setTutorQuery("elf");
+              setShowTutor(true); setTutorQuery("");
               setTimeout(() => tutorInputRef.current?.focus(), 50);
               addLog(`Archdruid's Charm: search for a creature or land card (land enters tapped, creature goes to hand).`, COLORS.green2);
             } else if (mode === "pump") {
@@ -17850,6 +17896,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         borderRadius: "8px", padding: "6px 0", minWidth: "190px",
         boxShadow: "0 4px 20px rgba(0,0,0,0.8)", fontFamily: "'Cinzel', serif", fontSize: "11px",
       }}>
+        <EscapeHandler onClose={() => setContextMenu(null)} />
         <div style={{ padding: "6px 14px 4px", color: COLORS.green3, fontSize: "10px", letterSpacing: "1px", borderBottom: `1px solid ${COLORS.border}`, marginBottom: "4px" }}>
           {card}
         </div>
@@ -19982,7 +20029,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     if (phase !== "mulligan") return;
     const handler = (e) => {
       const tag = document.activeElement?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (phase2 === "bottoming") return; // don't fire during bottoming selection
       if (e.key === "k" || e.key === "K") { e.preventDefault(); keepHand(); }
       if (e.key === "m" || e.key === "M") { e.preventDefault(); doMulligan(); }
@@ -19995,7 +20042,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     if (phase !== "playing") return;
     const handler = (e) => {
       const tag = document.activeElement?.tagName;
-      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
       if (inInput) return;
       if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey)) { e.preventDefault(); applyUndo(); return; }
       if (e.key === "?") { e.preventDefault(); goldfishTour.start(); return; }
@@ -20004,10 +20051,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       if (e.key === "t" || e.key === "T") { e.preventDefault(); openTutor(); }
       if (e.key === "d" || e.key === "D") { e.preventDefault(); drawCard(1); }
       if (e.key === "m" || e.key === "M") { e.preventDefault(); tapAllMana(); }
-      if (e.key === "Escape") {
-        const anyOpen = showUntapModal || showTutor || showScry || contextMenu || growingRitesCards;
-        if (anyOpen) { e.stopPropagation(); setShowUntapModal(null); setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setShowScry(false); setContextMenu(null); setGrowingRitesCards(null); }
-      }
+      // Escape is routed via useEscapeStack — individual modals register themselves
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -20019,6 +20063,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const { card, targets } = showUntapModal;
     return (
       <div onClick={() => setShowUntapModal(null)} style={{ position: "absolute", inset: 0, zIndex: 700, background: "#000000bb", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <EscapeHandler onClose={() => setShowUntapModal(null)} />
         <div onClick={e => e.stopPropagation()} style={{ background: COLORS.bg, border: `1px solid ${COLORS.green1}`, borderRadius: "10px", padding: "16px", minWidth: "240px", maxWidth: "340px" }}>
           <div style={{ fontSize: "10px", color: COLORS.green1, letterSpacing: "2px", fontFamily: "'Cinzel', serif", marginBottom: "10px" }}>
             TAP {card.toUpperCase()} — UNTAP WHICH ELF?
@@ -20060,6 +20105,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 620,
         background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center",
       }}>
+        <EscapeHandler onClose={() => setGrowingRitesCards(null)} />
         <div style={{
           background: "#091a09", border: `1px solid ${COLORS.green2}`,
           borderRadius: "10px", padding: "20px", minWidth: "320px", maxWidth: "420px",
@@ -20125,6 +20171,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 600,
         background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center",
       }}>
+        <EscapeHandler onClose={() => setShowScry(false)} />
         <div style={{
           background: "#0d1f0d", border: `1px solid ${COLORS.blue}`,
           borderRadius: "10px", padding: "20px", minWidth: "320px", maxWidth: "400px",
@@ -20272,6 +20319,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         background: "#0d1f0d", border: `1px solid ${borderColor}`,
         borderRadius: "8px", padding: "12px", boxShadow: "0 4px 24px rgba(0,0,0,0.9)",
       }}>
+        <EscapeHandler onClose={() => { setShowTutor(false); setTutorQuery(""); setTutorOnSelect(null); }} />
         <div style={{ fontSize: "10px", color: borderColor, letterSpacing: "2px", fontFamily: "'Cinzel', serif", marginBottom: "6px" }}>
           {header}
         </div>
@@ -20283,7 +20331,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         <input ref={tutorInputRef} value={tutorQuery}
           onChange={e => { setTutorQuery(e.target.value); setTutorSelected(0); }}
           onKeyDown={e => {
-            if (e.key === "Escape") { e.stopPropagation(); closeTutor(); }
+            if (e.key === "Escape") { e.stopPropagation(); /* handled by useEscapeStack */ }
             if (e.key === "ArrowDown") { e.preventDefault(); setTutorSelected(i => Math.min(i + 1, displayList.length - 1)); }
             if (e.key === "ArrowUp")   { e.preventDefault(); setTutorSelected(i => Math.max(i - 1, 0)); }
             if (e.key === "Enter" && displayList.length > 0) tutorCard(displayList[tutorSelected]);
@@ -20584,6 +20632,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       };
       return (
         <div style={{ position:"fixed", inset:0, zIndex:9100, background:"rgba(0,0,0,0.82)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <EscapeHandler onClose={() => { setPendingPicker(null); setPickerSelected([]); }} />
           <div style={{ background:"#0d1f0d", border:`1px solid ${color}`, borderRadius:"10px", padding:"20px 24px", minWidth:"320px", maxWidth:"480px", maxHeight:"80vh", overflowY:"auto", boxShadow:"0 8px 32px rgba(0,0,0,0.9)", fontFamily:"'Cinzel', serif" }}>
             <div style={{ color, fontSize:"10px", letterSpacing:"1.5px", marginBottom: isMulti ? "4px" : "12px" }}>{label}</div>
             {isMulti && (
@@ -22288,9 +22337,7 @@ function SynergyMapModal({ onClose, activeDeck, onLoadCombo }) {
 
   // Measure the stable outer wrapper — always mounted regardless of view
   useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") { e.stopPropagation(); if (comboCtxMenu) { setComboCtxMenu(null); } else { onClose(); } } };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // Escape is handled by useEscapeStack below — nothing else needed here
   }, [onClose, comboCtxMenu]);
 
   // Close combo context menu on any outside click
@@ -22761,6 +22808,7 @@ function SynergyMapModal({ onClose, activeDeck, onLoadCombo }) {
 }
 
 function SavedStatesPanel({ currentState, activeDeck, onLoad, onClose }) {
+  useEscapeStack(onClose);
   const { states, save } = useSavedStates();
   const [name, setName] = useState("");
   const [confirmDel, setConfirmDel] = useState(null);
@@ -23001,7 +23049,9 @@ function YevaAdvisor() {
   // Shift+L toggles the screensaver manually
   useEffect(() => {
     const handler = (e) => {
-      if (e.key === "L" && e.shiftKey) setIsIdleManual(v => !v);
+      const tag = document.activeElement?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (e.key === "L" && e.shiftKey && !inInput) setIsIdleManual(v => !v);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -23026,7 +23076,7 @@ function YevaAdvisor() {
     const handler = (e) => {
       // Don't fire when typing in an input/textarea
       const tag = document.activeElement?.tagName;
-      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
       // Shift+S = quick-save current state
       if (e.key === "S" && e.shiftKey && !e.ctrlKey && !e.metaKey && !inInput) {
@@ -23038,14 +23088,7 @@ function YevaAdvisor() {
         e.preventDefault();
         tour.start();
       }
-      // Escape = close any open modal
-      if (e.key === "Escape") {
-        setShowSavedStates(false);
-        setShowDebug(false);
-        setShowDeckManager(false);
-        setShowGoldfish(false);
-        setShowHelp(false);
-      }
+      // Escape is routed via useEscapeStack — modals register themselves on mount
       // Tab = cycle focus between zone inputs (only when not in an input, or at end of suggestions)
       if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
         const inputs = ZONES.map(z => zoneInputRefs.current[z]).filter(Boolean);
@@ -23495,6 +23538,7 @@ function YevaAdvisor() {
               alignItems: "center", justifyContent: "center",
               padding: "20px",
             }} onClick={() => setShowDebug(false)}>
+              <EscapeHandler onClose={() => setShowDebug(false)} />
               <div style={{
                 background: "#0d1f0d", border: `1px solid ${COLORS.borderBright}`,
                 borderRadius: "10px", padding: "24px", maxWidth: "780px", width: "100%",
