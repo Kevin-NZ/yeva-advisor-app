@@ -2889,8 +2889,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const ashayaNote = board.has("Ashaya, Soul of the Wild")
         ? " Ashaya makes the animated land a Forest — it can untap itself via Earthcraft or ranger loops."
         : "";
+      // Priority: castable NOW beats "find a missing piece" NEARLY THERE lines (9-11).
+      // Early game (ramp not yet sufficient): concrete action → 12; with Crop Rot same-turn follow-up → 13.
+      // Mid game (ramp ok, no infinite): still good setup → 9/10.
+      const badgermoleEarlyGame = !rampIsSufficient;
+      const basePri = badgermoleEarlyGame ? 12 : 9;
+      const badgermolePriority = hasCropRot ? basePri + 1 : basePri;
       results.push({
-        priority: 7,
+        priority: badgermolePriority,
         category: "🌱 RAMP",
         headline: `Cast Badgermole Cub ({1}{G}) — animates a land, adds creature body${hasCropRot ? " → then Crop Rotation → Cradle" : ""}`,
         detail: `Badgermole Cub ETB: target a land — it becomes a 0/0 Badger creature with haste and a +1/+1 counter (a 1/1). This adds a second creature to your board for Cradle/elf synergies and sets up future bouncer combos.${cradleNote}${ashayaNote}`,
@@ -6359,7 +6365,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       //   7  — normal (≥2 lands available to sacrifice)
       //   6  — only 1 land available (risky sac)
       //   5  — Badgermole on board and no bouncer yet (find the bouncer first)
+      // Priority scale — castable now should beat "find a missing piece" lines:
+      //   Badgermole on board, no bouncer  → 5  (find bouncer first)
+      //   Early game (ramp insufficient)   → 12 (concrete action, do it now)
+      //   Normal (≥2 lands)                → 7
+      //   Only 1 land to sac               → 6
+      const cropRotEarlyGame = !rampIsSufficient && !badgermoleOnBoard;
       const cropRotPriority = badgermoleOnBoard && !bouncerAvailable ? 5
+                            : cropRotEarlyGame                       ? 12
                             : landsOnBoard >= 2                      ? 7
                             :                                          6;
 
@@ -9440,6 +9453,29 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
   function extrasForCombo(combo, pool, depth) {
     const extraSteps = [];
     let extraMana = 0;
+
+    // Named dork/land requirement (one of the listed cards must be present or findable)
+    if (combo.needsNamedDork) {
+      const candidates = combo.needsNamedDork;
+      const hasOne = [...pool.have].some(c => candidates.includes(c));
+      if (!hasOne) {
+        if (depth >= 3) return null; // can't add more tutor steps
+        // Try to find one via remaining tutors
+        const found = candidates.find(c =>
+          !pool.have.has(c) && inDeckFn(c) &&
+          activeTutors.some(t => t.usable && tutorCanFind(t, c)));
+        if (!found) return null; // none findable
+        const tutor = activeTutors.find(t => t.usable && tutorCanFind(t, found));
+        const isLand = getCard(found)?.type === "land";
+        extraSteps.push({
+          tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
+          note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
+          isExtra: true,
+          label: isLand ? "key land" : "big dork",
+        });
+        extraMana += tutorCost(tutor, found);
+      }
+    }
 
     // Big dork requirement
     if (combo.needsBigDork) {
