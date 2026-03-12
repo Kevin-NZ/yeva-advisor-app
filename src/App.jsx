@@ -3344,19 +3344,26 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         return false;
       });
 
-      if (hasRanger && bigDorkNO && !results.some(r => r.combo === "natural_order_ashaya_win")) {
+      const rangersOnBoard = new Set(["Quirion Ranger","Scryb Ranger"].filter(r => board.has(r)));
+      const _NO_COMBO_PIECES = new Set([
+        "Quirion Ranger","Scryb Ranger","Priest of Titania","Seedborn Muse",
+        "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Temur Sabertooth",
+        "Kogla, the Titan Ape","Ashaya, Soul of the Wild","Duskwatch Recruiter",
+        "Argothian Elder","Wirewood Symbiote","Devoted Druid","Selvala, Heart of the Wilds",
+        "Woodland Bellower","Eternal Witness","Destiny Spinner","Hyrax Tower Scout",
+        "Earthcraft","Tireless Provisioner","Circle of Dreams Druid","Elvish Archdruid",
+        "Fanatic of Rhonas","Magus of the Candelabra","Formidable Speaker",
+      ]);
+      // Require a non-ranger sac target: sacrificing the ranger breaks the infinite loop.
+      const hasNonRangerSacTarget = battlefield.some(c =>
+        getCard(c)?.type === "creature" && c !== bigDorkNO && !rangersOnBoard.has(c)
+      );
+
+      if (hasRanger && bigDorkNO && hasNonRangerSacTarget && !results.some(r => r.combo === "natural_order_ashaya_win")) {
         // Rank sacrifice targets: prefer expendable dorks over combo pieces.
         // Combo pieces to avoid sacrificing: Quirion Ranger, Scryb Ranger, Priest of Titania,
         // Seedborn Muse, Yeva, Yisan, Temur Sabertooth, Kogla, Ashaya, Duskwatch, etc.
-        const COMBO_PIECES = new Set([
-          "Quirion Ranger","Scryb Ranger","Priest of Titania","Seedborn Muse",
-          "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Temur Sabertooth",
-          "Kogla, the Titan Ape","Ashaya, Soul of the Wild","Duskwatch Recruiter",
-          "Argothian Elder","Wirewood Symbiote","Devoted Druid","Selvala, Heart of the Wilds",
-          "Woodland Bellower","Eternal Witness","Destiny Spinner","Hyrax Tower Scout",
-          "Earthcraft","Tireless Provisioner","Circle of Dreams Druid","Elvish Archdruid",
-          "Fanatic of Rhonas","Magus of the Candelabra","Formidable Speaker",
-        ]);
+        const COMBO_PIECES = _NO_COMBO_PIECES;
         const sacCandidates = battlefield
           .filter(c => getCard(c)?.type === "creature" && c !== bigDorkNO)
           .sort((a, b) => {
@@ -3365,6 +3372,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             if (aCombo !== bCombo) return aCombo - bCombo; // non-combo first
             return (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0); // then lowest CMC
           });
+        // Require a non-essential sac target: sacrificing the ranger breaks the infinite loop.
+        // If all sac candidates are the ranger(s), the win path is invalid.
         const sacTarget = sacCandidates[0] || bigDorkNO;
         const dorkOutput = (() => {
           const t = getCard(bigDorkNO)?.tapsFor;
@@ -6342,15 +6351,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Project mana: current sumManaPool on the new board (untap step resets all sources)
     const nextPool = sumManaPool(nextBf);
     const nextMana = nextPool.green + nextPool.colorless;
+    // Project hand: remove the tutor most likely spent to find addCard this turn.
+    // Without this, the lookahead sees a full hand of tutors on a better board and
+    // over-reports WIN NOW lines that assume cards already used.
+    const TUTOR_PRIORITY = [
+      "Chord of Calling","Green Sun's Zenith","Summoner's Pact","Eldritch Evolution",
+      "Natural Order","Worldly Tutor","Shared Summons","Finale of Devastation",
+      "Elvish Harbinger","Fauna Shaman","Survival of the Fittest",
+    ];
+    const spentTutor = TUTOR_PRIORITY.find(t => hand.includes(t));
+    const nextHand = spentTutor ? hand.filter(c => c !== spentTutor) : hand;
     // Run the path planner on the projected state
-    const lines = findReachableLines(hand, nextBf, graveyard, nextMana, null);
+    const lines = findReachableLines(nextHand, nextBf, graveyard, nextMana, null);
     let bonus = 0;
     if (lines.length > 0) {
       const best = lines[0];
-      if (best.winNow)          bonus = 3;  // Wins immediately next turn
-      else if (best.sameTurn)   bonus = 2;  // Affordable same-turn combo line
-      else if (best.canAfford)  bonus = 1;  // Reachable line
-      else                      bonus = 0;  // Still missing pieces
+      // Cap at sameTurn (2) — never award win-now bonus (3).
+      // The lookahead is a tiebreaker within ONE PIECE AWAY, not a promotion to WIN NOW.
+      // A "win next turn" projection is too speculative: it assumes the remaining hand
+      // still has all other tutors intact, ignores opponent interaction, etc.
+      if (best.sameTurn || best.winNow) bonus = 2;  // Affordable combo line next turn
+      else if (best.canAfford)          bonus = 1;  // Reachable line
+      else                              bonus = 0;  // Still missing pieces
     }
     _nextTurnLookaheadCache.set(addCard, bonus);
     return bonus;
@@ -8725,16 +8747,17 @@ function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], at
 
   // Score a next-turn analysis result for branch comparison.
   // Higher = better outcome.
-  function scoreOutcome(analysis) {
+  function scoreOutcome(analysis, validatedAdvice = null) {
     if (!analysis || !analysis.results) return -999;
-    const top = analysis.results.filter(r => !r.isSuppressed)[0];
+    const results = validatedAdvice ?? analysis.results.filter(r => !r.isSuppressed);
+    const top = results[0];
     if (!top) return -10;
     const p = top.priority ?? 0;
-    // Bonus for win-now outcomes
+    // Only count win bonus if the WIN label survived validation
     const isWin = top.category && (
       top.category.includes("WIN NOW") || top.category.includes("CAST TO WIN") ||
       top.category.includes("WIN PILE") || top.category.includes("POISON WIN")
-    );
+    ) && !top.category.includes("unconfirmed");
     return p + (isWin ? 100 : 0) + (analysis.infiniteManaActive ? 20 : 0);
   }
 
@@ -8783,7 +8806,7 @@ function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], at
       const idx = h.indexOf(cardToPlay);
       if (idx >= 0 && simCanCast(cardToPlay, manaPool, bf)) {
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
-          !bf.some(c => getCard(c)?.type === "creature" && !sick.has(c));
+          !simHasValidSacTarget(bf, sick);
         if (!sacNeedsCreature) {
           playCard(cardToPlay, idx, manaPool);
           actionedSomething = true;
@@ -8846,7 +8869,7 @@ function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], at
       if (!simCanCast(nextCard, manaPool, bf)) break;
 
       const sacCheck = (nextCard === "Natural Order" || nextCard === "Eldritch Evolution") &&
-        !bf.some(c => getCard(c)?.type === "creature" && !sick.has(c));
+        !simHasValidSacTarget(bf, sick);
       if (sacCheck) break;
 
       playCard(nextCard, nextIdx, manaPool);
@@ -8873,13 +8896,26 @@ function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], at
       return null;
     }
 
+    // Filter next-turn results: validate any WIN NOW claims against actual board/hand/mana.
+    // Without this, the panel shows WIN NOW for states where combo pieces are missing from
+    // hand and would require tutors (not modelled) to assemble.
+    const nextManaPool = untappedPool; // already computed above
+    const validatedNextAdvice = nextTurnAnalysis.results.filter(r => !r.isSuppressed).map(r => {
+      if (isWinCategory(r.category) &&
+          !validateWin(r, nextTurnAnalysis, h, bf, nextManaPool)) {
+        // Demote: strip the WIN label so the panel renders it as a normal advice card
+        return { ...r, category: r.category.replace("🔥 WIN NOW", "⚡ WIN NEXT TURN (unconfirmed)").replace("⚡ CAST TO WIN", "⚡ CAST TO WIN (unconfirmed)"), priority: Math.min(r.priority, 9) };
+      }
+      return r;
+    });
+
     return {
       actionLabel: cardToPlay || primaryAdvice.category,
       actionDescription,
       boardAfter: { hand: h, battlefield: bf, graveyard: gy },
-      nextAdvice: nextTurnAnalysis.results.filter(r => !r.isSuppressed),
-      topResult: nextTurnAnalysis.results.filter(r => !r.isSuppressed)[0] ?? null,
-      score: scoreOutcome(nextTurnAnalysis),
+      nextAdvice: validatedNextAdvice,
+      topResult: validatedNextAdvice[0] ?? null,
+      score: scoreOutcome(nextTurnAnalysis, validatedNextAdvice),
       infiniteMana: nextTurnAnalysis.infiniteManaActive,
       actioned: actionedSomething,
     };
@@ -9190,7 +9226,15 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
       putsToBattlefield:true, constraint:"sacrifice-green", sorcerySpeed:true },
     { name:"Eldritch Evolution",   finds:"creature",       baseCost:3,  usable: inHand.has("Eldritch Evolution"),
       note:"{1}{G}{G}, sacrifice creature → find creature MV≤(sac+2) → battlefield",
-      putsToBattlefield:true, constraint:"sacrifice", sorcerySpeed:true },
+      putsToBattlefield:true, constraint:"sacrifice", sorcerySpeed:true,
+      // EE can only find a creature with CMC ≤ (best sac target CMC + 2).
+      // Best sac target = highest-CMC creature currently on the battlefield.
+      maxTargetCmc: (() => {
+        const sacCandidates = battlefield.filter(c => getCard(c)?.type === "creature");
+        if (sacCandidates.length === 0) return -1; // no sac target → EE unusable
+        const bestSacCmc = Math.max(...sacCandidates.map(c => getCard(c)?.cmc ?? 0));
+        return bestSacCmc + 2;
+      })() },
     { name:"Finale of Devastation",finds:"creature",       baseCost:"cmc+2", usable: inHand.has("Finale of Devastation"),
       note:"{X}{G}{G}: find creature MV≤X from library/graveyard → battlefield", putsToBattlefield:true, sorcerySpeed:true },
     { name:"Worldly Tutor",        finds:"creature",       baseCost:1,  usable: inHand.has("Worldly Tutor"),
@@ -9222,6 +9266,8 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
   function tutorCanFind(t, cardName) {
     const cd = getCard(cardName);
     if (!cd) return false;
+    // Eldritch Evolution CMC cap: target must have CMC ≤ best sac target + 2
+    if (t.maxTargetCmc !== undefined && (cd.cmc ?? 0) > t.maxTargetCmc) return false;
     switch (t.finds) {
       case "creature":           return cd.type === "creature";
       case "creature-green":     return cd.type === "creature" && (cd.greenPips ?? 0) > 0;
@@ -9270,6 +9316,26 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
     if (!tutorCanFind(tutor, target)) return null;
     if (!inDeckFn(target)) return null;
     if (pool.have.has(target)) return null; // already have it
+    // Sacrifice-constraint tutors (Natural Order, Eldritch Evolution) need a non-loop-piece
+    // sac target. Sacrificing a ranger or the only big dork breaks the infinite mana loop.
+    if (tutor.constraint === "sacrifice" || tutor.constraint === "sacrifice-green") {
+      const LOOP_RANGERS = new Set(["Quirion Ranger","Scryb Ranger"]);
+      const BIG_DORKS = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
+        "Circle of Dreams Druid","Karametra's Acolyte","Selvala, Heart of the Wilds",
+        "Wirewood Channeler","Marwyn, the Nurturer"]);
+      const hasRangerOnBoard = battlefield.some(c => LOOP_RANGERS.has(c));
+      // The target being fetched is going to be a combo piece — we need a spare creature
+      // that is neither a ranger (loop engine) nor the sole big dork (mana source).
+      // Count how many big dorks are on board: if only 1, it can't be sacrificed.
+      const bigDorkCount = battlefield.filter(c => BIG_DORKS.has(c)).length;
+      const validSacTargets = battlefield.filter(c => {
+        if (getCard(c)?.type !== "creature") return false;
+        if (LOOP_RANGERS.has(c)) return false;        // ranger needed for loop
+        if (BIG_DORKS.has(c) && bigDorkCount === 1) return false; // sole dork needed for loop
+        return true;
+      });
+      if (hasRangerOnBoard && validSacTargets.length === 0) return null;
+    }
     const cost = tutorCost(tutor, target);
     const np = clonePool(pool);
     np.manaSpent += cost;
@@ -9517,6 +9583,27 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
       .filter(r => inHand.has(r) && !board.has(r) && !tutoredToBattlefield.has(r));
     const handCastCost = handPieces.reduce((sum, r) => sum + (getCard(r)?.cmc ?? 0), 0);
 
+    // Extra pieces (ranger, bouncer, big-dork) that are already in hand still need to be cast.
+    // extrasForCombo only adds a tutor step when the piece is missing — if it's in hand it adds
+    // nothing, so its CMC would go unaccounted. Charge it here.
+    const extraHandPieces = extrasResult.extraSteps.length === 0
+      ? (() => {
+          const candidates = [];
+          if (combo.needsRanger) {
+            const r = ["Quirion Ranger","Scryb Ranger"].find(c => inHand.has(c) && !board.has(c));
+            if (r) candidates.push(r);
+          }
+          if (combo.needsAlsoBouncer) {
+            const b = ["Temur Sabertooth","Kogla, the Titan Ape"].find(c => inHand.has(c) && !board.has(c));
+            if (b) candidates.push(b);
+          }
+          return candidates;
+        })()
+      : extrasResult.extraSteps
+          .filter(s => !s.putsToBattlefield && inHand.has(s.target) && !board.has(s.target))
+          .map(s => s.target);
+    const extraHandCastCost = extraHandPieces.reduce((sum, r) => sum + (getCard(r)?.cmc ?? 0), 0);
+
     // Mana delta: if Ashaya is among the hand pieces being cast mid-sequence, all untapped
     // creatures on the current board become Forests (tap for {G}). This generates extra mana
     // that makes subsequent steps (e.g. Shared Summons) affordable.
@@ -9539,7 +9626,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList) {
     // If ranger goes to hand (not battlefield), its cast cost is already in castCostForHand
     const loopStartCost = 0; // already included in cast costs above
 
-    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost - ashayaMidSequenceMana;
+    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost + extraHandCastCost - ashayaMidSequenceMana;
     const canAfford = totalMana <= mana;
     const nextTurn  = preStatus.nextTurn;
     const stepCount = allSteps.length;
@@ -12284,6 +12371,16 @@ function HelpModal({ onClose, onStartTour }) {
     changelog: (() => {
       const versions = [
         {
+          version: "1.10.1", date: "2026-03-13", title: "Next-Turn Lookahead False Win Fixes",
+          fixed: [
+            "Next-turn lookahead panel no longer shows 🔥 WIN NOW for board states where Ashaya is missing and would require a tutor to find — validated against actual hand/board/mana before labelling",
+            "Branch scoring updated to use validated win results — false-win branches no longer rank above genuine lines in BEST PATH selection",
+            "simPlayCard sacrifice sort for EE/Natural Order now protects rangers and the sole big-dork (Fanatic etc.) from sacrifice — prevents sim from finding Ashaya via NatOrder while breaking the loop",
+            "nextTurnLookahead cap: bonus capped at 2 (never 3/winNow); one tutor removed from projected hand to prevent over-optimistic same-turn lines",
+            "GSZ X-cost deduction on tutor resolution, Eldritch Evolution CMC cap in path planner, Natural Order WIN NOW false positive with sole-ranger-only board",
+          ],
+        },
+        {
           version: "1.10.0", date: "2026-03-11", title: "Tutor Chains, Win Detection & Goldfish Polish",
           added: [
             "WIN NOW tutor chain detection — advisor detects multi-step sequences (Bellower → Speaker → Ashaya → Elder, Pact chains, etc.) and surfaces them as priority 15 🔥 WIN NOW cards",
@@ -12832,6 +12929,36 @@ function isWinCategory(cat) {
   return WIN_CATS.some(w => cat.includes(w));
 }
 
+// Validate that an advisor WIN NOW result is actually achievable given the current state.
+// Mirrors the win-validation logic in simulateOneGame so the next-turn lookahead panel
+// doesn't display false WIN NOW labels for states that can't actually win.
+// Returns true only if all combo pieces are present (board or hand) and mana covers casting.
+function validateWin(topResult, analysis, hand, battlefield, manaPool) {
+  if (!topResult || !isWinCategory(topResult.category)) return false;
+  const comboName = analysis.activeComboName ?? null;
+  const activeCombo = comboName ? COMBOS.find(c => c.name === comboName) : null;
+  if (!activeCombo) return false;
+
+  let remainingGreen = manaPool.green;
+  let remainingColorless = manaPool.colorless;
+  const mustPre = new Set(activeCombo.mustPreExist ?? []);
+
+  for (const req of (activeCombo.requires ?? [])) {
+    if (battlefield.includes(req)) continue; // on board ✓
+    if (mustPre.has(req)) return false;       // needs to be pre-existing (summoning sickness)
+    if (!hand.includes(req)) return false;    // not reachable without a tutor
+    const data = getCard(req);
+    if (!data || data.type === "land") continue;
+    const cmc = data.cmc ?? 0;
+    const pips = data.greenPips ?? 0;
+    if (remainingGreen < pips || (remainingGreen + remainingColorless) < cmc) return false;
+    remainingGreen = Math.max(0, remainingGreen - pips);
+    remainingColorless = Math.max(0, (remainingGreen + remainingColorless) - cmc);
+    remainingGreen = Math.max(0, remainingGreen);
+  }
+  return true;
+}
+
 // Extract the first card name from a result headline that appears in hand or battlefield.
 // e.g. "Cast Natural Order → ..." → "Natural Order"
 function extractPlayableCard(result, hand, battlefield) {
@@ -12919,6 +13046,25 @@ function selectBottomsFromScored(scored, bottomCount) {
 // calculateSimManaPool is now an alias for sumManaPool (defined in the Mana Engine above).
 // The two were identical except calculateSimManaPool was missing Utopia Sprawl and
 // Elvish Guidance bonuses, and had a Earthcraft sick-filter bug. Both are now fixed.
+
+// Returns true if there is at least one creature that can legally be sacrificed to EE/NatOrder
+// without destroying the infinite mana loop. Protects rangers and the sole big-dork.
+function simHasValidSacTarget(battlefield, sickSet = new Set()) {
+  const LOOP_RANGERS = new Set(["Quirion Ranger","Scryb Ranger"]);
+  const BIG_DORKS   = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
+    "Circle of Dreams Druid","Karametra's Acolyte","Selvala, Heart of the Wilds",
+    "Wirewood Channeler","Marwyn, the Nurturer"]);
+  const hasRanger    = battlefield.some(c => LOOP_RANGERS.has(c));
+  const bigDorkCount = battlefield.filter(c => BIG_DORKS.has(c)).length;
+  return battlefield.some(c => {
+    if (sickSet.has(c)) return false;
+    if (getCard(c)?.type !== "creature") return false;
+    if (LOOP_RANGERS.has(c) && hasRanger) return false;
+    if (BIG_DORKS.has(c) && bigDorkCount === 1) return false;
+    return true;
+  });
+}
+
 function simCanCast(card, manaPool, battlefield = []) {
   const data = getCard(card);
   if (!data) return false;
@@ -13289,7 +13435,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           !hand.some((c, j) => j !== idx && getCard(c)?.type === "land") &&
           battlefield.filter(c => getCard(c)?.type === "land").length < 2;
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
-          !battlefield.some(c => getCard(c)?.type === "creature" && !sickSet.has(c));
+          !simHasValidSacTarget(battlefield, sickSet);
         if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature) {
           // Smarter: hold tutors on early turns if we can't act on the found card
           const holdIt = isTutor && turn <= 3 && shouldHoldTutor(cardToPlay, mana);
@@ -13483,8 +13629,29 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         return cd?.type === "creature" && !sickSet.has(c);
       });
       if (sacrificable.length === 0) return; // can't cast without a sacrifice target
+
+      // Hard guard: if no valid (non-protected) sac target exists, abort.
+      // This prevents the sim from sacrificing rangers or the sole big-dork and then
+      // finding Ashaya/Archdruid — producing a fake WIN NOW on the next turn.
+      if (!simHasValidSacTarget(battlefield, sickSet)) return;
+
       // Pick least-valuable creature to sacrifice (lowest CMC non-combo creature)
+      // Protect rangers and the sole big-dork from sacrifice — they're needed for the combo loop.
+      const LOOP_RANGERS_SIM = new Set(["Quirion Ranger","Scryb Ranger"]);
+      const BIG_DORKS_SIM = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
+        "Circle of Dreams Druid","Karametra's Acolyte","Selvala, Heart of the Wilds",
+        "Wirewood Channeler","Marwyn, the Nurturer"]);
+      const hasRangerInPlay = battlefield.some(c => LOOP_RANGERS_SIM.has(c));
+      const bigDorkCount = battlefield.filter(c => BIG_DORKS_SIM.has(c)).length;
       sacrificable.sort((a, b) => {
+        // Never sacrifice a ranger if one is present (it's the loop engine)
+        const aRanger = LOOP_RANGERS_SIM.has(a) && hasRangerInPlay ? 1 : 0;
+        const bRanger = LOOP_RANGERS_SIM.has(b) && hasRangerInPlay ? 1 : 0;
+        if (aRanger !== bRanger) return aRanger - bRanger;
+        // Never sacrifice the sole bigDork
+        const aSoleDork = BIG_DORKS_SIM.has(a) && bigDorkCount === 1 ? 1 : 0;
+        const bSoleDork = BIG_DORKS_SIM.has(b) && bigDorkCount === 1 ? 1 : 0;
+        if (aSoleDork !== bSoleDork) return aSoleDork - bSoleDork;
         const aCombo = getCard(a)?.tags?.includes("combo") ? 1 : 0;
         const bCombo = getCard(b)?.tags?.includes("combo") ? 1 : 0;
         if (aCombo !== bCombo) return aCombo - bCombo; // non-combo first
