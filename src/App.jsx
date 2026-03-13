@@ -2305,14 +2305,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsHasteEnabler: need a haste source on the battlefield or in hand
-    // Valid enablers: Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity,
-    // Thousand-Year Elixir (grants haste to tapped creatures), Touch of Vitae (sorcery, grants haste until EOT)
+    // Valid enablers: any card tagged "haste" in the CARDS database.
+    // This includes: Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity,
+    // Thousand-Year Elixir, Touch of Vitae, Destiny Spinner, Badgermole Cub,
+    // Woodcaller Automaton, and Earthcraft (haste-mana).
     if (combo.needsHasteEnabler) {
-      const HASTE_ENABLERS = [
-        "Concordant Crossroads", "Surrak and Goreclaw", "Ulvenwald Oddity",
-        "Thousand-Year Elixir", "Touch of Vitae",
-      ];
-      const hasHaste = HASTE_ENABLERS.some(h => board.has(h) || inHand.has(h));
+      const hasHaste = [...board, ...hand].some(c => {
+        const tags = getCard(c)?.tags ?? [];
+        return tags.includes("haste") || tags.includes("haste-mana");
+      });
       if (!hasHaste) return {
         ok: false,
         missing: "a haste enabler (Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity, or Thousand-Year Elixir)",
@@ -2924,29 +2925,65 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
 
     if (castableBigDorks.length > 0 && !infiniteManaActive) {
-      const dork = castableBigDorks[0];
-      const cd = getCard(dork);
+      // Score each dork by its projected mana output and sort best-first
+      const scoredDorks = castableBigDorks.map(dork => {
+        const cd = getCard(dork);
+        let tapDesc = "";
+        let projectedOutput = 0;
+        if (cd.tapsFor === "elves") {
+          const elfCount = elvesOnBoard + (cd.tags?.includes("elf") ? 1 : 0);
+          projectedOutput = elfCount;
+          tapDesc = `${elfCount} elf${elfCount !== 1 ? "ves" : ""} on board → taps for ${elfCount}{G} next turn`;
+        } else if (cd.tapsFor === "marwyn") {
+          projectedOutput = Math.max(1, elvesOnBoard); // Marwyn power ≈ elves cast since entering
+          tapDesc = `taps for ~${projectedOutput}{G} (power-based, grows with elf casts)`;
+        } else if (cd.tapsFor === "joraga") {
+          projectedOutput = elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
+          tapDesc = projectedOutput > 2 ? `level 5+ → all elves tap for {G}{G} (${projectedOutput}{G})` : `taps for {G}{G} at level 1+`;
+        } else if (cd.tapsFor === "creatures") {
+          const cCount = creaturesOnBoard + 1;
+          projectedOutput = cCount;
+          tapDesc = `${cCount} creature${cCount !== 1 ? "s" : ""} on board → taps for ${cCount}{G} next turn`;
+        } else if (cd.tapsFor === "devotion") {
+          const devCount = devotionOnBoard + (cd.greenPips ?? 1);
+          projectedOutput = devCount;
+          tapDesc = `${devCount} green devotion → taps for ${devCount}{G} next turn`;
+        } else if (cd.tapsFor === "ferocious") {
+          // Ferocious: taps for 4{G} ONLY if a power-4+ creature is on the board.
+          // Check hasFerocious from board context. Without it, Fanatic taps for just 1{G}.
+          const boardCtxLocal = { hasFerocious: battlefield.some(c => {
+            const d = getCard(c);
+            if (!d) return false;
+            if (["Kogla, the Titan Ape","Temur Sabertooth","Woodland Bellower","Surrak and Goreclaw"].includes(c)) return true;
+            if (c === "Ashaya, Soul of the Wild" && creaturesOnBoard >= 4) return true;
+            return false;
+          })};
+          if (boardCtxLocal.hasFerocious) {
+            projectedOutput = 4;
+            tapDesc = "ferocious active → taps for {G}{G}{G}{G} next turn";
+          } else {
+            projectedOutput = 1;
+            tapDesc = "taps for {G} (ferocious NOT active — no power 4+ creature on board)";
+          }
+        } else if (cd.tapsFor === "power") {
+          projectedOutput = Math.max(1, creaturesOnBoard);
+          tapDesc = `taps for ~${projectedOutput}{G} (greatest power among creatures)`;
+        } else {
+          projectedOutput = typeof cd.tapsFor === "number" ? cd.tapsFor : 1;
+          tapDesc = `taps for ${projectedOutput}{G}`;
+        }
+        // Scaling bonus: dorks that grow with board state (elves/creatures/devotion/marwyn)
+        // should rank above flat-output dorks at equal projected output.
+        // Also account for elves in hand that could be cast to boost elf-counting dorks.
+        const elvesInHand = hand.filter(c => getCard(c)?.tags?.includes("elf") && c !== dork).length;
+        const scalingBonus = (cd.tapsFor === "elves" || cd.tapsFor === "creatures" || cd.tapsFor === "devotion" || cd.tapsFor === "marwyn")
+          ? 0.5 + elvesInHand * 0.3  // scales with elves in hand
+          : 0;
+        return { dork, cd, tapDesc, projectedOutput, scalingBonus };
+      }).sort((a, b) => (b.projectedOutput + b.scalingBonus) - (a.projectedOutput + a.scalingBonus));
 
-      // Estimate how much mana this dork would produce the turn after it lands
-      let tapDesc = "";
-      let projectedOutput = 0;
-      if (cd.tapsFor === "elves") {
-        // +1 for the dork itself joining the elf count
-        const elfCount = elvesOnBoard + (cd.tags?.includes("elf") ? 1 : 0);
-        projectedOutput = elfCount;
-        tapDesc = `${elfCount} elf${elfCount !== 1 ? "ves" : ""} on board → taps for ${elfCount}{G} next turn`;
-      } else if (cd.tapsFor === "creatures") {
-        const cCount = creaturesOnBoard + 1; // +1 for itself
-        projectedOutput = cCount;
-        tapDesc = `${cCount} creature${cCount !== 1 ? "s" : ""} on board → taps for ${cCount}{G} next turn`;
-      } else if (cd.tapsFor === "devotion") {
-        const devCount = devotionOnBoard + (cd.greenPips ?? 1);
-        projectedOutput = devCount;
-        tapDesc = `${devCount} green devotion → taps for ${devCount}{G} next turn`;
-      } else {
-        projectedOutput = cd.tapsFor ?? 1;
-        tapDesc = `taps for ${projectedOutput}{G}`;
-      }
+      const best = scoredDorks[0];
+      const { dork, cd, tapDesc, projectedOutput } = best;
 
       // What combos does this dork enable next turn?
       const enablesCombo = [];
@@ -9157,6 +9194,90 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Apply as fractional priority boost (preserves integer ordering, breaks ties)
     r.priority = r.priority + urgency;
   });
+
+  // ── EARLY GAME STRATEGY (T1-T3) ─────────────────────────────────────────
+  // When the board is still developing (few permanents, low mana), apply three
+  // strategic principles from the Yeva primer:
+  //   1. RAMP RELIABLY — 1-drop dorks/rocks first to enable T2/T3 critical plays
+  //   2. ASYMMETRICAL ADVANTAGE — favor non-threatening engines (Beast Whisperer,
+  //      Heartwood Storyteller, Yisan) over raw combo pieces early
+  //   3. RISK MANAGEMENT — don't expose combo-critical dorks (Priest, Archdruid,
+  //      Circle) into open mana without backup or flash protection
+  const isEarlyGame = !infiniteManaActive && dorksOnBoard <= 2 && mana <= 5 && creaturesOnBoard <= 4;
+  if (isEarlyGame) {
+    // Identify combo-critical dorks that are high-value targets for opponents
+    const COMBO_CRITICAL_DORKS = new Set([
+      "Priest of Titania", "Elvish Archdruid", "Circle of Dreams Druid",
+      "Karametra's Acolyte", "Selvala, Heart of the Wilds", "Marwyn, the Nurturer",
+      "Wirewood Channeler", "Fanatic of Rhonas",
+    ]);
+    // Identify asymmetrical advantage engines (non-threatening, compounding value)
+    const ADVANTAGE_ENGINES = new Set([
+      "Beast Whisperer", "Heartwood Storyteller", "Yisan, the Wanderer Bard",
+      "Eladamri, Korvecdal", "Guardian Project", "Runic Armasaur",
+      "Sylvan Library", "Survival of the Fittest", "Growing Rites of Itlimoc",
+    ]);
+
+    const hasBackupDork = hand.filter(c => COMBO_CRITICAL_DORKS.has(c)).length >= 2;
+    const hasFlashProtection = yevaFlash || board.has("Emergence Zone");
+    const counterThreat = opponentOpenMana === true;
+    const highThreat = threatLevel === "high" || threatLevel === "critical";
+
+    results.forEach(r => {
+      const hl = r.headline || "";
+      const cat = r.category || "";
+
+      // Priority 1: RAMP RELIABLY — boost 1-drop dorks on T1-T2
+      // (Already handled by existing T1 SETUP logic at priority 14)
+
+      // Priority 2: ASYMMETRICAL ADVANTAGE — boost non-threatening engines
+      if (cat.includes("RAMP") || cat.includes("ENGINE") || cat.includes("CARD ADVANTAGE") || cat.includes("ACTIVATE")) {
+        for (const engine of ADVANTAGE_ENGINES) {
+          if (hl.includes(engine)) {
+            // Boost advantage engines: they're safer to deploy early and compound
+            r.priority += 1.5;
+            r.earlyGameNote = `Early game: ${engine} builds advantage without painting a target`;
+            break;
+          }
+        }
+      }
+
+      // Priority 3: RISK MANAGEMENT — penalize combo-critical dorks when exposed
+      if (cat.includes("RAMP")) {
+        for (const critDork of COMBO_CRITICAL_DORKS) {
+          if (hl.includes(critDork)) {
+            if (counterThreat && !hasBackupDork && !hasFlashProtection) {
+              // High risk: opponents have open mana, no backup, no flash
+              r.priority -= 3;
+              r.earlyGameNote = `⚠ RISK: ${critDork} is a combo-critical piece. Opponents have open mana and you have no backup. Consider deploying a non-threatening engine first, or waiting for EOT flash via Yeva.`;
+            } else if (highThreat && !hasBackupDork) {
+              // Medium risk: high threat but no counter threat specifically
+              r.priority -= 1.5;
+              r.earlyGameNote = `Caution: ${critDork} is a high-value target. At threat level ${threatLevel} without a backup dork, consider whether an advantage engine is safer.`;
+            } else if (counterThreat && hasBackupDork) {
+              // Acceptable risk: counter threat but have backup
+              r.earlyGameNote = `${critDork} is exposed to counters, but you have a backup dork in hand.`;
+            }
+            break;
+          }
+        }
+      }
+
+      // Stax pieces get a boost in high-threat early game (faster decks require stax)
+      if ((cat.includes("STAX") || cat.includes("OUPHE")) && (highThreat || counterThreat)) {
+        r.priority += 1;
+        r.earlyGameNote = (r.earlyGameNote || "") + " Stax is valuable early against fast opponents.";
+      }
+    });
+  }
+
+  // Append earlyGameNote to detail for results that have one
+  results.forEach(r => {
+    if (r.earlyGameNote) {
+      r.detail = (r.detail || "") + "\n\n🌿 " + r.earlyGameNote;
+    }
+  });
+
   // ── GROUP 3: Compute turn clock for the current position ─────────────────
   let turnClock = null;
   if (isMyTurn && !infiniteManaActive) {
@@ -9811,6 +9932,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       steps: [],       // { tutor, target, mana, note, putsToBattlefield, constraint, nextTurn }
       nextTurnPieces: new Set(), // pieces that have summoning sickness
       discards: 0,     // how many discard constraints fired
+      usedTutors: new Set(), // one-shot hand spells that have been consumed in this path
     };
   }
   function clonePool(p) {
@@ -9820,6 +9942,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       steps: [...p.steps],
       nextTurnPieces: new Set(p.nextTurnPieces),
       discards: p.discards,
+      usedTutors: new Set(p.usedTutors),
     };
   }
 
@@ -9828,6 +9951,17 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     if (!tutorCanFind(tutor, target)) return null;
     if (!inDeckFn(target)) return null;
     if (pool.have.has(target)) return null; // already have it
+
+    // One-shot tutors (hand spells) can only be used once per path.
+    // On-board activated tutors (Fauna Shaman, Survival, Yisan, Poacher, Reclaimer,
+    // Formidable Speaker with bouncer) can be reused (they tap but can be untapped).
+    const ON_BOARD_REUSABLE = new Set([
+      "Fauna Shaman", "Survival of the Fittest", "Yisan, the Wanderer Bard",
+      "Skyshroud Poacher", "Elvish Reclaimer", "Formidable Speaker",
+    ]);
+    if (!ON_BOARD_REUSABLE.has(tutor.name) && pool.usedTutors.has(tutor.name)) {
+      return null; // this hand spell was already consumed in this path
+    }
     // Sacrifice-constraint tutors (Natural Order, Eldritch Evolution) need a non-loop-piece
     // sac target. Sacrificing a ranger or the only big dork breaks the infinite mana loop.
     if (tutor.constraint === "sacrifice" || tutor.constraint === "sacrifice-green") {
@@ -9869,6 +10003,10 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     }
     np.steps.push(step);
     if (tutor.constraint === "discard") np.discards++;
+    // Mark one-shot hand tutors as consumed so they can't be reused in this path
+    if (!ON_BOARD_REUSABLE.has(tutor.name)) {
+      np.usedTutors.add(tutor.name);
+    }
     return np;
   }
 
@@ -9877,6 +10015,15 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   function extrasForCombo(combo, pool, depth) {
     const extraSteps = [];
     let extraMana = 0;
+
+    // Filter activeTutors to exclude one-shot hand spells already consumed in this path.
+    const ON_BOARD_REUSABLE_SET = new Set([
+      "Fauna Shaman", "Survival of the Fittest", "Yisan, the Wanderer Bard",
+      "Skyshroud Poacher", "Elvish Reclaimer", "Formidable Speaker",
+    ]);
+    const availableTutors = activeTutors.filter(t =>
+      ON_BOARD_REUSABLE_SET.has(t.name) || !pool.usedTutors.has(t.name)
+    );
 
     // Named dork/land requirement (one of the listed cards must be present or findable)
     if (combo.needsNamedDork) {
@@ -9887,9 +10034,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         // Try to find one via remaining tutors
         const found = candidates.find(c =>
           !pool.have.has(c) && inDeckFn(c) &&
-          activeTutors.some(t => t.usable && tutorCanFind(t, c)));
+          availableTutors.some(t => t.usable && tutorCanFind(t, c)));
         if (!found) return null; // none findable
-        const tutor = activeTutors.find(t => t.usable && tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => t.usable && tutorCanFind(t, found));
         const isLand = getCard(found)?.type === "land";
         extraSteps.push({
           tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
@@ -9923,9 +10070,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
           "Selvala, Heart of the Wilds","Karametra's Acolyte","Wirewood Channeler","Marwyn, the Nurturer"]
           .filter(c => !pool.have.has(c) && inDeckFn(c));
         const found = candidates.find(c =>
-          activeTutors.some(t => t.usable && tutorCanFind(t, c)));
+          availableTutors.some(t => t.usable && tutorCanFind(t, c)));
         if (!found) return null; // can't satisfy
-        const tutor = activeTutors.find(t => t.usable && tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => t.usable && tutorCanFind(t, found));
         extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
           isExtra: true, label: `big dork (≥${min} mana)` });
@@ -9938,9 +10085,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       const hasBouncer = pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape");
       if (!hasBouncer && depth < 3) {
         const bouncers = ["Temur Sabertooth","Kogla, the Titan Ape"].filter(c => !pool.have.has(c) && inDeckFn(c));
-        const found = bouncers.find(c => activeTutors.some(t => tutorCanFind(t, c)));
+        const found = bouncers.find(c => availableTutors.some(t => tutorCanFind(t, c)));
         if (!found) return null;
-        const tutor = activeTutors.find(t => tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => tutorCanFind(t, found));
         extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, isExtra: true, label: "bouncer" });
         extraMana += tutorCost(tutor, found);
@@ -9952,9 +10099,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       const rangers = ["Quirion Ranger","Scryb Ranger"];
       const hasRanger = rangers.some(r => pool.have.has(r));
       if (!hasRanger && depth < 3) {
-        const found = rangers.find(c => !pool.have.has(c) && inDeckFn(c) && activeTutors.some(t => tutorCanFind(t, c)));
+        const found = rangers.find(c => !pool.have.has(c) && inDeckFn(c) && availableTutors.some(t => tutorCanFind(t, c)));
         if (!found) return null;
-        const tutor = activeTutors.find(t => tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => tutorCanFind(t, found));
         extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, isExtra: true, label: "ranger" });
         extraMana += tutorCost(tutor, found);
@@ -9966,6 +10113,85 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       const hasOne = [...pool.have].some(c =>
         getCard(c)?.tags?.includes("1drop") && getCard(c)?.tags?.includes("elf"));
       if (!hasOne) return null; // not worth searching at depth 3+
+    }
+
+    // Haste enabler requirement — need a haste source in the pool
+    // Uses the "haste" / "haste-mana" tag from the CARDS database to match all enablers.
+    if (combo.needsHasteEnabler) {
+      const hasHaste = [...pool.have].some(c => {
+        const tags = getCard(c)?.tags ?? [];
+        return tags.includes("haste") || tags.includes("haste-mana");
+      });
+      if (!hasHaste) return null; // no haste enabler available — combo impossible
+    }
+
+    // Big dork with haste CMC requirement — need a dork producing ≥ its CMC + 3
+    if (combo.needsBigDorkHasteCMC) {
+      const humanOnly = !!combo.needsHumanDork;
+      const HUMAN_SET = new Set(["Eternal Witness","Hyrax Tower Scout","Hope Tender",
+        "Karametra's Acolyte","Destiny Spinner","Heartwood Storyteller","Fauna Shaman",
+        "Formidable Speaker","Selvala, Heart of the Wilds","Marwyn, the Nurturer"]);
+      const poolArr = [...pool.have];
+      const found = poolArr.find(c => {
+        const data = getCard(c);
+        if (!data) return false;
+        if (!data.tags?.includes("dork") && !data.tags?.includes("big-dork")) return false;
+        if (humanOnly && !HUMAN_SET.has(c)) return false;
+        let output = 0;
+        const t = data.tapsFor;
+        if (typeof t === "number") output = t;
+        else if (t === "elves") output = elvesNow;
+        else if (t === "marwyn") output = Math.max(1, elvesNow - 1);
+        else if (t === "joraga") output = elvesNow >= 5 ? elvesNow * 2 : 2;
+        else if (t === "creatures") output = creaturesNow;
+        else if (t === "devotion") output = devotionNow;
+        else if (t === "power") output = creaturesNow;
+        else if (t === "ferocious") output = 4;
+        else output = 1;
+        return output >= (data.cmc ?? 0) + 3;
+      });
+      if (!found) return null;
+    }
+
+    // needsAlso: requires one of the named lands/cards (Cradle, Nykthos, etc.)
+    if (combo.needsAlso) {
+      const hasNamedLand = combo.needsAlso.some(c => pool.have.has(c));
+      // Also check enchanted Forest (aura land) if needsAuraLand is set
+      let auraLandOk = false;
+      if (combo.needsAuraLand) {
+        const auras = ["Utopia Sprawl","Wild Growth","Elvish Guidance"];
+        const hasAura = auras.some(a => pool.have.has(a));
+        const hasForest = [...pool.have].some(c => c === "Forest" || getCard(c)?.tags?.includes("basic"));
+        auraLandOk = hasAura && hasForest;
+      }
+      if (!hasNamedLand && !auraLandOk) return null;
+    }
+
+    // needsAnyUntapper: need at least one creature-untap mechanism
+    if (combo.needsAnyUntapper) {
+      const hasQR = pool.have.has("Quirion Ranger") || pool.have.has("Scryb Ranger");
+      const hasSym = pool.have.has("Wirewood Symbiote");
+      const hasHyraxLoop = pool.have.has("Hyrax Tower Scout") &&
+        (pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape"));
+      const hasElderLoop = pool.have.has("Argothian Elder") && pool.have.has("Wirewood Lodge");
+      if (!hasQR && !hasSym && !hasHyraxLoop && !hasElderLoop) return null;
+    }
+
+    // needsDrawEngine: need Beast Whisperer, Glademuse, or Nissa+Ashaya
+    if (combo.needsDrawEngine) {
+      const hasEngine = pool.have.has("Beast Whisperer") || pool.have.has("Glademuse") ||
+        (pool.have.has("Nissa, Resurgent Animist") && pool.have.has("Ashaya, Soul of the Wild"));
+      if (!hasEngine) return null;
+    }
+
+    // needsVitalize: Vitalize must be available
+    if (combo.needsVitalize) {
+      if (!pool.have.has("Vitalize")) return null;
+    }
+
+    // needsMinElves: need at least N elves
+    if (combo.needsMinElves) {
+      if (elvesNow < combo.needsMinElves) return null;
     }
 
     return { extraSteps, extraMana };
@@ -10058,19 +10284,26 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     if (poolAfterInfinite.have.has("Finale of Devastation")) return {
       outlet: "Finale of Devastation", steps: [], note: "cast X≥10 to win" };
     // Nature's Rhythm → Harmonize for Duskwatch
-    // NR must have been in hand at start (goes to graveyard after casting for Ashaya)
     if (nrWasInHand && !poolAfterInfinite.have.has("Duskwatch Recruiter")) return {
       outlet: "Duskwatch Recruiter via Harmonize",
       steps: ["Nature's Rhythm is now in graveyard — Harmonize it (X=2, {2}{G}{G}{G}{G}) to find Duskwatch Recruiter → battlefield."],
       note: "Harmonize Nature's Rhythm → Duskwatch" };
+    // Filter tutors: exclude one-shot hand spells already consumed assembling infinite mana
+    const ON_BOARD_REUSABLE_WIN = new Set([
+      "Fauna Shaman", "Survival of the Fittest", "Yisan, the Wanderer Bard",
+      "Skyshroud Poacher", "Elvish Reclaimer", "Formidable Speaker",
+    ]);
+    const usedTutors = poolAfterInfinite.usedTutors ?? new Set();
+    const winTutors = activeTutors.filter(t =>
+      ON_BOARD_REUSABLE_WIN.has(t.name) || !usedTutors.has(t.name));
     // Tutor for Duskwatch
-    const duskwatchTutor = activeTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter"));
+    const duskwatchTutor = winTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter"));
     if (duskwatchTutor) return {
       outlet: "Duskwatch Recruiter",
       steps: [`${duskwatchTutor.name} → Duskwatch Recruiter (${duskwatchTutor.note ?? ""})`],
       note: `tutor via ${duskwatchTutor.name}` };
     // Tutor for Formidable Speaker → finds Duskwatch
-    const speakerTutor = activeTutors.find(t => tutorCanFind(t, "Formidable Speaker"));
+    const speakerTutor = winTutors.find(t => tutorCanFind(t, "Formidable Speaker"));
     if (speakerTutor && inDeckFn("Formidable Speaker") && inDeckFn("Duskwatch Recruiter")) return {
       outlet: "Duskwatch Recruiter via Formidable Speaker",
       steps: [`${speakerTutor.name} → Formidable Speaker → ETB: discard → find Duskwatch Recruiter.`],
@@ -13746,15 +13979,22 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     const oneDrop     = hand.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
     const dorks       = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
     const tutors      = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
-    // Hard requirements: need a green mana source AND a 1-CMC dork.
-    // Fast mana (Chrome Mox, Mox Diamond, Lotus Petal) can sub for a green land when
-    // combined with a 1-drop dork — e.g. Chrome Mox imprinting a green card → T1 dork.
-    const hasGreen    = greenLands >= 1 || (fastMana >= 1 && oneDrop >= 1);
-    // Hard requirements: need a green land AND a 1-CMC dork
-    const hasBase     = hasGreen && oneDrop >= 1;
-    // Additional action: tutor, second dork, or a key combo piece
-    const hasAction   = tutors >= 1 || dorks >= 2;
-    const keep = hasBase && hasAction;
+    // Use lookahead projection to decide keep/mull
+    let keep = false;
+    try {
+      const proj = projectHandSpeed(hand);
+      // Keep if the hand projects to win T5 or sooner (speed 0 or 1)
+      // Also keep borderline hands (speed 2) if they have T1 dork + tutor
+      if (proj.speed <= 1) keep = true;
+      else if (proj.speed === 2 && proj.t1Dork && tutors >= 1) keep = true;
+      else if (proj.speed === 2 && proj.hasComboPath && dorks >= 2) keep = true;
+    } catch {
+      // Fallback to static heuristic if projection fails
+      const hasGreen = greenLands >= 1 || (fastMana >= 1 && oneDrop >= 1);
+      const hasBase  = hasGreen && oneDrop >= 1;
+      const hasAction = tutors >= 1 || dorks >= 2;
+      keep = hasBase && hasAction;
+    }
     if (keep || m === mullLimit) {
       // Bottom cards for mulligans
       if (m > 0) {
@@ -15951,6 +16191,111 @@ function ScryRow({ card, i, toBottom, onMoveUp, onMoveDown, onToggleBottom, move
 // ── Pure hand grader (module-level, no React deps) ─────────────────────────
 // Returns "KEEP" | "BORDERLINE" | "MULLIGAN" for a given list of card names.
 // Mirrors the gate logic inside GoldfishModal gradeHand(). Used for testing.
+// ── LOOKAHEAD MULLIGAN GRADING ────────────────────────────────────────────
+// Simulates a few turns of play from an opening hand to estimate how quickly
+// it can assemble a win. Returns { speed, t1Dork, manaT2, hasComboPath }.
+// speed: 0 = win T3 or sooner, 1 = T4-T5, 2 = T6+, 3 = no path found.
+function projectHandSpeed(cards) {
+  // Quick static checks first (very fast, no simulation needed)
+  const GREEN_LANDS_PROJ = new Set([
+    "Forest","Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills",
+    "Yavimaya, Cradle of Growth","Castle Garenbrig","Shifting Woodland",
+  ]);
+  const greenLands = cards.filter(c => GREEN_LANDS_PROJ.has(c)).length;
+  const fastMana = cards.filter(c => getCard(c)?.tags?.includes("fast-mana")).length;
+  const dork1 = cards.filter(c => getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 99) === 1).length;
+  const allDorks = cards.filter(c => getCard(c)?.tags?.includes("dork")).length;
+  const tutors = cards.filter(c => getCard(c)?.tags?.includes("tutor")).length;
+  const lands = cards.filter(c => getCard(c)?.type === "land").length;
+
+  // Hard fail: no green source at all
+  if (greenLands === 0 && fastMana === 0) return { speed: 3, t1Dork: false, manaT2: 0, hasComboPath: false };
+  // Hard fail: no ramp and no tutors to find ramp
+  if (allDorks === 0 && fastMana === 0 && tutors === 0) return { speed: 3, t1Dork: false, manaT2: 0, hasComboPath: false };
+
+  const t1Dork = dork1 >= 1 && greenLands >= 1;
+
+  // Simulate T1-T4 to estimate mana trajectory
+  let simBf = [];
+  let simHand = [...cards];
+  let manaT2 = 0;
+
+  // T1: play a land, cast a 1-drop dork or fast mana
+  const landIdx = simHand.findIndex(c => GREEN_LANDS_PROJ.has(c));
+  if (landIdx >= 0) {
+    const land = simHand.splice(landIdx, 1)[0];
+    // Fetch → Forest
+    if (getCard(land)?.tags?.includes("fetch")) {
+      simBf.push("Forest");
+    } else {
+      simBf.push(land);
+    }
+  }
+  // Play fast mana (Sol Ring, Mox, Petal)
+  const fmIdx = simHand.findIndex(c => getCard(c)?.tags?.includes("fast-mana"));
+  if (fmIdx >= 0) {
+    simBf.push(simHand.splice(fmIdx, 1)[0]);
+  }
+  // Cast 1-drop dork
+  if (t1Dork) {
+    const dIdx = simHand.findIndex(c => getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 99) === 1);
+    if (dIdx >= 0) simBf.push(simHand.splice(dIdx, 1)[0]);
+  }
+
+  // T2: estimate mana (non-sick sources)
+  const t2Pool = sumManaPool(simBf);
+  manaT2 = t2Pool.green + t2Pool.colorless;
+  // Add a land from remaining hand
+  const land2Idx = simHand.findIndex(c => getCard(c)?.type === "land");
+  if (land2Idx >= 0) {
+    const land2 = simHand.splice(land2Idx, 1)[0];
+    if (getCard(land2)?.tags?.includes("fetch")) {
+      simBf.push("Forest");
+    } else {
+      simBf.push(land2);
+    }
+    manaT2 = sumManaPool(simBf).green + sumManaPool(simBf).colorless;
+  }
+
+  // Check for combo path reachability with projected T3 board
+  // Cast affordable cards from hand into simBf
+  for (const c of [...simHand]) {
+    const cd = getCard(c);
+    if (!cd || cd.type === "land") continue;
+    if ((cd.cmc ?? 99) <= manaT2) {
+      simBf.push(c);
+      simHand.splice(simHand.indexOf(c), 1);
+      manaT2 -= cd.cmc ?? 0;
+    }
+  }
+
+  // Project T3 mana and run findReachableLines
+  const t3Pool = sumManaPool(simBf);
+  const t3Mana = t3Pool.green + t3Pool.colorless;
+  let hasComboPath = false;
+  let bestTurn = 99;
+  try {
+    const lines = findReachableLines(simHand, simBf, [], t3Mana, null, 0);
+    if (lines.length > 0) {
+      hasComboPath = true;
+      const best = lines[0];
+      if (best.winNow || best.sameTurn) bestTurn = 3;
+      else if (best.nextTurnOnly) bestTurn = 4;
+      else if (best.canAfford) bestTurn = 5;
+      else bestTurn = 6;
+    }
+  } catch { /* findReachableLines may fail with minimal state — ignore */ }
+
+  // Estimate speed tier
+  let speed;
+  if (bestTurn <= 3) speed = 0;
+  else if (bestTurn <= 5) speed = 1;
+  else if (hasComboPath || (t1Dork && tutors >= 1)) speed = 2;
+  else speed = 3;
+
+  return { speed, t1Dork, manaT2, hasComboPath };
+}
+
 function gradeHandLabel(cards) {
   const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
   const rockCards   = cards.filter(c => getCard(c)?.tags?.includes("rock"));
@@ -15976,11 +16321,8 @@ function gradeHandLabel(cards) {
   const colourlessOnlyLands = landCards.filter(c =>
     c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" && !isGreenLand(c));
   const dork1Cards  = dorkCards.filter(c => getCard(c)?.tags?.includes("1drop"));
-  const COMBO_TAGS  = new Set(["ashaya","duskwatch","quirion","earthcraft","wirewood","ranger",
-    "symbiote","sabertooth","scout","bounce","infinite-dork","key","untap","untap-lands",
-    "survival","land-animator","haste-mana","kogla-loop"]);
-  const combo = cards.filter(c => getCard(c)?.tags?.some(t => COMBO_TAGS.has(t))).length;
-  // Gate 1: no green source
+
+  // Gate 1: no green source — hard MULLIGAN (unless fast mana bridges)
   if (greenLands === 0) {
     const greenFastMana = cards.filter(c =>
       getCard(c)?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide");
@@ -15990,17 +16332,43 @@ function gradeHandLabel(cards) {
   }
   // Gate 2: 0 real lands + 0 rocks
   if (realLands === 0 && rockCards.length === 0) return "MULLIGAN";
-  // Gate 3: no ramp — but Crop Rotation / multiple tutors can ramp out by T2
-  if (rampCount === 0) {
-    const tutorRampOut = (tutors >= 2 || cards.includes("Crop Rotation")) && realLands >= 2 && combo >= 1;
-    if (tutorRampOut) return "BORDERLINE";
+  // Gate 3: no ramp and no tutors — hard MULLIGAN
+  if (rampCount === 0 && tutors === 0) return "MULLIGAN";
+
+  // ── LOOKAHEAD GRADING: project the hand forward to estimate win speed ──
+  // This replaces the old static "has ramp + tutor + land = KEEP" heuristic
+  // with actual forward simulation that considers card interactions.
+  try {
+    const proj = projectHandSpeed(cards);
+
+    // speed 0 = T3 or sooner (explosive), 1 = T4-T5 (good), 2 = T6+ (slow), 3 = no path
+    if (proj.speed === 0) return "KEEP";    // Fast combo path — always keep
+    if (proj.speed === 1) {
+      // Good hand: T4-T5 projected win
+      if (proj.t1Dork && tutors >= 1) return "KEEP"; // T1 dork + tutor = very keepable
+      return "BORDERLINE"; // Solid but not explosive
+    }
+    if (proj.speed === 2) {
+      // Slow but functional: has a path, just needs time
+      if (proj.t1Dork && rampCount >= 2) return "BORDERLINE"; // Can still develop
+      if (proj.hasComboPath) return "BORDERLINE"; // Has a route, just slow
+      return "MULLIGAN"; // Too slow, no clear path
+    }
+    // speed 3: no combo path found at all
+    if (rampCount >= 1 && tutors >= 1 && realLands >= 2) return "BORDERLINE"; // Marginal — static checks say functional
+    return "MULLIGAN";
+  } catch {
+    // Fallback to static grading if projection fails
+    if (rampCount === 0) {
+      const tutorRampOut = (tutors >= 2 || cards.includes("Crop Rotation")) && realLands >= 2;
+      if (tutorRampOut) return "BORDERLINE";
+      return "MULLIGAN";
+    }
+    const hasT1Play = (dork1Cards.length >= 1 && greenLands >= 1) || (enchantLandRamp >= 1 && greenLands >= 1);
+    if (realLands >= 2 && rampCount >= 1 && tutors >= 1 && hasT1Play) return "KEEP";
+    if (realLands >= 1 && rampCount >= 1) return "BORDERLINE";
     return "MULLIGAN";
   }
-  // Simplified keep/borderline for passing hands
-  const hasT1Play = (dork1Cards.length >= 1 && greenLands >= 1) || (enchantLandRamp >= 1 && greenLands >= 1);
-  if (realLands >= 2 && rampCount >= 1 && tutors >= 1 && hasT1Play) return "KEEP";
-  if (realLands >= 1 && rampCount >= 1) return "BORDERLINE";
-  return "MULLIGAN";
 }
 
 function useTour() {
