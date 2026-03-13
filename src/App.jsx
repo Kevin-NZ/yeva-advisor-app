@@ -1696,7 +1696,12 @@ function buildBoardContext(battlefield, sickSet = null, attachments = null) {
     ? creatures.filter(c => !sickSet.has(c))
     : creatures;
   const elves         = creatures.filter(c => getCard(c)?.tags?.includes("elf")).length;
+  const activeElves   = activeCreatures.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creatureCount = creatures.length;
+  // BUG 1 FIX: activeCreatureCount excludes summoning-sick creatures.
+  // Used by Cradle/Nykthos/big-dork mana output when sickSet is provided (sim context).
+  // When sickSet is null (advisor context), activeCreatureCount === creatureCount.
+  const activeCreatureCount = activeCreatures.length;
   const devotion      = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
   // Ferocious: true if any creature on board has power 4 or greater.
   // We track this via explicit "power4" tag or by checking known big creatures.
@@ -1760,7 +1765,7 @@ function buildBoardContext(battlefield, sickSet = null, attachments = null) {
 
   return {
     board, creatures, activeCreatures,
-    elves, creatureCount, devotion,
+    elves, activeElves, creatureCount, activeCreatureCount, devotion,
     badgermoleBonus, hasYavimaya, hasFerocious,
     hasAura,          // backward compat: true if any aura on battlefield
     hasAuraOnForest,  // precise: true if an aura is actually on a Forest
@@ -1778,7 +1783,12 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
 
   if (data.type === "land") {
     if (card === "Gaea's Cradle" || card === "Itlimoc, Cradle of the Sun") {
-      return { green: ctx.creatureCount, colorless: 0 };
+      // BUG 1 FIX: When sickSet is provided (sim context), only count non-sick creatures.
+      // Sick creatures entered this turn and can't tap — Cradle shouldn't count them
+      // because the extra mana from a higher creature count isn't actually spendable
+      // until the creature untaps next turn.
+      const cc = sickSet ? ctx.activeCreatureCount : ctx.creatureCount;
+      return { green: cc, colorless: 0 };
     }
     if (card === "Nykthos, Shrine to Nyx") {
       const g = ctx.devotion === 0 ? 0 : Math.max(1, ctx.devotion - 2);
@@ -1800,8 +1810,13 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     return { green: 1, colorless: 0 }; // all other lands tap for {G}
 
   } else if (data.tags?.includes("dork") || data.tags?.includes("big-dork")) {
-    const { elves, creatureCount, devotion, badgermoleBonus,
-            hasYavimaya, hasAura, hasCradle, hasNykthos } = ctx;
+    const { badgermoleBonus, hasYavimaya, hasAura, hasCradle, hasNykthos } = ctx;
+    // BUG 1 FIX: When sickSet is provided, use active (non-sick) counts.
+    // Sick creatures can't tap for mana, so elf-counting/creature-counting dorks
+    // shouldn't include them in their output calculation.
+    const elves = sickSet ? ctx.activeElves : ctx.elves;
+    const creatureCount = sickSet ? ctx.activeCreatureCount : ctx.creatureCount;
+    const devotion = ctx.devotion; // devotion is static pips, not affected by sickness
     const t = data.tapsFor;
     let amt = 0;
     if (typeof t === "number") {
@@ -13847,6 +13862,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
     // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
     sickSet = new Set(); // all permanents untap and lose summoning sickness
+    simState._usedAbilities = new Set(); // reset activated ability tracking for new turn
     // Consume one-shot mana sources (Lotus Petal) that were played last turn
     if (simState.consumedAtEndOfTurn?.size > 0) {
       for (const c of simState.consumedAtEndOfTurn) {
@@ -13924,9 +13940,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       }
 
       // Calculate available mana (excluding summoning-sick creatures), split by color.
-      // Pass simAttachments so Arbor Elf sees enchanted-Forest bonuses (Utopia Sprawl / Wild Growth).
+      // Pass simAttachments so Arbor Elf sees enchanted-Forest bonuses.
       const manaPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
-      const mana = manaPool.total; // total for advisor call
+      const mana = manaPool.total;
       if (manaCurve.length < turn) manaCurve.push(mana);
 
       // Track T1 dork
@@ -13980,17 +13996,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         let winValid = true;
 
         if (!activeCombo) {
-          // SIM GROUP 4: No identified combo from the advisor — fall back to
-          // findReachableLines which can discover multi-tutor win paths.
-          try {
-            const deckSet = new Set(battlefield.concat(hand, graveyard, library).filter(c => getCard(c)));
-            const lines = findReachableLines(hand, battlefield, graveyard, manaPool.total, deckSet);
-            if (lines.length > 0 && lines[0].winNow) {
-              winValid = true; // findReachableLines confirmed a win-now path
-            } else {
-              winValid = false;
-            }
-          } catch { winValid = false; }
+          // No identified combo — the advisor may be claiming WIN NOW from a path-planner
+          // line that the sim can't verify. Reject the win to prevent false positives.
+          // The path planner's winNow flag doesn't account for summoning sickness of
+          // pieces already on the board or mana already spent this turn.
+          winValid = false;
         } else {
           // Simulate casting required pieces in order to verify:
           //   (a) each missing piece is actually in hand (not just theoretically reachable)
@@ -14001,7 +14011,20 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           let remainingColorless = manaPool.colorless;
           const mustPre = new Set(activeCombo.mustPreExist ?? []);
           for (const req of activeCombo.requires) {
-            if (battlefield.includes(req)) continue; // already on board ✓
+            if (battlefield.includes(req)) {
+              // Piece is on board — but if it's summoning-sick AND it's a mustPreExist card
+              // (needs to tap to loop), the combo can't fire this turn.
+              if (sickSet.has(req) && mustPre.has(req)) { winValid = false; break; }
+              // Also check: any creature that needs to tap for mana (big-dork/infinite-dork)
+              // and is summoning-sick can't contribute to the combo this turn.
+              if (sickSet.has(req)) {
+                const rd = getCard(req);
+                if (rd?.tags?.includes("big-dork") || rd?.tags?.includes("infinite-dork")) {
+                  winValid = false; break;
+                }
+              }
+              continue; // on board and not sick (or doesn't need to tap) ✓
+            }
             // mustPreExist pieces must have been on board before this turn — casting them now means
             // summoning sickness prevents them from tapping this turn → loop can't fire
             if (mustPre.has(req)) { winValid = false; break; }
@@ -14027,10 +14050,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           }
         }
 
-        // Hard floor: T1/T2 wins are physically impossible in this deck.
-        // The cheapest real combo requires 3+ cards plus mana to cast them.
-        // Any T2 "win" is a simulator false positive — suppress it.
-        if (winValid && turn <= 2) winValid = false;
+        // T1 wins are physically impossible (need creatures to enter, lose sickness, and combo).
+        // T2 wins are now properly validated by the mana budget tracker and sickness checks above.
+        if (winValid && turn <= 1) winValid = false;
 
         if (winValid) {
           const winCard = extractPlayableCard(top, hand, battlefield);
@@ -14237,9 +14259,14 @@ function pickBestTutorTarget(library, battlefield, hand, sickSet, opts = {}) {
 function simActivateAbilities(simState, manaPool) {
   const { hand, battlefield, graveyard, library, sickSet, castLog } = simState;
   const board = new Set(battlefield);
+  // Track which abilities have been used this turn to prevent infinite loops.
+  // The caller resets _usedAbilities at the start of each turn via sickSet reset.
+  if (!simState._usedAbilities) simState._usedAbilities = new Set();
+  const used = simState._usedAbilities;
 
   // Survival of the Fittest: {G}, discard creature → search for creature → hand
-  if (board.has("Survival of the Fittest") && manaPool.green >= 1) {
+  // Limit to 1 activation per turn to prevent discard-find-discard loops
+  if (board.has("Survival of the Fittest") && !used.has("Survival") && manaPool.green >= 1) {
     const discardable = hand.findIndex(c => getCard(c)?.type === "creature");
     if (discardable >= 0) {
       const discarded = hand.splice(discardable, 1)[0];
@@ -14253,12 +14280,13 @@ function simActivateAbilities(simState, manaPool) {
           [library[i], library[j]] = [library[j], library[i]];
         }
       }
+      used.add("Survival");
       return true;
     }
   }
 
-  // Fauna Shaman: {G}, tap, discard creature → search for creature → hand (sorcery speed, needs non-sick)
-  if (board.has("Fauna Shaman") && !sickSet.has("Fauna Shaman") && manaPool.green >= 1) {
+  // Fauna Shaman: {G}, TAP, discard creature → search. Once per turn (taps).
+  if (board.has("Fauna Shaman") && !sickSet.has("Fauna Shaman") && !used.has("Fauna") && manaPool.green >= 1) {
     const discardable = hand.findIndex(c => getCard(c)?.type === "creature");
     if (discardable >= 0) {
       const discarded = hand.splice(discardable, 1)[0];
@@ -14272,32 +14300,30 @@ function simActivateAbilities(simState, manaPool) {
           [library[i], library[j]] = [library[j], library[i]];
         }
       }
+      used.add("Fauna");
       return true;
     }
   }
 
-  // Duskwatch Recruiter: {2}{G} → look at top 3, put a creature into hand
-  if (board.has("Duskwatch Recruiter") && !sickSet.has("Duskwatch Recruiter") && manaPool.green >= 1 && manaPool.total >= 3) {
+  // Duskwatch Recruiter: {2}{G} → look at top 3, put a creature into hand. Once per turn in sim.
+  if (board.has("Duskwatch Recruiter") && !sickSet.has("Duskwatch Recruiter") && !used.has("Duskwatch") && manaPool.green >= 1 && manaPool.total >= 3) {
     const top3 = library.slice(0, Math.min(3, library.length));
     const creature = top3.find(c => getCard(c)?.type === "creature");
     if (creature) {
       library.splice(library.indexOf(creature), 1);
       hand.push(creature);
     }
-    // Non-creatures go to bottom
     const nonCreatures = top3.filter(c => c !== creature && getCard(c)?.type !== "creature");
     for (const nc of nonCreatures) {
       const idx = library.indexOf(nc);
-      if (idx >= 0) {
-        library.splice(idx, 1);
-        library.push(nc);
-      }
+      if (idx >= 0) { library.splice(idx, 1); library.push(nc); }
     }
+    used.add("Duskwatch");
     return creature !== undefined;
   }
 
-  // Yisan, the Wanderer Bard: {2}{G}, tap, add verse counter → search for creature CMC = verse
-  if (board.has("Yisan, the Wanderer Bard") && !sickSet.has("Yisan, the Wanderer Bard") && manaPool.green >= 1 && manaPool.total >= 3) {
+  // Yisan, the Wanderer Bard: {2}{G}, TAP, verse counter. Once per turn (taps).
+  if (board.has("Yisan, the Wanderer Bard") && !sickSet.has("Yisan, the Wanderer Bard") && !used.has("Yisan") && manaPool.green >= 1 && manaPool.total >= 3) {
     const verse = (simState.yisanCounters ?? 0) + 1;
     simState.yisanCounters = verse;
     const target = library.find(c => {
@@ -14313,11 +14339,12 @@ function simActivateAbilities(simState, manaPool) {
         [library[i], library[j]] = [library[j], library[i]];
       }
     }
-    return true;
+    used.add("Yisan");
+    return !!target; // only return true if we actually found something
   }
 
-  // Skyshroud Poacher: {3}, tap → search for Elf → battlefield
-  if (board.has("Skyshroud Poacher") && !sickSet.has("Skyshroud Poacher") && manaPool.total >= 3) {
+  // Skyshroud Poacher: {3}, TAP → search for Elf → battlefield. Once per turn.
+  if (board.has("Skyshroud Poacher") && !sickSet.has("Skyshroud Poacher") && !used.has("Poacher") && manaPool.total >= 3) {
     const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
       { creatureOnly: true, elfOnly: true });
     if (target) {
@@ -14328,6 +14355,7 @@ function simActivateAbilities(simState, manaPool) {
         const j = Math.floor(Math.random() * (i + 1));
         [library[i], library[j]] = [library[j], library[i]];
       }
+      used.add("Poacher");
       return true;
     }
   }
@@ -14603,19 +14631,10 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     // We implement this by adding a special "PETAL_MANA" phantom card to battlefield
     // that sumManaPool will count as {G}, then removing after this turn.
     if (card === "Lotus Petal") {
-      // Add a one-turn phantom: represented by adding to battlefield; we'll remove it
-      // at the start of the next turn via the sickSet trick — add it to sickSet so
-      // it looks like a creature that entered this turn, and on untap (sickSet reset) it vanishes.
-      // Actually simpler: add directly to battlefield tagged as a one-shot source and remove it
-      // by adding a cleanup entry. Since sickSet resets each turn, push to sickSet acts as
-      // "remove at next untap". We need a taps-for-1-green source that disappears.
-      // Best: just add 1 to a petals counter in simState and handle in mana calculation.
-      // Since we can't easily patch sumManaPool here, the cleanest fix is:
-      // push to battlefield NOW, and mark it for removal by appending to a consumedSet.
       if (!simState.consumedAtEndOfTurn) simState.consumedAtEndOfTurn = new Set();
-      battlefield.push(card); // counted as {G} by sumManaPool this turn
-      simState.consumedAtEndOfTurn.add(card); // removed at next untap
-      return; // skip the normal battlefield.push below
+      battlefield.push(card);
+      simState.consumedAtEndOfTurn.add(card);
+      return;
     }
     // Chrome Mox: imprint a nonland green card from hand to produce {G} per turn.
     // Only imprint if there's a "disposable" green card — never exile 1-drop dorks,
@@ -14624,19 +14643,15 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       const imprintable = hand.reduce((acc, c, i) => {
         const cd = getCard(c);
         if (!cd || cd.type === "land") return acc;
-        if ((cd.greenPips ?? 0) < 1 && (cd.greenPips ?? 0) < 1) return acc; // not green
-        // Never imprint 1-drop dorks — they're too valuable
+        if ((cd.greenPips ?? 0) < 1 && (cd.greenPips ?? 0) < 1) return acc;
         if (cd.tags?.includes("dork") && (cd.cmc ?? 0) === 1) return acc;
         acc.push({ c, i, cmc: cd.cmc ?? 0 });
         return acc;
       }, []);
-      // Sort: highest CMC first (imprint the card that costs most to find again)
       imprintable.sort((a, b) => b.cmc - a.cmc);
       if (imprintable.length > 0) {
-        hand.splice(imprintable[0].i, 1); // exile the imprinted card
+        hand.splice(imprintable[0].i, 1);
       }
-      // If nothing to imprint, Chrome Mox enters tapped and produces nothing useful;
-      // sumManaPool still counts it as {G} (slight overcount, acceptable approximation).
     }
     // Optimal play: discard a land already on the battlefield (already tapped this turn) so Mox
     // replaces it 1-for-1 as a permanent mana source. Only discard from hand if no spare
