@@ -117,8 +117,8 @@ const CARDS = {
 
   // ── VARIANT / SIDEBOARD CARDS ──────────────────────────────────────────
   // Mana dorks & big dorks
-  "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"elves", role:"dork-combo", greenPips:1},
-  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"elves", role:"big-dork-combo", greenPips:1},
+  "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"joraga", role:"dork-combo", greenPips:1, note:"{T}: Add {G}{G} at level 1-4 (after paying {1}{G} once). At level 5+: all elves tap for {G}{G}. Conservative estimate: level 1-4 = 2 mana; level 5+ = elves×2."},
+  "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"marwyn", role:"big-dork-combo", greenPips:1, note:"{T}: Add {G} equal to Marwyn's power. Gains +1/+1 counter whenever another elf enters. Power = #counters (base 1/1). In practice, power ≈ number of elves cast after Marwyn entered."},
   "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork","human"], tapsFor:"power", role:"big-dork-combo", greenPips:2},
   "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", role:"big-dork-combo", greenPips:1},
   "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], role:"storm-engine", greenPips:2},
@@ -1807,12 +1807,18 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     if (typeof t === "number") {
       amt = t + (t > 0 ? badgermoleBonus : 0);
     } else if (t === "elves") {
-      // Joraga Treespeaker: tagged tapsFor:"elves" but only does so AFTER level-up (not simulated).
-      // Treat it as a plain {G} source in the sim to avoid overcounting.
-      if (card === "Joraga Treespeaker") {
-        amt = 1 + badgermoleBonus;
+      amt = elves + badgermoleBonus;
+    } else if (t === "marwyn") {
+      // Marwyn taps for power = base 1 + #elf-ETBs since entering.
+      // Conservative estimate: power ≈ max(elves - 1, 1) (she doesn't count herself).
+      amt = Math.max(1, elves - 1) + badgermoleBonus;
+    } else if (t === "joraga") {
+      // Joraga Treespeaker: level 1-4 = {G}{G} (flat 2). Level 5+ = all elves tap for {G}{G}.
+      // In the sim, assume level 1-4 (conservative). With 5+ elves, assume level 5+ mode.
+      if (elves >= 5) {
+        amt = elves * 2 + badgermoleBonus;
       } else {
-        amt = elves + badgermoleBonus;
+        amt = 2 + badgermoleBonus;
       }
     } else if (t === "creatures") {
       amt = creatureCount + badgermoleBonus;
@@ -1830,6 +1836,23 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
       } else {
         amt = 1 + badgermoleBonus;
       }
+    } else if (t === "power") {
+      // Selvala, Heart of the Wilds: {G},{T}: Add {G} equal to greatest power among creatures.
+      // Improved: track Ashaya (power = lands + creature-lands), known high-power creatures.
+      const KNOWN_POWERS = {
+        "Kogla, the Titan Ape": 7, "Woodland Bellower": 6, "Regal Force": 5,
+        "Temur Sabertooth": 4, "Seedborn Muse": 4, "Great Oak Guardian": 4,
+        "Surrak and Goreclaw": 6, "Ulvenwald Oddity": 4,
+      };
+      let gp = Math.max(1, creatureCount);
+      for (const [name, pow] of Object.entries(KNOWN_POWERS)) {
+        if (ctx.board.has(name)) gp = Math.max(gp, pow);
+      }
+      if (ctx.board.has("Ashaya, Soul of the Wild")) {
+        const landCount = ctx.landCount ?? 0;
+        gp = Math.max(gp, landCount + creatureCount);
+      }
+      amt = gp + badgermoleBonus;
     } else {
       amt = 1 + badgermoleBonus;
     }
@@ -1889,6 +1912,17 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
   if (ctx.board.has("Earthcraft")) {
     const untapTargets = ctx.hasYavimaya ? ctx.landCount : ctx.basicForests;
     green += Math.min(ctx.activeCreatures.length, untapTargets);
+  }
+
+  // SIM GROUP 5: Leyline of Abundance: whenever you tap a creature for mana, add {G}.
+  // Each non-sick dork that taps for mana gets +1G. This stacks with Badgermole Cub.
+  // Note: Leyline triggers on {T} mana abilities only, not Earthcraft-style "tap an untapped creature".
+  if (ctx.board.has("Leyline of Abundance")) {
+    const dorkCount = ctx.activeCreatures.filter(c => {
+      const cd = getCard(c);
+      return cd && (cd.tags?.includes("dork") || cd.tags?.includes("big-dork")) && cd.tapsFor;
+    }).length;
+    green += dorkCount;
   }
 
   return { green, colorless, total: green + colorless };
@@ -2005,21 +2039,42 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
-    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler, Marwyn
+    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler
     if (t === "creatures") return creaturesOnBoard + extraElves + badgermoleBonus; // Circle of Dreams Druid
     if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
+    // Marwyn taps for power = base 1 + #elf-ETBs since she entered.
+    // Conservative estimate: power ≈ max(elves on board - 1, 1) since each elf cast added a counter.
+    // With extraElves (being cast as part of this combo), she'd get those counters too.
+    if (t === "marwyn") {
+      const marwynPower = Math.max(1, elvesOnBoard + extraElves - 1);
+      return marwynPower + badgermoleBonus;
+    }
+    // Joraga Treespeaker: level 1-4 taps for {G}{G} (flat 2). Level 5+ gives all elves {T}: Add {G}{G}.
+    // We can't track level counters precisely; conservative assumption is level 1-4 (taps for 2).
+    // If board has many elves (≥5), assume level 5+ mode: elf-count × 2 (each elf taps for {G}{G}).
+    if (t === "joraga") {
+      if (elvesOnBoard + extraElves >= 5) return (elvesOnBoard + extraElves) * 2 + badgermoleBonus;
+      return 2 + badgermoleBonus;
+    }
     if (t === "power") {
       // Selvala, Heart of the Wilds: {G},{T}: Add {G} equal to the greatest power among creatures you control.
-      // We can't track exact power values, so we estimate:
-      //   - If a known power-4+ creature is on board, use 4 as a conservative floor.
-      //   - Otherwise use creature count as a proxy floor (assumes roughly 1 power per creature).
-      //     This avoids severely under-counting Selvala when no explicit power-4 creature is tracked.
-      const bigOnBoard = ["Kogla, the Titan Ape","Temur Sabertooth",
-        "Selvala, Heart of the Wilds","Yorvo, Lord of Garenbrig","Vorinclex, Voice of Hunger",
-        "Craterhoof Behemoth","Primeval Titan","Nylea, God of the Hunt","Rhonas the Indomitable",
-        "Ghalta, Primal Hunger"].some(n => board.has(n))
-        || (board.has("Ashaya, Soul of the Wild") && creaturesOnBoard >= 4); // Ashaya P/T = forests controlled
-      const greatestPower = bigOnBoard ? 4 : Math.max(1, creaturesOnBoard);
+      // Improved estimate: accounts for Ashaya (power = lands controlled) and
+      // other known high-power creatures with specific power values.
+      const KNOWN_POWERS = {
+        "Kogla, the Titan Ape": 7, "Woodland Bellower": 6, "Regal Force": 5,
+        "Temur Sabertooth": 4, "Seedborn Muse": 4, "Great Oak Guardian": 4,
+        "Surrak and Goreclaw": 6, "Ulvenwald Oddity": 4,
+      };
+      let greatestPower = Math.max(1, creaturesOnBoard); // floor: assume 1 power per creature avg
+      for (const [name, pow] of Object.entries(KNOWN_POWERS)) {
+        if (board.has(name)) greatestPower = Math.max(greatestPower, pow);
+      }
+      // Ashaya's P/T = number of lands you control (including creature-lands via Ashaya itself)
+      if (board.has("Ashaya, Soul of the Wild")) {
+        const landCount = battlefield.filter(c => getCard(c)?.type === "land" || c === "Dryad Arbor").length;
+        const ashayaPower = landCount + creaturesOnBoard; // creatures are lands too
+        greatestPower = Math.max(greatestPower, ashayaPower);
+      }
       return greatestPower + badgermoleBonus;
     }
     if (t === "arbor") {
@@ -2032,6 +2087,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (boardCtx.hasAuraOnForest) return 2 + badgermoleBonus;
       return 1 + badgermoleBonus;
     }
+    // Ferocious: Fanatic of Rhonas taps for 4 if power 4+ creature on board, else 1
+    if (t === "ferocious") return badgermoleBonus + (creaturesOnBoard >= 4 ? 4 : 1);
     return 0;
   }
 
@@ -2136,7 +2193,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // is too optimistic. Ashaya itself may still be in hand as long as the animator is in play.
   const ashayaAvailable      = board.has("Ashaya, Soul of the Wild") || (accessible("Ashaya, Soul of the Wild") && canCastNow);
   const landAnimateOnBoard   = board.has("Destiny Spinner") || (board.has("Badgermole Cub") && (board.has("Temur Sabertooth") || accessible("Temur Sabertooth")));
-  const hasHasteEnabler      = ashayaAvailable && landAnimateOnBoard;
+  // GROUP 4: Earthcraft as pseudo-haste enabler — a freshly cast creature can immediately
+  // tap via Earthcraft to untap a basic land, effectively producing mana the turn it enters.
+  // This is functionally equivalent to haste for mana production purposes.
+  // Requires: Earthcraft on board + at least 1 basic land (or Yavimaya making all lands basic).
+  const earthcraftHaste = board.has("Earthcraft") && (
+    battlefield.some(c => c === "Forest" || getCard(c)?.tags?.includes("basic")) ||
+    board.has("Yavimaya, Cradle of Growth")
+  );
+  const hasHasteEnabler      = (ashayaAvailable && landAnimateOnBoard) || earthcraftHaste;
 
   const results = [];
   const suppressedWins = []; // { label, reason } — shown as collapsed notes at end
@@ -2171,10 +2236,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         || combo.id === "regal_force_draw"
         || combo.id === "sabertooth_woodcaller"
         || combo.id === "woodcaller_ashaya_loop";
+      // GROUP 7: Also check graveyard recovery via accessible()
       const hasBouncer = nonHumanBounce
-        ? (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"))
-        : (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth")
-            || board.has("Kogla, the Titan Ape") || inHand.has("Kogla, the Titan Ape"));
+        ? (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth") || accessible("Temur Sabertooth"))
+        : (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth") || accessible("Temur Sabertooth")
+            || board.has("Kogla, the Titan Ape") || inHand.has("Kogla, the Titan Ape") || accessible("Kogla, the Titan Ape"));
       if (!hasBouncer) return {
         ok: false,
         missing: nonHumanBounce
@@ -2239,10 +2305,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsDrawEngine: need Beast Whisperer or Glademuse
+    // GROUP 6: Nissa, Resurgent Animist also qualifies — with Ashaya in play,
+    // every creature entering is a land entering (landfall), so Nissa adds mana
+    // per creature cast AND tutors an Elf/Elemental on the 2nd landfall each turn.
+    // In an infinite Ranger loop, Nissa triggers every iteration.
     if (combo.needsDrawEngine) {
       const hasEngine = board.has("Beast Whisperer") || board.has("Glademuse")
-        || inHand.has("Beast Whisperer") || inHand.has("Glademuse");
-      if (!hasEngine) return { ok: false, missing: "Beast Whisperer or Glademuse (draw engine)" };
+        || inHand.has("Beast Whisperer") || inHand.has("Glademuse")
+        || ((board.has("Nissa, Resurgent Animist") || inHand.has("Nissa, Resurgent Animist"))
+            && (board.has("Ashaya, Soul of the Wild") || inHand.has("Ashaya, Soul of the Wild")));
+      if (!hasEngine) return { ok: false, missing: "Beast Whisperer, Glademuse, or Nissa (with Ashaya for landfall loop)" };
     }
 
     // needsMinElves: need at least N elves on the battlefield
@@ -2322,16 +2394,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsRemoval: Kogla variant needs Beast Within OR Legolas's Quick Reflexes
+    // GROUP 7: Also check graveyard recovery (Eternal Witness can retrieve these)
     if (combo.needsRemoval) {
       const hasRemoval = board.has("Beast Within") || inHand.has("Beast Within")
-        || board.has("Legolas's Quick Reflexes") || inHand.has("Legolas's Quick Reflexes");
+        || board.has("Legolas's Quick Reflexes") || inHand.has("Legolas's Quick Reflexes")
+        || accessible("Beast Within") || accessible("Legolas's Quick Reflexes");
       if (!hasRemoval) return { ok: false, missing: "Beast Within or Legolas's Quick Reflexes (to kill Endurance on the stack)" };
     }
 
     // needsRanger: Ashaya variant needs Quirion Ranger or Scryb Ranger
+    // GROUP 7: Also check graveyard recovery
     if (combo.needsRanger) {
       const hasRanger = board.has("Quirion Ranger") || inHand.has("Quirion Ranger")
-        || board.has("Scryb Ranger") || inHand.has("Scryb Ranger");
+        || board.has("Scryb Ranger") || inHand.has("Scryb Ranger")
+        || accessible("Quirion Ranger") || accessible("Scryb Ranger");
       if (!hasRanger) return { ok: false, missing: "Quirion Ranger or Scryb Ranger" };
     }
 
@@ -3519,8 +3595,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const t = getCard(c)?.tapsFor;
         if (typeof t === "number") return t >= dorkThreshold;
         if (t === "elves")    return elvesOnBoard >= dorkThreshold;
+        if (t === "marwyn")   return Math.max(1, elvesOnBoard - 1) >= dorkThreshold;
+        if (t === "joraga")   return (elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2) >= dorkThreshold;
         if (t === "creatures") return creaturesOnBoard >= dorkThreshold;
         if (t === "devotion") return devotionOnBoard >= dorkThreshold;
+        if (t === "power")    return creaturesOnBoard >= dorkThreshold;
         if (t === "ferocious") return true; // ferocious Fanatic always produces 4 in the loop (Ashaya tokens are 4/4)
         return false;
       });
@@ -3560,8 +3639,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           const t = getCard(bigDorkNO)?.tapsFor;
           if (typeof t === "number") return t;
           if (t === "elves")    return elvesOnBoard;
+          if (t === "marwyn")   return Math.max(1, elvesOnBoard - 1);
+          if (t === "joraga")   return elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
           if (t === "creatures") return creaturesOnBoard;
           if (t === "devotion") return devotionOnBoard;
+          if (t === "power")    return creaturesOnBoard;
           if (t === "ferocious") return 4; // in the infinite loop, Ashaya makes dork a 4/4 Forest — ferocious always active
           return dorkThreshold;
         })();
@@ -3672,8 +3754,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const t = getCard(c).tapsFor;
       if (typeof t === "number" && t >= 2) return t;
       if (t === "elves")     return elvesOnBoard;          // Witness is NOT an elf
+      if (t === "marwyn")    return Math.max(1, elvesOnBoard - 1); // Witness is NOT an elf
+      if (t === "joraga")    return elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
       if (t === "creatures") return creaturesOnBoard + 1;  // +1 for Witness (any creature)
       if (t === "devotion")  return devotionOnBoard + (getCard(c)?.greenPips ?? 0); // Witness devotion 1
+      if (t === "power")     return creaturesOnBoard + 1;
     }
     return 0;
   })();
@@ -3699,8 +3784,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const t = getCard(c)?.tapsFor;
       if (typeof t === "number") return t >= dorkThreshold;
       if (t === "elves")    return (elvesOnBoard + 1) >= dorkThreshold; // +1 for Witness
+      if (t === "marwyn")   return Math.max(1, elvesOnBoard) >= dorkThreshold;
+      if (t === "joraga")   return (elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2) >= dorkThreshold;
       if (t === "creatures") return (creaturesOnBoard + 1) >= dorkThreshold;
       if (t === "devotion") return (devotionOnBoard + 1) >= dorkThreshold;
+      if (t === "power")    return (creaturesOnBoard + 1) >= dorkThreshold;
       return false;
     });
     const sacCandidates = battlefield.filter(c =>
@@ -3725,8 +3813,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const t = getCard(bigDork)?.tapsFor;
         if (typeof t === "number") return t;
         if (t === "elves")    return elvesOnBoard + 1;
+        if (t === "marwyn")   return Math.max(1, elvesOnBoard);
+        if (t === "joraga")   return elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
         if (t === "creatures") return creaturesOnBoard + 1;
         if (t === "devotion") return devotionOnBoard + 1;
+        if (t === "power")    return creaturesOnBoard + 1;
         if (t === "ferocious") return 4; // in the loop, Ashaya tokens have 4/4 — ferocious always on
         return dorkThreshold;
       })();
@@ -6293,18 +6384,54 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
        "Kogla, the Titan Ape","Eladamri, Korvecdal"].includes(c)
     );
     if (legendsInHand.length > 0) {
+      // GROUP 5: When opponents have open mana (counter threat), and our next play
+      // is a key legend like Ashaya, boost priority significantly — the sequencing
+      // of "tap Halfling first" becomes critical.
+      const isAshayaNext = legendsInHand.includes("Ashaya, Soul of the Wild");
+      const counterThreat = opponentOpenMana === true;
+      const halflingPriority = counterThreat && isAshayaNext ? 11
+        : counterThreat ? 9
+        : isAshayaNext ? 8
+        : 7;
       results.push({
-        priority: 7,
-        category: "🛡️ PROTECTION ACTIVE",
+        priority: halflingPriority,
+        category: counterThreat ? "🛡️ PROTECTION — COUNTER THREAT" : "🛡️ PROTECTION ACTIVE",
         headline: `Delighted Halfling: tap to make ${legendsInHand[0]} uncounterable`,
-        detail: "Tap Delighted Halfling when casting a legendary spell to add one mana of any color toward it — that spell can't be countered when cast this way. Key legends in hand are now safe through blue interaction.",
+        detail: counterThreat
+          ? `⚠ OPPONENTS HAVE OPEN MANA. Tap Delighted Halfling when casting ${legendsInHand[0]} — the spell cannot be countered. This is critical with blue mana up.`
+          : "Tap Delighted Halfling when casting a legendary spell to add one mana of any color toward it — that spell can't be countered when cast this way. Key legends in hand are now safe through blue interaction.",
         steps: [
+          counterThreat ? `⚠ SEQUENCE: Tap Delighted Halfling FIRST, then use the mana toward casting ${legendsInHand[0]}. This makes the spell uncounterable.` :
           `When casting ${legendsInHand[0]}: tap Delighted Halfling to add {G} (or any color) toward its cost — it becomes uncounterable.`,
           legendsInHand.length > 1 ? `Other legends in hand that benefit: ${legendsInHand.slice(1).join(", ")}.` : "",
           "Note: the protection only applies if you use Halfling's mana for the cast. You can use it alongside other mana.",
-          "Best deployed proactively when you see blue mana held up, or in response to a counter being announced.",
+          counterThreat ? "Opponents have open mana — deploy proactively before casting your legend." : "Best deployed proactively when you see blue mana held up.",
         ].filter(Boolean),
-        color: "#1abc9c",
+        color: counterThreat ? "#e74c3c" : "#1abc9c",
+      });
+    }
+  }
+
+  // GROUP 5: When Delighted Halfling is in hand and a key legend is ALSO in hand,
+  // advise casting Halfling first to set up counter-protection for next turn.
+  if (inHand.has("Delighted Halfling") && !board.has("Delighted Halfling") && canAfford(1, 1) && !infiniteManaActive) {
+    const legendsInHand = hand.filter(c =>
+      c !== "Delighted Halfling" &&
+      ["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Yisan, the Wanderer Bard",
+       "Kogla, the Titan Ape","Eladamri, Korvecdal"].includes(c)
+    );
+    if (legendsInHand.length > 0 && opponentOpenMana) {
+      results.push({
+        priority: 10,
+        category: "🛡️ DEPLOY PROTECTION FIRST",
+        headline: `Cast Delighted Halfling NOW — protect ${legendsInHand[0]} from counters`,
+        detail: `Opponents have open mana. Cast Delighted Halfling ({G}) this turn. Next turn, tap it when casting ${legendsInHand[0]} to make the spell uncounterable. Sequencing Halfling first prevents opponents from countering your combo piece.`,
+        steps: [
+          "Cast Delighted Halfling ({G}) — enters as a 1/1 with summoning sickness.",
+          "Next turn: tap Halfling to add one mana of any color toward a legendary spell — that spell can't be countered.",
+          `Protected legends in hand: ${legendsInHand.join(", ")}.`,
+        ],
+        color: "#e74c3c",
       });
     }
   }
@@ -7611,8 +7738,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const t = getCard(c)?.tapsFor;
         if (typeof t === "number") return t >= 3;
         if (t === "elves")     return postCastElves >= 3;
+        if (t === "marwyn")    return Math.max(1, postCastElves - 1) >= 3;
+        if (t === "joraga")    return (postCastElves >= 5 ? postCastElves * 2 : 2) >= 3;
         if (t === "creatures") return (creaturesOnBoard + speakerElvBonus) >= 3;
         if (t === "devotion")  return (devotionOnBoard  + speakerElvBonus) >= 3;
+        if (t === "power")     return (creaturesOnBoard + speakerElvBonus) >= 3;
         return false;
       });
 
@@ -7622,8 +7752,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           const t = getCard(dorkName)?.tapsFor;
           if (typeof t === "number") return t;
           if (t === "elves")     return postCastElves;
+          if (t === "marwyn")    return Math.max(1, postCastElves - 1);
+          if (t === "joraga")    return postCastElves >= 5 ? postCastElves * 2 : 2;
           if (t === "creatures") return creaturesOnBoard + speakerElvBonus;
           if (t === "devotion")  return devotionOnBoard  + speakerElvBonus;
+          if (t === "power")     return creaturesOnBoard + speakerElvBonus;
           return 3;
         })();
         const netMana = dorkOutput - 3; // Speaker costs {2}{G} = 3
@@ -8985,6 +9118,94 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Sort by priority descending; tie-break on category string (alphabetical) then insertion
   // order (index) for fully deterministic output across renders.
   results.forEach((r, i) => { r._idx = i; });
+
+  // ── GROUP 8: Priority De-compression ───────────────────────────────────────
+  // Many advice cards cluster at priority 7-10, making rankings muddy.
+  // Add a fractional urgency bonus based on how directly this play contributes
+  // to the win. Cards that are part of a known combo path get a small boost.
+  // Cards that are pure value/ramp without a clear combo connection get no boost.
+  results.forEach(r => {
+    let urgency = 0;
+    const cat = r.category || "";
+    const hl = r.headline || "";
+    // Win-related categories get highest urgency
+    if (cat.includes("WIN NOW") || cat.includes("CAST TO WIN") || cat.includes("WIN PILE")) urgency = 0.9;
+    else if (cat.includes("INFINITE MANA") || cat.includes("MANA ONLINE") || cat.includes("LOOP READY")) urgency = 0.7;
+    else if (cat.includes("ONE PIECE AWAY") || cat.includes("NEARLY THERE")) urgency = 0.5;
+    else if (cat.includes("ENABLE MANA LOOP") || cat.includes("CAST TO ENABLE")) urgency = 0.6;
+    else if (cat.includes("FIND INFINITE")) urgency = 0.6;
+    // Combo piece names in headline
+    else if (hl.includes("Ashaya") || hl.includes("Quirion") || hl.includes("Sabertooth")) urgency = 0.3;
+    // Ramp that feeds combo
+    else if (cat.includes("RAMP") && (hl.includes("Priest") || hl.includes("Archdruid") || hl.includes("Circle"))) urgency = 0.2;
+    r.urgency = urgency;
+    // Apply as fractional priority boost (preserves integer ordering, breaks ties)
+    r.priority = r.priority + urgency;
+  });
+  // ── GROUP 3: Compute turn clock for the current position ─────────────────
+  let turnClock = null;
+  if (isMyTurn && !infiniteManaActive) {
+    try {
+      const deckSet = deckList ? new Set(deckList) : null;
+      const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+      if (lines.length > 0) {
+        const best = lines[0];
+        if (best.winNow)       turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
+        else if (best.sameTurn) turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
+        else if (best.nextTurnOnly) turnClock = { turns: 1, plan: `Win next turn: ${best.combo.name}` };
+        else if (best.canAfford)    turnClock = { turns: 2, plan: `~2 turns: ${best.combo.name} (need setup)` };
+        else turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
+      } else {
+        turnClock = { turns: 5, plan: "5+ turns — no combo path found" };
+      }
+    } catch (e) { turnClock = null; }
+  } else if (infiniteManaActive) {
+    turnClock = { turns: 0, plan: "Infinite mana active — win this turn" };
+  }
+
+  // ── GROUP 2: Compute win conversion paths when infinite mana is active ──
+  let winConversion = null;
+  if (infiniteManaActive) {
+    const poolHave = new Set([...battlefield, ...hand]);
+    const winPaths = [];
+    const hasDuskwatch = poolHave.has("Duskwatch Recruiter") || battlefield.some(c => c === "Duskwatch Recruiter");
+    const hasEndurance = poolHave.has("Endurance");
+    const hasSanitarium = poolHave.has("Geier Reach Sanitarium");
+    const hasAshaya = poolHave.has("Ashaya, Soul of the Wild");
+    const hasQuirionOrScryb = poolHave.has("Quirion Ranger") || poolHave.has("Scryb Ranger");
+    const hasBouncer = poolHave.has("Temur Sabertooth") || poolHave.has("Kogla, the Titan Ape");
+    const hasEWit = poolHave.has("Eternal Witness");
+    const hasSpinner = poolHave.has("Destiny Spinner");
+    const hasHyrax = poolHave.has("Hyrax Tower Scout");
+    const hasElder = poolHave.has("Argothian Elder");
+    const hasUntapLand = (hasAshaya && hasQuirionOrScryb) || (hasAshaya && hasElder) ||
+      (hasSpinner && hasHyrax) || poolHave.has("Woodcaller Automaton");
+
+    if (hasDuskwatch || poolHave.has("Finale of Devastation")) {
+      // Mill path
+      if (hasEndurance && hasSanitarium && hasUntapLand) {
+        winPaths.push({ path: "mill", priority: 1, desc: "Sanitarium Mill: Endurance protects your library, loop Sanitarium to mill opponents", missing: [] });
+      } else if (hasEndurance && hasSanitarium) {
+        winPaths.push({ path: "mill-blocked", priority: 99, desc: "Mill: missing land untap method", missing: ["land untap (Ashaya+Ranger, Elder, Spinner+Hyrax, Woodcaller)"] });
+      }
+      // Poison path
+      const hasBite = poolHave.has("Infectious Bite") || inGrave.has("Infectious Bite");
+      if (hasBite && hasEWit && hasBouncer) {
+        winPaths.push({ path: "poison", priority: 2, desc: "Poison: Infectious Bite loop via EWit + bouncer", missing: [] });
+      }
+      // Finale path
+      if (poolHave.has("Finale of Devastation")) {
+        winPaths.push({ path: "finale", priority: 3, desc: "Finale of Devastation X≥10: all creatures get +X/+X haste", missing: [] });
+      }
+      // Combat fallback
+      if (poolHave.has("Beast Within")) {
+        winPaths.push({ path: "combat", priority: 5, desc: "Beast Within all opposing permanents → mass attack", missing: [] });
+      }
+    }
+    winPaths.sort((a, b) => a.priority - b.priority);
+    winConversion = winPaths.length > 0 ? winPaths : null;
+  }
+
   results.sort((a, b) =>
     b.priority - a.priority ||
     (a.category ?? "").localeCompare(b.category ?? "") ||
@@ -8992,7 +9213,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   );
   const normal = results.filter(r => !r.isSuppressed).slice(0, 7);
   const suppressed = results.filter(r => r.isSuppressed);
-  return { results: [...normal, ...suppressed], infiniteManaActive, activeComboName };
+  return { results: [...normal, ...suppressed], infiniteManaActive, activeComboName, turnClock, winConversion };
 }
 
 // ============================================================
@@ -9674,8 +9895,11 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         if (!cd || cd.type !== "creature") return false;
         if (typeof cd.tapsFor === "number") return cd.tapsFor >= min;
         if (cd.tapsFor === "elves")     return cd.tags?.includes("big-dork") && elvesNow >= min;
+        if (cd.tapsFor === "marwyn")    return cd.tags?.includes("big-dork") && Math.max(1, elvesNow - 1) >= min;
+        if (cd.tapsFor === "joraga")    return elvesNow >= 5 ? (elvesNow * 2 >= min) : (2 >= min);
         if (cd.tapsFor === "creatures") return cd.tags?.includes("big-dork") && creaturesNow >= min;
         if (cd.tapsFor === "devotion")  return cd.tags?.includes("big-dork") && devotionNow >= min;
+        if (cd.tapsFor === "power")     return cd.tags?.includes("big-dork") && creaturesNow >= min;
         return false;
       });
       if (!hasDork && depth < 3) {
@@ -10253,7 +10477,7 @@ function validateCardEntry(entry, name) {
     }
     // tapsFor must be a number or a known string
     if (entry.tapsFor !== undefined) {
-      const validTapsFor = ["elves","creatures","devotion","arbor"];
+      const validTapsFor = ["elves","creatures","devotion","arbor","marwyn","joraga","power","ferocious"];
       if (typeof entry.tapsFor !== "number" && !validTapsFor.includes(entry.tapsFor)) {
         entry.tapsFor = 1;
       }
@@ -11662,6 +11886,9 @@ function CustomCardEditor({ name, onSave, onCancel }) {
     { value: "elves",    label: "# elves" },
     { value: "creatures", label: "# creatures" },
     { value: "devotion", label: "# devotion" },
+    { value: "marwyn",  label: "Marwyn (power)" },
+    { value: "joraga",  label: "Joraga (level)" },
+    { value: "power",   label: "greatest power" },
   ];
 
   const handleSave = () => {
@@ -13394,11 +13621,23 @@ function simCanCast(card, manaPool, battlefield = []) {
   // is called before simPlayCard, so the affordable-scorer path must also check hand lands.
   // See sim loop for the hand-land guard added alongside this.
   if (card === "Chord of Calling") {
+    // SIM GROUP 8: Proper convoke cost model.
+    // Chord costs {X}{G}{G}{G}. Convoke lets each creature tap to pay {1} or {G}.
+    // Effective cost = max(0, X + 3 - convokeTappers) total, need at least 3 green pips
+    // but convoke creatures of green color can pay for pips too.
     const convokeTappers = battlefield.filter(c => {
       const cd = getCard(c);
-      return cd?.type === "creature"; // sickSet not available here; approximate — sim loop checks properly
+      return cd?.type === "creature"; // sickSet not available here; approximate
     }).length;
-    return manaPool.green >= pips && convokeTappers >= 1;
+    // With convoke, even X=0 is useful (fetches CMC 0 = Dryad Arbor).
+    // Need: green pips covered by (manaPool.green + green convokers), total covered by (mana + all convokers).
+    const greenConvokers = battlefield.filter(c => {
+      const cd = getCard(c);
+      return cd?.type === "creature" && (cd.greenPips ?? 0) > 0;
+    }).length;
+    const effectiveGreen = manaPool.green + greenConvokers;
+    const effectiveTotal = manaPool.total + convokeTappers;
+    return effectiveGreen >= 3 && effectiveTotal >= 3; // minimum: X=0 costs {G}{G}{G}, 3 convokers can cover it
   }
   // Enchant-land auras need a land on the battlefield to attach to
   if (data.tags?.includes("enchant-land")) {
@@ -13412,6 +13651,53 @@ function simCanCast(card, manaPool, battlefield = []) {
   }
   // Need enough green for the pips, and total mana >= cmc
   return manaPool.green >= pips && manaPool.total >= cmc;
+}
+
+// SIM GROUP 6: Fire landfall triggers for cards on the battlefield.
+// Called when a land enters the battlefield (normal drop or fetch result).
+// triggerCount = total landfall triggers this turn, newTriggers = how many just happened.
+function simFireLandfall(simState, triggerCount, newTriggers) {
+  const { hand, battlefield, library, sickSet } = simState;
+  const board = new Set(battlefield);
+
+  for (let t = 0; t < newTriggers; t++) {
+    // Lotus Cobra: add one mana of any color (modeled as +1G phantom)
+    // We can't easily add phantom mana mid-loop, so Lotus Cobra's landfall mana
+    // is captured by sumManaPool seeing the Treasure/Food from Tireless Provisioner instead.
+
+    // Tireless Provisioner: create a Treasure token (taps for any color, sac)
+    // Modeled as adding a one-shot mana source to the battlefield.
+    if (board.has("Tireless Provisioner")) {
+      // Add a phantom treasure: Lotus Petal equivalent for this turn
+      if (!simState.consumedAtEndOfTurn) simState.consumedAtEndOfTurn = new Set();
+      battlefield.push("Lotus Petal"); // acts as {G} this turn
+      simState.consumedAtEndOfTurn.add("Lotus Petal");
+    }
+
+    // Nissa, Resurgent Animist: add one mana (always {G} in mono-green).
+    // On the 2nd landfall each turn: reveal cards until Elf or Elemental → hand.
+    if (board.has("Nissa, Resurgent Animist")) {
+      // Mana trigger handled by sumManaPool seeing the board state.
+      // 2nd landfall: tutor for Elf/Elemental
+      const thisTriggerNum = triggerCount - newTriggers + t + 1;
+      if (thisTriggerNum === 2) {
+        // Search library for an Elf or Elemental
+        const target = library.find(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && (cd.tags?.includes("elf") || c === "Endurance");
+        });
+        if (target) {
+          library.splice(library.indexOf(target), 1);
+          hand.push(target);
+          // Shuffle library (Nissa reveals from top, but sim doesn't track exact position)
+          for (let i = library.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [library[i], library[j]] = [library[j], library[i]];
+          }
+        }
+      }
+    }
+  }
 }
 
 function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
@@ -13572,11 +13858,23 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     if (turn > 1) {
       if (library.length > 0) { hand.push(library.shift()); }
     }
+
+    // SIM GROUP 6: Sylvan Library — draw 2 extra cards at draw step.
+    // In goldfish (no life pressure), always pay 4 life per card (keep both).
+    if (battlefield.includes("Sylvan Library") && turn > 1) {
+      for (let d = 0; d < 2 && library.length > 0; d++) {
+        hand.push(library.shift());
+      }
+    }
+
     landPlayed = false;
 
     // Play out the turn — loop until no more affordable plays this turn
     let madePlay = true;
     let turnsPlays = 0;
+    // SIM GROUP 6: Track landfall trigger count per turn for Nissa
+    let landfallCount = 0;
+
     while (madePlay && turnsPlays < 20) {
       madePlay = false;
       turnsPlays++;
@@ -13589,10 +13887,16 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           if (getCard(land)?.tags?.includes("fetch")) {
             // Fetch lands: playCard handles cracking and sets landPlayed
             playCard(land, landIdx);
+            // SIM GROUP 6: Landfall triggers from fetch (2 triggers: fetch entering + found land)
+            landfallCount += 2;
+            simFireLandfall(simState, landfallCount, 2);
           } else {
             hand.splice(landIdx, 1);
             battlefield.push(land);
             landPlayed = true;
+            // SIM GROUP 6: Landfall trigger from normal land drop
+            landfallCount += 1;
+            simFireLandfall(simState, landfallCount, 1);
           }
           madePlay = true;
           continue;
@@ -13676,8 +13980,17 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         let winValid = true;
 
         if (!activeCombo) {
-          // No identified combo — can't validate the win, treat as unachievable
-          winValid = false;
+          // SIM GROUP 4: No identified combo from the advisor — fall back to
+          // findReachableLines which can discover multi-tutor win paths.
+          try {
+            const deckSet = new Set(battlefield.concat(hand, graveyard, library).filter(c => getCard(c)));
+            const lines = findReachableLines(hand, battlefield, graveyard, manaPool.total, deckSet);
+            if (lines.length > 0 && lines[0].winNow) {
+              winValid = true; // findReachableLines confirmed a win-now path
+            } else {
+              winValid = false;
+            }
+          } catch { winValid = false; }
         } else {
           // Simulate casting required pieces in order to verify:
           //   (a) each missing piece is actually in hand (not just theoretically reachable)
@@ -13804,6 +14117,14 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         }
       }
 
+      // ── SIM GROUP 2: Try activated abilities before giving up ────────────
+      // If no card was played, check for on-board engines (Survival, Fauna, Duskwatch, Yisan).
+      const abilityManaPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+      if (simActivateAbilities(simState, abilityManaPool)) {
+        madePlay = true;
+        continue;
+      }
+
       // Nothing left to do this turn
       break;
     }
@@ -13814,7 +14135,206 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
   return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork, winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog) : null };
 }
 
-// Derive a short combo label from an advisor result headline
+// ── SIM GROUP 3: Dynamic tutor target scoring ─────────────────────────────
+// Replaces static priority lists with context-aware scoring.
+// Returns sorted array of {name, score} for the best tutor targets given board state.
+function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
+  const board = new Set(battlefield);
+  const inHand = new Set(hand);
+  const boardSet = new Set(battlefield);
+  const { creatureOnly = false, elfOnly = false, greenOnly = false, maxCmc = 99, minCmc = 0, nonHuman = false, nonLegendary = false } = opts;
+
+  // Derived board state
+  const elvesOnBoard = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
+  const hasAshaya = board.has("Ashaya, Soul of the Wild");
+  const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+  const hasSymbiote = board.has("Wirewood Symbiote");
+  const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+  const hasBigDork = battlefield.some(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"));
+  const hasDuskwatch = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+  const hasElder = board.has("Argothian Elder");
+  const hasCradle = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+  const hasNykthos = board.has("Nykthos, Shrine to Nyx");
+  const LEGENDARY = new Set(["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Yisan, the Wanderer Bard",
+    "Eladamri, Korvecdal","Kogla, the Titan Ape","Nissa, Resurgent Animist","Selvala, Heart of the Wilds",
+    "Marwyn, the Nurturer"]);
+  const HUMAN = new Set(["Eternal Witness","Hyrax Tower Scout","Hope Tender","Karametra's Acolyte",
+    "Destiny Spinner","Heartwood Storyteller","Fauna Shaman","Formidable Speaker"]);
+
+  const candidates = library.filter(c => {
+    const cd = getCard(c);
+    if (!cd) return false;
+    if (boardSet.has(c)) return false;
+    if (creatureOnly && cd.type !== "creature") return false;
+    if (elfOnly && !cd.tags?.includes("elf")) return false;
+    if (greenOnly && (cd.greenPips ?? 0) === 0 && cd.type !== "land") return false;
+    if (nonHuman && HUMAN.has(c)) return false;
+    if (nonLegendary && LEGENDARY.has(c)) return false;
+    if ((cd.cmc ?? 0) > maxCmc || (cd.cmc ?? 0) < minCmc) return false;
+    return true;
+  });
+
+  return candidates.map(c => {
+    const cd = getCard(c);
+    let score = 0;
+
+    // Completes infinite mana combo THIS turn
+    if (c === "Ashaya, Soul of the Wild" && (hasRanger || hasSymbiote) && hasBigDork) score += 100;
+    if (c === "Ashaya, Soul of the Wild" && hasElder) score += 100;
+    if ((c === "Quirion Ranger" || c === "Scryb Ranger") && hasAshaya && hasBigDork) score += 95;
+    if (c === "Argothian Elder" && hasAshaya && !sickSet?.has?.("Argothian Elder")) score += 95;
+
+    // Win outlet with infinite mana
+    if (c === "Duskwatch Recruiter" && hasAshaya && hasRanger && hasBigDork) score += 110;
+    if (c === "Formidable Speaker" && hasAshaya && hasRanger) score += 85;
+
+    // Big dorks that enable combos
+    if (cd.tags?.includes("big-dork") || cd.tags?.includes("infinite-dork")) {
+      if (hasAshaya && hasRanger) score += 80;
+      else if (hasRanger) score += 50;
+      else score += 30;
+    }
+
+    // Untap engines
+    if ((c === "Quirion Ranger" || c === "Scryb Ranger") && !hasRanger) score += 60;
+    if (c === "Wirewood Symbiote" && !hasSymbiote) score += 55;
+    if (c === "Hyrax Tower Scout" && hasBouncer) score += 50;
+
+    // Bouncers
+    if ((c === "Temur Sabertooth" || c === "Kogla, the Titan Ape") && !hasBouncer) score += 45;
+
+    // Key enablers
+    if (c === "Ashaya, Soul of the Wild" && !hasAshaya) score += 70;
+    if (c === "Destiny Spinner") score += 25;
+    if (c === "Eternal Witness") score += 30;
+    if (c === "Woodland Bellower") score += 35;
+    if (c === "Seedborn Muse") score += 20;
+
+    // Ramp dorks
+    if (cd.tags?.includes("dork") && (cd.cmc ?? 0) === 1) score += 15;
+    if (cd.tags?.includes("dork") && (cd.cmc ?? 0) > 1 && !cd.tags?.includes("big-dork")) score += 10;
+
+    // Draw engines
+    if (c === "Beast Whisperer" || c === "Regal Force" || c === "Sylvan Library") score += 20;
+
+    // Fallback: combo-tagged cards get a small boost
+    if (cd.tags?.includes("combo")) score += 5;
+
+    return { name: c, score };
+  }).sort((a, b) => b.score - a.score);
+}
+
+// Helper: pick the best tutor target from library given board context
+function pickBestTutorTarget(library, battlefield, hand, sickSet, opts = {}) {
+  const scored = scoreTutorTargets(library, battlefield, hand, sickSet, opts);
+  return scored.length > 0 ? scored[0].name : null;
+}
+
+// ── SIM GROUP 2: Activated ability framework ──────────────────────────────
+// Between plays, check for on-board activated abilities and fire them.
+// Returns true if an ability was activated (caller should re-check mana and loop).
+function simActivateAbilities(simState, manaPool) {
+  const { hand, battlefield, graveyard, library, sickSet, castLog } = simState;
+  const board = new Set(battlefield);
+
+  // Survival of the Fittest: {G}, discard creature → search for creature → hand
+  if (board.has("Survival of the Fittest") && manaPool.green >= 1) {
+    const discardable = hand.findIndex(c => getCard(c)?.type === "creature");
+    if (discardable >= 0) {
+      const discarded = hand.splice(discardable, 1)[0];
+      graveyard.push(discarded);
+      const target = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
+      if (target) {
+        library.splice(library.indexOf(target), 1);
+        hand.push(target);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+      return true;
+    }
+  }
+
+  // Fauna Shaman: {G}, tap, discard creature → search for creature → hand (sorcery speed, needs non-sick)
+  if (board.has("Fauna Shaman") && !sickSet.has("Fauna Shaman") && manaPool.green >= 1) {
+    const discardable = hand.findIndex(c => getCard(c)?.type === "creature");
+    if (discardable >= 0) {
+      const discarded = hand.splice(discardable, 1)[0];
+      graveyard.push(discarded);
+      const target = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
+      if (target) {
+        library.splice(library.indexOf(target), 1);
+        hand.push(target);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+      return true;
+    }
+  }
+
+  // Duskwatch Recruiter: {2}{G} → look at top 3, put a creature into hand
+  if (board.has("Duskwatch Recruiter") && !sickSet.has("Duskwatch Recruiter") && manaPool.green >= 1 && manaPool.total >= 3) {
+    const top3 = library.slice(0, Math.min(3, library.length));
+    const creature = top3.find(c => getCard(c)?.type === "creature");
+    if (creature) {
+      library.splice(library.indexOf(creature), 1);
+      hand.push(creature);
+    }
+    // Non-creatures go to bottom
+    const nonCreatures = top3.filter(c => c !== creature && getCard(c)?.type !== "creature");
+    for (const nc of nonCreatures) {
+      const idx = library.indexOf(nc);
+      if (idx >= 0) {
+        library.splice(idx, 1);
+        library.push(nc);
+      }
+    }
+    return creature !== undefined;
+  }
+
+  // Yisan, the Wanderer Bard: {2}{G}, tap, add verse counter → search for creature CMC = verse
+  if (board.has("Yisan, the Wanderer Bard") && !sickSet.has("Yisan, the Wanderer Bard") && manaPool.green >= 1 && manaPool.total >= 3) {
+    const verse = (simState.yisanCounters ?? 0) + 1;
+    simState.yisanCounters = verse;
+    const target = library.find(c => {
+      const cd = getCard(c);
+      return cd?.type === "creature" && (cd.cmc ?? 0) === verse && !board.has(c);
+    });
+    if (target) {
+      library.splice(library.indexOf(target), 1);
+      battlefield.push(target);
+      sickSet.add(target);
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
+    }
+    return true;
+  }
+
+  // Skyshroud Poacher: {3}, tap → search for Elf → battlefield
+  if (board.has("Skyshroud Poacher") && !sickSet.has("Skyshroud Poacher") && manaPool.total >= 3) {
+    const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
+      { creatureOnly: true, elfOnly: true });
+    if (target) {
+      library.splice(library.indexOf(target), 1);
+      battlefield.push(target);
+      sickSet.add(target);
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ── Simulator: play a card from hand into the game state.
 // Takes a mutable simState object so this can be unit-tested independently.
 // simState: { hand, battlefield, graveyard, library, sickSet, landPlayed, castLog }
@@ -13829,53 +14349,20 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     if (card === "Green Sun's Zenith") {
       // X = total mana available minus the {G} pip cost.
       // manaPool.total includes the {G} already, so X = manaPool.total - 1.
-      const xBudget = manaPool ? Math.max(0, manaPool.total - 1) : 99; // 99 = unconstrained fallback
-      const GSZ_PRIORITY = [
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
-        "Argothian Elder", "Wirewood Symbiote",
-        "Temur Sabertooth", "Kogla, the Titan Ape",
-        "Eternal Witness", "Fierce Empath",
-        "Hyrax Tower Scout", "Hope Tender",
-        "Elvish Reclaimer", "Destiny Spinner",
-        "Seedborn Muse",
-        "Dryad Arbor", // X=0 fallback
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
-        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
-      ];
+      const xBudget = manaPool ? Math.max(0, manaPool.total - 1) : 99;
+      // SIM GROUP 7: Dynamic target selection replaces static GSZ_PRIORITY list
       // Shuffle GSZ back first (its rules text says shuffle into library)
       library.push(card);
       for (let i = library.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [library[i], library[j]] = [library[j], library[i]];
       }
-      // Pick best creature in library not already on battlefield
-      const boardSet = new Set(battlefield);
-      let target = null;
-      for (const t of GSZ_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSet.has(t)) continue;
-        if ((cd.cmc ?? 0) > xBudget) continue; // can't afford this X
-        if (library.indexOf(t) === -1) continue;
-        target = t;
-        break;
-      }
-      // Fallback: any creature in library within X budget
-      if (!target) {
-        target = library.find(c => {
-          const cd = getCard(c);
-          return cd?.type === "creature" && !boardSet.has(c) && (cd.cmc ?? 0) <= xBudget;
-        }) ?? null;
-      }
+      const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, greenOnly: true, maxCmc: xBudget });
       if (target) {
-        const libIdx = library.indexOf(target);
-        library.splice(libIdx, 1);
+        library.splice(library.indexOf(target), 1);
         battlefield.push(target);
         sickSet.add(target);
-        // Shuffle again after removing the found card
         for (let i = library.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [library[i], library[j]] = [library[j], library[i]];
@@ -13891,42 +14378,9 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       // X budget = convoke creatures + any leftover mana after paying the {G}{G}{G} base (cmc=3).
       const leftoverMana = manaPool ? Math.max(0, manaPool.total - 3) : 0;
       const xBudget = convokeTappers + leftoverMana;
-      // Priority-ordered list of creatures Chord should fetch
-      const CHORD_PRIORITY = [
-        // Win pieces first
-        "Duskwatch Recruiter", "Formidable Speaker",
-        // Infinite mana enablers
-        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
-        "Argothian Elder", "Wirewood Symbiote",
-        // Utility / ramp
-        "Temur Sabertooth", "Kogla, the Titan Ape",
-        "Eternal Witness", "Fierce Empath",
-        "Hyrax Tower Scout", "Hope Tender",
-        "Elvish Reclaimer", "Destiny Spinner",
-        "Seedborn Muse",
-        // Dorks (fallback ramp)
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
-        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
-      ];
-      const boardSet = new Set(battlefield);
-      let target = null;
-      for (const t of CHORD_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSet.has(t)) continue; // already on battlefield
-        const libIdx = library.indexOf(t);
-        if (libIdx === -1) continue;
-        if ((cd.cmc ?? 0) <= xBudget) { target = t; break; }
-      }
-      // Fallback: any creature in library within X budget
-      if (!target) {
-        target = library.find(c => {
-          const cd = getCard(c);
-          return cd?.type === "creature" && (cd?.cmc ?? 0) <= xBudget && !boardSet.has(c);
-        }) ?? null;
-      }
+      // SIM GROUP 7: Dynamic target selection replaces static CHORD_PRIORITY
+      const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, maxCmc: xBudget });
       if (target) {
         const libIdx = library.indexOf(target);
         library.splice(libIdx, 1);
@@ -13983,36 +14437,9 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       graveyard.push(sacrificed);
       // Determine CMC ceiling for fetched creature
       const ceilCmc = card === "Natural Order" ? 99 : sacrificedCmc + 2;
-      // Shared priority list — prefer highest-impact finishers
-      const NO_EE_PRIORITY = [
-        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
-        "Kogla, the Titan Ape", "Temur Sabertooth",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Marwyn, the Nurturer",
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Quirion Ranger", "Scryb Ranger", "Argothian Elder",
-        "Wirewood Symbiote", "Eternal Witness", "Fierce Empath",
-        "Hyrax Tower Scout", "Hope Tender", "Elvish Harbinger",
-        "Seedborn Muse", "Destiny Spinner",
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
-        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
-      ];
-      const boardSet2 = new Set(battlefield);
-      let noTarget = null;
-      for (const t of NO_EE_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSet2.has(t)) continue;
-        if ((cd.cmc ?? 0) > ceilCmc) continue;
-        if (library.indexOf(t) === -1) continue;
-        noTarget = t; break;
-      }
-      if (!noTarget) {
-        noTarget = library.find(c => {
-          const cd = getCard(c);
-          return cd?.type === "creature" && !boardSet2.has(c) && (cd.cmc ?? 0) <= ceilCmc;
-        }) ?? null;
-      }
+      // SIM GROUP 7: Dynamic target selection replaces static NO_EE_PRIORITY
+      const noTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, maxCmc: ceilCmc, greenOnly: card === "Natural Order" });
       if (noTarget) {
         library.splice(library.indexOf(noTarget), 1);
         battlefield.push(noTarget);
@@ -14025,30 +14452,8 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     } else if (card === "Worldly Tutor") {
       graveyard.push(card);
       // Put a creature on top of library (no shuffle — it goes on top).
-      const WT_PRIORITY = [
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
-        "Argothian Elder", "Wirewood Symbiote",
-        "Temur Sabertooth", "Kogla, the Titan Ape",
-        "Eternal Witness", "Fierce Empath",
-        "Hyrax Tower Scout", "Hope Tender",
-        "Elvish Reclaimer", "Destiny Spinner", "Elvish Harbinger",
-        "Seedborn Muse",
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
-        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
-      ];
-      const boardSetWT = new Set(battlefield);
-      let wtTarget = null;
-      for (const t of WT_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSetWT.has(t)) continue;
-        if (library.indexOf(t) === -1) continue;
-        wtTarget = t; break;
-      }
-      if (!wtTarget) wtTarget = library.find(c => getCard(c)?.type === "creature" && !boardSetWT.has(c)) ?? null;
+      // SIM GROUP 7: Dynamic target selection
+      const wtTarget = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
       if (wtTarget) {
         // Remove from library, put on top
         library.splice(library.indexOf(wtTarget), 1);
@@ -14061,34 +14466,9 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       // Simplification: put the best available green creature on top of library (drawn next turn).
       // Ignore the upkeep payment — the deck wins before it matters.
       graveyard.push(card);
-      const SP_PRIORITY = [
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Ashaya, Soul of the Wild", "Quirion Ranger", "Scryb Ranger",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Selvala, Heart of the Wilds",
-        "Argothian Elder", "Wirewood Symbiote",
-        "Temur Sabertooth", "Kogla, the Titan Ape",
-        "Eternal Witness", "Fierce Empath",
-        "Hyrax Tower Scout", "Hope Tender",
-        "Elvish Reclaimer", "Destiny Spinner", "Elvish Harbinger",
-        "Seedborn Muse",
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
-        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
-      ];
-      const boardSetSP = new Set(battlefield);
-      let spTarget = null;
-      for (const t of SP_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSetSP.has(t)) continue;
-        if (library.indexOf(t) === -1) continue;
-        spTarget = t; break;
-      }
-      if (!spTarget) spTarget = library.find(c => {
-        const cd = getCard(c);
-        return cd?.type === "creature" && !boardSetSP.has(c) &&
-          (cd.tags?.includes("elf") || cd.greenPips > 0 || (cd.greenPips ?? 0) > 0);
-      }) ?? null;
+      // SIM GROUP 7: Dynamic target selection — find best green creature
+      const spTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, greenOnly: true });
       if (spTarget) {
         library.splice(library.indexOf(spTarget), 1);
         hand.push(spTarget); // Summoner's Pact puts the card into hand immediately
@@ -14126,31 +14506,9 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       // {X}{G}{G}: search for creature with CMC ≤ X, put onto battlefield. Uses same X budget as GSZ.
       graveyard.push(card);
       const xBudget = manaPool ? Math.max(0, manaPool.total - 2) : 99; // {G}{G} base cost
-      const FIN_PRIORITY = [
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
-        "Quirion Ranger", "Scryb Ranger", "Argothian Elder",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Marwyn, the Nurturer",
-        "Wirewood Symbiote", "Temur Sabertooth", "Kogla, the Titan Ape",
-        "Eternal Witness", "Fierce Empath", "Elvish Harbinger",
-        "Hyrax Tower Scout", "Hope Tender", "Destiny Spinner",
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves",
-        "Arbor Elf", "Birds of Paradise", "Boreal Druid",
-      ];
-      const boardSetFin = new Set(battlefield);
-      let finTarget = null;
-      for (const t of FIN_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSetFin.has(t)) continue;
-        if ((cd.cmc ?? 0) > xBudget) continue;
-        if (library.indexOf(t) !== -1) { finTarget = t; break; }
-      }
-      if (!finTarget) finTarget = library.find(c => {
-        const cd = getCard(c);
-        return cd?.type === "creature" && !boardSetFin.has(c) && (cd.cmc ?? 0) <= xBudget;
-      }) ?? null;
+      // SIM GROUP 7: Dynamic target selection
+      const finTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, maxCmc: xBudget });
       if (finTarget) {
         library.splice(library.indexOf(finTarget), 1);
         battlefield.push(finTarget);
@@ -14161,29 +14519,16 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         }
       }
     } else if (card === "Shared Summons") {
-      // {3}{G}{G}: search for up to 2 creatures. Find the top 2 from priority list, put in hand.
+      // {3}{G}{G}: search for up to 2 creatures. SIM GROUP 7: Dynamic scoring.
       graveyard.push(card);
-      const SS_PRIORITY = [
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
-        "Quirion Ranger", "Scryb Ranger", "Argothian Elder",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Wirewood Symbiote",
-        "Temur Sabertooth", "Eternal Witness", "Fierce Empath", "Elvish Harbinger",
-        "Hyrax Tower Scout", "Hope Tender",
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
-      ];
-      const boardSetSS = new Set(battlefield);
+      const scored = scoreTutorTargets(library, battlefield, hand, sickSet, { creatureOnly: true });
       const found = [];
-      for (const t of SS_PRIORITY) {
+      for (const s of scored) {
         if (found.length >= 2) break;
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSetSS.has(t)) continue;
-        const li = library.indexOf(t);
+        const li = library.indexOf(s.name);
         if (li === -1) continue;
         library.splice(li, 1);
-        found.push(t);
+        found.push(s.name);
       }
       hand.push(...found);
       for (let i = library.length - 1; i > 0; i--) {
@@ -14198,29 +14543,28 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       graveyard.push(card);
     } else if (card === "Archdruid's Charm") {
       // {G}{G}{G}: choose one — search for a creature; search for a basic land onto battlefield;
-      // or destroy a nonland permanent. We always search for the best creature available.
+      // or destroy a nonland permanent. SIM GROUP 7: Dynamic target selection.
       graveyard.push(card);
-      const AC_PRIORITY = [
-        "Duskwatch Recruiter", "Formidable Speaker",
-        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
-        "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
-        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
-        "Karametra's Acolyte", "Temur Sabertooth", "Eternal Witness",
-        "Fierce Empath", "Elvish Harbinger", "Hyrax Tower Scout", "Hope Tender",
-        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
-      ];
-      const boardSetAC = new Set(battlefield);
-      let acTarget = null;
-      for (const t of AC_PRIORITY) {
-        const cd = getCard(t);
-        if (!cd || cd.type !== "creature") continue;
-        if (boardSetAC.has(t)) continue;
-        if (library.indexOf(t) !== -1) { acTarget = t; break; }
-      }
-      if (!acTarget) acTarget = library.find(c => getCard(c)?.type === "creature" && !boardSetAC.has(c)) ?? null;
+      const acTarget = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
       if (acTarget) {
         library.splice(library.indexOf(acTarget), 1);
         hand.push(acTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+    } else if (card === "Nature's Rhythm") {
+      // SIM GROUP 1: {X}{G}{G}: search for creature CMC ≤ X → battlefield. Goes to graveyard.
+      // Harmonize from graveyard is not modeled (would need a separate pass), but the primary cast is.
+      graveyard.push(card);
+      const xBudget = manaPool ? Math.max(0, manaPool.total - 2) : 99;
+      const nrTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, maxCmc: xBudget });
+      if (nrTarget) {
+        library.splice(library.indexOf(nrTarget), 1);
+        battlefield.push(nrTarget);
+        sickSet.add(nrTarget);
         for (let i = library.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [library[i], library[j]] = [library[j], library[i]];
@@ -14593,6 +14937,71 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       }
       // If nothing to discard, Speaker just enters as a 3/3 — no search
     }
+
+    // ── SIM GROUP 1: Missing ETB handlers ─────────────────────────────────
+    // Chomping Changeling: ETB destroys up to one artifact or enchantment.
+    // In goldfish sim, no opponent permanents to destroy — but track for completeness.
+    // (No sim effect needed in goldfish mode.)
+
+    // Woodcaller Automaton: ETB untaps target land and animates it with haste.
+    // Key effect: untaps Cradle/Nykthos for double-tap. Sim doesn't track tap state
+    // per-card, but the mana pool recalculates each iteration, so this is mana-neutral.
+    // The real value is the haste animation (land becomes creature that can tap for mana).
+    // Modeled by ensuring the land is available in sumManaPool (already is since it's on bf).
+
+    // Disciple of Freyalise: ETB — you may sacrifice another creature. If you do,
+    // draw X cards and gain X life where X = that creature's power.
+    if (card === "Disciple of Freyalise" && battlefield.length > 1) {
+      // Find least-valuable creature to sacrifice (lowest CMC non-combo dork)
+      const sacCandidates = battlefield.filter(c =>
+        c !== card && getCard(c)?.type === "creature" && !sickSet.has(c)
+      ).sort((a, b) => {
+        const aCmc = getCard(a)?.cmc ?? 0, bCmc = getCard(b)?.cmc ?? 0;
+        const aCombo = getCard(a)?.tags?.includes("combo") ? 10 : 0;
+        const bCombo = getCard(b)?.tags?.includes("combo") ? 10 : 0;
+        return (aCmc + aCombo) - (bCmc + bCombo);
+      });
+      if (sacCandidates.length > 0) {
+        const sac = sacCandidates[0];
+        const sacPower = getCard(sac)?.cmc ?? 1; // approximate power ≈ CMC
+        const sacIdx = battlefield.indexOf(sac);
+        if (sacIdx >= 0) {
+          battlefield.splice(sacIdx, 1);
+          graveyard.push(sac);
+          // Draw X cards
+          for (let d = 0; d < sacPower && library.length > 0; d++) {
+            hand.push(library.shift());
+          }
+        }
+      }
+    }
+
+    // Genesis Hydra: on-cast trigger — reveal top X cards, put a nonland permanent CMC ≤ X onto bf.
+    if (card === "Genesis Hydra") {
+      const xVal = manaPool ? Math.max(0, manaPool.total - 2) : 3;
+      const revealed = library.splice(0, Math.min(xVal, library.length));
+      const validPerm = revealed.find(c => {
+        const cd = getCard(c);
+        return cd && cd.type !== "land" && (cd.cmc ?? 0) <= xVal;
+      });
+      if (validPerm) {
+        const vpIdx = revealed.indexOf(validPerm);
+        revealed.splice(vpIdx, 1);
+        battlefield.push(validPerm);
+        sickSet.add(validPerm);
+      }
+      // Shuffle remaining revealed cards back into library
+      library.push(...revealed);
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
+    }
+
+    // Sylvan Library: draw 2 extra at draw step is handled in the turn loop, not ETB.
+    // (See Group 6 in the turn loop.)
+
+    // Landfall triggers: Lotus Cobra, Tireless Provisioner, Nissa (handled in fetch/land-drop sections)
 
     // Guardian Project: draw a card when a nontoken creature enters if it doesn't share a name
     // with another creature you control, a creature in hand, OR a creature card in your graveyard.
@@ -23780,6 +24189,8 @@ function YevaAdvisor() {
   const [showNextTurn, setShowNextTurn] = useState(false);
   const [infiniteMana, setInfiniteMana] = useState(false);
   const [activeComboName, setActiveComboName] = useState(null);
+  const [turnClock, setTurnClock] = useState(null);
+  const [winConversion, setWinConversion] = useState(null);
   const [collapseKey, setCollapseKey] = useState(0);
   const advicePanelRef = useRef(null);
   const zoneInputRefs = useRef({}); // populated by CardInput via onRef prop
@@ -23986,10 +24397,12 @@ function YevaAdvisor() {
     if (hand.length + battlefield.length > 0) {
       try {
         const manaAvailable = { green: parseInt(greenMana) || 0, colorless: parseInt(colorlessMana) || 0 };
-        const { results, infiniteManaActive, activeComboName: comboName } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana });
+        const { results, infiniteManaActive, activeComboName: comboName, turnClock, winConversion } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana });
         setAdvice(results);
         setInfiniteMana(infiniteManaActive);
         setActiveComboName(comboName);
+        setTurnClock(turnClock);
+        setWinConversion(winConversion);
 
         // Next-turn simulation: try each current advice play, project forward, compare outcomes
         try {
@@ -24116,6 +24529,32 @@ function YevaAdvisor() {
                     {activeComboName}
                   </span>
                 )}
+              </div>
+            )}
+            {/* GROUP 3: Turn Clock Display */}
+            {turnClock && !infiniteMana && (
+              <div title={turnClock.plan} style={{
+                padding: "4px 10px",
+                background: turnClock.turns === 0 ? "#1a2e0a" : turnClock.turns <= 2 ? "#1a1e0a" : "#1a0a0a",
+                border: `1px solid ${turnClock.turns === 0 ? "#58d68d" : turnClock.turns <= 2 ? "#c8a800" : "#e74c3c"}`,
+                borderRadius: "6px", fontSize: "11px",
+                color: turnClock.turns === 0 ? "#58d68d" : turnClock.turns <= 2 ? "#c8a800" : "#e74c3c",
+                fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", cursor: "help",
+              }}>
+                ⏱ T{turnClock.turns === 0 ? "NOW" : `+${turnClock.turns}`}
+              </div>
+            )}
+            {/* GROUP 2: Win Conversion Paths */}
+            {winConversion && winConversion.length > 0 && (
+              <div title={winConversion.map(w => `${w.path}: ${w.desc}${w.missing.length > 0 ? " ⚠ MISSING: " + w.missing.join(", ") : ""}`).join("\n")} style={{
+                padding: "4px 10px",
+                background: "#0a1a2e",
+                border: `1px solid #5b9bd5`,
+                borderRadius: "6px", fontSize: "11px",
+                color: "#7db8e8",
+                fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", cursor: "help",
+              }}>
+                🎯 {winConversion[0].missing.length === 0 ? winConversion[0].path.toUpperCase() : "WIN PATH: " + winConversion[0].missing[0]}
               </div>
             )}
             <button onClick={() => setShowSavedStates(true)} title="Save and reload board state snapshots — useful for testing different lines from the same position (Shift+S)" style={{
