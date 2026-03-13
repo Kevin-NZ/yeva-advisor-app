@@ -13339,7 +13339,16 @@ function simHasValidSacTarget(battlefield, sickSet = new Set()) {
 function simCanCast(card, manaPool, battlefield = []) {
   const data = getCard(card);
   if (!data) return false;
-  const cmc = data.cmc ?? 0;
+  let cmc = data.cmc ?? 0;
+  // Cost reductions: Emerald Medallion (-1 generic for green spells), Nylea, Keen-Eyed (-1 generic for creature spells)
+  if (cmc > 0 && data.type !== "land") {
+    const hasEmeraldMedallion = battlefield.some(c => c === "Emerald Medallion");
+    const hasNylea = battlefield.some(c => c === "Nylea, Keen-Eyed");
+    // Emerald Medallion: green spells cost {1} less (reduces generic, not colored pips)
+    if (hasEmeraldMedallion && (data.greenPips ?? 0) > 0) cmc = Math.max((data.greenPips ?? 0), cmc - 1);
+    // Nylea: creature spells cost {1} less (reduces generic, not colored pips)
+    if (hasNylea && data.type === "creature") cmc = Math.max((data.greenPips ?? 0), cmc - 1);
+  }
   const pips = data.greenPips ?? (data.type !== "land" ? Math.min(cmc, data.greenPips ?? 0) : 0);
   // Green Sun's Zenith: {X}{G}. cmc in DB is 1 (the {G}). Require total >= 2 so X >= 1
   // (X=0 only fetches Dryad Arbor which is rarely worth it).
@@ -13660,9 +13669,16 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
             if (remainingGreen < pips || (remainingGreen + remainingColorless) < cmc) {
               winValid = false; break;
             }
+            // Spend green pips first, then use remaining colorless/green for generic cost
             remainingGreen -= pips;
-            remainingColorless -= Math.max(0, cmc - pips);
-            if (remainingColorless < 0) { remainingGreen += remainingColorless; remainingColorless = 0; }
+            const generic = cmc - pips;
+            if (remainingColorless >= generic) {
+              remainingColorless -= generic;
+            } else {
+              const shortfall = generic - remainingColorless;
+              remainingColorless = 0;
+              remainingGreen -= shortfall; // pay generic with green if colorless runs out
+            }
           }
         }
 
@@ -13708,8 +13724,8 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
           !simHasValidSacTarget(battlefield, sickSet);
         if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature) {
-          // Smarter: hold tutors on early turns if we can't act on the found card
-          const holdIt = isTutor && turn <= 3 && shouldHoldTutor(cardToPlay, mana);
+          // Hold tutors only when we genuinely can't act on what they find (mana-based check)
+          const holdIt = isTutor && shouldHoldTutor(cardToPlay, mana);
           if (!holdIt) {
             playCard(cardToPlay, idx, manaPool);
             played = true;
@@ -14268,6 +14284,54 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         return;
       }
     }
+    // Invasion of Ikoria (Battle — Siege): resolve its ETB search immediately, then goes to graveyard.
+    // Battles don't stay on the battlefield in the sim — they're modelled as a one-shot tutor.
+    if (card === "Invasion of Ikoria") {
+      const IoI_PRIORITY = [
+        "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds", "Temur Sabertooth",
+        "Kogla, the Titan Ape", "Woodland Bellower", "Duskwatch Recruiter",
+        "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
+        "Priest of Titania", "Circle of Dreams Druid", "Elvish Archdruid",
+        "Karametra's Acolyte", "Argothian Elder", "Hyrax Tower Scout",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
+      ];
+      const HUMAN_CREATURES = new Set([
+        "Eternal Witness", "Hyrax Tower Scout", "Hope Tender",
+        "Karametra's Acolyte", "Destiny Spinner", "Heartwood Storyteller",
+        "Saryth, the Viper's Fang", "Fauna Shaman",
+      ]);
+      const xVal = manaPool ? Math.max(0, manaPool.total - 2) : 99; // X = total - {G}{G} base cost
+      const boardSetIoI = new Set(battlefield);
+      let ioiTarget = null;
+      for (const t of IoI_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd || cd.type !== "creature") continue;
+        if (HUMAN_CREATURES.has(t)) continue;
+        if (boardSetIoI.has(t)) continue;
+        if ((cd.cmc ?? 0) > xVal) continue;
+        const li = library.indexOf(t);
+        if (li !== -1) { ioiTarget = t; break; }
+      }
+      if (!ioiTarget) {
+        ioiTarget = library.find(c => {
+          const cd = getCard(c);
+          return cd?.type === "creature" && !HUMAN_CREATURES.has(c) &&
+                 !boardSetIoI.has(c) && (cd.cmc ?? 0) <= xVal;
+        }) ?? null;
+      }
+      if (ioiTarget) {
+        library.splice(library.indexOf(ioiTarget), 1);
+        battlefield.push(ioiTarget);
+        sickSet.add(ioiTarget);
+        for (let i = library.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [library[i], library[j]] = [library[j], library[i]];
+        }
+      }
+      graveyard.push(card); // Siege resolves and is exiled/graved; simplified to graveyard
+      return;
+    }
+
     battlefield.push(card);
     if (cardType === "creature") sickSet.add(card);
 
@@ -14299,6 +14363,38 @@ function simPlayCard(card, idx, simState, manaPool = null) {
           [library[i], library[j]] = [library[j], library[i]];
         }
       }
+    } else if (card === "Eternal Witness") {
+      // ETB: return target card from graveyard to hand.
+      // Priority: first recover a tutor or key combo piece, then any spell.
+      const EW_PRIORITY = [
+        "Natural Order", "Eldritch Evolution", "Green Sun's Zenith", "Finale of Devastation",
+        "Chord of Calling", "Shared Summons", "Worldly Tutor", "Archdruid's Charm",
+        "Invasion of Ikoria", "Summoner's Pact",
+        "Vitalize", "Crop Rotation",
+        "Temur Sabertooth", "Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Duskwatch Recruiter", "Formidable Speaker",
+      ];
+      let ewTarget = null;
+      const boardSetEW = new Set(battlefield);
+      for (const t of EW_PRIORITY) {
+        if (graveyard.includes(t) && !boardSetEW.has(t)) { ewTarget = t; break; }
+      }
+      if (!ewTarget) ewTarget = graveyard.find(c => {
+        const cd = getCard(c);
+        return cd && cd.type !== "land"; // return any non-land if nothing priority
+      }) ?? null;
+      if (ewTarget) {
+        graveyard.splice(graveyard.lastIndexOf(ewTarget), 1);
+        hand.push(ewTarget);
+      }
+    } else if (card === "Skullwinder") {
+      // ETB: return target card from your graveyard to hand.
+      // (Also gives opponent a card — ignored in goldfish sim.)
+      const swTarget = graveyard.length > 0 ? graveyard[graveyard.length - 1] : null;
+      if (swTarget) {
+        graveyard.splice(graveyard.lastIndexOf(swTarget), 1);
+        hand.push(swTarget);
+      }
     } else if (card === "Elvish Harbinger") {
       // ETB: search for elf, reveal it, put on top of library
       const EH_PRIORITY = [
@@ -14322,6 +14418,37 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       if (ehTarget) {
         library.splice(library.indexOf(ehTarget), 1);
         library.unshift(ehTarget); // top of library, drawn next turn
+      }
+    } else if (card === "Treefolk Harbinger") {
+      // ETB: search for a Treefolk or Forest card, reveal it, shuffle and put on top.
+      // Priority: Woodland Bellower (Treefolk, CMC 6), then Heartwood Storyteller, then Forest.
+      const TH_PRIORITY = [
+        "Woodland Bellower", "Heartwood Storyteller", "Forest",
+      ];
+      let thTarget = null;
+      const boardSetTH = new Set(battlefield);
+      for (const t of TH_PRIORITY) {
+        const cd = getCard(t);
+        if (!cd) continue;
+        const isTreefolk = cd.tags?.includes("treefolk") || cd.type === "land";
+        if (!isTreefolk) continue;
+        const li = library.indexOf(t);
+        if (li !== -1) { thTarget = t; break; }
+      }
+      if (!thTarget) {
+        // Fallback: any Forest land in library
+        thTarget = library.find(c => {
+          const cd = getCard(c);
+          return cd?.type === "land" && (cd.tags?.includes("forest") || c === "Forest");
+        }) ?? null;
+      }
+      if (thTarget) {
+        library.splice(library.indexOf(thTarget), 1);
+        library.unshift(thTarget); // top of library
+        for (let i = library.length - 1; i > 1; i--) { // shuffle rest (skip index 0)
+          const j = 1 + Math.floor(Math.random() * i);
+          [library[i], library[j]] = [library[j], library[i]];
+        }
       }
     } else if (card === "Growing Rites of Itlimoc") {
       // ETB: look at top 4, reveal creature, put rest on bottom. Then at end of turn,
@@ -14380,16 +14507,76 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       for (let d = 0; d < draws && library.length > 0; d++) {
         hand.push(library.shift());
       }
+    } else if (card === "Formidable Speaker") {
+      // ETB: you MAY discard a card. If you do, search your entire library for any creature
+      // card, reveal it, put it into your hand, then shuffle.
+      // In sim: always discard the least-valuable card in hand to search for the best creature.
+      const discardable = hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd) return false;
+        // Never discard combo pieces, dorks, or tutors
+        if (cd.tags?.includes("combo") || cd.tags?.includes("key")) return false;
+        if (cd.tags?.includes("dork") && (cd.cmc ?? 0) === 1) return false;
+        if (cd.tags?.includes("tutor") && (cd.cmc ?? 0) <= 2) return false;
+        return true;
+      });
+      // Sort by value ascending — discard the lowest-value card
+      discardable.sort((a, b) => {
+        const cdA = getCard(a), cdB = getCard(b);
+        const scoreA = (cdA?.tags?.includes("dork") ? 2 : 0) + (cdA?.cmc ?? 0);
+        const scoreB = (cdB?.tags?.includes("dork") ? 2 : 0) + (cdB?.cmc ?? 0);
+        return scoreA - scoreB;
+      });
+      if (discardable.length > 0) {
+        const discardIdx = hand.indexOf(discardable[0]);
+        hand.splice(discardIdx, 1);
+        // Search library for the best creature not already on the battlefield
+        const SPEAKER_PRIORITY = [
+          "Duskwatch Recruiter", "Ashaya, Soul of the Wild",
+          "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
+          "Temur Sabertooth", "Kogla, the Titan Ape",
+          "Argothian Elder", "Priest of Titania", "Circle of Dreams Druid",
+          "Elvish Archdruid", "Karametra's Acolyte", "Selvala, Heart of the Wilds",
+          "Marwyn, the Nurturer", "Hyrax Tower Scout", "Hope Tender",
+          "Eternal Witness", "Fierce Empath", "Elvish Harbinger",
+          "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
+        ];
+        const boardSet = new Set(battlefield);
+        let spTarget = null;
+        for (const t of SPEAKER_PRIORITY) {
+          const cd = getCard(t);
+          if (!cd || cd.type !== "creature") continue;
+          if (boardSet.has(t)) continue;
+          if (library.indexOf(t) !== -1) { spTarget = t; break; }
+        }
+        if (!spTarget) spTarget = library.find(c => getCard(c)?.type === "creature" && !boardSet.has(c)) ?? null;
+        if (spTarget) {
+          library.splice(library.indexOf(spTarget), 1);
+          hand.push(spTarget);
+          for (let i = library.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [library[i], library[j]] = [library[j], library[i]];
+          }
+        }
+      }
+      // If nothing to discard, Speaker just enters as a 3/3 — no search
     }
 
     // Guardian Project: draw a card when a nontoken creature enters if it doesn't share a name
-    // with another creature you control or one in your hand. Fire for any non-sick creature ETB.
+    // with another creature you control, a creature in hand, OR a creature card in your graveyard.
     if (battlefield.includes("Guardian Project") && cardType === "creature") {
       const namesOnBoard = new Set(battlefield.filter(c => getCard(c)?.type === "creature" && c !== card));
       const namesInHand  = new Set(hand.filter(c => getCard(c)?.type === "creature"));
-      if (!namesOnBoard.has(card) && !namesInHand.has(card) && library.length > 0) {
+      const namesInGrave = new Set(graveyard.filter(c => getCard(c)?.type === "creature"));
+      if (!namesOnBoard.has(card) && !namesInHand.has(card) && !namesInGrave.has(card) && library.length > 0) {
         hand.push(library.shift());
       }
+    }
+
+    // Beast Whisperer: whenever a creature spell you cast enters the battlefield, draw a card.
+    // Beast Whisperer itself entering does NOT trigger its own ability.
+    if (card !== "Beast Whisperer" && cardType === "creature" && battlefield.includes("Beast Whisperer") && library.length > 0) {
+      hand.push(library.shift());
     }
 
     if (cardData?.tags?.includes("fetch")) {
