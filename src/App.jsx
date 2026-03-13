@@ -35,7 +35,7 @@ const CARDS = {
   "Temur Sabertooth":      { type:"creature", cmc:4, tags:["combo","sabertooth","bounce","protection"] , greenPips:2},
   "Hyrax Tower Scout":     { type:"creature", cmc:3, tags:["combo","scout","untap","human"] , greenPips:1},
   "Argothian Elder":       { type:"creature", cmc:4, tags:["combo","elf","untap-lands"] , greenPips:1},
-  "Wirewood Lodge":        { type:"land",    cmc:0, tags:["combo","land","untap-elf"] },
+  "Wirewood Lodge":        { type:"land",    cmc:0, tags:["combo","land","untap-elf"], tapsForColorless:1 },
   "Earthcraft":            { type:"enchantment", cmc:2, tags:["combo","enchantment","earthcraft","haste-mana"] , role:"haste-mana-engine", greenPips:1},
   "Kogla, the Titan Ape":  { type:"creature", cmc:6, tags:["combo","finisher","kogla","removal"] , greenPips:3},
   "Eternal Witness":       { type:"creature", cmc:3, tags:["combo","human","recursion","etb"] , greenPips:2},
@@ -1688,7 +1688,10 @@ function enchantLandBonus(auraName) {
 
 function buildBoardContext(battlefield, sickSet = null, attachments = null) {
   const board      = new Set(battlefield);
-  const creatures  = battlefield.filter(c => getCard(c)?.type === "creature");
+  // Dryad Arbor is type "land" in the DB but is also a 1/1 creature — include it everywhere
+  // a creature count matters (Cradle, Priest, convoke, etc.)
+  const isCreature = c => getCard(c)?.type === "creature" || c === "Dryad Arbor";
+  const creatures  = battlefield.filter(isCreature);
   const activeCreatures = sickSet
     ? creatures.filter(c => !sickSet.has(c))
     : creatures;
@@ -1785,7 +1788,14 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
       return { green: 0, colorless: 2 }; // {C}{C} — cannot satisfy green pip requirements
     }
     if (data.tags?.includes("fetch")) {
-      return { green: 0, colorless: 0 }; // sacrifices itself; fetched land enters tapped
+      // With Yavimaya, all lands are Forests — fetches tap for {G} before being sacrificed.
+      // Without Yavimaya, a fetch produces no mana (it sacrifices itself to search).
+      return ctx.hasYavimaya
+        ? { green: 1, colorless: 0 }
+        : { green: 0, colorless: 0 };
+    }
+    if (data.tapsForColorless) {
+      return { green: 0, colorless: data.tapsForColorless }; // e.g. Wirewood Lodge taps for {C}
     }
     return { green: 1, colorless: 0 }; // all other lands tap for {G}
 
@@ -1976,7 +1986,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Legacy alias used in many string interpolations and simple threshold checks
   const mana = totalMana;
   const elvesOnBoard    = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
-  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
+  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
   const dorksOnBoard    = battlefield.filter(c => getCard(c)?.tags?.includes("dork")).length;
   // Exact green devotion: sum of devotion field for every permanent on the battlefield
   const devotionOnBoard = battlefield.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
@@ -2478,7 +2488,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // a creature. Also detect compound lines: land + Lotus Petal → enables casting ramp
   // dorks this turn or T2. This fires before the generic ramp advice so the sequencing
   // advice (land THEN Lotus THEN dork) appears with clear priority.
-  if (isMyTurn && !infiniteManaActive && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && cd?.type === "creature"; }).length === 0) {
+  if (isMyTurn && !infiniteManaActive && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && (cd?.type === "creature" || c === "Dryad Arbor"); }).length === 0) {
     const landsToDrop = hand.filter(c => getCard(c)?.type === "land");
     const hasDryadArbor = inHand.has("Dryad Arbor");
     const hasLotusPetalInHand = inHand.has("Lotus Petal");
@@ -2625,7 +2635,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // One dork is never enough — always worth adding another.
   const creatureDorksOnBoard = battlefield.filter(c => {
     const cd = getCard(c);
-    return cd?.tags?.includes("dork") && cd?.type === "creature";
+    return cd?.tags?.includes("dork") && (cd?.type === "creature" || c === "Dryad Arbor");
   }).length;
   const boardManaOutput = sumManaPool(battlefield).green + sumManaPool(battlefield).colorless;
   const rampIsSufficient = creatureDorksOnBoard >= 2 || boardManaOutput >= 4;
@@ -2669,8 +2679,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const elderCmc = 4;
     const canCastElder = canAfford(elderCmc, 1);
     if (canCastElder && !results.some(r => r.headline?.includes("Argothian Elder") && r.priority >= 6)) {
-      const hasAshaya = board.has("Ashaya, Soul of the Wild");
-      const hasLodge  = board.has("Wirewood Lodge");
+      const hasAshaya     = board.has("Ashaya, Soul of the Wild");
+      const ashayaInHand  = inHand.has("Ashaya, Soul of the Wild");
+      const hasLodge      = board.has("Wirewood Lodge");
       const bigLands  = battlefield.filter(c => {
         const cd = getCard(c);
         return cd?.type === "land" && c !== "Forest"
@@ -2687,47 +2698,68 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Boost Elder priority when it's the most impactful affordable play this turn.
       // If no other action at priority ≥8 is truly castable (e.g. tutor advice exists but
       // we lack the mana to execute it), Elder deserves top billing.
-      const elderPriorityBoost = !hasAshaya && !infiniteManaActive
+      const elderPriorityBoost = !hasAshaya && !ashayaInHand && !infiniteManaActive
         && results.filter(r => r.priority >= 8).length === 0;
       // Elder has summoning sickness the turn it's cast — its tap ability can't be used
       // until next turn even though Ashaya makes it a Forest. Category and steps must reflect this.
       const elderAlreadyOnBoard = board.has("Argothian Elder");
       const elderWinsNow = hasAshaya && elderAlreadyOnBoard; // already untapped, no sickness
-      results.push({
-        priority: hasAshaya ? 12 : (elderPriorityBoost ? 9 : 7),
-        category: elderWinsNow ? "⚡ CAST TO WIN"
-                : hasAshaya   ? "⚡ CAST TO ENABLE MANA LOOP"
-                :               "🌱 RAMP",
-        headline: elderWinsNow
-          ? "Argothian Elder → tap as Forest via Ashaya → untaps itself → infinite mana NOW"
-          : hasAshaya
-          ? "Cast Argothian Elder → NEXT TURN: enters as Forest via Ashaya → infinite mana"
-          : "Cast Argothian Elder ({3}{G}) — untaps two lands each activation (ramp + combo setup)",
-        detail: hasAshaya
-          ? elderWinsNow
-            ? "Argothian Elder + Ashaya, Soul of the Wild = infinite mana. Tap Elder as a Forest for {G}, activate Elder's ability: untap Elder + any other land. Elder re-untaps itself → loop infinitely."
-            : "Cast Argothian Elder this turn. ⚠ Summoning sickness: Elder can't tap its ability the turn it enters. Next turn: tap Elder as a Forest for {G}, activate Elder's untap ability targeting Elder + any other land — Elder re-untaps itself → loop infinitely."
-          : `Argothian Elder's tap ability untaps any two lands you control. ${infiniteNote} Key combo piece with Ashaya (infinite mana) and Wirewood Lodge (repeated activations).`,
-        steps: [
-          ...(elderWinsNow ? [
-            "Tap Argothian Elder as a Forest for {G} (via Ashaya).",
-            "Activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → repeat → infinite mana.",
-          ] : hasAshaya ? [
-            `Cast Argothian Elder ({3}{G}).`,
+
+      // Two-card line: Elder in hand + Ashaya in hand → cast Elder now, Ashaya next turn → infinite.
+      // This is a high-priority two-turn setup even without Ashaya already on board.
+      if (ashayaInHand && !hasAshaya) {
+        const ashayaCmc = getCard("Ashaya, Soul of the Wild")?.cmc ?? 5;
+        results.push({
+          priority: 12,
+          category: "⚡ CAST TO ENABLE MANA LOOP",
+          headline: "Cast Argothian Elder ({3}{G}) → next turn cast Ashaya → infinite mana (Elder + Ashaya 2-card line)",
+          detail: "Both pieces are in hand. Cast Elder this turn (summoning sickness — can't activate yet). Next turn: cast Ashaya (Soul of the Wild makes all creatures Forests). Tap Elder as a Forest for {G}, activate Elder's untap ability targeting Elder + any other land — Elder re-untaps itself → infinite mana loop.",
+          steps: [
+            `Cast Argothian Elder ({3}{G}) — uses all available mana this turn.`,
             "⚠ Summoning sickness: Elder cannot use its tap ability this turn.",
-            "Next turn: untap Elder. Tap Elder as a Forest for {G} (Ashaya makes all creatures Forests).",
-            "Activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → infinite mana.",
-          ] : [
-            `Cast Argothian Elder ({3}{G}).`,
-            "Tap ability ({T}): untap two target lands you control.",
-            bigLands.length >= 1
-              ? `Untap ${bigLands.slice(0,2).join(" + ")} — nets significant extra mana each turn.`
-              : "Use each turn to untap your two biggest mana producers.",
-            "Once Ashaya is in play: Elder + Ashaya = infinite mana (next turn after Elder enters).",
-          ]),
-        ],
-        color: elderWinsNow ? "#ff6b35" : hasAshaya ? "#e67e22" : "#52be80",
-      });
+            `Next turn: cast Ashaya, Soul of the Wild ({${ashayaCmc - 1}}{G} or less with ramp). All creatures become Forests.`,
+            "Tap Elder as a Forest for {G} (it is now a Forest via Ashaya).",
+            "Activate Elder's tap ability ({T}): untap Elder + any other land. Elder re-untaps itself → repeat → infinite mana.",
+          ],
+          color: "#e67e22",
+        });
+      } else {
+        results.push({
+          priority: hasAshaya ? 12 : (elderPriorityBoost ? 9 : 7),
+          category: elderWinsNow ? "⚡ CAST TO WIN"
+                  : hasAshaya   ? "⚡ CAST TO ENABLE MANA LOOP"
+                  :               "🌱 RAMP",
+          headline: elderWinsNow
+            ? "Argothian Elder → tap as Forest via Ashaya → untaps itself → infinite mana NOW"
+            : hasAshaya
+            ? "Cast Argothian Elder → NEXT TURN: enters as Forest via Ashaya → infinite mana"
+            : "Cast Argothian Elder ({3}{G}) — untaps two lands each activation (ramp + combo setup)",
+          detail: hasAshaya
+            ? elderWinsNow
+              ? "Argothian Elder + Ashaya, Soul of the Wild = infinite mana. Tap Elder as a Forest for {G}, activate Elder's ability: untap Elder + any other land. Elder re-untaps itself → loop infinitely."
+              : "Cast Argothian Elder this turn. ⚠ Summoning sickness: Elder can't tap its ability the turn it enters. Next turn: tap Elder as a Forest for {G}, activate Elder's untap ability targeting Elder + any other land — Elder re-untaps itself → loop infinitely."
+            : `Argothian Elder's tap ability untaps any two lands you control. ${infiniteNote} Key combo piece with Ashaya (infinite mana) and Wirewood Lodge (repeated activations).`,
+          steps: [
+            ...(elderWinsNow ? [
+              "Tap Argothian Elder as a Forest for {G} (via Ashaya).",
+              "Activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → repeat → infinite mana.",
+            ] : hasAshaya ? [
+              `Cast Argothian Elder ({3}{G}).`,
+              "⚠ Summoning sickness: Elder cannot use its tap ability this turn.",
+              "Next turn: untap Elder. Tap Elder as a Forest for {G} (Ashaya makes all creatures Forests).",
+              "Activate Elder's tap ability: untap Elder + any other land. Elder re-untaps itself → infinite mana.",
+            ] : [
+              `Cast Argothian Elder ({3}{G}).`,
+              "Tap ability ({T}): untap two target lands you control.",
+              bigLands.length >= 1
+                ? `Untap ${bigLands.slice(0,2).join(" + ")} — nets significant extra mana each turn.`
+                : "Use each turn to untap your two biggest mana producers.",
+              "Once Ashaya is in play: Elder + Ashaya = infinite mana (next turn after Elder enters).",
+            ]),
+          ],
+          color: elderWinsNow ? "#ff6b35" : hasAshaya ? "#e67e22" : "#52be80",
+        });
+      }
     }
   }
 
@@ -16122,9 +16154,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setSickCreatures(new Set()); // assume advisor state is settled
     setTapped(new Set());
     setCounters({});
-    const gm = parseInt(sgm ?? "0", 10) || 0;
-    const cm = parseInt(scm ?? "0", 10) || 0;
-    setManaPool(gm + cm);
+    // Do NOT carry over the advisor's floating mana — the goldfish derives its
+    // mana pool by tapping permanents. Seeding pre-floated mana would let the
+    // player spend mana that isn't represented by any tapped permanent.
+    setManaPool(0);
     setLandPlayed(false);
     setTurnNumber(1); turnRef.current = 1;
     setIsMyTurn(sit ?? true);
@@ -16519,15 +16552,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         return; // AuraTargetModal will call goldfishConfirmAura when target is chosen
       }
     }
+    const newIdxForSick = battlefield.length; // synchronous read before append
     setBattlefield(prev => [...prev, card]);
-    // Mark creatures as sick using their new index key (so bounce+recast gets sickness again).
+    // Mark creatures as sick using their stable index key.
     // Dryad Arbor has type "land" but is also a creature — it gets summoning sickness too.
+    // setSickCreatures must NOT be called inside a setBattlefield updater (React anti-pattern).
     if (getCard(card)?.type === "creature" || card === "Dryad Arbor") {
-      setBattlefield(prev2 => {
-        const newIdx = prev2.length - 1; // card was just appended
-        setSickCreatures(prev => new Set([...prev, `${card}:${newIdx}`]));
-        return prev2;
-      });
+      setSickCreatures(prev => new Set([...prev, `${card}:${newIdxForSick}`]));
     }
   }
 
@@ -16607,7 +16638,65 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const cardData = CARDS[card] ?? EXTRA_CARDS.get(card);
     const wasTapped = tapped.has(key);
 
-    // Lodge/untap-elf cards: when tapping, show target picker
+    // Wirewood Lodge: tapping offers two mutually exclusive activated abilities —
+    //   {T}: Add {C}
+    //   {G}{T}: Untap target Elf
+    // Show a choice picker so the player selects which ability to use.
+    if (!wasTapped && card === "Wirewood Lodge") {
+      const elfTargets = battlefield
+        .map((c, idx) => ({ c, idx }))
+        .filter(({ c }) => getCard(c)?.tags?.includes("elf") && c !== card);
+      const choices = [
+        { label: "Tap for {C}", sub: "Add 1 colourless mana", key: "tap-c" },
+        ...(elfTargets.length > 0
+          ? [{ label: "Untap an Elf  ({G})", sub: `${elfTargets.length} elf target${elfTargets.length > 1 ? "s" : ""} available`, key: "untap-elf" }]
+          : [{ label: "Untap an Elf  ({G})", sub: "No Elf targets", key: "untap-elf-disabled", disabled: true }]
+        ),
+      ];
+      setPendingPicker({
+        label: "WIREWOOD LODGE",
+        color: COLORS.green2,
+        items: choices,
+        onSelect: ({ key: choice }) => {
+          if (choice === "tap-c") {
+            // Just tap for {C}
+            pushUndo();
+            setTapped(prev => { const next = new Set(prev); next.add(key); return next; });
+            setManaPool(prev => prev + 1);
+            flashMana(1);
+            addLog("Wirewood Lodge: tapped for {C}.", COLORS.green1);
+          } else if (choice === "untap-elf") {
+            // Pick elf target, then tap Lodge + untap elf (costs {G} from pool)
+            setPendingPicker({
+              label: "WIREWOOD LODGE — UNTAP AN ELF",
+              color: COLORS.green2,
+              items: elfTargets.map(({ c, idx }) => ({
+                label: c,
+                sub: tapped.has(cardKey(c, idx)) ? "● tapped" : "○ untapped",
+                key: `${c}:${idx}`, c, idx,
+              })),
+              onSelect: ({ c: tc, idx: ti }) => {
+                if (manaPool < 1) {
+                  addLog("Wirewood Lodge: need {G} to activate untap ability.", COLORS.red ?? COLORS.textDim);
+                  return;
+                }
+                pushUndo();
+                setTapped(prev => { const next = new Set(prev); next.add(key); return next; });
+                setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                setManaPool(prev => Math.max(0, prev - 1));
+                flashMana(-1);
+                addLog(`Wirewood Lodge: paid {G}, tapped → untapped ${tc}.`, COLORS.green2);
+              },
+            });
+            setPickerSelected([]);
+          }
+        },
+      });
+      setPickerSelected([]);
+      return;
+    }
+
+    // Other untap-elf cards (generic): show target picker
     if (!wasTapped && cardData?.tags?.includes("untap-elf")) {
       const elfTargets = battlefield
         .map((c, idx) => ({ c, idx }))
@@ -16649,7 +16738,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   function confirmUntapTarget(targetCard, targetIdx) {
     const { card, i } = showUntapModal;
     pushUndo();
-    // Tap the Lodge/untapper
+    // Tap the untapper
     const key = cardKey(card, i);
     setTapped(prev => { const next = new Set(prev); next.add(key); return next; });
     // Untap the target elf
@@ -16715,15 +16804,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     if (cmc > 0) { setManaPool(p => Math.max(0, p - cmc)); flashMana(-cmc); }
     if (type === "land") {
       if (landPlayed) { addLog(`Already played a land this turn — ${card} returned to hand.`, COLORS.red); setHand(prev => [...prev, card]); return; }
-      setBattlefield(prev => {
-        const newIdx = prev.length;
-        // Dryad Arbor is a land-creature — it enters with summoning sickness like any creature.
-        // Apply sickness immediately so it cannot tap for {G} this turn.
-        if (card === "Dryad Arbor") {
-          setSickCreatures(s => new Set([...s, `Dryad Arbor:${newIdx}`]));
-        }
-        return [...prev, card];
-      });
+      const dryadIdx = battlefield.length; // synchronous read before append
+      setBattlefield(prev => [...prev, card]);
+      // Dryad Arbor is a land-creature — it enters with summoning sickness like any creature.
+      if (card === "Dryad Arbor") {
+        setSickCreatures(s => new Set([...s, `Dryad Arbor:${dryadIdx}`]));
+      }
       setLandPlayed(true);
       addLog(`Played ${card}.${card === "Dryad Arbor" ? " (summoning sickness — cannot tap for {G} this turn)" : ""}`, COLORS.green1);
     } else if (type === "instant" || type === "sorcery") {
@@ -16747,11 +16833,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           const arborIdx = library.indexOf("Dryad Arbor");
           if (arborIdx !== -1) {
             setLibrary(prev => [...prev.slice(0, arborIdx), ...prev.slice(arborIdx + 1)]);
-            setBattlefield(prev => {
-              const newIdx = prev.length;
-              setSickCreatures(s => new Set([...s, `Dryad Arbor:${newIdx}`]));
-              return [...prev, "Dryad Arbor"];
-            });
+            const gszArborIdx = battlefield.length; // synchronous read before append
+            setBattlefield(prev => [...prev, "Dryad Arbor"]);
+            setSickCreatures(s => new Set([...s, `Dryad Arbor:${gszArborIdx}`]));
             shuffleGSZBack();
             addLog(`Cast Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield (summoning sick). GSZ shuffled back.`, COLORS.green2);
           } else {
@@ -16768,13 +16852,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             const idx = library.indexOf(chosen);
             if (idx !== -1) {
               setLibrary(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
-              setBattlefield(prev => {
-                const newIdx = prev.length;
-                // Dryad Arbor has type "land" but is a creature — always gets summoning sickness via GSZ
-                const isCreatureForSickness = getCard(chosen)?.type === "creature" || chosen === "Dryad Arbor";
-                if (isCreatureForSickness) setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
-                return [...prev, chosen];
-              });
+              const gszChosenIdx = battlefield.length; // synchronous read before append
+              // Dryad Arbor has type "land" but is a creature — always gets summoning sickness via GSZ
+              const isCreatureForSickness = getCard(chosen)?.type === "creature" || chosen === "Dryad Arbor";
+              setBattlefield(prev => [...prev, chosen]);
+              if (isCreatureForSickness) setSickCreatures(s => new Set([...s, `${chosen}:${gszChosenIdx}`]));
               fireETB(chosen);
             }
             shuffleGSZBack();
@@ -17338,11 +17420,9 @@ if (card === "Woodland Bellower") {
       }
       return without;
     });
-    setBattlefield(prev => {
-      const newIdx = prev.length;
-      setSickCreatures(s => new Set([...s, `${chosen}:${newIdx}`]));
-      return [...prev, chosen];
-    });
+    const bellowerIdx = battlefield.length; // synchronous read before append
+    setBattlefield(prev => [...prev, chosen]);
+    setSickCreatures(s => new Set([...s, `${chosen}:${bellowerIdx}`]));
     addLog(`Woodland Bellower ETB → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
   });
   setShowTutor(true); setTutorQuery("");
@@ -17817,13 +17897,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           ? " (Forest fetched — Dryad Arbor has summoning sickness, need {G} to cast 1-drop this turn)"
           : "";
       addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${dryadNote}`, COLORS.green1);
-      // Fetched land enters tapped; Dryad Arbor also has summoning sickness (it's a creature)
-      setBattlefield(prev => {
-        const newIdx = prev.length; // will be appended
-        setTapped(t => { const next = new Set(t); next.add(`${found}:${newIdx}`); return next; });
-        if (found === "Dryad Arbor") setSickCreatures(s => new Set([...s, `${found}:${newIdx}`]));
-        return prev;
-      });
+      // Fetched land enters tapped; Dryad Arbor also has summoning sickness (it's a creature).
+      // battlefield.length is the pre-append closure value = the new card's index (append not yet committed).
+      const fetchIdx6 = battlefield.length;
+      setTapped(t => { const next = new Set(t); next.add(`${found}:${fetchIdx6}`); return next; });
+      if (found === "Dryad Arbor") setSickCreatures(s => new Set([...s, `${found}:${fetchIdx6}`]));
     }
     closeContextMenu();
   }
@@ -17854,12 +17932,10 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       setLandPlayed(true);
       const note = found === "Dryad Arbor" ? " (creature + elf + forest — summoning sick)" : "";
       addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${note}`, COLORS.green1);
-      setBattlefield(prev => {
-        const newIdx = prev.length;
-        setTapped(t => { const next = new Set(t); next.add(`${found}:${newIdx}`); return next; });
-        if (found === "Dryad Arbor") setSickCreatures(s => new Set([...s, `${found}:${newIdx}`]));
-        return prev;
-      });
+      // battlefield.length is the pre-append closure value = the new card's index.
+      const fetchIdx7 = battlefield.length;
+      setTapped(t => { const next = new Set(t); next.add(`${found}:${fetchIdx7}`); return next; });
+      if (found === "Dryad Arbor") setSickCreatures(s => new Set([...s, `${found}:${fetchIdx7}`]));
     }
     closeContextMenu();
   }
@@ -18708,33 +18784,53 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           );
         })()}
 
-        {/* ── Wirewood Lodge: tap — untap target Elf (also triggered by toggleTap, but right-click gives explicit control) ── */}
+        {/* ── Wirewood Lodge: two abilities — {T}: Add {C}  OR  {G}{T}: Untap target Elf ── */}
         {isBF && card === "Wirewood Lodge" && (() => {
-          const elfTargets = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.tags?.includes("elf"));
-          if (isCardTapped || elfTargets.length === 0) return (
+          if (isCardTapped) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Elf — {isCardTapped ? "tapped" : "no Elves on battlefield"}
+              ⚡ Wirewood Lodge — already tapped
             </div>
           );
-          return (
+          const elfTargets = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.tags?.includes("elf") && c !== card);
+          const lodgeKey = cardKey(card, index);
+          return (<>
+            {/* Ability 1: {T} → Add {C} */}
             <div onClick={() => {
               pushUndo();
-              toggleTap(card, index);
-              setPendingPicker({ label: "WIREWOOD LODGE — UNTAP AN ELF", color: COLORS.green2,
-                items: elfTargets.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
-                onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
-                  addLog(`Wirewood Lodge: tapped, untapped ${tc}.`, COLORS.green2);
-                }
-              });
-              setPickerSelected([]);
+              setTapped(prev => { const next = new Set(prev); next.add(lodgeKey); return next; });
+              setManaPool(prev => prev + 1);
+              flashMana(1);
+              addLog("Wirewood Lodge: tapped for {C}.", COLORS.green1);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Tap — untap an Elf
+              ⚡ Tap for {"{C}"}
             </div>
-          );
+            {/* Ability 2: {G}{T} → Untap target Elf */}
+            <div onClick={() => {
+              if (elfTargets.length === 0) return;
+              if (manaPool < 1) { addLog("Wirewood Lodge: need {G} to activate untap ability.", COLORS.textDim); closeContextMenu(); return; }
+              pushUndo();
+              setTapped(prev => { const next = new Set(prev); next.add(lodgeKey); return next; });
+              setManaPool(prev => Math.max(0, prev - 1));
+              flashMana(-1);
+              setPendingPicker({ label: "WIREWOOD LODGE — UNTAP AN ELF", color: COLORS.green2,
+                items: elfTargets.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
+                onSelect: ({ c: tc, i: ti }) => {
+                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                  addLog(`Wirewood Lodge: paid {G}, tapped → untapped ${tc}.`, COLORS.green2);
+                }
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: elfTargets.length > 0 && manaPool >= 1 ? "pointer" : "default",
+              color: elfTargets.length > 0 && manaPool >= 1 ? COLORS.green2 : COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { if (elfTargets.length > 0 && manaPool >= 1) e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {"{G}"}{"{T}"} — Untap an Elf{elfTargets.length === 0 ? " (no targets)" : manaPool < 1 ? " (need {G})" : ` (${elfTargets.length} target${elfTargets.length > 1 ? "s" : ""})`}
+            </div>
+          </>);
         })()}
 
         {/* ── Elvish Reclaimer: {2}{T}, sacrifice a land — search library for a land → battlefield tapped ── */}
@@ -18798,12 +18894,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       return without;
                     });
                     // Put land onto battlefield tapped
-                    setBattlefield(prev => {
-                      const newBF = [...prev, chosen];
-                      const newIdx = newBF.length - 1;
-                      setTapped(t => new Set([...t, cardKey(chosen, newIdx)]));
-                      return newBF;
-                    });
+                    const reclaimerLandIdx = battlefield.length; // synchronous read before append
+                    setBattlefield(prev => [...prev, chosen]);
+                    setTapped(t => new Set([...t, cardKey(chosen, reclaimerLandIdx)]));
                     addLog(`Elvish Reclaimer → ${chosen} onto battlefield tapped. Library shuffled.`, COLORS.green2);
                   });
                   setShowTutor(true);
@@ -23914,7 +24007,7 @@ function YevaAdvisor() {
   }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, yisanCounters, threatLevel, opponentOpenMana]);
 
   const elvesOnBoard     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
-  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature").length;
+  const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
   const devotionOnBoard  = battlefield.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
 
   return (
