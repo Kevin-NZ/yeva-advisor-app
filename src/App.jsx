@@ -2759,6 +2759,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const cd = getCard(c);
         if (!cd || cd.type === "land" || c === "Lotus Petal") return false;
         return cd.cmc <= thisTurnMana && (cd.greenPips ?? 0) <= (greenFromLand + petalBonus);
+      }).sort((a, b) => {
+        // Prioritize: 1-drop dorks > enchant-land ramp > fast mana > tutors > other
+        const acd = getCard(a), bcd = getCard(b);
+        const aScore = (acd?.tags?.includes("dork") && acd?.cmc === 1) ? 10
+          : acd?.tags?.includes("enchant-land") ? 8
+          : acd?.tags?.includes("fast-mana") ? 7
+          : acd?.tags?.includes("dork") ? 6
+          : 0;
+        const bScore = (bcd?.tags?.includes("dork") && bcd?.cmc === 1) ? 10
+          : bcd?.tags?.includes("enchant-land") ? 8
+          : bcd?.tags?.includes("fast-mana") ? 7
+          : bcd?.tags?.includes("dork") ? 6
+          : 0;
+        return bScore - aScore;
       });
 
       // What ramp dorks could be cast T2 (land untaps for {G} + Lotus Petal this turn,
