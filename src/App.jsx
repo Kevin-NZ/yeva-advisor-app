@@ -4836,11 +4836,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const spellsNeedingForestMana = isMyTurn ? hand.filter(c => {
         const cd = getCard(c);
         if (!cd || cd.type === "land") return false;
+        // Crop Rotation on T1 (no lands on board) would sacrifice the fetched Forest
+        // leaving you with nothing — never recommend fetching Forest FOR Crop Rotation
+        // when there's no other land on the battlefield.
+        const landsOnBoard = battlefield.filter(x => getCard(x)?.type === "land").length;
+        if (c === "Crop Rotation" && landsOnBoard === 0) return false;
         const cmc = cd.cmc ?? 0;
         const pips = cd.greenPips ?? 0;
         const alreadyCastable = mana >= cmc && (mana >= pips);
         const castableWithForest = manaWithForest >= cmc && (manaWithForest >= pips);
         return !alreadyCastable && castableWithForest;
+      }).sort((a, b) => {
+        // Prefer 1-drop dorks as the "urgent spell" over non-dork spells
+        const acd = getCard(a), bcd = getCard(b);
+        const aIsDork = acd?.tags?.includes("dork") && (acd?.cmc ?? 99) === 1 ? 1 : 0;
+        const bIsDork = bcd?.tags?.includes("dork") && (bcd?.cmc ?? 99) === 1 ? 1 : 0;
+        return bIsDork - aIsDork;
       }) : [];
 
       // Earthcraft lets Arbor tap immediately (it's a creature), so no sick penalty there
@@ -4867,8 +4878,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
       if (needsManaThisTurn) {
         // Forest is better right now — but note that Dryad is the default preference
+        // Boost priority when this is the ONLY way to get green mana on T1:
+        // no green land in hand AND no green-producing land on battlefield already
+        const noGreenLandInHand = !hand.some(c =>
+          c !== fetchSource && getCard(c)?.type === "land" &&
+          (c === "Forest" || getCard(c)?.tags?.includes("green-mana")));
+        const noGreenOnBoard = !battlefield.some(c => {
+          const cd = getCard(c);
+          if (cd?.type !== "land") return false;
+          return c === "Forest" || cd?.tags?.includes("green-mana") || cd?.tags?.includes("basic");
+        });
+        const urgentIsDork = getCard(urgentSpell)?.tags?.includes("dork") && (getCard(urgentSpell)?.cmc ?? 99) === 1;
+        const fetchPriority = (noGreenLandInHand && noGreenOnBoard && urgentIsDork) ? 12 : 5;
         results.push({
-          priority: 5,
+          priority: fetchPriority,
           category: "🌿 FETCH LAND",
           headline: `Crack ${fetchSource} → Forest (need the mana for ${urgentSpell} this turn)`,
           detail: `You need the extra {G} from a basic Forest to cast ${urgentSpell} this turn. Dryad Arbor has summoning sickness and cannot tap for mana until your next untap step — fetch a Forest instead. Consider fetching Dryad Arbor on a future fetch when mana isn't tight.`,
