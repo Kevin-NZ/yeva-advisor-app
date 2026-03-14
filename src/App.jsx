@@ -1940,6 +1940,33 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
     green += dorkCount;
   }
 
+  // Deserted Temple: untap Cradle or Nykthos for double output minus 1 (the {1} activation cost).
+  // Only counts when Cradle/Nykthos is present and the Temple isn't sick (it's a land, always active).
+  if (ctx.board.has("Deserted Temple")) {
+    if (ctx.hasCradle) {
+      const cradleOutput = sickSet ? ctx.activeCreatureCount : ctx.creatureCount;
+      const dtBonus = Math.max(0, cradleOutput - 1); // Cradle taps for creatures, minus {1} for Temple
+      green += dtBonus;
+    } else if (ctx.hasNykthos) {
+      const nykOutput = Math.max(0, ctx.devotion - 2);
+      const dtBonus = Math.max(0, nykOutput - 1); // Nykthos output minus {1} Temple cost
+      green += dtBonus;
+    }
+  }
+
+  // Wirewood Symbiote ritual: bounce an elf to untap a big dork. Net +1G if dork taps for ≥2.
+  // Only counts once per turn (Symbiote's ability is once per turn).
+  if (ctx.board.has("Wirewood Symbiote")) {
+    const hasElf = ctx.activeCreatures.some(c =>
+      getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote");
+    const bigDork = ctx.activeCreatures.find(c => {
+      const cd = getCard(c);
+      if (!cd?.tapsFor) return false;
+      return cd.tags?.includes("big-dork");
+    });
+    if (hasElf && bigDork) green += 1; // net +1G from untapping the big dork
+  }
+
   return { green, colorless, total: green + colorless };
 }
 
@@ -2031,6 +2058,71 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const maxColorless = Math.max(availColorless, _bfPool.colorless);
   const canAfford = (cmc, greenPips = 0) =>
     maxGreen >= greenPips && (maxGreen + maxColorless) >= cmc;
+
+  // ── Ranger Mana Trick ──────────────────────────────────────────────────
+  // Quirion Ranger / Scryb Ranger can bounce a Forest to hand then replay it
+  // as the land drop, netting +1{G} per ranger. This only works if:
+  //   - A non-sick Quirion/Scryb Ranger is on the battlefield
+  //   - There's at least one tappable Forest (including Ashaya creature-Forests)
+  //   - The land drop hasn't been used yet (isMyTurn implied by wanting to play the land)
+  // Each ranger can do this once per turn. Scryb can also bounce from an opponent's turn.
+  // Also: Wirewood Symbiote can bounce an elf (not a land), but paired with a ranger
+  // it enables extra untap cycles.
+  let rangerManaBonus = 0;
+  const hasQuirion = board.has("Quirion Ranger");
+  const hasScryb = board.has("Scryb Ranger");
+  const forestsOnBoard = battlefield.filter(c => c === "Forest" || getCard(c)?.tags?.includes("basic")).length;
+  // Quirion: return a Forest you control to hand → untap target creature.
+  // The mana trick: tap Forest → bounce it → replay as land drop → tap again = +1G net.
+  if (hasQuirion && forestsOnBoard >= 1 && isMyTurn) rangerManaBonus += 1;
+  // Scryb: same trick but with a Forest (once per turn, requires discarding a card — no,
+  // Scryb returns a Forest to hand, no discard). Also works on opponent's turn.
+  if (hasScryb && forestsOnBoard >= 1) rangerManaBonus += 1;
+  // #1: Wirewood Symbiote ritual — bounce an elf you control, untap a dork tapping for ≥2.
+  // Net: +1{G} (dork taps again for ≥2, minus the elf that was bounced to hand).
+  // Requires: Symbiote on board (non-sick), an elf on board to bounce, a dork tapping ≥2.
+  const hasSymbiote = board.has("Wirewood Symbiote");
+  let symbioteRitualBonus = 0;
+  if (hasSymbiote) {
+    const elvesAvailable = battlefield.filter(c => getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote").length;
+    const bigDorkOnBoard = battlefield.some(c => {
+      const cd = getCard(c);
+      if (!cd?.tapsFor) return false;
+      if (typeof cd.tapsFor === "number") return cd.tapsFor >= 2;
+      return cd.tags?.includes("big-dork");
+    });
+    if (elvesAvailable >= 1 && bigDorkOnBoard) symbioteRitualBonus = 1;
+  }
+
+  // #2: Deserted Temple mana doubling — untap Cradle or Nykthos for double output.
+  // Costs {1}: tap Deserted Temple + {1} to untap a land. Net = targetOutput - 1.
+  const hasDesertedTemple = board.has("Deserted Temple");
+  let desertedTempleBonus = 0;
+  if (hasDesertedTemple) {
+    const hasCradleOnBoard = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+    const hasNykthosOnBoard = board.has("Nykthos, Shrine to Nyx");
+    if (hasCradleOnBoard) {
+      const creatCount = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
+      desertedTempleBonus = Math.max(0, creatCount - 1); // Cradle output minus Temple's {1} cost
+    } else if (hasNykthosOnBoard) {
+      const devot = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
+      desertedTempleBonus = Math.max(0, devot - 3); // Nykthos output (devotion - 2) minus Temple cost {1}
+    }
+  }
+
+  // #3: Formidable Speaker untap trick — Speaker ETB untaps a land (including Cradle/Nykthos).
+  // If Speaker is in hand and castable, and Cradle/Nykthos is on board, the Speaker's ETB
+  // can untap it for a massive mana burst. Not included in base rangerManaBonus because
+  // it requires casting Speaker first.
+  const speakerUntapBonus = 0; // tracked separately — used in advice, not in canAffordWithTricks
+
+  // ESG in hand adds {G} (exile from hand at instant speed)
+  const esgInHand = hand.includes("Elvish Spirit Guide");
+  const esgBonus = esgInHand ? 1 : 0;
+
+  const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus;
+  const canAffordWithTricks = (cmc, greenPips = 0) =>
+    (maxGreen + effectiveManaBonus) >= greenPips && (maxGreen + maxColorless + effectiveManaBonus) >= cmc;
 
   // Legacy alias used in many string interpolations and simple threshold checks
   const mana = totalMana;
@@ -2887,6 +2979,152 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ── RANGER MANA TRICK ──────────────────────────────────────────────────
+  // When Quirion/Scryb Ranger is on board and the land drop is unused,
+  // the player can: tap Forest → return it with ranger → replay it → tap again = +1{G}.
+  // Surface this when it unlocks a cast the player couldn't otherwise afford.
+  if (isMyTurn && rangerManaBonus > 0 && !infiniteManaActive) {
+    // Find cards in hand that are affordable WITH the trick but NOT without
+    const unlocked = hand.filter(c => {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") return false;
+      const cmc = cd.cmc ?? 0;
+      const pips = cd.greenPips ?? 0;
+      return !canAfford(cmc, pips) && canAffordWithTricks(cmc, pips);
+    });
+    if (unlocked.length > 0) {
+      const whichRanger = hasQuirion ? "Quirion Ranger" : "Scryb Ranger";
+      const secondRanger = hasQuirion && hasScryb ? " (Scryb Ranger can add another +1{G})" : "";
+      const targets = unlocked.map(c => `${c} ({${getCard(c)?.cmc ?? "?"}})`).join(", ");
+      results.push({
+        priority: 11, // high — this is an actionable play that changes what's castable NOW
+        category: "⚡ RANGER MANA TRICK",
+        combo: "ranger_mana_trick",
+        headline: `${whichRanger}: bounce + replay Forest for +${rangerManaBonus}{G} → unlocks ${unlocked[0]}`,
+        detail: `You have ${maxGreen + maxColorless} mana but need ${getCard(unlocked[0])?.cmc ?? "?"} to cast ${unlocked[0]}. ` +
+          `${whichRanger} can net +1{G}: tap a Forest, return it to hand with ${whichRanger}, replay it as your land drop, tap again.${secondRanger} ` +
+          `This brings you to ${maxGreen + maxColorless + rangerManaBonus}${esgBonus ? `+${esgBonus} (ESG)` : ""} mana — enough to cast: ${targets}.`,
+        steps: [
+          `Tap Forest #1 for {G}.`,
+          `Activate ${whichRanger}: return Forest #1 to your hand → untap any creature (${whichRanger} itself is fine).`,
+          `Play Forest #1 from hand as your land drop (it enters untapped).`,
+          `Tap Forest #1 again for {G}. Net: +1{G} (you spent the ranger activation for free).`,
+          ...(hasScryb && hasQuirion ? [`Repeat with Scryb Ranger + the other Forest for another +1{G}.`] : []),
+          ...(esgBonus ? [`Exile Elvish Spirit Guide from hand for another +1{G}.`] : []),
+          `Cast ${unlocked[0]} ({${getCard(unlocked[0])?.cmc ?? "?"}}).`,
+        ],
+        color: "#e67e22",
+      });
+    }
+  }
+
+  // ── WIREWOOD SYMBIOTE RITUAL ─────────────────────────────────────────────
+  // Symbiote bounces an elf to untap a dork for +1G net. Surface when it unlocks a cast.
+  if (symbioteRitualBonus > 0 && !infiniteManaActive) {
+    const unlockedBySym = hand.filter(c => {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") return false;
+      const cmc = cd.cmc ?? 0;
+      const pips = cd.greenPips ?? 0;
+      const withoutSym = maxGreen + rangerManaBonus + esgBonus;
+      return !(withoutSym >= pips && (withoutSym + maxColorless) >= cmc) &&
+        canAffordWithTricks(cmc, pips);
+    });
+    if (unlockedBySym.length > 0) {
+      results.push({
+        priority: 10,
+        category: "⚡ SYMBIOTE RITUAL",
+        combo: "symbiote_ritual",
+        headline: `Wirewood Symbiote: bounce an elf → untap dork for +1{G} → unlocks ${unlockedBySym[0]}`,
+        detail: `Wirewood Symbiote can bounce an elf you control to untap a mana dork. If the dork taps for ≥2{G}, you net +1{G}. This brings you to ${maxGreen + maxColorless + effectiveManaBonus} mana — enough for ${unlockedBySym[0]}.`,
+        steps: [
+          `Tap your big mana dork for ≥2{G}.`,
+          `Activate Wirewood Symbiote: return any elf to hand → untap the dork.`,
+          `Tap the dork again for ≥2{G}. Net: +1{G} (minus the lost elf mana).`,
+          `Cast ${unlockedBySym[0]} ({${getCard(unlockedBySym[0])?.cmc ?? "?"}}).`,
+        ],
+        color: "#e67e22",
+      });
+    } else if (isMyTurn) {
+      // Even if it doesn't unlock a new cast, still mention Symbiote as a mana technique
+      const bigDork = battlefield.find(c => getCard(c)?.tags?.includes("big-dork") && getCard(c)?.tapsFor);
+      if (bigDork) {
+        results.push({
+          priority: 5,
+          category: "💡 MANA TIP",
+          combo: "symbiote_ritual_tip",
+          headline: `Wirewood Symbiote: bounce an elf to untap ${bigDork} for extra mana`,
+          detail: `Symbiote can bounce any elf (including a 1-drop dork) to untap ${bigDork}. The dork taps again — net positive if it produces ≥2{G}.`,
+          steps: [
+            `Tap ${bigDork} for mana.`,
+            `Activate Symbiote: return an elf to hand → untap ${bigDork}.`,
+            `Tap ${bigDork} again. Recast the bounced elf if you have spare mana.`,
+          ],
+          color: "#7dcea0",
+        });
+      }
+    }
+  }
+
+  // ── DESERTED TEMPLE MANA DOUBLING ──────────────────────────────────────
+  // Tap Cradle/Nykthos → Deserted Temple untaps it → tap again = double output - 1.
+  if (desertedTempleBonus > 0 && !infiniteManaActive) {
+    const targetLand = board.has("Gaea's Cradle") ? "Gaea's Cradle"
+      : board.has("Itlimoc, Cradle of the Sun") ? "Itlimoc"
+      : "Nykthos, Shrine to Nyx";
+    const unlockedByDT = hand.filter(c => {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") return false;
+      const cmc = cd.cmc ?? 0;
+      const pips = cd.greenPips ?? 0;
+      const withoutDT = maxGreen + rangerManaBonus + esgBonus + symbioteRitualBonus;
+      return !(withoutDT >= pips && (withoutDT + maxColorless) >= cmc) &&
+        canAffordWithTricks(cmc, pips);
+    });
+    results.push({
+      priority: unlockedByDT.length > 0 ? 11 : 6,
+      category: unlockedByDT.length > 0 ? "⚡ DESERTED TEMPLE" : "💡 MANA TIP",
+      combo: "deserted_temple_double",
+      headline: `Deserted Temple: untap ${targetLand} for +${desertedTempleBonus}{G}${unlockedByDT.length > 0 ? ` → unlocks ${unlockedByDT[0]}` : ""}`,
+      detail: `Tap ${targetLand} for mana, then pay {1} and tap Deserted Temple to untap it. Tap ${targetLand} again for its full output. Net bonus: +${desertedTempleBonus}{G}.`,
+      steps: [
+        `Tap ${targetLand} for mana.`,
+        `Tap Deserted Temple + pay {1}: untap ${targetLand}.`,
+        `Tap ${targetLand} again for its full output.`,
+        ...(unlockedByDT.length > 0 ? [`Cast ${unlockedByDT[0]} ({${getCard(unlockedByDT[0])?.cmc ?? "?"}}).`] : []),
+      ],
+      color: "#e67e22",
+    });
+  }
+
+  // ── FORMIDABLE SPEAKER AS CRADLE UNTAPPER ──────────────────────────────
+  // Speaker's ETB untaps a permanent — if Cradle/Nykthos is on board, casting Speaker
+  // effectively adds Cradle's output to the turn's mana (pay Speaker's cost, get Cradle output back).
+  if (isMyTurn && !infiniteManaActive && inHand.has("Formidable Speaker")) {
+    const hasCradleBoard = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+    const hasNykthosBoard = board.has("Nykthos, Shrine to Nyx");
+    if ((hasCradleBoard || hasNykthosBoard) && canAffordWithTricks(2, 1)) {
+      const untapTarget = hasCradleBoard ? "Gaea's Cradle" : "Nykthos, Shrine to Nyx";
+      const creatCount = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
+      const extraMana = hasCradleBoard ? creatCount + 1 : Math.max(0, battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0) + 1 - 2);
+      results.push({
+        priority: extraMana >= 3 ? 10 : 8,
+        category: "⚡ SPEAKER UNTAP",
+        combo: "speaker_untap_cradle",
+        headline: `Cast Formidable Speaker ({1}{G}) → ETB untaps ${untapTarget} for +${extraMana}{G}`,
+        detail: `Formidable Speaker's ETB untaps any permanent. Cast it to untap ${untapTarget} and tap it again — you get Speaker's body PLUS ${extraMana}{G} net mana. Also tutors a creature via its discard ability.`,
+        steps: [
+          `Cast Formidable Speaker ({1}{G}).`,
+          `ETB: choose to untap ${untapTarget}.`,
+          `Tap ${untapTarget} again for ${extraMana + (hasCradleBoard ? 0 : 2)}{G}.`,
+          `Net: +${extraMana}{G} (paid {1}{G} for Speaker, got ${extraMana + 2}{G} back from ${untapTarget}).`,
+          `Also: discard a card to Speaker → search for any creature.`,
+        ],
+        color: "#e67e22",
+      });
+    }
+  }
+
   // ---- CAST FAUNA SHAMAN FROM HAND ----
   // Fauna Shaman is a repeatable creature tutor. Not tagged big-dork, so needs its own block.
   // {1}{G} = 2 mana. Activate {G}: discard a creature → search for any creature.
@@ -2921,7 +3159,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (!cd?.tags?.includes("big-dork")) return false;
       if (!cd?.tapsFor) return false; // must actually tap for mana (not just tagged big-dork for other reasons)
       if (board.has(c)) return false; // already on board (unique legend or already cast)
-      return canAfford(cd.cmc, cd.greenPips ?? 1);
+      return canAffordWithTricks(cd.cmc, cd.greenPips ?? 1);
     });
 
     if (castableBigDorks.length > 0 && !infiniteManaActive) {
@@ -5270,7 +5508,136 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ---- TALON GATES OF MADARA ----
+  // ── SEEDBORN MUSE + WAR ROOM / ACTIVATED ABILITIES BOOST ───────────────
+  // When Seedborn is on board, activated abilities fire on every opponent's turn.
+  // War Room draws a card each untap. Duskwatch digs 3 cards. Formidable Speaker tutors.
+  if (board.has("Seedborn Muse") && !infiniteManaActive) {
+    const warRoomOnBoard = board.has("War Room");
+    const duskwatchOnBoard = board.has("Duskwatch Recruiter");
+    const speakerOnBoard = board.has("Formidable Speaker");
+    const warRoomInHand = inHand.has("War Room");
+    const duskwatchInHand = inHand.has("Duskwatch Recruiter");
+
+    if (warRoomOnBoard) {
+      results.push({
+        priority: 7,
+        category: "🌙 SEEDBORN SYNERGY",
+        combo: "seedborn_war_room",
+        headline: "Seedborn Muse + War Room: draw a card on every player's turn",
+        detail: "War Room's {3}, {T}, pay 1 life: draw a card. With Seedborn untapping everything each opponent's turn, you draw 3-4 extra cards per round in a 4-player pod. Spend excess Cradle/Nykthos mana on draws.",
+        steps: ["On each opponent's untap step: Seedborn untaps War Room.", "Tap War Room + {3}: draw a card.", "In a 4-player pod: 3 extra draws per round."],
+        color: "#9b59b6",
+      });
+    }
+    if (!warRoomOnBoard && warRoomInHand) {
+      results.push({
+        priority: 6,
+        category: "💡 SEEDBORN TIP",
+        combo: "seedborn_play_war_room",
+        headline: "Play War Room — with Seedborn Muse it draws 3+ extra cards per round",
+        detail: "War Room is a land that draws cards. With Seedborn Muse already on board, playing it gives you a card draw engine on every player's turn.",
+        steps: ["Play War Room as your land drop.", "Each opponent's turn: Seedborn untaps War Room → tap it to draw."],
+        color: "#9b59b6",
+      });
+    }
+    if (duskwatchOnBoard) {
+      results.push({
+        priority: 7,
+        category: "🌙 SEEDBORN SYNERGY",
+        combo: "seedborn_duskwatch",
+        headline: "Seedborn Muse + Duskwatch Recruiter: dig 3 cards every player's turn",
+        detail: "Duskwatch costs {2}{G} to activate. With Seedborn untapping all your mana each turn, you can activate Duskwatch on every opponent's turn — digging through 9-12 cards per round to find combo pieces.",
+        steps: ["Each opponent's untap: Seedborn untaps all lands/dorks.", "Activate Duskwatch ({2}{G}): look at top 3, keep a creature.", "Repeat each opponent's turn."],
+        color: "#9b59b6",
+      });
+    }
+  }
+
+  // ── ELADAMRI + BEAST WHISPERER / GLADEMUSE CHAIN ───────────────────────
+  // #8: Eladamri plays creatures from the top of library. Beast Whisperer draws on each
+  // creature cast. The chain: cast top creature → draw → see new top → cast that too.
+  // This is a powerful storm engine that can chain through multiple creatures per turn.
+  if (board.has("Eladamri, Korvecdal") && !infiniteManaActive) {
+    const hasWhisperer = board.has("Beast Whisperer");
+    const hasGlademuse = board.has("Glademuse");
+    const hasGuardianProject = board.has("Guardian Project");
+    const drawEngine = hasWhisperer ? "Beast Whisperer" : hasGlademuse ? "Glademuse" : hasGuardianProject ? "Guardian Project" : null;
+    const whispererInHand = inHand.has("Beast Whisperer");
+    const glademuseInHand = inHand.has("Glademuse");
+
+    if (drawEngine) {
+      results.push({
+        priority: 9,
+        category: "⚡ ELADAMRI CHAIN",
+        combo: "eladamri_draw_chain",
+        headline: `Eladamri + ${drawEngine}: chain creatures from library (storm engine)`,
+        detail: `Eladamri lets you play creatures from the top of your library. ${drawEngine} draws a card for each creature cast. The chain: cast a creature from library top → ${drawEngine} triggers a draw → the drawn card shifts the top → if the new top is a creature, cast it too. With enough mana, chain through multiple creatures per turn, building an overwhelming board.`,
+        steps: [
+          `Look at top card of library (Eladamri reveals it).`,
+          `If it's a creature you can afford: cast it from library top.`,
+          `${drawEngine} triggers: draw a card. New top card is revealed.`,
+          `If new top is also a creature: cast it → draw again → repeat.`,
+          `Keep chaining until you hit a non-creature or run out of mana.`,
+        ],
+        color: "#e67e22",
+      });
+    } else if (whispererInHand || glademuseInHand) {
+      const engine = whispererInHand ? "Beast Whisperer" : "Glademuse";
+      const engineCmc = getCard(engine)?.cmc ?? 4;
+      if (canAffordWithTricks(engineCmc, getCard(engine)?.greenPips ?? 1)) {
+        results.push({
+          priority: 8,
+          category: "⚡ ELADAMRI SETUP",
+          combo: "eladamri_setup_chain",
+          headline: `Cast ${engine} ({${engineCmc}}) → enables Eladamri chain (storm from library top)`,
+          detail: `Eladamri is on board. Cast ${engine} to enable the chain: each creature cast from library top triggers a draw, shifting the top card. This lets you storm through your library casting creature after creature.`,
+          steps: [
+            `Cast ${engine} ({${engineCmc}}).`,
+            `Now each creature cast from library top draws a card → reveals new top → chain continues.`,
+          ],
+          color: "#5dade2",
+        });
+      }
+    }
+  }
+
+  // ── SHIFTING WOODLAND GRAVEYARD RECOVERY ───────────────────────────────
+  // #9: When combo pieces are in the graveyard and Shifting Woodland is on the board,
+  // it can copy a creature from the graveyard (if Delirium is active: 4+ card types in GY).
+  if (board.has("Shifting Woodland")) {
+    // Check delirium: need 4+ different card types in the graveyard
+    const gyTypes = new Set(graveyard.map(c => getCard(c)?.type).filter(Boolean));
+    const hasDelirium = gyTypes.size >= 4;
+    const comboInGY = graveyard.filter(c => {
+      const tags = getCard(c)?.tags ?? [];
+      return tags.includes("combo") || tags.includes("key") || tags.includes("big-dork") || tags.includes("infinite-dork") || tags.includes("ashaya");
+    });
+    if (comboInGY.length > 0 && hasDelirium) {
+      results.push({
+        priority: 8,
+        category: "♻️ RECOVERY",
+        combo: "shifting_woodland_copy",
+        headline: `Shifting Woodland: copy ${comboInGY[0]} from graveyard (delirium active)`,
+        detail: `Shifting Woodland can become a copy of ${comboInGY[0]} in your graveyard (delirium = 4+ card types in GY, currently ${gyTypes.size}). Pay {3}{G}{G} + tap: Woodland becomes a copy of ${comboInGY[0]}. This recovers a lost combo piece without needing Eternal Witness.`,
+        steps: [
+          `Activate Shifting Woodland ({3}{G}{G}, tap): become a copy of ${comboInGY[0]} in your graveyard.`,
+          `Delirium is active (${gyTypes.size} card types in graveyard: ${[...gyTypes].join(", ")}).`,
+          ...(comboInGY.length > 1 ? [`Other copyable targets: ${comboInGY.slice(1, 3).join(", ")}.`] : []),
+        ],
+        color: "#7dcea0",
+      });
+    } else if (comboInGY.length > 0 && !hasDelirium) {
+      results.push({
+        priority: 4,
+        category: "💡 RECOVERY TIP",
+        combo: "shifting_woodland_no_delirium",
+        headline: `Shifting Woodland: ${comboInGY[0]} in graveyard but delirium not active (${gyTypes.size}/4 types)`,
+        detail: `Shifting Woodland can copy ${comboInGY[0]} from your graveyard, but needs delirium (4+ card types in GY). Currently only ${gyTypes.size}: ${[...gyTypes].join(", ")}. Get ${4 - gyTypes.size} more card type(s) into the graveyard.`,
+        steps: [`Need ${4 - gyTypes.size} more card type(s) in graveyard for delirium.`, `Missing types might include: ${["creature","instant","sorcery","enchantment","artifact","land","planeswalker"].filter(t => !gyTypes.has(t)).slice(0,3).join(", ")}.`],
+        color: "#95a5a6",
+      });
+    }
+  }
   // {T}: Phase out target creature you control or an opponent controls until your next turn.
   // No mana cost — just a tap. Phased-out creatures are effectively removed from the game
   // until your next untap step (they don't untap, can't be targeted, don't count for anything).
@@ -6814,17 +7181,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? (isFirst ? "🔥 WIN NOW" : "🔥 WIN NOW — ALT LINE")
         : l.sameTurn
         ? (isFirst ? "⚡ FIND INFINITE MANA" : "⚡ ALT MANA LINE")
-        : l.nextTurnOnly
+        : (l.nextTurnOnly && l.canAfford)
         ? (isFirst ? "⚡ FIND INFINITE MANA — NEXT TURN" : "⚡ ALT MANA LINE — NEXT TURN")
         : (isFirst ? `⚡ FIND INFINITE MANA — NEED ${l.totalMana} MANA` : `⚡ ALT MANA LINE — NEED ${l.totalMana} MANA`);
       // Priority tiers for path planner lines:
       // • WIN NOW (all pieces castable this turn)          → 15, 14, 13
       // • FIND INFINITE MANA (affordable same turn)        → 13, 12, 11
-      // • NEXT TURN lines (one step away, have the mana)  →  9,  8,  7  (below castable ramp ~9)
-      // • NEED X MANA lines (can't afford yet)            →  6,  5,  4  (informational only)
+      // • NEXT TURN lines (affordable, just needs untap)   →  9,  8,  7  (below castable ramp ~9)
+      // • NEED X MANA lines (can't afford yet)             →  6,  5,  4  (informational only)
+      // NOTE: nextTurnOnly lines that can't afford are demoted to NEED MANA tier.
       const pri = l.winNow    ? 15 - idx
                 : l.sameTurn  ? 13 - idx
-                : l.nextTurnOnly ? 9 - idx
+                : (l.nextTurnOnly && l.canAfford) ? 9 - idx
                 : 6 - idx;
 
       const stepSummary = l.tutorSteps.length === 0
@@ -13914,12 +14282,10 @@ function simFireLandfall(simState, triggerCount, newTriggers) {
     // is captured by sumManaPool seeing the Treasure/Food from Tireless Provisioner instead.
 
     // Tireless Provisioner: create a Treasure token (taps for any color, sac)
-    // Modeled as adding a one-shot mana source to the battlefield.
+    // Model as bonus mana this turn rather than a battlefield permanent.
     if (board.has("Tireless Provisioner")) {
-      // Add a phantom treasure: Lotus Petal equivalent for this turn
-      if (!simState.consumedAtEndOfTurn) simState.consumedAtEndOfTurn = new Set();
-      battlefield.push("Lotus Petal"); // acts as {G} this turn
-      simState.consumedAtEndOfTurn.add("Lotus Petal");
+      if (!simState._petalManaThisTurn) simState._petalManaThisTurn = 0;
+      simState._petalManaThisTurn += 1;
     }
 
     // Nissa, Resurgent Animist: add one mana (always {G} in mono-green).
@@ -14103,6 +14469,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
     sickSet = new Set(); // all permanents untap and lose summoning sickness
     simState._usedAbilities = new Set(); // reset activated ability tracking for new turn
+    simState._petalManaThisTurn = 0;    // reset one-shot mana from Lotus Petal / Treasures
     // Consume one-shot mana sources (Lotus Petal) that were played last turn
     if (simState.consumedAtEndOfTurn?.size > 0) {
       for (const c of simState.consumedAtEndOfTurn) {
@@ -14130,6 +14497,12 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     let turnsPlays = 0;
     // SIM GROUP 6: Track landfall trigger count per turn for Nissa
     let landfallCount = 0;
+    // Mana budget: compute once after land drop, track spending to prevent re-tapping.
+    // turnManaCapacity is set after the land drop resolves. manaSpent tracks total CMC cast.
+    // bonusMana tracks one-shot sources that enter mid-turn (Lotus Petal, Chrome Mox, etc.)
+    let turnManaCapacity = -1; // -1 = not yet computed
+    let manaSpent = 0;
+    let bonusMana = 0;
 
     while (madePlay && turnsPlays < 20) {
       madePlay = false;
@@ -14154,6 +14527,15 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
             landfallCount += 1;
             simFireLandfall(simState, landfallCount, 1);
           }
+          // Recompute turn mana capacity after land entered
+          const postLandPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+          turnManaCapacity = postLandPool.total;
+          manaSpent = 0; // reset — new budget includes the land
+          // Pick up any bonus mana from landfall triggers (Tireless Provisioner Treasures)
+          if (simState._petalManaThisTurn > 0) {
+            bonusMana += simState._petalManaThisTurn;
+            simState._petalManaThisTurn = 0;
+          }
           madePlay = true;
           continue;
         }
@@ -14168,11 +14550,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           const hasDorkInHand = hand.some((c, i) => i !== esgIdx && getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
           const hasDorkOnBoard = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
           if (hasDorkInHand && !hasDorkOnBoard && baseMana.green < 1) {
-            // Exile ESG to produce {G}, then cast the 1-drop
             hand.splice(esgIdx, 1);
             if (castLog) castLog.add("Elvish Spirit Guide");
+            bonusMana += 1; // ESG adds 1G mid-turn
             const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
-            if (odIdx >= 0) { playCard(hand[odIdx], odIdx); t1Dork = true; }
+            if (odIdx >= 0) { playCard(hand[odIdx], odIdx); manaSpent += 1; t1Dork = true; }
             madePlay = true;
             continue;
           }
@@ -14181,7 +14563,28 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // Calculate available mana (excluding summoning-sick creatures), split by color.
       // Pass simAttachments so Arbor Elf sees enchanted-Forest bonuses.
-      const manaPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+      const rawPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+
+      // Clamp by mana budget: effective mana = min(rawPool, capacity - spent + bonus)
+      // On first iteration (before land drop), turnManaCapacity = -1 → use raw pool
+      let manaPool;
+      if (turnManaCapacity >= 0) {
+        const budget = turnManaCapacity - manaSpent + bonusMana;
+        const cappedTotal = Math.min(rawPool.total, Math.max(0, budget));
+        // Distribute the cap proportionally between green and colorless
+        if (rawPool.total > 0 && cappedTotal < rawPool.total) {
+          const ratio = cappedTotal / rawPool.total;
+          manaPool = {
+            green: Math.floor(rawPool.green * ratio),
+            colorless: Math.floor(rawPool.colorless * ratio),
+            total: cappedTotal,
+          };
+        } else {
+          manaPool = rawPool;
+        }
+      } else {
+        manaPool = rawPool;
+      }
       const mana = manaPool.total;
       if (manaCurve.length < turn) manaCurve.push(mana);
 
@@ -14191,7 +14594,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       // Smarter sequencing: always try to cast a 1-drop dork T1 before anything else
       if (turn === 1 && manaPool.green >= 1 && !battlefield.some(c => getCard(c)?.tags?.includes("dork"))) {
         const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
-        if (odIdx >= 0) { playCard(hand[odIdx], odIdx); t1Dork = true; madePlay = true; continue; }
+        if (odIdx >= 0) { playCard(hand[odIdx], odIdx); manaSpent += 1; t1Dork = true; madePlay = true; continue; }
       }
 
       // Pass sick-adjusted battlefield to advisor.
@@ -14335,6 +14738,18 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           const holdIt = isTutor && shouldHoldTutor(cardToPlay, mana);
           if (!holdIt) {
             playCard(cardToPlay, idx, manaPool);
+            manaSpent += cardData?.cmc ?? 0; // track for budget capping
+            // Fast mana artifacts (CMC 0) add bonus mana when entering
+            if (cardData?.tags?.includes("fast-mana") && cardData?.type !== "creature") {
+              if (cardToPlay === "Sol Ring") bonusMana += 2;
+              else if (cardToPlay === "Chrome Mox" || cardToPlay === "Mox Diamond") bonusMana += 1;
+              // Lotus Petal handled via _petalManaThisTurn (goes straight to graveyard)
+            }
+            // Pick up any Petal-style bonus mana generated by simPlayCard
+            if (simState._petalManaThisTurn > 0) {
+              bonusMana += simState._petalManaThisTurn;
+              simState._petalManaThisTurn = 0;
+            }
             played = true;
             madePlay = true;
             continue;
@@ -14373,7 +14788,17 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           return { c, i, score };
         }).filter(Boolean).sort((a, b) => b.score - a.score);
         if (affordable.length > 0) {
-          playCard(affordable[0].c, affordable[0].i, manaPool);
+          const chosen = affordable[0];
+          playCard(chosen.c, chosen.i, manaPool);
+          manaSpent += getCard(chosen.c)?.cmc ?? 0;
+          if (getCard(chosen.c)?.tags?.includes("fast-mana") && getCard(chosen.c)?.type !== "creature") {
+            if (chosen.c === "Sol Ring") bonusMana += 2;
+            else if (chosen.c === "Chrome Mox" || chosen.c === "Mox Diamond") bonusMana += 1;
+          }
+          if (simState._petalManaThisTurn > 0) {
+            bonusMana += simState._petalManaThisTurn;
+            simState._petalManaThisTurn = 0;
+          }
           madePlay = true;
           continue;
         }
@@ -14381,8 +14806,19 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // ── SIM GROUP 2: Try activated abilities before giving up ────────────
       // If no card was played, check for on-board engines (Survival, Fauna, Duskwatch, Yisan).
-      const abilityManaPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+      const rawAbilityPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+      let abilityManaPool = rawAbilityPool;
+      if (turnManaCapacity >= 0) {
+        const budget = turnManaCapacity - manaSpent + bonusMana;
+        const cappedTotal = Math.min(rawAbilityPool.total, Math.max(0, budget));
+        if (rawAbilityPool.total > 0 && cappedTotal < rawAbilityPool.total) {
+          const ratio = cappedTotal / rawAbilityPool.total;
+          abilityManaPool = { green: Math.floor(rawAbilityPool.green * ratio), colorless: Math.floor(rawAbilityPool.colorless * ratio), total: cappedTotal };
+        }
+      }
       if (simActivateAbilities(simState, abilityManaPool)) {
+        // Abilities cost mana: Survival/Fauna = 1G, Duskwatch/Yisan = 3, Poacher = 3
+        manaSpent += 3; // conservative estimate; most abilities cost 1-3 mana
         madePlay = true;
         continue;
       }
@@ -14596,6 +15032,54 @@ function simActivateAbilities(simState, manaPool) {
         [library[i], library[j]] = [library[j], library[i]];
       }
       used.add("Poacher");
+      return true;
+    }
+  }
+
+  // Eladamri, Korvecdal: play creatures from library top. With a draw engine
+  // (Beast Whisperer, Guardian Project, Glademuse), chain: cast → draw → cast again.
+  if (board.has("Eladamri, Korvecdal") && !used.has("Eladamri")) {
+    const hasDrawEngine = board.has("Beast Whisperer") || board.has("Guardian Project") || board.has("Glademuse");
+    if (library.length > 0) {
+      const topCard = library[0];
+      const topData = getCard(topCard);
+      if (topData?.type === "creature" && (topData.cmc ?? 99) <= manaPool.total && manaPool.green >= (topData.greenPips ?? 0)) {
+        // Cast from library top
+        library.shift();
+        battlefield.push(topCard);
+        sickSet.add(topCard);
+        if (castLog) castLog.add(topCard);
+        // Draw engine trigger: draw a card (shifts library top)
+        if (hasDrawEngine && library.length > 0) {
+          hand.push(library.shift());
+        }
+        // Don't mark as used if draw engine is active — can chain multiple per turn
+        if (!hasDrawEngine) used.add("Eladamri");
+        return true;
+      }
+    }
+  }
+
+  // Wirewood Symbiote ritual: bounce an elf to untap a big dork for +1G net.
+  // This is modeled in sumManaPool but also as an activated ability for the sim
+  // to actually perform the bounce (moving the elf to hand, untapping the dork).
+  // Once per turn (Symbiote's ability limit).
+  if (board.has("Wirewood Symbiote") && !used.has("Symbiote")) {
+    const elfToBounce = battlefield.find(c =>
+      getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote" &&
+      getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 99) <= 1);
+    const bigDork = battlefield.find(c =>
+      getCard(c)?.tags?.includes("big-dork") && getCard(c)?.tapsFor && !sickSet.has(c));
+    if (elfToBounce && bigDork) {
+      // Bounce the 1-drop elf to hand, untap the big dork
+      const elfIdx = battlefield.indexOf(elfToBounce);
+      if (elfIdx >= 0) {
+        battlefield.splice(elfIdx, 1);
+        hand.push(elfToBounce);
+      }
+      used.add("Symbiote");
+      // The mana gain is already modeled in sumManaPool; the sim effect is
+      // bouncing the elf so it can be recast for ETB triggers / elf count
       return true;
     }
   }
@@ -14871,9 +15355,12 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     // We implement this by adding a special "PETAL_MANA" phantom card to battlefield
     // that sumManaPool will count as {G}, then removing after this turn.
     if (card === "Lotus Petal") {
-      if (!simState.consumedAtEndOfTurn) simState.consumedAtEndOfTurn = new Set();
-      battlefield.push(card);
-      simState.consumedAtEndOfTurn.add(card);
+      // Lotus Petal sacrifices itself to produce {G}. Rather than keeping it on the
+      // battlefield (which inflates sumManaPool on every recalculation), send it
+      // directly to the graveyard and signal the turn loop to add bonus mana.
+      graveyard.push(card);
+      if (!simState._petalManaThisTurn) simState._petalManaThisTurn = 0;
+      simState._petalManaThisTurn += 1;
       return;
     }
     // Chrome Mox: imprint a nonland green card from hand to produce {G} per turn.
@@ -17586,6 +18073,23 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           addLog(`Auto-tapped ${autoTapped[0].c} for ${autoTapped[0].mana} mana.`, COLORS.green1);
         } else {
           addLog(`Auto-tapped ${autoTapped.length} sources for ${autoMana} mana.`, COLORS.green1);
+        }
+        // Sacrifice one-shot mana sources (Lotus Petal) that were auto-tapped
+        const petalsToSac = autoTapped.filter(s => s.c === "Lotus Petal");
+        if (petalsToSac.length > 0) {
+          setBattlefield(prev => {
+            const next = [...prev];
+            // Remove petals in reverse index order to avoid index shifting
+            const indices = petalsToSac.map(s => s.i).sort((a, b) => b - a);
+            for (const pi of indices) {
+              if (next[pi] === "Lotus Petal") next.splice(pi, 1);
+            }
+            return next;
+          });
+          setGraveyard(prev => [...prev, ...petalsToSac.map(() => "Lotus Petal")]);
+          for (const p of petalsToSac) {
+            addLog(`Lotus Petal: sacrificed for {G}.`, COLORS.gold);
+          }
         }
       }
     }
@@ -21184,6 +21688,85 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             📖 Trigger — unique creature ETB: draw 1
           </div>
         )}
+
+        {/* ── Eladamri, Korvecdal: cast creature from library top / activate ability ── */}
+        {isBF && card === "Eladamri, Korvecdal" && (() => {
+          const topCard = library.length > 0 ? library[0] : null;
+          const topData = topCard ? getCard(topCard) : null;
+          const isTopCreature = topData?.type === "creature";
+          const topCmc = topData?.cmc ?? 99;
+          const canCastTop = isTopCreature && manaPool >= topCmc;
+          // Activated ability: {G}, tap, tap two untapped creatures → reveal top or hand card, if creature put onto battlefield
+          const untappedCreatures = battlefield.filter((c, i) =>
+            getCard(c)?.type === "creature" && !tapped.has(cardKey(c, i)) && c !== "Eladamri, Korvecdal").length;
+          const canActivate = !isCardTapped && manaPool >= 1 && untappedCreatures >= 2;
+          return (<>
+            {topCard && (
+              <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+                📚 Top of library: {topCard} {isTopCreature ? `(creature, CMC ${topCmc})` : `(${topData?.type ?? "unknown"})`}
+              </div>
+            )}
+            {canCastTop && (
+              <div onClick={() => {
+                pushUndo();
+                setLibrary(prev => prev.slice(1));
+                setBattlefield(prev => [...prev, topCard]);
+                setSickCreatures(s => new Set([...s, `${topCard}:${battlefield.length}`]));
+                setManaPool(p => Math.max(0, p - topCmc)); flashMana(-topCmc);
+                addLog(`Eladamri: cast ${topCard} (CMC ${topCmc}) from library top.`, COLORS.green2);
+                // Trigger draw engines
+                const hasWhisperer = battlefield.includes("Beast Whisperer");
+                const hasGP = battlefield.includes("Guardian Project");
+                const hasGlademuse = battlefield.includes("Glademuse");
+                if ((hasWhisperer || hasGP || hasGlademuse) && library.length > 1) {
+                  setLibrary(prev => { const drawn = prev[0]; setHand(h => [...h, drawn]); return prev.slice(1); });
+                  addLog(`${hasWhisperer ? "Beast Whisperer" : hasGP ? "Guardian Project" : "Glademuse"} triggered — drew a card.`, COLORS.blue);
+                }
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                🌿 Cast {topCard} from library top ({'{' + topCmc + '}'})
+              </div>
+            )}
+            {isTopCreature && !canCastTop && (
+              <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+                🌿 Cast {topCard} — need {topCmc} mana (have {manaPool})
+              </div>
+            )}
+            <div onClick={() => {
+              if (!canActivate) { addLog(`Eladamri: need {G} + tap self + tap 2 creatures.`, COLORS.textDim); closeContextMenu(); return; }
+              pushUndo();
+              toggleTap(card, index);
+              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              // Auto-tap 2 untapped creatures (smallest first)
+              const creatTargets = battlefield
+                .map((c, i) => ({ c, i, cmc: getCard(c)?.cmc ?? 0 }))
+                .filter(({ c, i }) => getCard(c)?.type === "creature" && !tapped.has(cardKey(c, i)) && c !== "Eladamri, Korvecdal")
+                .sort((a, b) => a.cmc - b.cmc)
+                .slice(0, 2);
+              setTapped(prev => {
+                const next = new Set(prev);
+                creatTargets.forEach(({ c, i }) => next.add(cardKey(c, i)));
+                return next;
+              });
+              // Reveal top — if creature, put onto battlefield
+              if (topCard && isTopCreature) {
+                setLibrary(prev => prev.slice(1));
+                setBattlefield(prev => [...prev, topCard]);
+                setSickCreatures(s => new Set([...s, `${topCard}:${battlefield.length}`]));
+                addLog(`Eladamri activated: paid {G}, tapped self + ${creatTargets.map(t => t.c).join(" + ")} → revealed ${topCard} (creature) → onto battlefield!`, COLORS.green2);
+              } else {
+                addLog(`Eladamri activated: paid {G}, tapped self + ${creatTargets.map(t => t.c).join(" + ")} → revealed ${topCard ?? "empty library"} (${topData?.type ?? "N/A"}) — not a creature, stays on top.`, COLORS.textDim);
+              }
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: canActivate ? "pointer" : "default", color: canActivate ? COLORS.gold : COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { if (canActivate) e.currentTarget.style.background = "#1a1a0a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Activate ({'{G}'} tap + tap 2 creatures) — cheat top creature onto battlefield
+            </div>
+          </>);
+        })()}
 
         {/* ── Runic Armasaur: draw trigger — opponent activates ability of creature or land (non-mana) ── */}
         {isBF && card === "Runic Armasaur" && (
