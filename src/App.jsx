@@ -2287,15 +2287,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       for (const combo of COMBOS) {
         if (combo.type !== "infinite-mana") continue;
         const mustPre = combo.mustPreExist ?? [];
+        let castCostFromHand = 0;
         const allReachable = combo.requires.every(r => {
           if (board.has(r)) return true;
           if (!inHand.has(r)) return false;
           // mustPreExist cards (summoning sick) need to be on the board unless haste is up
           if (mustPre.includes(r) && !_hasteOnBoard) return false;
           if (getCard(r)?.type === "land") return isMyTurn;
+          // Track the mana cost of pieces we need to cast from hand
+          castCostFromHand += getCard(r)?.cmc ?? 0;
           return _castable;
         });
         if (!allReachable) continue;
+        // Verify we can actually afford to cast all hand pieces this turn
+        if (castCostFromHand > totalMana) continue;
         const extras = comboExtrasSatisfied(combo, false);
         if (extras.ok) { _inf = true; _infName = combo.name; break; }
       }
