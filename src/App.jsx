@@ -22812,7 +22812,19 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         background: COLORS.bg, border: `1px solid ${COLORS.borderBright}`,
         borderRadius: "12px", width: "100%", maxWidth: "1400px",
         display: "flex", flexDirection: "column", overflow: "hidden",
+        position: "relative",
       }} onClick={e => e.stopPropagation()}>
+        {/* Watermark background — Yeva sketch */}
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 0,
+          backgroundImage: "url('https://yeva-advisor-app.vercel.app/src/App.png')",
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "center center",
+          backgroundSize: "cover",
+          opacity: 0.03,
+          pointerEvents: "none",
+          borderRadius: "12px",
+        }} />
 
         {/* Header */}
         <div data-gtour="gtour-header" style={{
