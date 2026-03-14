@@ -1941,16 +1941,24 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
   }
 
   // Deserted Temple: untap Cradle or Nykthos for double output minus 1 (the {1} activation cost).
-  // Only counts when Cradle/Nykthos is present and the Temple isn't sick (it's a land, always active).
+  // When DT uses its untap ability, it taps itself ({T}) and pays {1} — so it can't also
+  // produce {C} from its normal tap ability. Subtract the {C} already counted by cardManaContribution,
+  // and subtract the {1} activation cost from the bonus.
   if (ctx.board.has("Deserted Temple")) {
     if (ctx.hasCradle) {
       const cradleOutput = sickSet ? ctx.activeCreatureCount : ctx.creatureCount;
-      const dtBonus = Math.max(0, cradleOutput - 1); // Cradle taps for creatures, minus {1} for Temple
-      green += dtBonus;
+      const dtBonus = Math.max(0, cradleOutput - 1); // Cradle output minus {1} activation cost
+      if (dtBonus > 0) {
+        green += dtBonus;
+        colorless -= 1; // DT can't also tap for {C} when using the untap ability
+      }
     } else if (ctx.hasNykthos) {
       const nykOutput = Math.max(0, ctx.devotion - 2);
-      const dtBonus = Math.max(0, nykOutput - 1); // Nykthos output minus {1} Temple cost
-      green += dtBonus;
+      const dtBonus = Math.max(0, nykOutput - 1);
+      if (dtBonus > 0) {
+        green += dtBonus;
+        colorless -= 1;
+      }
     }
   }
 
@@ -1992,6 +2000,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const inHand = new Set(hand);
   const inGrave = new Set(graveyard);
   const allAvailable = new Set([...hand, ...battlefield]);
+  // #4: Cache for findReachableLines result — shared between path planner and turn clock
+  let _cachedFRL = null;
   // boardCtx: attachment-aware board context used by helpers (e.g. hasAuraOnForest for Arbor Elf)
   const boardCtx = buildBoardContext(battlefield, null, attachments);
 
@@ -2121,8 +2131,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const esgBonus = esgInHand ? 1 : 0;
 
   const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus;
-  const canAffordWithTricks = (cmc, greenPips = 0) =>
-    (maxGreen + effectiveManaBonus) >= greenPips && (maxGreen + maxColorless + effectiveManaBonus) >= cmc;
+  // #8: Convoke bonus for Chord of Calling — each non-sick creature can tap to pay {1} or {G}
+  const convokeCreatures = battlefield.filter(c => {
+    const cd = getCard(c);
+    return cd?.type === "creature" || c === "Dryad Arbor";
+  }).length;
+  const canAffordWithTricks = (cmc, greenPips = 0, cardName = null) => {
+    const bonus = effectiveManaBonus + (cardName === "Chord of Calling" ? convokeCreatures : 0);
+    return (maxGreen + bonus) >= greenPips && (maxGreen + maxColorless + bonus) >= cmc;
+  };
 
   // Legacy alias used in many string interpolations and simple threshold checks
   const mana = totalMana;
@@ -5553,6 +5570,46 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ── SEEDBORN + FORMIDABLE SPEAKER + WIREWOOD SYMBIOTE LOOP ─────────
+  // #7: With Seedborn Muse untapping everything, Wirewood Symbiote can bounce
+  // Formidable Speaker each opponent's turn. Speaker re-enters → ETB untaps a
+  // permanent (Cradle/dork) + discard-to-tutor. Free tutor every opponent's turn.
+  if (board.has("Seedborn Muse") && !infiniteManaActive) {
+    const hasSpeaker = board.has("Formidable Speaker");
+    const hasSymbiote = board.has("Wirewood Symbiote");
+    const speakerInHand = inHand.has("Formidable Speaker");
+    const symbioteInHand = inHand.has("Wirewood Symbiote");
+
+    if (hasSpeaker && hasSymbiote) {
+      results.push({
+        priority: 8,
+        category: "🌙 SEEDBORN LOOP",
+        combo: "seedborn_speaker_symbiote",
+        headline: "Seedborn + Symbiote + Speaker: free tutor every opponent's turn",
+        detail: "Each opponent's untap step: Seedborn untaps everything. Activate Wirewood Symbiote: bounce Formidable Speaker to hand (it's an Elf). Recast Speaker ({1}{G}): ETB untaps a permanent (Cradle/dork) AND you may discard to search for any creature. In a 4-player pod: 3 free tutors per round.",
+        steps: [
+          "Opponent's untap: Seedborn Muse untaps all your permanents.",
+          "Activate Wirewood Symbiote: return Formidable Speaker to hand.",
+          "Cast Formidable Speaker ({1}{G}): ETB untaps Gaea's Cradle or a dork.",
+          "Discard a card → search your library for any creature.",
+          "Repeat each opponent's turn. 3 tutors per round in a 4-player pod.",
+        ],
+        color: "#9b59b6",
+      });
+    } else if ((hasSpeaker && symbioteInHand) || (speakerInHand && hasSymbiote)) {
+      const missing = !hasSymbiote ? "Wirewood Symbiote" : "Formidable Speaker";
+      results.push({
+        priority: 6,
+        category: "💡 SEEDBORN TIP",
+        combo: "seedborn_speaker_symbiote_setup",
+        headline: `Cast ${missing} to enable Seedborn + Speaker + Symbiote tutor loop`,
+        detail: `With Seedborn Muse on board, adding ${missing} completes a loop: bounce Speaker with Symbiote each opponent's turn → free tutors and Cradle untaps. In a 4-player pod this is 3 creature searches per round.`,
+        steps: [`Cast ${missing}.`, "Loop: Symbiote bounces Speaker → recast Speaker → ETB untap + tutor."],
+        color: "#9b59b6",
+      });
+    }
+  }
+
   // ── ELADAMRI + BEAST WHISPERER / GLADEMUSE CHAIN ───────────────────────
   // #8: Eladamri plays creatures from the top of library. Beast Whisperer draws on each
   // creature cast. The chain: cast top creature → draw → see new top → cast that too.
@@ -5638,6 +5695,35 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
     }
   }
+
+  // ── EMERGENCE ZONE — HOLD FOR EOT STRATEGY ───────────────────────────
+  // #6: When Emergence Zone is on board, advise holding combo pieces for EOT
+  // deployment. Sacrificing EZ gives flash to ALL spells (not just creatures),
+  // enabling instant-speed wins and dodging sorcery-speed interaction.
+  if (board.has("Emergence Zone") && isMyTurn && !infiniteManaActive) {
+    const comboInHand = hand.filter(c => {
+      const tags = getCard(c)?.tags ?? [];
+      return tags.includes("combo") || tags.includes("key") || tags.includes("ashaya") ||
+        tags.includes("big-dork") || tags.includes("tutor");
+    });
+    if (comboInHand.length >= 2 && mana >= 3) {
+      results.push({
+        priority: 7,
+        category: "🌙 EMERGENCE ZONE STRATEGY",
+        combo: "emergence_zone_hold",
+        headline: `Hold combo pieces for EOT — sacrifice Emergence Zone for universal flash`,
+        detail: `Emergence Zone on board: pay {1}, tap, sacrifice → all spells have flash this turn. Instead of deploying combo pieces on your main phase (vulnerable to sorcery-speed interaction), hold them for the last opponent's end step. This protects against Windfall, Wheel, board wipes, and gives opponents minimal response windows.`,
+        steps: [
+          `Pass your turn with mana open and combo pieces in hand.`,
+          `On last opponent's end step: activate Emergence Zone ({1}, tap, sacrifice).`,
+          `All spells gain flash until end of turn — cast your combo pieces at instant speed.`,
+          `Combo pieces in hand: ${comboInHand.slice(0, 3).join(", ")}.`,
+        ],
+        color: "#9b59b6",
+      });
+    }
+  }
+
   // {T}: Phase out target creature you control or an opponent controls until your next turn.
   // No mana cost — just a tap. Phased-out creatures are effectively removed from the game
   // until your next untap step (they don't untap, can't be targeted, don't count for anything).
@@ -7172,7 +7258,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // that winNow lines (e.g. cast Ashaya → immediate infinite → win) are surfaced.
   if ((!infiniteManaActive || !trueInfiniteManaActive) && isMyTurn) {
     const deckSet = deckList ? new Set(deckList) : null;
-    const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+    // #4: Cache the findReachableLines result — it's expensive (~1-2ms) and called twice
+    // (once here for the path planner, once below for the turn clock).
+    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+    const lines = _cachedFRL;
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
       const isFirst = idx === 0;
@@ -9651,7 +9740,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (isMyTurn && !infiniteManaActive) {
     try {
       const deckSet = deckList ? new Set(deckList) : null;
-      const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+      // #4: Reuse cached result from path planner if available
+      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+      const lines = _cachedFRL;
       if (lines.length > 0) {
         const best = lines[0];
         if (best.winNow)       turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
@@ -14608,24 +14699,32 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         if (!sickSet.has(c)) return true;
         const data = getCard(c);
         if (!data) return true;
-        // Remove sick creatures whose contribution is tapping or ETB-only
         if (data.tags?.some(t => ETB_ONLY_TAGS.has(t))) return false;
-        // Remove sick creatures that are mustPreExist in any combo (they need to tap to loop)
         if (data.type === "creature" && MUST_PRE_EXIST_CARDS.has(c)) return false;
         return true;
       });
+
+      // #5: Skip the expensive analyzeGameState call if hand+battlefield haven't
+      // changed since the last iteration (nothing was cast, no progress was made).
+      // This saves ~10-15ms per skipped call in the sim.
+      const stateKey = hand.length + ":" + battlefield.length + ":" + hand.slice(0,3).join(",") + ":" + battlefield.slice(-3).join(",");
       let analysis;
-      try {
-        analysis = analyzeGameState({
-          hand, battlefield: advisorBattlefield, graveyard,
-          // Pass color-split mana object so the advisor correctly distinguishes
-          // green from colorless (Sol Ring, Ancient Tomb, etc.)
-          manaAvailable: { green: manaPool.green, colorless: manaPool.colorless },
-          isMyTurn: true,
-          deckList: deckSet,
-          attachments: simState.simAttachments ?? null,
-        });
-      } catch { break; }
+      if (stateKey === simState._lastStateKey && simState._lastAnalysis) {
+        // Nothing changed — reuse previous analysis but still check for win
+        analysis = simState._lastAnalysis;
+      } else {
+        try {
+          analysis = analyzeGameState({
+            hand, battlefield: advisorBattlefield, graveyard,
+            manaAvailable: { green: manaPool.green, colorless: manaPool.colorless },
+            isMyTurn: true,
+            deckList: deckSet,
+            attachments: simState.simAttachments ?? null,
+          });
+          simState._lastStateKey = stateKey;
+          simState._lastAnalysis = analysis;
+        } catch { break; }
+      }
 
       const liveResults = (analysis.results ?? []).filter(r => !r.isSuppressed);
       const top = liveResults[0];
@@ -16759,10 +16858,15 @@ function projectHandSpeed(cards) {
   // Project T3 mana and run findReachableLines
   const t3Pool = sumManaPool(simBf);
   const t3Mana = t3Pool.green + t3Pool.colorless;
+  // #1: Account for convoke — non-sick creatures can reduce Chord of Calling cost
+  const t3Creatures = simBf.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
+  // Chord with convoke: effective mana = t3Mana + creatures (each creature taps to pay {1} or {G})
+  const hasChord = simHand.includes("Chord of Calling");
+  const effectiveT3Mana = hasChord ? t3Mana + t3Creatures : t3Mana;
   let hasComboPath = false;
   let bestTurn = 99;
   try {
-    const lines = findReachableLines(simHand, simBf, [], t3Mana, null, 0);
+    const lines = findReachableLines(simHand, simBf, [], effectiveT3Mana, null, 0);
     if (lines.length > 0) {
       hasComboPath = true;
       const best = lines[0];
