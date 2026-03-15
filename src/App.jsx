@@ -5482,8 +5482,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       results.push({
         priority: 8,
         category: "🎯 YISAN TUTOR",
-        headline: `Yisan verse ${nextVerse} → ${bestTarget.name}`,
-        detail: `Yisan currently has ${yisanCounters} verse counter${yisanCounters !== 1 ? "s" : ""}. Next activation adds 1 counter (reaching verse ${nextVerse}) and tutors a CMC ${nextVerse} creature directly onto the battlefield.${activationsNote}${doubleActivate ? ` With ${rangerName} available, you can double-activate this turn.` : ""}`,
+        headline: `Yisan verse ${nextVerse} (V${yisanCounters}→V${nextVerse}) → ${bestTarget.name}`,
+        detail: `Yisan currently has ${yisanCounters} verse counter${yisanCounters !== 1 ? "s" : ""}. Next activation adds 1 counter (reaching verse ${nextVerse}) and tutors a CMC ${nextVerse} creature directly onto the battlefield.${activationsNote}${doubleActivate ? ` With ${rangerName} available, you can double-activate this turn.` : ""}${yisanCounters === 0 ? "\n\n⚠ Yisan is at verse 0. If you've already activated Yisan, update the verse counter below the battlefield to get accurate tutor targets." : ""}`,
         steps: [
           `Pay {2}{G}, tap Yisan: add a verse counter (now at ${nextVerse}), search for a CMC ${nextVerse} creature → battlefield.`,
           `Best target: ${bestTarget.name} — ${bestTarget.reason}.`,
@@ -17631,12 +17631,17 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const currentMana = currentManaPool.total; // flat number for Goldfish mana display
   const analysis = React.useMemo(() => {
     if (hand.length + battlefield.length === 0) return null;
+    // Extract Yisan verse counter from the generic counters system
+    const yisanIdx = battlefield.indexOf("Yisan, the Wanderer Bard");
+    const yisanKey = yisanIdx >= 0 ? cardKey("Yisan, the Wanderer Bard", yisanIdx) : null;
+    const gfYisanCounters = yisanKey ? (counters[yisanKey] ?? 0) : 0;
     try {
       const result = analyzeGameState({
         hand, battlefield, graveyard,
         manaAvailable: calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments),
         isMyTurn, deckList: activeDeck ? new Set(deckCards) : null,
         attachments: untappedAttachments,
+        yisanCounters: gfYisanCounters,
       });
       // Auto-detect milestones
       if (phase === "playing") {
@@ -17651,7 +17656,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       }
       return result;
     } catch (e) { return { results: [], error: e?.message || "Unknown error", infiniteManaActive: false }; }
-  }, [hand, battlefield, graveyard, isMyTurn, tapped]);
+  }, [hand, battlefield, graveyard, isMyTurn, tapped, counters]);
 
   // ── helpers ─────────────────────────────────────────────────
   // ── UNDO ────────────────────────────────────────────────────
@@ -18019,11 +18024,47 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     });
     setAttachments(att => {
       const m = new Map();
+      const orphanedAuras = []; // auras whose enchanted land was removed
       for (const [auraI, landI] of att) {
-        if (auraI === removeIdx || landI === removeIdx) continue;
+        if (auraI === removeIdx) continue; // aura itself was removed
+        if (landI === removeIdx) {
+          // The enchanted land left — aura falls off (state-based action)
+          orphanedAuras.push(auraI > removeIdx ? auraI - 1 : auraI);
+          continue;
+        }
         const newAuraI = auraI > removeIdx ? auraI - 1 : auraI;
         const newLandI = landI > removeIdx ? landI - 1 : landI;
         m.set(newAuraI, newLandI);
+      }
+      // Schedule orphaned auras for removal (done outside this updater to avoid nested setState)
+      if (orphanedAuras.length > 0) {
+        setTimeout(() => {
+          setBattlefield(prev => {
+            const next = [...prev];
+            // Remove orphaned auras in reverse index order
+            const sorted = orphanedAuras.sort((a, b) => b - a);
+            const removed = [];
+            for (const ai of sorted) {
+              if (ai >= 0 && ai < next.length) {
+                removed.push(next[ai]);
+                next.splice(ai, 1);
+              }
+            }
+            if (removed.length > 0) {
+              setGraveyard(g => [...g, ...removed]);
+              addLog(`${removed.join(", ")}: enchanted land left — aura falls off to graveyard.`, COLORS.textDim);
+            }
+            return next;
+          });
+          // Clean up attachments for the removed auras
+          setAttachments(a2 => {
+            const m2 = new Map();
+            for (const [ai, li] of a2) {
+              if (!orphanedAuras.includes(ai)) m2.set(ai, li);
+            }
+            return m2;
+          });
+        }, 0);
       }
       return m;
     });
