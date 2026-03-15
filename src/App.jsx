@@ -14906,10 +14906,17 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
       // Track T1 dork
       if (turn === 1 && battlefield.some(c => getCard(c)?.tags?.includes("dork"))) t1Dork = true;
 
-      // Smarter sequencing: always try to cast a 1-drop dork T1 before anything else
+      // Smarter sequencing: always try to cast a 1-drop dork T1 before anything else.
+      // Also: GSZ X=0 → Dryad Arbor is a valid T1 play (costs {G}, enters as creature+elf).
       if (turn === 1 && manaPool.green >= 1 && !battlefield.some(c => getCard(c)?.tags?.includes("dork"))) {
         const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
         if (odIdx >= 0) { playCard(hand[odIdx], odIdx); manaSpent += 1; t1Dork = true; madePlay = true; continue; }
+        // Fallback: GSZ X=0 → Dryad Arbor if no literal 1-drop dork
+        const gszIdx = hand.indexOf("Green Sun's Zenith");
+        if (gszIdx >= 0 && library.includes("Dryad Arbor")) {
+          playCard("Green Sun's Zenith", gszIdx, manaPool);
+          manaSpent += 1; t1Dork = true; madePlay = true; continue;
+        }
       }
 
       // Pass sick-adjusted battlefield to advisor.
@@ -14973,7 +14980,23 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           //   (b) green mana is sufficient to cast all missing pieces sequentially
           //   (c) mustPreExist pieces were on the battlefield BEFORE this turn started
           //       (they need summoning-sickness-free taps to loop — can't be cast and loop same turn)
-          let remainingGreen = manaPool.green;
+          // Include elderUntapBonus: if Elder + an untapper (Ranger/Symbiote+elf) is on board
+          // and non-sick, the Elder+untapper sequence can generate extra mana before casting.
+          const simElderOnBoard = battlefield.includes("Argothian Elder") && !sickSet.has("Argothian Elder");
+          const simRangerOnBoard = battlefield.includes("Quirion Ranger") || battlefield.includes("Scryb Ranger");
+          const simSymbioteElf = battlefield.includes("Wirewood Symbiote") &&
+            battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder" && getCard(c)?.tags?.includes("elf"));
+          const simHasElderUntapper = simRangerOnBoard || simSymbioteElf;
+          const simYavimaya = battlefield.includes("Yavimaya, Cradle of Growth");
+          const simForestCount = battlefield.filter(c => {
+            const cd = getCard(c);
+            if (cd?.type !== "land") return false;
+            return simYavimaya || cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
+          }).length;
+          const simElderBonus = (simElderOnBoard && simHasElderUntapper && simForestCount >= 2)
+            ? (simYavimaya ? 3 : 2)
+            : 0;
+          let remainingGreen = manaPool.green + simElderBonus;
           let remainingColorless = manaPool.colorless;
           const mustPre = new Set(activeCombo.mustPreExist ?? []);
           for (const req of activeCombo.requires) {
@@ -15202,13 +15225,18 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
 
     // Completes infinite mana combo THIS turn
     if (c === "Ashaya, Soul of the Wild" && (hasRanger || hasSymbiote) && hasBigDork) score += 100;
-    if (c === "Ashaya, Soul of the Wild" && hasElder) score += 100;
+    // Ashaya + Elder only scores high if there's also an untapper (Ranger or Symbiote with an elf to bounce)
+    // — without an untapper, Elder+Ashaya is a next-turn combo only (Elder has sickness this turn)
+    const hasElderUntapper = hasRanger ||
+      (hasSymbiote && battlefield.some(c2 => c2 !== "Wirewood Symbiote" && c2 !== "Argothian Elder" && getCard(c2)?.tags?.includes("elf")));
+    if (c === "Ashaya, Soul of the Wild" && hasElder && hasElderUntapper) score += 100;
     if ((c === "Quirion Ranger" || c === "Scryb Ranger") && hasAshaya && hasBigDork) score += 95;
     if (c === "Argothian Elder" && hasAshaya && !sickSet?.has?.("Argothian Elder")) score += 95;
 
     // Win outlet with infinite mana
-    if (c === "Duskwatch Recruiter" && hasAshaya && hasRanger && hasBigDork) score += 110;
-    if (c === "Formidable Speaker" && hasAshaya && hasRanger) score += 85;
+    // Duskwatch wins with Ashaya + any ranger OR Symbiote+bigDork loop
+    if (c === "Duskwatch Recruiter" && hasAshaya && (hasRanger || (hasSymbiote && hasBigDork))) score += 110;
+    if (c === "Formidable Speaker" && hasAshaya && (hasRanger || hasSymbiote)) score += 85;
 
     // Big dorks that enable combos
     if (cd.tags?.includes("big-dork") || cd.tags?.includes("infinite-dork")) {
@@ -15383,26 +15411,35 @@ function simActivateAbilities(simState, manaPool) {
     }
   }
 
-  // Wirewood Symbiote ritual: bounce an elf to untap a big dork for +1G net.
-  // This is modeled in sumManaPool but also as an activated ability for the sim
-  // to actually perform the bounce (moving the elf to hand, untapping the dork).
+  // Wirewood Symbiote: bounce an elf to untap a big dork OR Argothian Elder.
+  // - Big-dork path: net +1G (dork re-taps for ≥2, minus the elf bounced to hand).
+  // - Elder path: bounce any non-Elder elf to untap Elder, which then untaps two lands → +mana.
+  //   This is the Symbiote+Elder sequence we detect in effectiveManaBonus (elderUntapBonus).
   // Once per turn (Symbiote's ability limit).
   if (board.has("Wirewood Symbiote") && !used.has("Symbiote")) {
+    const hasElder = board.has("Argothian Elder") && !sickSet.has("Argothian Elder");
+    // Elf available to bounce: not Symbiote, not Elder (can't bounce Elder to untap Elder)
     const elfToBounce = battlefield.find(c =>
-      getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote" &&
+      getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote" && c !== "Argothian Elder" &&
       getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 99) <= 1);
     const bigDork = battlefield.find(c =>
       getCard(c)?.tags?.includes("big-dork") && getCard(c)?.tapsFor && !sickSet.has(c));
+    // Elder path: any non-Symbiote, non-Elder elf can be bounced to untap Elder
+    const elfForElder = hasElder && battlefield.find(c =>
+      getCard(c)?.tags?.includes("elf") && c !== "Wirewood Symbiote" && c !== "Argothian Elder");
     if (elfToBounce && bigDork) {
-      // Bounce the 1-drop elf to hand, untap the big dork
+      // Standard path: bounce 1-drop elf to untap big dork
       const elfIdx = battlefield.indexOf(elfToBounce);
-      if (elfIdx >= 0) {
-        battlefield.splice(elfIdx, 1);
-        hand.push(elfToBounce);
-      }
+      if (elfIdx >= 0) { battlefield.splice(elfIdx, 1); hand.push(elfToBounce); }
       used.add("Symbiote");
-      // The mana gain is already modeled in sumManaPool; the sim effect is
-      // bouncing the elf so it can be recast for ETB triggers / elf count
+      return true;
+    } else if (elfForElder) {
+      // Elder path: bounce any elf to untap Elder, which then untaps two lands next mana calc
+      const elfIdx = battlefield.indexOf(elfForElder);
+      if (elfIdx >= 0) { battlefield.splice(elfIdx, 1); hand.push(elfForElder); }
+      used.add("Symbiote");
+      // Elder re-untap effect is captured on the next calculateSimManaPool call since
+      // Elder is now untapped and can activate again.
       return true;
     }
   }
@@ -17049,10 +17086,17 @@ function projectHandSpeed(cards) {
   if (fmIdx >= 0) {
     simBf.push(simHand.splice(fmIdx, 1)[0]);
   }
-  // Cast 1-drop dork
+  // Cast 1-drop dork — or GSZ X=0 → Dryad Arbor (creature+elf on battlefield, summoning sick but counts for elf synergies)
   if (t1Dork) {
     const dIdx = simHand.findIndex(c => getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 99) === 1);
-    if (dIdx >= 0) simBf.push(simHand.splice(dIdx, 1)[0]);
+    if (dIdx >= 0) {
+      simBf.push(simHand.splice(dIdx, 1)[0]);
+    } else if (hasGSZT1) {
+      // GSZ X=0 → Dryad Arbor: consume GSZ from hand, push Dryad Arbor (sick, but counts as elf/creature)
+      const gszIdx = simHand.indexOf("Green Sun's Zenith");
+      if (gszIdx >= 0) simHand.splice(gszIdx, 1);
+      simBf.push("Dryad Arbor"); // sick T1, untaps T2
+    }
   }
 
   // T2: estimate mana (non-sick sources)
@@ -17815,6 +17859,26 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   })();
   const currentManaPool = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
   const currentMana = currentManaPool.total; // flat number for Goldfish mana display
+  // Compute how much green is in the floating mana pool, derived from tapped permanents:
+  //   greenInPool = max(0, min(greenFromTapped, manaPool - colorlessFromTapped))
+  // This handles the case where colourless sources were tapped after green was spent
+  // (e.g. Forest → cast Sol Ring → tap Sol Ring: pool=2 colourless, greenFromTapped=1,
+  //  colorlessFromTapped=2 → greenInPool = max(0, min(1, 0)) = 0 correctly).
+  const availableGreen = (() => {
+    const bCtx = buildBoardContext(battlefield, sickCreatureNames, attachments);
+    let greenFromTapped = 0, colorlessFromTapped = 0;
+    for (const key of tapped) {
+      const lastColon = key.lastIndexOf(":");
+      const cName = key.slice(0, lastColon);
+      const cData = getCard(cName);
+      if (!cData) continue;
+      const { green, colorless } = cardManaContribution(cName, cData, bCtx, sickCreatureNames);
+      greenFromTapped += green;
+      colorlessFromTapped += colorless;
+    }
+    const greenInPool = Math.max(0, Math.min(greenFromTapped, manaPool - colorlessFromTapped));
+    return currentManaPool.green + greenInPool;
+  })();
   const analysis = React.useMemo(() => {
     if (hand.length + battlefield.length === 0) return null;
     // Extract Yisan verse counter from the generic counters system
@@ -18433,18 +18497,40 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const cardData = getCard(card);
     const type = cardData?.type;
     const cmc = cardData?.cmc ?? 0;
+    const greenPips = cardData?.greenPips ?? 0;
     pushUndo();
 
+    // ── Colour legality guard ─────────────────────────────────────────────────
+    // Reject the cast if green pips cannot be covered by available green mana.
+    // availableGreen is derived from tapped + untapped permanents at render time —
+    // see the stateless computation above (greenInPool formula).
+    if (greenPips > 0 && availableGreen < greenPips) {
+      addLog(`Cannot cast ${card} — need ${greenPips}{G} but only ${availableGreen} green available.`, COLORS.red);
+      return;
+    }
+
     // ── Auto-tap: if manaPool < cmc, tap untapped mana sources to cover cost ──
+    // Tap green sources first when the card has green pips to ensure colour is satisfied.
     // Compute effectiveTapped synchronously so pickers built later in this call see the right state.
     let effectiveTapped = new Set(tapped);
     if (cmc > 0 && manaPool < cmc) {
       const needed = cmc - manaPool;
-      // Gather untapped mana producers sorted by output descending (tap bigger sources first)
+      // Gather untapped mana producers. When the card needs green, sort green sources first.
       const untappedSources = battlefield
         .map((c, i) => ({ c, i, key: cardKey(c, i), mana: cardManaAt(c, i) }))
-        .filter(({ key, mana }) => !tapped.has(key) && mana > 0)
-        .sort((a, b) => b.mana - a.mana);
+        .filter(({ key, mana }) => !tapped.has(key) && mana > 0);
+      if (greenPips > 0) {
+        // Sort: green producers first (to satisfy pips), then by output descending
+        const ctx = buildBoardContext(battlefield, sickCreatureNames, attachments);
+        untappedSources.sort((a, b) => {
+          const aGreen = cardManaContribution(a.c, getCard(a.c) ?? {}, ctx).green > 0 ? 1 : 0;
+          const bGreen = cardManaContribution(b.c, getCard(b.c) ?? {}, ctx).green > 0 ? 1 : 0;
+          if (aGreen !== bGreen) return bGreen - aGreen; // green sources first
+          return b.mana - a.mana; // then largest output
+        });
+      } else {
+        untappedSources.sort((a, b) => b.mana - a.mana);
+      }
       let tapped_ = new Set(tapped);
       let autoMana = 0;
       const autoTapped = [];
@@ -18478,6 +18564,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           setGraveyard(prev => [...prev, ...petalsToSac.map(() => "Lotus Petal")]);
           for (const p of petalsToSac) {
             addLog(`Lotus Petal: sacrificed for {G}.`, COLORS.gold);
+            // Lotus Petal produces {G}
           }
         }
       }
@@ -23366,7 +23453,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   T{turnNumber}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", background: "#071407", border: `1px solid ${manaPool > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "hidden" }}>
-                  <button onClick={() => setManaPool(p => Math.max(0, p - 1))} style={{ background: "none", border: "none", borderRight: `1px solid ${COLORS.border}`, padding: "3px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>−</button>
+                  <button onClick={() => { setManaPool(p => Math.max(0, p - 1)); }} style={{ background: "none", border: "none", borderRight: `1px solid ${COLORS.border}`, padding: "3px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>−</button>
                   <span style={{ padding: "3px 7px", fontFamily: "'Cinzel', serif", fontSize: "10px", color: manaPool > 0 ? COLORS.green1 : COLORS.textDim }}>{manaPool}◆</span>
                   <button onClick={() => setManaPool(p => p + 1)} style={{ background: "none", border: "none", borderLeft: `1px solid ${COLORS.border}`, padding: "3px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>+</button>
                 </div>
@@ -23888,11 +23975,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           const cd = getCard(card);
                           const isLand = cd?.type === "land";
                           const cantPlay = isLand && landPlayed;
-                          // Affordability: total mana = already-tapped pool + untapped sources still available
+                          // Affordability: total mana = already-tapped pool + untapped sources still available.
+                          // Colour check: if pool already covers cost, green must come from pool.
+                          // If auto-tap will fire, untapped green sources can cover pips.
                           const totalMana = manaPool + currentMana;
                           const cmc = cd?.cmc ?? 0;
+                          const greenPips = cd?.greenPips ?? 0;
                           const gfInfinite = analysis?.infiniteManaActive ?? false;
-                          const cantAfford = !gfInfinite && !isLand && cmc > 0 && cmc > totalMana;
+                          const cantAfford = !gfInfinite && !isLand && cmc > 0 &&
+                            (cmc > totalMana || (greenPips > 0 && availableGreen < greenPips));
                           const unplayable = cantPlay || cantAfford;
                           return renderCard(card, i, "hand", {
                             onClick: () => !unplayable && castFromHand(card, i),
