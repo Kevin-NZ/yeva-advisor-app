@@ -3916,19 +3916,30 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Net-zero loops ARE valid (infinite ETB/LTB/storm even if no mana gain).
       // Quirion recast = {G}=1 → threshold 1 (any dork tap ≥1G). Scryb recast = {1}{G}=2 → threshold 2.
       const dorkThreshold = rangerRecastCost;
-      const bigDorkNO = battlefield.find(c => {
-        if (!getCard(c)?.tags?.includes("big-dork") && !getCard(c)?.tags?.includes("dork")) return false;
+      // Select the highest-output dork (not just the first one found).
+      // Prefer big-dorks over regular dorks, and higher output over lower.
+      const bigDorkNO = battlefield.reduce((best, c) => {
+        if (!getCard(c)?.tags?.includes("big-dork") && !getCard(c)?.tags?.includes("dork")) return best;
         const t = getCard(c)?.tapsFor;
-        if (typeof t === "number") return t >= dorkThreshold;
-        if (t === "elves")    return elvesOnBoard >= dorkThreshold;
-        if (t === "marwyn")   return Math.max(1, elvesOnBoard - 1) >= dorkThreshold;
-        if (t === "joraga")   return (elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2) >= dorkThreshold;
-        if (t === "creatures") return creaturesOnBoard >= dorkThreshold;
-        if (t === "devotion") return devotionOnBoard >= dorkThreshold;
-        if (t === "power")    return creaturesOnBoard >= dorkThreshold;
-        if (t === "ferocious") return true; // ferocious Fanatic always produces 4 in the loop (Ashaya tokens are 4/4)
-        return false;
-      });
+        let output = 0;
+        if (typeof t === "number") output = t;
+        else if (t === "elves")    output = elvesOnBoard;
+        else if (t === "marwyn")   output = Math.max(1, elvesOnBoard - 1);
+        else if (t === "joraga")   output = elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
+        else if (t === "creatures") output = creaturesOnBoard;
+        else if (t === "devotion") output = devotionOnBoard;
+        else if (t === "power")    output = creaturesOnBoard;
+        else if (t === "ferocious") output = 4; // Ashaya makes ferocious active
+        else output = 1;
+        if (output < dorkThreshold) return best;
+        if (!best) return { name: c, output };
+        // Prefer big-dork tagged > regular dork, then higher output
+        const bestIsBig = getCard(best.name)?.tags?.includes("big-dork") ? 1 : 0;
+        const curIsBig = getCard(c)?.tags?.includes("big-dork") ? 1 : 0;
+        if (curIsBig > bestIsBig) return { name: c, output };
+        if (curIsBig === bestIsBig && output > best.output) return { name: c, output };
+        return best;
+      }, null)?.name ?? null;
 
       const rangersOnBoard = new Set(["Quirion Ranger","Scryb Ranger"].filter(r => board.has(r)));
       const _NO_COMBO_PIECES = new Set([
@@ -3947,11 +3958,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
       if (hasRanger && bigDorkNO && hasNonRangerSacTarget && !results.some(r => r.combo === "natural_order_ashaya_win")) {
         // Rank sacrifice targets: prefer expendable dorks over combo pieces.
-        // Combo pieces to avoid sacrificing: Quirion Ranger, Scryb Ranger, Priest of Titania,
-        // Seedborn Muse, Yeva, Yisan, Temur Sabertooth, Kogla, Ashaya, Duskwatch, etc.
+        // CRITICAL: always exclude rangers (needed for the loop) and the big dork.
         const COMBO_PIECES = _NO_COMBO_PIECES;
         const sacCandidates = battlefield
-          .filter(c => getCard(c)?.type === "creature" && c !== bigDorkNO)
+          .filter(c => getCard(c)?.type === "creature" && c !== bigDorkNO && !rangersOnBoard.has(c))
           .sort((a, b) => {
             const aCombo = COMBO_PIECES.has(a) ? 1 : 0;
             const bCombo = COMBO_PIECES.has(b) ? 1 : 0;
@@ -4033,6 +4043,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           }
 
           if (isMyTurn) {
+            // Path A (NO → Speaker → Ashaya from hand) requires: NO cost (4) + Ashaya cost (5) = 9 mana.
+            // Path B (NO → Ashaya directly) requires: NO cost (4) only (Ashaya enters battlefield directly).
+            const pathACost = pathA ? 4 + 5 : 0; // NO + casting Ashaya from hand
+            const pathBCost = pathB ? 4 : 0;     // NO only (Ashaya enters directly from library)
+            const affordPathA = pathA && mana >= pathACost;
+            const affordPathB = pathB && mana >= pathBCost;
+            if (!affordPathA && !affordPathB) {
+              // Can't afford either path — demote to NEXT TURN
+              results.push({
+                priority: 10,
+                category: "⏭️ WIN NEXT TURN",
+                headline: `NEXT TURN: ${headline}`,
+                combo: "natural_order_ashaya_win",
+                detail: `Need ${pathA ? pathACost : pathBCost} mana (have ${mana}). ${detail}`,
+                steps,
+                color: "#c8a800",
+              });
+            } else {
             results.push({
               priority: 16,
               category: "⚡ CAST TO WIN",
@@ -4042,6 +4070,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
               steps,
               color: "#ff4500",
             });
+            }
           } else {
             results.push({
               priority: 15,
@@ -4412,6 +4441,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const effectiveMana = mana + convokeTap;             // mana + convoke = effective casting power
 
     // Build ranked target list based on what's castable and what's missing
+    // Role deduplication: if a functionally equivalent piece is already in hand,
+    // deprioritize searching for the same role (e.g. don't Chord for Quirion Ranger
+    // when Scryb Ranger is already in hand).
+    const RANGER_ROLE = new Set(["Quirion Ranger", "Scryb Ranger"]);
+    const hasRangerInHand = hand.some(c => RANGER_ROLE.has(c));
+    const hasRangerOnBoard = battlefield.some(c => RANGER_ROLE.has(c));
+    const UNTAP_ROLE = new Set(["Wirewood Symbiote", "Hyrax Tower Scout"]);
+    const hasUntapInHand = hand.some(c => UNTAP_ROLE.has(c));
+    const BOUNCER_ROLE = new Set(["Temur Sabertooth", "Kogla, the Titan Ape"]);
+    const hasBouncerInHand = hand.some(c => BOUNCER_ROLE.has(c));
+
     const chordTargets = [
       { name: "Duskwatch Recruiter",      xCost: 3, reason: "win condition — activate ({2}{G}) with infinite mana, looks at top 3 cards each time" },
       { name: "Quirion Ranger",           xCost: 1, reason: "infinite mana loop piece with Ashaya" },
@@ -4427,7 +4467,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Kogla, the Titan Ape",     xCost: 6, reason: "bouncer + removal, returns humans on attack" },
     // Chord costs {X}{G}{G}{G}: three mandatory green pips + X generic (paid by convoke or mana).
     // Minimum mana to cast Chord for target with CMC=X: X + 3 total (minus convoke creatures).
-    ].filter(t => !board.has(t.name) && !inHand.has(t.name) && effectiveMana >= t.xCost + 3);
+    ].filter(t => {
+      if (board.has(t.name) || inHand.has(t.name)) return false;
+      if (effectiveMana < t.xCost + 3) return false;
+      // Skip targets whose role is already covered by a card in hand or on board
+      if (RANGER_ROLE.has(t.name) && (hasRangerInHand || hasRangerOnBoard)) return false;
+      if (UNTAP_ROLE.has(t.name) && hasUntapInHand) return false;
+      if (BOUNCER_ROLE.has(t.name) && hasBouncerInHand) return false;
+      return true;
+    });
 
     if (chordTargets.length > 0) {
       const best = chordTargets[0];
@@ -20476,7 +20524,23 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               setPendingPicker({ label: `${card.toUpperCase()} — BOUNCE A FOREST TO HAND`, color: COLORS.green3,
                 items: forests.map(({c,i}) => ({ label: c, sub: "land · bounce to hand", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: forestCard, i: forestIdx }) => {
+                  // Remove forest and remap sick creature keys (index shift)
                   setBattlefield(prev => { const a=[...prev]; a.splice(forestIdx,1); return a; });
+                  // Remap sickCreatures keys to account for shifted indices
+                  setSickCreatures(prev => {
+                    const next = new Set();
+                    for (const key of prev) {
+                      const lastColon = key.lastIndexOf(":");
+                      const keyIdx = parseInt(key.slice(lastColon + 1), 10);
+                      if (keyIdx === forestIdx) continue; // removed card (shouldn't be sick, but guard)
+                      if (keyIdx > forestIdx) {
+                        next.add(key.slice(0, lastColon + 1) + (keyIdx - 1));
+                      } else {
+                        next.add(key);
+                      }
+                    }
+                    return next;
+                  });
                   setHand(prev => [...prev, forestCard]);
                   addLog(`${card}: bounced ${forestCard} to hand. Now choose a creature to untap.`, COLORS.green3);
                   // Step 2: pick a creature to untap (battlefield has changed so recalc)
@@ -20520,6 +20584,21 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 items: elves.map(({c,i}) => ({ label: c, sub: "elf · bounce to hand", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: elfCard, i: elfIdx }) => {
                   setBattlefield(prev => { const a=[...prev]; a.splice(elfIdx,1); return a; });
+                  // Remap sickCreatures keys to account for shifted indices
+                  setSickCreatures(prev => {
+                    const next = new Set();
+                    for (const key of prev) {
+                      const lastColon = key.lastIndexOf(":");
+                      const keyIdx = parseInt(key.slice(lastColon + 1), 10);
+                      if (keyIdx === elfIdx) continue;
+                      if (keyIdx > elfIdx) {
+                        next.add(key.slice(0, lastColon + 1) + (keyIdx - 1));
+                      } else {
+                        next.add(key);
+                      }
+                    }
+                    return next;
+                  });
                   setHand(prev => [...prev, elfCard]);
                   addLog(`Wirewood Symbiote: bounced ${elfCard} to hand. Now choose a creature to untap.`, COLORS.green3);
                   setPendingPicker({ label: "WIREWOOD SYMBIOTE — UNTAP A CREATURE", color: COLORS.green3,
@@ -23008,7 +23087,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           backgroundRepeat: "no-repeat",
           backgroundPosition: "center center",
           backgroundSize: "cover",
-          opacity: 0.03,
+          opacity: 0.08,
           pointerEvents: "none",
           borderRadius: "12px",
         }} />
