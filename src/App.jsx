@@ -4804,6 +4804,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // "At the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose."
   // This is a common mistake — forgetting to pay costs games.
   if (inHand.has("Summoner's Pact")) {
+    // Only advise Summoner's Pact if the player can afford the {2}{G}{G} upkeep trigger
+    // next turn. Next-upkeep mana = full battlefield production (everything untaps).
+    const nextUpkeepPool = sumManaPool(battlefield);
+    const canPayPactUpkeep = nextUpkeepPool.green >= 2 && (nextUpkeepPool.green + nextUpkeepPool.colorless) >= 4;
+    if (canPayPactUpkeep || infiniteManaActive) {
     const pactTargets = [
       { name: "Duskwatch Recruiter",      reason: "win condition with infinite mana — highest priority" },
       { name: "Quirion Ranger",           reason: "infinite mana loop piece with Ashaya" },
@@ -4833,6 +4838,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       ],
       color: "#e74c3c",
     });
+    } // end canPayPactUpkeep
   }
 
   // ---- SUMMONER'S PACT UPKEEP REMINDER ----
@@ -10539,7 +10545,12 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     { name:"Elvish Reclaimer",     finds:"land",           baseCost:1,  usable: board.has("Elvish Reclaimer"),
       note:"{T}, sacrifice a land: find any land → battlefield (tapped)", putsToBattlefield:true, constraint:"sacrifice-land", sorcerySpeed:true },
     // ── Hand spells ─────────────────────────────────────────────────────────
-    { name:"Summoner's Pact",      finds:"creature-green", baseCost:0,  usable: inHand.has("Summoner's Pact"),
+    { name:"Summoner's Pact",      finds:"creature-green", baseCost:0,  usable: inHand.has("Summoner's Pact") && (() => {
+        // Summoner's Pact requires paying {2}{G}{G} next upkeep or lose.
+        // Only allow it as a tutor option if the full battlefield mana can cover 4 mana, 2 green.
+        const nextUpkeep = sumManaPool(battlefield);
+        return nextUpkeep.green >= 2 && (nextUpkeep.green + nextUpkeep.colorless) >= 4;
+      })(),
       note:"free — pay {2}{G}{G} next upkeep or lose",          nextTurnCost:4 },
     { name:"Green Sun's Zenith",   finds:"creature-green", baseCost:"cmc+2", usable: inHand.has("Green Sun's Zenith"),
       note:"{X}{G}{G}: find green creature MV≤X → battlefield", putsToBattlefield:true },
@@ -11192,7 +11203,13 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
         && getCard(target)?.tags?.includes("elf")
         && (mana >= 3 || infiniteMana)) options.push("Elvish Harbinger (ETB → top of library next draw)");
     if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && getCard(target)?.type === "creature") options.push("Worldly Tutor");
-    if (accessible("Summoner's Pact") && getCard(target)?.type === "creature") options.push("Summoner's Pact");
+    // Summoner's Pact: only suggest if the player can afford {2}{G}{G} next upkeep.
+    // Next-upkeep mana = full battlefield production (all permanents untap).
+    if (accessible("Summoner's Pact") && getCard(target)?.type === "creature") {
+      const nextUpkeepPool = sumManaPool(battlefield ?? []);
+      const canPayPact = infiniteMana || (nextUpkeepPool.green >= 2 && (nextUpkeepPool.green + nextUpkeepPool.colorless) >= 4);
+      if (canPayPact) options.push("Summoner's Pact");
+    }
     if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 1: find creature or land)");
     if (inHand.has("Chord of Calling")) {
       const targetCmc = getCard(target)?.cmc ?? 2;
