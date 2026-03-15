@@ -101,14 +101,14 @@ const CARDS = {
   "Endurance":             { type:"creature", cmc:3, tags:["hate","flash","etb","self-protection","win-con","graveyard"] , greenPips:2},
   "Infectious Bite":       { type:"instant", cmc:2, tags:["removal","poison","win-con"] , greenPips:1},
   "Legolas's Quick Reflexes":{ type:"instant", cmc:1, tags:["utility","split-second","untap","removal"] , greenPips:1},
-  "Nature's Rhythm":       { type:"sorcery", cmc:2, tags:["tutor","sorcery","harmonize"] , role:"creature-tutor", note:"Sorcery {X, greenPips:2}{G}{G}: search your library for a creature with MV ≤ X, put it onto the battlefield. Harmonize {X}{G}{G}{G}{G}: cast from graveyard (tap creatures to reduce generic cost by their power), then exile. Effectively two creature tutors — cast normally then Harmonize once from the graveyard."},
+  "Nature's Rhythm":       { type:"sorcery", cmc:2, tags:["tutor","sorcery","harmonize"] , role:"creature-tutor", greenPips:2, note:"Sorcery {X}{G}{G}: search your library for a creature with MV ≤ X, put it onto the battlefield. Harmonize {X}{G}{G}{G}{G}: cast from graveyard (tap creatures to reduce generic cost by their power), then exile. Effectively two creature tutors — cast normally then Harmonize once from the graveyard." },
   // OTHER UTILITY
   "Yisan, the Wanderer Bard": { type:"creature", cmc:3, tags:["tutor","engine","yisan"] , greenPips:1},
   "Magus of the Candelabra": { type:"creature", cmc:1, tags:["combo","untap-lands"] , greenPips:1},
   "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure","human","fetch-synergy"] , role:"ramp-combo", greenPips:1},
   "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler","infinite-dork","haste","land-animator"] , role:"haste-combo", greenPips:1},
   "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land","haste","treefolk","land-animator"] , greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
-  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor","devotion","kicker"] , greenPips:1},
+  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor","devotion","kicker"] , greenPips:2},
   "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , greenPips:1},
   "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling","treefolk","removal","combo"] , role:"kogla-loop", greenPips:1},
   "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection","legend-protection"] , role:"legend-protector", greenPips:1, note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
@@ -148,7 +148,7 @@ const CARDS = {
   "Carpet of Flowers":     { type:"enchantment", cmc:1, tags:["ramp","enchantment","meta"], role:"meta-ramp", greenPips:1},
   "Castle Garenbrig":      { type:"land", cmc:0, tags:["land","ramp","combo","green-mana"]},
   "Bonders' Enclave":      { type:"land", cmc:0, tags:["land","draw","utility"]},
-  "Bridgeworks Battle":    { type:"sorcery", cmc:3, tags:["removal","sorcery","fight"], role:"removal", greenPips:1},
+  "Bridgeworks Battle":    { type:"sorcery", cmc:3, tags:["removal","sorcery","fight"], role:"removal", greenPips:2},
   "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], note:"{T}: Add {1}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
   "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"]},
   "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"]},
@@ -174,7 +174,7 @@ const CARDS = {
   "Insidious Fungus":      { type:"creature", cmc:1, tags:["removal","utility","fungus"], role:"removal", greenPips:1, note:"{2}, Sacrifice: Choose — destroy target artifact; OR destroy target enchantment; OR draw a card and put a land from hand onto battlefield tapped. CMC 1 ({G}). NOT a land-destroyer on ETB."},
   "Saryth, the Viper's Fang": { type:"creature", cmc:4, tags:["protection","untap","dork"], role:"protection", greenPips:2},
   "Skullwinder":           { type:"creature", cmc:3, tags:["recursion","etb","snake","politics"], role:"recursion", greenPips:1},
-  "Noxious Revival":       { type:"instant", cmc:1, tags:["recursion","graveyard","instant","free"], role:"recursion", greenPips:1},
+  "Noxious Revival":       { type:"instant", cmc:1, tags:["recursion","graveyard","instant","free"], role:"recursion", greenPips:0},
   "Emerald Charm":         { type:"instant", cmc:1, tags:["utility","untap","removal","instant"], role:"ritual", greenPips:1},
   "Warping Wail":          { type:"instant", cmc:2, tags:["utility","counter","removal","instant"], role:"interaction"},
   "Scavenging Ooze":       { type:"creature", cmc:2, tags:["hate","graveyard"], role:"hate", greenPips:1},
@@ -827,6 +827,7 @@ const COMBOS = [
     requires: ["Survival of the Fittest", "Eternal Witness"],
     priority: 7,
     type: "engine",
+    needsInfiniteMana: true, // loop only meaningful with infinite mana — each cycle costs {G}+{2}{G}
     lines: [
       "Activate Survival ({G}): discard creature X, search for Eternal Witness.",
       "Cast Eternal Witness ({2}{G}): ETB returns creature X from graveyard.",
@@ -1783,12 +1784,10 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
 
   if (data.type === "land") {
     if (card === "Gaea's Cradle" || card === "Itlimoc, Cradle of the Sun") {
-      // BUG 1 FIX: When sickSet is provided (sim context), only count non-sick creatures.
-      // Sick creatures entered this turn and can't tap — Cradle shouldn't count them
-      // because the extra mana from a higher creature count isn't actually spendable
-      // until the creature untaps next turn.
-      const cc = sickSet ? ctx.activeCreatureCount : ctx.creatureCount;
-      return { green: cc, colorless: 0 };
+      // Gaea's Cradle taps for {G} per creature you control.
+      // Summoning sickness does NOT affect whether a creature is counted — only whether
+      // it can tap. Always use total creatureCount, never activeCreatureCount.
+      return { green: ctx.creatureCount, colorless: 0 };
     }
     if (card === "Nykthos, Shrine to Nyx") {
       const g = ctx.devotion === 0 ? 0 : Math.max(1, ctx.devotion - 2);
@@ -1946,7 +1945,8 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
   // and subtract the {1} activation cost from the bonus.
   if (ctx.board.has("Deserted Temple")) {
     if (ctx.hasCradle) {
-      const cradleOutput = sickSet ? ctx.activeCreatureCount : ctx.creatureCount;
+      // Cradle counts ALL creatures regardless of summoning sickness
+      const cradleOutput = ctx.creatureCount;
       const dtBonus = Math.max(0, cradleOutput - 1); // Cradle output minus {1} activation cost
       if (dtBonus > 0) {
         green += dtBonus;
@@ -2796,7 +2796,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const castableNow = hand.filter(c => {
         const cd = getCard(c);
         if (!cd || cd.type === "land" || c === "Lotus Petal") return false;
-        return cd.cmc <= thisTurnMana && (cd.greenPips ?? 0) <= (greenFromLand + petalBonus);
+        if (cd.cmc > thisTurnMana || (cd.greenPips ?? 0) > (greenFromLand + petalBonus)) return false;
+        // Utopia Sprawl requires a Forest target — only valid if bestLand is a Forest subtype
+        if (c === "Utopia Sprawl") {
+          const bestLandCd = getCard(bestLand);
+          const isForest = bestLand === "Forest" || bestLandCd?.tags?.includes("forest") ||
+                           bestLand === "Yavimaya, Cradle of Growth";
+          if (!isForest) return false;
+        }
+        return true;
       }).sort((a, b) => {
         // Prioritize: 1-drop dorks > enchant-land ramp > fast mana > tutors > other
         const acd = getCard(a), bcd = getCard(b);
@@ -7536,8 +7544,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         steps: (() => {
           // Build assembly steps, injecting an untap note between consecutive activations
           // of the same tapping on-board tutor (e.g. Fauna Shaman used twice needs Lodge/Elixir).
+          // NOTE: Survival of the Fittest does NOT tap — its cost is {G}, discard a creature.
+          // It can be activated multiple times per turn freely.
           const TAPPING_BOARD_TUTORS = new Set([
-            "Fauna Shaman", "Survival of the Fittest", "Skyshroud Poacher",
+            "Fauna Shaman", "Skyshroud Poacher",
             "Yisan, the Wanderer Bard", "Elvish Reclaimer",
           ]);
           const lodgeOnBoard  = board.has("Wirewood Lodge");
@@ -7643,6 +7653,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Suppress disciple_freyalise_loop if disciple_loop or the bespoke block has already fired.
     if (combo.id === "disciple_freyalise_loop" &&
         results.some(r => r.combo === "disciple_loop" || r.combo === "disciple_bespoke")) continue;
+
+    // Combos flagged needsInfiniteMana only make sense when infinite mana is already active —
+    // without it the loop can't repeat and the advice is misleading.
+    if (combo.needsInfiniteMana && !infiniteManaActive) continue;
 
     if (missing.length === 0 && extras.ok) {
       // Type metadata: label, headline prefix, priority boost, color
@@ -11084,6 +11098,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     const canAfford = totalMana <= mana;
     const nextTurn  = preStatus.nextTurn;
     const stepCount = allSteps.length;
+
 
     // ── Win outlet check for infinite-mana combos ────────────────────────
     // With infinite mana, mana is no longer a constraint for the outlet search.
@@ -17673,7 +17688,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [pendingNaturalOrder, setPendingNaturalOrder] = useState(null); // { card, maxCmc } awaiting sac pick
   const [pendingGraveyardPick, setPendingGraveyardPick] = useState(null); // { card, mode:"hand"|"battlefield", filter, label }
   const [pendingHyraxUntap, setPendingHyraxUntap] = useState(false); // untap a creature on ETB
-  const [pendingImprint, setPendingImprint] = useState(null); // { moxCard } Chrome Mox imprint picker
+  const [pendingImprint, setPendingImprint] = useState(null); // { moxCard, moxIdx } Chrome Mox imprint picker
+  const [imprintedMoxes, setImprintedMoxes] = useState(new Set()); // Set of cardKey strings for imprinted Chrome Moxes
   const [pendingGenesisHydra, setPendingGenesisHydra] = useState(null); // { x } reveal top X, pick permanent ≤ CMC X
   const [pendingPicker, setPendingPicker] = useState(null); // generic picker: { label, color, items:[{label,key}], onSelect, onSkip, multi, selected }
   const [pickerSelected, setPickerSelected] = useState([]); // for multi-select pickers
@@ -17812,7 +17828,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     // Do NOT carry over the advisor's floating mana — the goldfish derives its
     // mana pool by tapping permanents. Seeding pre-floated mana would let the
     // player spend mana that isn't represented by any tapped permanent.
-    setManaPool(0);
+    setManaPool(0); setImprintedMoxes(new Set());
     setLandPlayed(false);
     setTurnNumber(1); turnRef.current = 1;
     setIsMyTurn(sit ?? true);
@@ -17838,7 +17854,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   }, [gameHistory, statsLoaded]);
 
   // ── derived analysis ────────────────────────────────────────
-  const untappedBattlefield = battlefield.filter((_, i) => !tapped.has(`${battlefield[i]}:${i}`));
+  // Exclude unimprinted Chrome Moxes from mana calculations — they produce no mana without an imprint
+  const untappedBattlefield = battlefield.filter((c, i) =>
+    !tapped.has(`${battlefield[i]}:${i}`) &&
+    !(c === "Chrome Mox" && !imprintedMoxes.has(cardKey(c, i)))
+  );
   // Remap attachment indices from original battlefield positions to untappedBattlefield positions.
   // attachments uses indices into `battlefield`; after filtering tapped cards the positions shift.
   const untappedAttachments = (() => {
@@ -17864,6 +17884,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // This handles the case where colourless sources were tapped after green was spent
   // (e.g. Forest → cast Sol Ring → tap Sol Ring: pool=2 colourless, greenFromTapped=1,
   //  colorlessFromTapped=2 → greenInPool = max(0, min(1, 0)) = 0 correctly).
+  // Chrome Mox with no imprint produces no mana — exclude it from calculations.
   const availableGreen = (() => {
     const bCtx = buildBoardContext(battlefield, sickCreatureNames, attachments);
     let greenFromTapped = 0, colorlessFromTapped = 0;
@@ -17872,6 +17893,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       const cName = key.slice(0, lastColon);
       const cData = getCard(cName);
       if (!cData) continue;
+      // Chrome Mox with no imprint produces no mana
+      if (cName === "Chrome Mox" && !imprintedMoxes.has(key)) continue;
       const { green, colorless } = cardManaContribution(cName, cData, bCtx, sickCreatureNames);
       greenFromTapped += green;
       colorlessFromTapped += colorless;
@@ -17914,7 +17937,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     undoStack.current = [
       { hand: [...hand], battlefield: [...battlefield], graveyard: [...graveyard],
         library: [...library], exile: [...exile], tapped: new Set(tapped),
-        counters: { ...counters }, manaPool, landPlayed, turnNumber: turnRef.current,
+        counters: { ...counters }, manaPool, imprintedMoxes: new Set(imprintedMoxes), landPlayed, turnNumber: turnRef.current,
         sickCreatures: new Set(sickCreatures), attachments: new Map(attachments),
         yevaTax,
         log: [...log] },
@@ -17934,6 +17957,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setTapped(snap.tapped);
     setCounters(snap.counters);
     setManaPool(snap.manaPool);
+    setImprintedMoxes(snap.imprintedMoxes ?? new Set());
     setLandPlayed(snap.landPlayed);
     setTurnNumber(snap.turnNumber);
     turnRef.current = snap.turnNumber;
@@ -17963,7 +17987,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setTurnNumber(1); turnRef.current = 1; setIsMyTurn(true); setLandPlayed(false);
     setMulliganCount(0); setLog([]); setPendingBottoms([]);
     setPhase2(null); setYevaTax(0);
-    setTapped(new Set()); setCounters({}); setManaPool(0);
+    setTapped(new Set()); setCounters({}); setManaPool(0); setImprintedMoxes(new Set());
     setDragCard(null); setDragOver(null);
     milestoneRef.current = { firstDork: null, infiniteMana: null, winCondition: null };
     replaySnapshotsRef.current = [];
@@ -18342,6 +18366,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   function cardManaAt(card, idx) {
     const data = getCard(card);
     if (!data) return 0;
+    // Chrome Mox produces no mana if it has no imprint
+    if (card === "Chrome Mox" && !imprintedMoxes.has(cardKey(card, idx))) return 0;
     const ctx = buildBoardContext(battlefield, sickCreatureNames, attachments);
     const base = cardManaContribution(card, data, ctx, sickCreatureNames);
     let total = base.green + base.colorless;
@@ -19652,8 +19678,25 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       return cd.tags?.includes("forest") || cd.tags?.includes("basic") || c === "Forest";
     });
     // T1 with a castable 1-drop dork in hand → we need mana this turn → fetch Forest, not Dryad Arbor
+    // More generally: prefer Forest whenever there's anything in hand that could be cast with
+    // the green mana a Forest provides this turn (Dryad Arbor has sickness = 0 mana this turn).
     const hasOneDrop = hand.some(c => getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 0) === 1);
-    const needsManaThisTurn = !landPlayed && turnNumber === 1 && hasOneDrop;
+    const currentPoolAfterFetch = manaPool; // fetch enters tapped so contributes 0 immediately
+    // Count mana available this turn from already-tapped + untapped non-Dryad sources
+    const untappedMana = currentManaPool.total; // from untapped battlefield (excl. Dryad)
+    const totalManaThisTurn = currentPoolAfterFetch + untappedMana;
+    const hasCastableInHand = hand.some(c => {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") return false;
+      const cmc = cd.cmc ?? 0;
+      const pips = cd.greenPips ?? 0;
+      if (cmc === 0) return false; // free spells don't need the Forest
+      // Would adding 1 green (Forest) allow casting this card?
+      const newTotal = totalManaThisTurn + 1;
+      const newGreen = currentManaPool.green + 1;
+      return newTotal >= cmc && newGreen >= pips;
+    });
+    const needsManaThisTurn = isMyTurn && hasCastableInHand;
     // Dryad Arbor wins unless we already have one or need mana urgently this turn
     const bestIdx = (dryadIdx >= 0 && !needsManaThisTurn) ? dryadIdx : forestIdx;
     if (bestIdx === -1) {
@@ -19666,7 +19709,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       const dryadNote = found === "Dryad Arbor"
         ? " (Dryad Arbor preferred — creature + elf + forest)"
         : (needsManaThisTurn && dryadIdx >= 0)
-          ? " (Forest fetched — Dryad Arbor has summoning sickness, need {G} to cast 1-drop this turn)"
+          ? " (Forest fetched — Dryad Arbor has summoning sickness, need {G} this turn to cast something)"
           : "";
       addLog(`Cracked ${card} → graveyard. Fetched ${found} → battlefield (tapped).${dryadNote}`, COLORS.green1);
       // Fetched land enters tapped; Dryad Arbor also has summoning sickness (it's a creature).
@@ -23247,6 +23290,12 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     setHand(prev => { const idx = prev.indexOf(c); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
                     setExile(prev => [...prev, c]);
                     addLog(`Chrome Mox: imprinted ${c} → exiled. Mox now taps for {G}.`, COLORS.gold);
+                    // Mark this Chrome Mox as imprinted so cardManaAt knows it produces mana
+                    setBattlefield(bf => {
+                      const moxIdx = bf.lastIndexOf("Chrome Mox");
+                      if (moxIdx >= 0) setImprintedMoxes(prev => new Set([...prev, cardKey("Chrome Mox", moxIdx)]));
+                      return bf;
+                    });
                     setPendingImprint(null);
                   }} style={{ background: "#1a1400", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: COLORS.gold, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left" }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.gold; e.currentTarget.style.background = "#241e00"; }}
