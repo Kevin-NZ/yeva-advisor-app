@@ -3054,6 +3054,67 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ── RANGER BIG DORK UNTAP ────────────────────────────────────────────
+  // When a ranger is on board with a big dork AND a Forest (tapped or not),
+  // the player can bounce the Forest to untap the big dork for massive mana.
+  // This fires even when no specific cast is "unlocked" — the mana gain itself
+  // is the value. With land drop available, replay the Forest for net = dorkOutput + 1G - 0 cost.
+  // Without land drop, net = dorkOutput - 1G (lost the Forest's mana).
+  if (isMyTurn && !infiniteManaActive && (hasQuirion || hasScryb)) {
+    const whichRanger = hasQuirion ? "Quirion Ranger" : "Scryb Ranger";
+    // Find the best big dork to untap (highest output, must already be tapped or will be after tapping)
+    const bigDorkForRanger = battlefield.reduce((best, c) => {
+      const cd = getCard(c);
+      if (!cd?.tapsFor || c === whichRanger) return best;
+      if (!(cd.tags?.includes("big-dork") || cd.tags?.includes("dork"))) return best;
+      let output = 0;
+      const t = cd.tapsFor;
+      if (typeof t === "number") output = t;
+      else if (t === "elves") output = elvesOnBoard;
+      else if (t === "marwyn") output = Math.max(1, elvesOnBoard - 1);
+      else if (t === "joraga") output = elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
+      else if (t === "creatures") output = creaturesOnBoard;
+      else if (t === "devotion") output = devotionOnBoard;
+      else if (t === "power") output = creaturesOnBoard;
+      else if (t === "ferocious") {
+        const hasPower4 = battlefield.some(x => (getCard(x)?.power ?? 0) >= 4);
+        output = hasPower4 ? 4 : 1;
+      }
+      else output = 1;
+      if (output < 3) return best; // only worth advising for significant mana gain (≥3G)
+      if (!best || output > best.output) return { name: c, output };
+      return best;
+    }, null);
+
+    if (bigDorkForRanger && forestsOnBoard >= 1) {
+      const dorkName = bigDorkForRanger.name;
+      const dorkOutput = bigDorkForRanger.output;
+      // Don't fire if the basic ranger trick already unlocked something (avoid duplicate advice)
+      const rangerTrickAlreadyFired = results.some(r => r.combo === "ranger_mana_trick");
+      if (!rangerTrickAlreadyFired) {
+        const netGain = dorkOutput + 1; // dork re-taps + replayed Forest taps
+        results.push({
+          priority: 11,
+          category: "⚡ RANGER MANA TRICK",
+          combo: "ranger_big_dork_untap",
+          headline: `${whichRanger}: bounce Forest → untap ${dorkName} for +${netGain}{G}`,
+          detail: `${whichRanger} can return a tapped Forest to your hand to untap ${dorkName}. ` +
+            `${dorkName} taps for ${dorkOutput}{G}. Since you haven't played a land yet, replay the Forest from hand → tap it for {G}. ` +
+            `Total gain: +${dorkOutput}{G} (${dorkName}) + 1{G} (replayed Forest) = +${netGain}{G}. ` +
+            `This is free — the ranger's ability costs no mana, just returns the Forest to hand.`,
+          steps: [
+            `Tap ${dorkName} for ${dorkOutput}{G} (if not already tapped).`,
+            `Activate ${whichRanger}: return tapped Forest to your hand → untap ${dorkName}.`,
+            `Play the Forest from hand as your land drop (enters untapped).`,
+            `Tap the Forest for {G}. Tap ${dorkName} again for ${dorkOutput}{G}.`,
+            `Net gain: +${netGain}{G} total.`,
+          ],
+          color: "#e67e22",
+        });
+      }
+    }
+  }
+
   // ── WIREWOOD SYMBIOTE RITUAL ─────────────────────────────────────────────
   // Symbiote bounces an elf to untap a dork for +1G net. Surface when it unlocks a cast.
   if (symbioteRitualBonus > 0 && !infiniteManaActive) {
@@ -4506,6 +4567,23 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- NATURE'S RHYTHM ----
   // Functions as a second Green Sun's Zenith that can be cast again after use.
   if (inHand.has("Nature's Rhythm") && isMyTurn) {
+    // WIN NOW: infinite mana already active — Nature's Rhythm fetches Duskwatch directly
+    if (infiniteManaActive && !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")) {
+      const nrDuskCost = 2 + 2; // X=2 + {G}{G}
+      results.push({
+        priority: 15,
+        category: "🔥 WIN NOW — NATURE'S RHYTHM",
+        headline: "Nature's Rhythm (X=2) → Duskwatch Recruiter → activate with infinite mana → WIN",
+        detail: `Infinite mana is online. Cast Nature's Rhythm for X=2 (cost {2}{G}{G}=4): put Duskwatch Recruiter directly onto the battlefield. Activate Duskwatch ({2}{G}) repeatedly — look at top 3 each time, take every creature. Assemble the full win pile (Endurance + Geier Reach Sanitarium) and mill all opponents.`,
+        steps: [
+          `Cast Nature's Rhythm with X=2 (total cost: 4 mana): find Duskwatch Recruiter → battlefield.`,
+          `Activate Duskwatch Recruiter ({2}{G}): look at top 3, reveal a creature. Repeat with infinite mana.`,
+          `Assemble win pile: Destiny Spinner (haste for creature-lands) + Endurance (shuffle protection) + Geier Reach Sanitarium (mill engine).`,
+          `Mill all opponents simultaneously. WIN.`,
+        ],
+        color: "#ff6b35",
+      });
+    }
     // WIN NOW: if Quirion/Scryb Ranger already on board + dork available → Ashaya = infinite mana
     const nrRangerOnBoard = board.has("Quirion Ranger") || board.has("Scryb Ranger");
     const nrHasTappingDork = battlefield.some(c => {
@@ -4554,7 +4632,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Quirion Ranger",        xCost: 1, reason: "infinite mana loop with Ashaya" },
       { name: "Elvish Reclaimer",      xCost: 1, reason: "land tutor" },
     ].filter(t => !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 2 || infiniteManaActive));
-    if (nrTargets.length > 0 && !nrAshayaWin) {
+    if (nrTargets.length > 0 && !nrAshayaWin && !(infiniteManaActive && !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter"))) {
       const best = nrTargets[0];
       results.push({
         priority: 7,
@@ -19565,8 +19643,24 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
   }
 
   function exportToAdvisor() {
-    onLoadState({ hand, battlefield, graveyard, mana: calculateBattlefieldMana(untappedBattlefield).total, isMyTurn });
-    onClose();
+    // Compress the current board state and open a new browser tab with it pre-loaded.
+    // The main advisor reads ?s= on mount and populates the fields.
+    const manaPool = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
+    const state = {
+      hand: [...hand],
+      battlefield: [...battlefield],
+      graveyard: [...graveyard],
+      greenMana: manaPool.green,
+      colorlessMana: manaPool.colorless,
+      isMyTurn,
+    };
+    compressState(state).then(encoded => {
+      const base = window.location.origin + window.location.pathname;
+      window.open(`${base}?s=${encoded}`, "_blank");
+      addLog("📤 Board state exported — opened in a new tab.", COLORS.blue);
+    }).catch(() => {
+      addLog("⚠ Export failed — could not compress state.", COLORS.red);
+    });
   }
 
   const runNActualCount = React.useRef(null);
@@ -21955,17 +22049,22 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           </div>
         )}
 
-        {/* ── Eladamri, Korvecdal: cast creature from library top / activate ability ── */}
+        {/* ── Eladamri, Korvecdal: cast creature from library top / cheat from hand ── */}
         {isBF && card === "Eladamri, Korvecdal" && (() => {
           const topCard = library.length > 0 ? library[0] : null;
           const topData = topCard ? getCard(topCard) : null;
           const isTopCreature = topData?.type === "creature";
           const topCmc = topData?.cmc ?? 99;
           const canCastTop = isTopCreature && manaPool >= topCmc;
-          // Activated ability: {G}, tap, tap two untapped creatures → reveal top or hand card, if creature put onto battlefield
-          const untappedCreatures = battlefield.filter((c, i) =>
-            getCard(c)?.type === "creature" && !tapped.has(cardKey(c, i)) && c !== "Eladamri, Korvecdal").length;
-          const canActivate = !isCardTapped && manaPool >= 1 && untappedCreatures >= 2;
+          // Hand cheat: {G}, tap self, tap two untapped creatures → reveal creature from hand → battlefield
+          const cost = 1;
+          const untappedCreatureList = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => {
+            const cd = getCard(c);
+            const isCreature = cd?.type === "creature" || c === "Dryad Arbor";
+            return isCreature && !tapped.has(cardKey(c,i)) && c !== "Eladamri, Korvecdal";
+          });
+          const handCreatures = hand.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
+          const canActivateHand = !isCardTapped && manaPool >= cost && untappedCreatureList.length >= 2 && handCreatures.length > 0;
           return (<>
             {topCard && (
               <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -22000,37 +22099,50 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 🌿 Cast {topCard} — need {topCmc} mana (have {manaPool})
               </div>
             )}
-            <div onClick={() => {
-              if (!canActivate) { addLog(`Eladamri: need {G} + tap self + tap 2 creatures.`, COLORS.textDim); closeContextMenu(); return; }
-              pushUndo();
-              toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
-              // Auto-tap 2 untapped creatures (smallest first)
-              const creatTargets = battlefield
-                .map((c, i) => ({ c, i, cmc: getCard(c)?.cmc ?? 0 }))
-                .filter(({ c, i }) => getCard(c)?.type === "creature" && !tapped.has(cardKey(c, i)) && c !== "Eladamri, Korvecdal")
-                .sort((a, b) => a.cmc - b.cmc)
-                .slice(0, 2);
-              setTapped(prev => {
-                const next = new Set(prev);
-                creatTargets.forEach(({ c, i }) => next.add(cardKey(c, i)));
-                return next;
-              });
-              // Reveal top — if creature, put onto battlefield
-              if (topCard && isTopCreature) {
-                setLibrary(prev => prev.slice(1));
-                setBattlefield(prev => [...prev, topCard]);
-                setSickCreatures(s => new Set([...s, `${topCard}:${battlefield.length}`]));
-                addLog(`Eladamri activated: paid {G}, tapped self + ${creatTargets.map(t => t.c).join(" + ")} → revealed ${topCard} (creature) → onto battlefield!`, COLORS.green2);
-              } else {
-                addLog(`Eladamri activated: paid {G}, tapped self + ${creatTargets.map(t => t.c).join(" + ")} → revealed ${topCard ?? "empty library"} (${topData?.type ?? "N/A"}) — not a creature, stays on top.`, COLORS.textDim);
-              }
-              closeContextMenu();
-            }} style={{ padding: "6px 14px", cursor: canActivate ? "pointer" : "default", color: canActivate ? COLORS.gold : COLORS.textDim, letterSpacing: "1px" }}
-              onMouseEnter={e => { if (canActivate) e.currentTarget.style.background = "#1a1a0a"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Activate ({'{G}'} tap + tap 2 creatures) — cheat top creature onto battlefield
-            </div>
+            {/* Hand cheat: {G}, tap self, tap 2 creatures → pick creature from hand → battlefield */}
+            {canActivateHand ? (
+              <div onClick={() => {
+                pushUndo();
+                setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+                toggleTap(card, index);
+                // Step 1: pick 2 creatures to tap
+                setPendingPicker({ label: "ELADAMRI — TAP TWO CREATURES (CHOOSE 2)", color: COLORS.gold, multi: 2,
+                  items: untappedCreatureList.map(({c,i}) => ({ label: c, sub: "untapped creature", key: `${c}:${i}`, c, i })),
+                  onSelect: (chosen) => {
+                    const arr = Array.isArray(chosen) ? chosen : [chosen];
+                    setTapped(prev => { const next = new Set(prev); arr.forEach(({c:tc,i:ti}) => next.add(cardKey(tc,ti))); return next; });
+                    // Step 2: pick a creature from hand to reveal
+                    const freshHandCreatures = hand.map((c2, i2) => ({ c: c2, i: i2 })).filter(({ c: c2 }) => getCard(c2)?.type === "creature");
+                    setPendingPicker({
+                      label: "ELADAMRI — REVEAL A CREATURE FROM HAND → BATTLEFIELD",
+                      color: COLORS.green2,
+                      items: freshHandCreatures.map(({ c: c2, i: i2 }) => ({
+                        label: c2, sub: `CMC ${getCard(c2)?.cmc ?? "?"} creature`,
+                        key: `${c2}:${i2}`, c: c2, i: i2,
+                      })),
+                      onSelect: ({ c: chosen2, i: handIdx }) => {
+                        setHand(prev => { const a = [...prev]; a.splice(handIdx, 1); return a; });
+                        goldfishAddToBattlefield(chosen2);
+                        fireETB(chosen2);
+                        addLog(`Eladamri: tapped ${arr.map(x => x.c).join(" & ")} + paid {G} → revealed ${chosen2} from hand → onto battlefield!`, COLORS.green2);
+                      },
+                      onSkip: () => addLog(`Eladamri: no creature selected from hand.`, COLORS.textDim),
+                    });
+                    setPickerSelected([]);
+                  },
+                });
+                setPickerSelected([]);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ Hand cheat ({'{G}'}, tap 2) — reveal creature from hand ({handCreatures.length})
+              </div>
+            ) : (
+              <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+                ⚡ Hand cheat ({'{G}'}, tap 2) — {isCardTapped ? "tapped" : manaPool < cost ? "need 1 mana" : untappedCreatureList.length < 2 ? "need 2 untapped creatures" : "no creatures in hand"}
+              </div>
+            )}
           </>);
         })()}
 
