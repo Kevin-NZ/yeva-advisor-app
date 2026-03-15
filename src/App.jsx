@@ -2120,6 +2120,39 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // #4: Argothian Elder + untapper mana trick.
+  // An untapper (Quirion/Scryb Ranger OR Wirewood Symbiote) can reset Elder mid-sequence,
+  // letting it untap two more lands for a second activation.
+  // Sequence: tap all lands (base mana) → Elder untaps 2 Forests → tap them (+2) →
+  //   untapper resets Elder → Elder untaps remaining Forest+land → tap Forest (+1)
+  // Net extra = +3 with Yavimaya (all lands valid Elder targets).
+  // Without Yavimaya, ≥2 basic Forests: net extra = +2 conservatively.
+  // Symbiote bounces an elf (costs one elf from board) to untap Elder — same net mana result.
+  // Requires: Elder on board, one untapper (Quirion/Scryb OR Symbiote+elf), ≥2 Forest-type lands, isMyTurn.
+  let elderUntapBonus = 0;
+  const elderOnBoard = board.has("Argothian Elder");
+  const rangerOnBoard = hasQuirion || hasScryb;
+  // Symbiote can untap Elder if there is another elf on board to bounce (not Symbiote or Elder itself)
+  const symbioteCanUntapElder = hasSymbiote && elderOnBoard &&
+    battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder" && getCard(c)?.tags?.includes("elf"));
+  const hasElderUntapper = rangerOnBoard || symbioteCanUntapElder;
+  if (elderOnBoard && hasElderUntapper && isMyTurn) {
+    const yavimayaOnBoard = board.has("Yavimaya, Cradle of Growth");
+    const forestTypeLands = battlefield.filter(c => {
+      const cd = getCard(c);
+      if (cd?.type !== "land") return false;
+      if (yavimayaOnBoard) return true;
+      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
+    }).length;
+    if (forestTypeLands >= 2) {
+      // Yavimaya: all lands are valid Elder targets → both activations reliably produce mana → +3
+      // Without Yavimaya: conservative +2 (second activation may hit a non-mana land)
+      elderUntapBonus = yavimayaOnBoard ? 3 : 2;
+    }
+  }
+  // Keep old name as alias so nrEffectiveMana reference below still compiles
+  const elderQuirionBonus = elderUntapBonus;
+
   // #3: Formidable Speaker untap trick — Speaker ETB untaps a land (including Cradle/Nykthos).
   // If Speaker is in hand and castable, and Cradle/Nykthos is on board, the Speaker's ETB
   // can untap it for a massive mana burst. Not included in base rangerManaBonus because
@@ -2130,7 +2163,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const esgInHand = hand.includes("Elvish Spirit Guide");
   const esgBonus = esgInHand ? 1 : 0;
 
-  const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus;
+  const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus + elderUntapBonus;
   // #8: Convoke bonus for Chord of Calling — each non-sick creature can tap to pay {1} or {G}
   const convokeCreatures = battlefield.filter(c => {
     const cd = getCard(c);
@@ -4590,11 +4623,27 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (c === "Quirion Ranger" || c === "Scryb Ranger") return false;
       const cd = getCard(c); return cd?.type === "creature" && (cd?.tapsFor ?? 0) > 0;
     });
-    const nrAshayaWin = nrRangerOnBoard && nrHasTappingDork &&
+    // Elder on board is itself a tapping "dork" for the Ashaya loop — count it
+    const nrElderOnBoard = board.has("Argothian Elder");
+    const nrHasDorkOrElder = nrHasTappingDork || nrElderOnBoard;
+    const nrAshayCmc = 5; // Ashaya CMC = 5, so NR X=5 costs {5}{G}{G} = 7
+    // Wirewood Symbiote can also untap Elder (bounce an elf → untap Elder).
+    // Check for Symbiote as an Elder-untapper even when no Quirion/Scryb is present.
+    const nrSymbioteUntapsElder = hasSymbiote && nrElderOnBoard &&
+      battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder" && getCard(c)?.tags?.includes("elf"));
+    const nrHasElderUntapper = nrRangerOnBoard || nrSymbioteUntapsElder;
+    // Mana check: when Elder is on board with an untapper, use elderUntapBonus (not rangerManaBonus —
+    // the Quirion/Symbiote action is consumed untapping Elder, not as an independent mana trick).
+    const nrEffectiveMana = mana + (nrElderOnBoard && nrHasElderUntapper ? elderUntapBonus : 0);
+    const nrAshayaWin = (nrRangerOnBoard || nrSymbioteUntapsElder) && nrHasDorkOrElder &&
       !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild") &&
-      (mana >= 7 || infiniteManaActive); // X=5 + {G}{G} = 7
+      (nrEffectiveMana >= nrAshayCmc + 2 || infiniteManaActive); // X=5 + {G}{G} = 7
     if (nrAshayaWin) {
-      const nrRanger = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+      // Name the untapper: prefer Ranger (named in loop), fall back to Symbiote
+      const nrUntapper = board.has("Quirion Ranger") ? "Quirion Ranger"
+                       : board.has("Scryb Ranger")   ? "Scryb Ranger"
+                       :                               "Wirewood Symbiote";
+      const nrRanger = nrUntapper; // alias used in existing string templates
       const nrDuskwatch  = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
       const nrFinale     = inHand.has("Finale of Devastation");
       const nrSpeaker    = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
@@ -4610,12 +4659,19 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : nrSpeaker
         ? "Formidable Speaker ETB finds Duskwatch Recruiter. Activate with infinite mana to draw your library."
         : "Nature's Rhythm goes to graveyard after resolving — Harmonize it (X=2, trivial cost with infinite mana) to find Duskwatch Recruiter. Draw your entire library.";
+      // Mana sequence note explaining how Elder + untapper generates the 7 needed
+      const nrElderManaNote = nrElderOnBoard && nrHasElderUntapper
+        ? nrSymbioteUntapsElder && !nrRangerOnBoard
+          ? `Argothian Elder + Wirewood Symbiote mana sequence: tap all lands (${mana} mana) → Elder untaps 2 Forests → tap them → Symbiote bounces an elf to untap Elder → Elder untaps 2 more → tap one. Reaches ${nrAshayCmc + 2} mana for Nature's Rhythm X=5.`
+          : `Argothian Elder + ${nrRanger} mana sequence: tap all lands (${mana} mana) → Elder untaps 2 Forests → tap them → ${nrRanger} bounces a Forest to untap Elder → Elder untaps 2 more → tap one. Reaches ${nrAshayCmc + 2} mana for Nature's Rhythm X=5.`
+        : null;
       results.push({
         priority: nrPriority,
         category: nrCategory,
         headline: "Nature's Rhythm (X=5) → Ashaya → infinite mana with " + nrRanger + (nrHasOutlet ? " → WIN" : ""),
-        detail: `You have ${nrRanger} and a tapping dork on board. Casting Nature's Rhythm for X=5 (cost {5}{G}{G}=7) puts Ashaya directly onto the battlefield. Ashaya makes all creatures Forests — ${nrRanger} can return a creature-Forest to untap a dork repeatedly, creating infinite mana. ${nrOutlet}`,
+        detail: `You have ${nrRanger}${nrElderOnBoard ? " + Argothian Elder" : ""} on board. Casting Nature's Rhythm for X=5 (cost {5}{G}{G}=7) puts Ashaya directly onto the battlefield. Ashaya makes all creatures Forests — ${nrRanger} can return a creature-Forest to untap a dork repeatedly, creating infinite mana. ${nrOutlet}`,
         steps: [
+          ...(nrElderManaNote ? [nrElderManaNote] : []),
           `Cast Nature's Rhythm with X=5 (total cost: 7 mana): put Ashaya, Soul of the Wild onto the battlefield.`,
           `Ashaya ETB: all your creatures become Forests in addition to their other types.`,
           `Loop: tap a dork for mana → ${nrRanger} returns that creature (now a Forest) to hand → recast it → repeat. Infinite mana.`,
@@ -16967,7 +17023,10 @@ function projectHandSpeed(cards) {
   // Hard fail: no ramp and no tutors to find ramp
   if (allDorks === 0 && fastMana === 0 && tutors === 0) return { speed: 3, t1Dork: false, manaT2: 0, hasComboPath: false };
 
-  const t1Dork = dork1 >= 1 && greenLands >= 1;
+  // GSZ at X=0 costs {G} and puts Dryad Arbor directly onto the battlefield — a real T1 play.
+  // Dryad Arbor has summoning sickness but is immediately a creature/elf for synergy counts.
+  const hasGSZT1 = cards.includes("Green Sun's Zenith") && greenLands >= 1;
+  const t1Dork = (dork1 >= 1 && greenLands >= 1) || hasGSZT1;
 
   // Simulate T1-T4 to estimate mana trajectory
   let simBf = [];
@@ -17123,7 +17182,8 @@ function gradeHandLabel(cards) {
       if (tutorRampOut) return "BORDERLINE";
       return "MULLIGAN";
     }
-    const hasT1Play = (dork1Cards.length >= 1 && greenLands >= 1) || (enchantLandRamp >= 1 && greenLands >= 1);
+    const hasGSZT1fb = cards.includes("Green Sun's Zenith") && greenLands >= 1;
+    const hasT1Play = (dork1Cards.length >= 1 && greenLands >= 1) || (enchantLandRamp >= 1 && greenLands >= 1) || hasGSZT1fb;
     if (realLands >= 2 && rampCount >= 1 && tutors >= 1 && hasT1Play) return "KEEP";
     if (realLands >= 1 && rampCount >= 1) return "BORDERLINE";
     return "MULLIGAN";
@@ -18140,6 +18200,22 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         const lastColon = key.lastIndexOf(":");
         const keyIdx = parseInt(key.slice(lastColon + 1), 10);
         if (keyIdx === removeIdx) continue; // this is the removed card — drop it
+        if (keyIdx > removeIdx) {
+          next.add(key.slice(0, lastColon + 1) + (keyIdx - 1)); // shift down
+        } else {
+          next.add(key);
+        }
+      }
+      return next;
+    });
+    // Remap tapped keys the same way — removing a card shifts all higher indices down by 1.
+    // Without this, cards that were tapped appear untapped after any removal.
+    setTapped(prev => {
+      const next = new Set();
+      for (const key of prev) {
+        const lastColon = key.lastIndexOf(":");
+        const keyIdx = parseInt(key.slice(lastColon + 1), 10);
+        if (keyIdx === removeIdx) continue; // removed card's tap state — discard
         if (keyIdx > removeIdx) {
           next.add(key.slice(0, lastColon + 1) + (keyIdx - 1)); // shift down
         } else {
@@ -19773,9 +19849,13 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     // or a fast rock off any real land).
     // enchantLandRamp already excludes Utopia Sprawl when no Forest in hand,
     // so enchantLandRamp >= 1 guarantees a castable enchant-land with a valid target.
+    // Green Sun's Zenith at X=0 costs {G} and puts Dryad Arbor directly onto the battlefield —
+    // this is a valid T1 play on any green land (creature + elf + forest for synergy).
+    const hasGSZT1 = cards.includes("Green Sun's Zenith") && greenLands >= 1;
     const hasT1Play = (dorks1 >= 1 && greenLands >= 1) ||
                       (enchantLandRamp >= 1 && greenLands >= 1) ||
-                      (rockCards.some(c => (getCard(c)?.cmc ?? 99) <= 1) && realLands >= 1);
+                      (rockCards.some(c => (getCard(c)?.cmc ?? 99) <= 1) && realLands >= 1) ||
+                      hasGSZT1;
     const allRampIsSlow = rampCount >= 1 && !hasT1Play;
 
     // ── TUTORS ───────────────────────────────────────────────────
@@ -20011,6 +20091,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       } else if (enchantLandRamp >= 1) {
         const aura = cards.find(c => getCard(c)?.tags?.includes("enchant-land"));
         notes.push(`Enchant-land T1 ✓ — ${aura} on a Forest`);
+      } else if (hasGSZT1) {
+        notes.push("T1 play ✓ — Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield. Costs {G}, doesn't use land drop. Summoning sickness applies but it's immediately a creature, elf, and Forest for synergy.");
       } else {
         const fastRock = rockCards.find(c => (getCard(c)?.cmc ?? 99) <= 1);
         if (fastRock) notes.push(`Fast rock T1 ✓ — ${fastRock}`);
@@ -20602,8 +20684,13 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Quirion Ranger / Scryb Ranger: bounce a Forest to hand → untap a creature ── */}
         {isBF && (card === "Quirion Ranger" || card === "Scryb Ranger") && (() => {
+          const yavimayaActive = battlefield.includes("Yavimaya, Cradle of Growth");
           const forests = battlefield.map((c,i) => ({c,i})).filter(({c}) => {
-            const cd = getCard(c); return cd?.type === "land" && (cd?.tags?.includes("basic") || cd?.tags?.includes("forest"));
+            const cd = getCard(c);
+            if (cd?.type !== "land") return false;
+            // Yavimaya makes ALL lands into Forests — any land is a valid bounce target
+            if (yavimayaActive) return true;
+            return cd?.tags?.includes("basic") || cd?.tags?.includes("forest");
           });
           const creatures = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature");
           if (forests.length === 0 || creatures.length === 0) return (
@@ -20618,15 +20705,21 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               setPendingPicker({ label: `${card.toUpperCase()} — BOUNCE A FOREST TO HAND`, color: COLORS.green3,
                 items: forests.map(({c,i}) => ({ label: c, sub: "land · bounce to hand", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: forestCard, i: forestIdx }) => {
+                  // Compute the updated battlefield after the forest is removed — used for step 2
+                  // to avoid a stale-closure bug where the old `battlefield` array would be read.
+                  const newBF = [...battlefield];
+                  newBF.splice(forestIdx, 1);
                   // Remove forest and remap sick creature keys (index shift)
-                  setBattlefield(prev => { const a=[...prev]; a.splice(forestIdx,1); return a; });
-                  // Remap sickCreatures keys to account for shifted indices
-                  setSickCreatures(prev => {
+                  setBattlefield(() => newBF);
+                  // Remap sickCreatures and tapped keys to account for the index shift from the splice.
+                  // Any card at index > forestIdx has shifted down by 1 — stale keys would make
+                  // those cards appear untapped / not-sick even though nothing changed for them.
+                  const remapKeySet = (prev) => {
                     const next = new Set();
                     for (const key of prev) {
                       const lastColon = key.lastIndexOf(":");
                       const keyIdx = parseInt(key.slice(lastColon + 1), 10);
-                      if (keyIdx === forestIdx) continue; // removed card (shouldn't be sick, but guard)
+                      if (keyIdx === forestIdx) continue; // removed card — drop
                       if (keyIdx > forestIdx) {
                         next.add(key.slice(0, lastColon + 1) + (keyIdx - 1));
                       } else {
@@ -20634,14 +20727,17 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       }
                     }
                     return next;
-                  });
+                  };
+                  setSickCreatures(remapKeySet);
+                  setTapped(remapKeySet);
                   setHand(prev => [...prev, forestCard]);
                   addLog(`${card}: bounced ${forestCard} to hand. Now choose a creature to untap.`, COLORS.green3);
-                  // Step 2: pick a creature to untap (battlefield has changed so recalc)
+                  // Step 2: pick a creature to untap — use newBF (post-splice) so indices are correct.
+                  // tapped has already been remapped above so newBF indices now match tapped keys.
                   setPendingPicker({ label: `${card.toUpperCase()} — UNTAP A CREATURE`, color: COLORS.green3,
-                    items: battlefield
+                    items: newBF
                       .map((bc,bi) => ({c:bc,i:bi}))
-                      .filter(({c:bc}) => getCard(bc)?.type === "creature")
+                      .filter(({c:bc}) => getCard(bc)?.type === "creature" || bc === "Dryad Arbor")
                       .map(({c:bc,i:bi}) => ({ label: bc, sub: tapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
                     onSelect: ({ c: tc, i: ti }) => {
                       setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
@@ -20677,14 +20773,19 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               setPendingPicker({ label: "WIREWOOD SYMBIOTE — BOUNCE AN ELF TO HAND", color: COLORS.green3,
                 items: elves.map(({c,i}) => ({ label: c, sub: "elf · bounce to hand", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: elfCard, i: elfIdx }) => {
-                  setBattlefield(prev => { const a=[...prev]; a.splice(elfIdx,1); return a; });
-                  // Remap sickCreatures keys to account for shifted indices
-                  setSickCreatures(prev => {
+                  // Compute post-splice battlefield inline to avoid stale-closure bug in step 2
+                  const newBF = [...battlefield];
+                  newBF.splice(elfIdx, 1);
+                  setBattlefield(() => newBF);
+                  // Remap both sickCreatures and tapped keys — removing a card at elfIdx shifts
+                  // all higher indices down by 1. Without remapping tapped, every card after the
+                  // removed elf appears untapped (its key no longer matches the tapped Set).
+                  const remapKeySet = (prev) => {
                     const next = new Set();
                     for (const key of prev) {
                       const lastColon = key.lastIndexOf(":");
                       const keyIdx = parseInt(key.slice(lastColon + 1), 10);
-                      if (keyIdx === elfIdx) continue;
+                      if (keyIdx === elfIdx) continue; // removed card — drop
                       if (keyIdx > elfIdx) {
                         next.add(key.slice(0, lastColon + 1) + (keyIdx - 1));
                       } else {
@@ -20692,13 +20793,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       }
                     }
                     return next;
-                  });
+                  };
+                  setSickCreatures(remapKeySet);
+                  setTapped(remapKeySet);
                   setHand(prev => [...prev, elfCard]);
                   addLog(`Wirewood Symbiote: bounced ${elfCard} to hand. Now choose a creature to untap.`, COLORS.green3);
                   setPendingPicker({ label: "WIREWOOD SYMBIOTE — UNTAP A CREATURE", color: COLORS.green3,
-                    items: battlefield
+                    items: newBF
                       .map((bc,bi) => ({c:bc,i:bi}))
-                      .filter(({c:bc}) => getCard(bc)?.type === "creature")
+                      .filter(({c:bc}) => getCard(bc)?.type === "creature" || bc === "Dryad Arbor")
                       .map(({c:bc,i:bi}) => ({ label: bc, sub: tapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
                     onSelect: ({ c: tc, i: ti }) => {
                       setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
@@ -23148,7 +23251,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       setPickerSelected(next);
                       if (multi > 1 && next.length === multi) { onSelect(next); setPendingPicker(null); setPickerSelected([]); }
                     } else {
-                      if (!item.disabled) { onSelect(item); setPendingPicker(null); setPickerSelected([]); }
+                      if (!item.disabled) {
+                        // Clear the picker FIRST, then fire onSelect via setTimeout so that any
+                        // chained setPendingPicker call (e.g. Quirion step 2) is not immediately
+                        // overwritten by the synchronous null that used to follow onSelect.
+                        const savedCb = onSelect;
+                        const savedItem = item;
+                        setPendingPicker(null); setPickerSelected([]);
+                        setTimeout(() => savedCb(savedItem), 0);
+                      }
                     }
                   }} style={{
                     background: isChosen ? "#1e3a1e" : "#0a1a0a",
