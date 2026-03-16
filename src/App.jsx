@@ -1991,7 +1991,7 @@ function calculateCardManaForPool(card, battlefield) {
   return green + colorless;
 }
 
-function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false }) {
+function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false }) {
   // deckList: Set of card names in the player's deck. When set, ONE PIECE AWAY advice and
   // combo suggestions are filtered to only show cards that are actually in the deck.
   // null = no filter (all cards valid, legacy behaviour).
@@ -2743,7 +2743,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // a creature. Also detect compound lines: land + Lotus Petal → enables casting ramp
   // dorks this turn or T2. This fires before the generic ramp advice so the sequencing
   // advice (land THEN Lotus THEN dork) appears with clear priority.
-  if (isMyTurn && !infiniteManaActive && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && (cd?.type === "creature" || c === "Dryad Arbor"); }).length === 0) {
+  if (isMyTurn && !infiniteManaActive && !landPlayed && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && (cd?.type === "creature" || c === "Dryad Arbor"); }).length === 0) {
     const landsToDrop = hand.filter(c => getCard(c)?.type === "land");
     const hasDryadArbor = inHand.has("Dryad Arbor");
     const hasLotusPetalInHand = inHand.has("Lotus Petal");
@@ -4916,6 +4916,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         results.push({
           priority: 4,
           category: "🌿 LAND TUTOR",
+          requiresLandDrop: true,
           headline: "Sylvan Scrying → Dryad Arbor (prefer over Forest)",
           detail: "All your priority lands are already assembled. When tutoring a basic land with Sylvan Scrying, prefer Dryad Arbor over a Forest — it produces the same {G} next turn but also enters as a 1/1 Dryad Elf creature immediately, boosting elf synergies and enabling creature-based lines.",
           steps: [
@@ -5110,6 +5111,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         results.push({
           priority: fetchPriority,
           category: "🌿 FETCH LAND",
+          requiresLandDrop: !fromBf,
           headline: `Crack ${fetchSource} → Forest (need the mana for ${urgentSpell} this turn)`,
           detail: `You need the extra {G} from a basic Forest to cast ${urgentSpell} this turn. Dryad Arbor has summoning sickness and cannot tap for mana until your next untap step — fetch a Forest instead. Consider fetching Dryad Arbor on a future fetch when mana isn't tight.`,
           steps: [
@@ -5125,6 +5127,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         results.push({
           priority: 6,
           category: "🌿 FETCH DRYAD ARBOR",
+          requiresLandDrop: !fromBf,
           headline: `Crack ${fetchSource} → Dryad Arbor (creature + elf + forest in one)`,
           detail: `Dryad Arbor is simultaneously a Forest land, a 1/1 green creature, and a Dryad Elf. You don't need the mana immediately this turn, so the summoning sickness is irrelevant — Arbor untaps next turn and provides all the same {G} production but with significant creature-based upside.`,
           steps: [
@@ -6611,6 +6614,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         results.push({
           priority: 3,
           category: "🏔️ UTILITY LAND",
+          requiresLandDrop: true,
           headline: `Play ${dl.name} — draw utility land`,
           detail: dl.desc,
           steps: [`Play ${dl.name} as your land drop.`, dl.desc],
@@ -10653,6 +10657,20 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       note:"{1}{G}: find any land → hand",                      sorcerySpeed:true },
     { name:"Archdruid's Charm",    finds:"land-forest",    baseCost:3,  usable: inHand.has("Archdruid's Charm"),
       note:"{G}{G}{G}: find Forest land → battlefield",          putsToBattlefield:true, sorcerySpeed:true },
+    // Eternal Witness: ETB retrieves any card from graveyard → hand.
+    // Usable as a tutor when EW is in hand (cast it) or on board with a bouncer (recast).
+    // It can retrieve any card type from graveyard — crucial for recursion loops.
+    ...( (inHand.has("Eternal Witness") || (board.has("Eternal Witness") &&
+          (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")))) &&
+         graveyard.length > 0
+      ? [{ name:"Eternal Witness",  finds:"creature",  baseCost: inHand.has("Eternal Witness") ? 3 : 4,
+           usable: true,
+           note: inHand.has("Eternal Witness")
+             ? "{2}{G}: ETB retrieves any card from graveyard → hand"
+             : "{2}{G} (+ bouncer cost): bounce+recast EW to retrieve any card from graveyard",
+           putsToBattlefield:false, sorcerySpeed:true,
+           graveyardTutor: true }]  // flag: this retrieves from graveyard to hand
+      : [] ),
   ];
 
   const activeTutors = TUTOR_DEFS.filter(t => t.usable);
@@ -10661,6 +10679,8 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   function tutorCanFind(t, cardName) {
     const cd = getCard(cardName);
     if (!cd) return false;
+    // Eternal Witness retrieves from graveyard — target must actually be in graveyard
+    if (t.graveyardTutor) return graveyard.includes(cardName);
     // Eldritch Evolution CMC cap: target must have CMC ≤ best sac target + 2
     if (t.maxTargetCmc !== undefined && (cd.cmc ?? 0) > t.maxTargetCmc) return false;
     switch (t.finds) {
@@ -10680,22 +10700,48 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   // Cost to use tutor T for card C
   function tutorCost(t, cardName) {
     const cmc = getCard(cardName)?.cmc ?? 0;
-    if (t.baseCost === "cmc+2") return cmc + 2;
-    if (t.baseCost === "cmc+3") return cmc + 3;
-    return t.baseCost;
+    let cost;
+    if (t.baseCost === "cmc+2") cost = cmc + 2;
+    else if (t.baseCost === "cmc+3") cost = cmc + 3;
+    else cost = t.baseCost;
+    // Chord of Calling: convoke — each non-sick creature on battlefield taps to pay {1} or {G}
+    // Subtract convokeable creatures (those already on board and not sick) from the cost.
+    // We don't track summoning sickness in the path planner, so conservatively count
+    // all pre-existing battlefield creatures as convoke-eligible.
+    if (t.name === "Chord of Calling") {
+      const convoke = battlefield.filter(c => {
+        const cd = getCard(c);
+        return cd?.type === "creature" || c === "Dryad Arbor";
+      }).length;
+      cost = Math.max(0, cost - convoke);
+    }
+    return cost;
   }
 
   // ── Pool model ─────────────────────────────────────────────────────────────
   // A Pool captures what's "available" after a sequence of steps.
   // We track: set of cards available (board+hand+fetched), mana spent, step list.
   function makePool() {
+    // Pool starts with hand + battlefield. Also include graveyard cards that are
+    // directly retrievable (Finale searches library AND graveyard; Eternal Witness
+    // in hand or on board can retrieve anything from graveyard in a subsequent step).
+    const inGrave = new Set(graveyard);
+    const ewAvailable = inHand.has("Eternal Witness") || board.has("Eternal Witness");
+    const finaleAvailable = inHand.has("Finale of Devastation");
+    // Graveyard cards "pre-accessible" without a step cost:
+    //   - Finale of Devastation can find a creature from graveyard (same step as finding from library)
+    //   - Eternal Witness can retrieve ANY card from graveyard (but costs a tutor step)
+    // We add graveyard creatures to the pool only for Finale (since EW needs its own step).
+    const graveyardForFinale = finaleAvailable
+      ? [...graveyard].filter(c => getCard(c)?.type === "creature")
+      : [];
     return {
-      have: new Set([...battlefield, ...hand]),  // cards accessible
+      have: new Set([...battlefield, ...hand, ...graveyardForFinale]),
       manaSpent: 0,
-      steps: [],       // { tutor, target, mana, note, putsToBattlefield, constraint, nextTurn }
-      nextTurnPieces: new Set(), // pieces that have summoning sickness
-      discards: 0,     // how many discard constraints fired
-      usedTutors: new Set(), // one-shot hand spells that have been consumed in this path
+      steps: [],
+      nextTurnPieces: new Set(),
+      discards: 0,
+      usedTutors: new Set(),
     };
   }
   function clonePool(p) {
@@ -10733,22 +10779,37 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         "Circle of Dreams Druid","Karametra's Acolyte","Selvala, Heart of the Wilds",
         "Wirewood Channeler","Marwyn, the Nurturer"]);
       const hasRangerOnBoard = battlefield.some(c => LOOP_RANGERS.has(c));
-      // The target being fetched is going to be a combo piece — we need a spare creature
-      // that is neither a ranger (loop engine) nor the sole big dork (mana source).
-      // Count how many big dorks are on board: if only 1, it can't be sacrificed.
       const bigDorkCount = battlefield.filter(c => BIG_DORKS.has(c)).length;
-      const validSacTargets = battlefield.filter(c => {
+      // Valid sac targets: creatures on board that aren't loop-critical,
+      // PLUS creatures in hand (we can cast then sac), PLUS dorks if there are 2+.
+      const boardSacTargets = battlefield.filter(c => {
         if (getCard(c)?.type !== "creature") return false;
-        if (LOOP_RANGERS.has(c)) return false;        // ranger needed for loop
-        if (BIG_DORKS.has(c) && bigDorkCount === 1) return false; // sole dork needed for loop
+        if (LOOP_RANGERS.has(c)) return false;
+        if (BIG_DORKS.has(c) && bigDorkCount === 1) return false;
         return true;
       });
-      if (hasRangerOnBoard && validSacTargets.length === 0) return null;
+      // Hand creatures are also valid sac targets (cast → sac same turn for Natural Order)
+      const handCreatures = [...pool.have].filter(c =>
+        !battlefield.includes(c) && getCard(c)?.type === "creature" && c !== target
+      );
+      const hasAnySacTarget = boardSacTargets.length > 0 || handCreatures.length > 0;
+      // Only block if rangers are involved (they can't be sacrificed) AND no sac fodder exists
+      if (!hasAnySacTarget) return null;
     }
     const cost = tutorCost(tutor, target);
     const np = clonePool(pool);
     np.manaSpent += cost;
     np.have.add(target);
+    // Shared Summons (creature×2): finds TWO creatures in one step. When this tutor is used
+    // to find the first target, also speculatively add the best second target from remaining
+    // needed combo pieces — simulating getting both pieces at once.
+    if (tutor.finds === "creature×2") {
+      // Find the best second target: another creature not yet in pool, from the current combo's requires
+      // We don't know the combo here, but we can grab any creature from the deck that's useful.
+      // The caller (findPathForCombo) passes 'remaining' — we can't access it here, so just
+      // mark the pool with a flag that a second creature was obtained at no extra cost.
+      np._sharedSummonsFreeCreature = true; // caller will try to add a second piece
+    }
     const step = {
       tutor: tutor.name,
       target,
@@ -11022,6 +11083,16 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
           visited.add(key);
           const np = applyStep(pool, tutor, target);
           if (!np) continue;
+          // Shared Summons (creature×2): also add the best second remaining piece for free
+          if (np._sharedSummonsFreeCreature) {
+            delete np._sharedSummonsFreeCreature;
+            const secondTarget = remaining.find(r => r !== target && tutorCanFind(tutor, r) && !np.have.has(r));
+            if (secondTarget) {
+              np.have.add(secondTarget);
+              np.steps.push({ tutor: tutor.name, target: secondTarget, mana: 0,
+                note: "Shared Summons 2nd creature (free)", putsToBattlefield: false });
+            }
+          }
           const newRemaining = remaining.filter(r => np.have.has(r) ? false : true);
           // Also remove items now covered by the new piece (e.g. Shared Summons gets 2)
           queue.push({ pool: np, remaining: newRemaining, depth: depth + 1 });
@@ -11161,13 +11232,28 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     const loopStartCost = 0; // already included in cast costs above
 
     const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost + extraHandCastCost - ashayaMidSequenceMana;
+
+    // ── Mid-sequence mana bonuses ────────────────────────────────────────────
+    // Fast mana in hand that can contribute to this turn's mana pool:
+    //   Lotus Petal (free, sac for {G}), Elvish Spirit Guide (exile for {G}).
+    //   Chrome Mox / Mox Diamond: +1 optimistically (imprint/land assumed available).
+    //   Sol Ring: +2 colorless if not already on board (costs 1 to cast → net +1 for colored, +2 total).
+    // Excludes dorks (summoning sickness — can't tap same turn they enter).
+    const fastManaBonus = hand.reduce((acc, c) => {
+      if (c === "Lotus Petal") return acc + 1;       // free {G}
+      if (c === "Elvish Spirit Guide") return acc + 1; // free {G} (exile)
+      if ((c === "Chrome Mox" || c === "Mox Diamond") && !board.has(c)) return acc + 1; // net +1 after cast cost
+      return acc;
+    }, 0);
+
     // Apply Elder's untap-two-lands bonus when Elder is already on the battlefield
     // (mustPreExist ensures it — Elder tapped as a combo participant, not newly cast).
     const elderApplies = elderBonusFRL > 0 && (
       (combo.mustPreExist ?? []).includes("Argothian Elder") ||
       ((combo.requires ?? []).includes("Argothian Elder") && board.has("Argothian Elder"))
     );
-    const effectiveManaFRL = mana + (elderApplies ? elderBonusFRL : 0);
+    const effectiveManaFRL = mana + (elderApplies ? elderBonusFRL : 0)
+      + fastManaBonus;
     const canAfford = totalMana <= effectiveManaFRL;
     const nextTurn  = preStatus.nextTurn;
     const stepCount = allSteps.length;
@@ -14602,6 +14688,42 @@ function selectBottomsFromScored(scored, bottomCount) {
 // The two were identical except calculateSimManaPool was missing Utopia Sprawl and
 // Elvish Guidance bonuses, and had a Earthcraft sick-filter bug. Both are now fixed.
 
+// Compute Argothian Elder's mana bonus for the simulator.
+// Elder's {T}: Untap two target lands — bonus = sum of the top-N land mana outputs,
+// where N = 2 (single activation) or 4 (two activations with a creature untapper),
+// minus the cost of the untapper mechanism (Quirion/Scryb bounces a forest → -1; Symbiote → 0).
+function simElderManaBonus(battlefield, sickSet = new Set()) {
+  if (!battlefield.includes("Argothian Elder")) return 0;
+  if (sickSet.has("Argothian Elder")) return 0; // sick Elder can't activate
+  const yavimaya = battlefield.includes("Yavimaya, Cradle of Growth");
+  const ctx = buildBoardContext(battlefield);
+  const validTargets = battlefield
+    .filter(c => {
+      const cd = getCard(c);
+      if (cd?.type !== "land") return false;
+      if (yavimaya) return true;
+      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
+    })
+    .map(c => {
+      const cd = getCard(c);
+      const { green, colorless } = cardManaContribution(c, cd ?? {}, ctx, sickSet);
+      return green + colorless;
+    })
+    .sort((a, b) => b - a);
+  if (validTargets.length < 2) return 0;
+  // Check for creature untapper (not sick) to allow second activation
+  const quirionUp = (battlefield.includes("Quirion Ranger") || battlefield.includes("Scryb Ranger"))
+    && !sickSet.has("Quirion Ranger") && !sickSet.has("Scryb Ranger");
+  const symbioteUp = battlefield.includes("Wirewood Symbiote") && !sickSet.has("Wirewood Symbiote")
+    && battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder"
+        && !sickSet.has(c) && getCard(c)?.tags?.includes("elf"));
+  if (quirionUp || symbioteUp) {
+    const untapCost = quirionUp ? 1 : 0; // Quirion bounces a forest; Symbiote bounces an elf
+    return Math.max(0, validTargets.slice(0, 4).reduce((s, m) => s + m, 0) - untapCost);
+  }
+  return validTargets.slice(0, 2).reduce((s, m) => s + m, 0);
+}
+
 // Returns true if there is at least one creature that can legally be sacrificed to EE/NatOrder
 // without destroying the infinite mana loop. Protects rangers and the sole big-dork.
 function simHasValidSacTarget(battlefield, sickSet = new Set()) {
@@ -14936,9 +15058,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
             landfallCount += 1;
             simFireLandfall(simState, landfallCount, 1);
           }
-          // Recompute turn mana capacity after land entered
+          // Recompute turn mana capacity after land entered — include Elder bonus
           const postLandPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
-          turnManaCapacity = postLandPool.total;
+          turnManaCapacity = postLandPool.total + simElderManaBonus(battlefield, sickSet);
           manaSpent = 0; // reset — new budget includes the land
           // Pick up any bonus mana from landfall triggers (Tireless Provisioner Treasures)
           if (simState._petalManaThisTurn > 0) {
@@ -14972,7 +15094,12 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // Calculate available mana (excluding summoning-sick creatures), split by color.
       // Pass simAttachments so Arbor Elf sees enchanted-Forest bonuses.
-      const rawPool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+      const basePool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
+      // Add Argothian Elder's untap-two-lands bonus (precise per-land calculation).
+      const elderBonus = simElderManaBonus(battlefield, sickSet);
+      const rawPool = elderBonus > 0
+        ? { green: basePool.green + elderBonus, colorless: basePool.colorless, total: basePool.total + elderBonus }
+        : basePool;
 
       // Clamp by mana budget: effective mana = min(rawPool, capacity - spent + bonus)
       // On first iteration (before land drop), turnManaCapacity = -1 → use raw pool
@@ -15074,22 +15201,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
           //   (b) green mana is sufficient to cast all missing pieces sequentially
           //   (c) mustPreExist pieces were on the battlefield BEFORE this turn started
           //       (they need summoning-sickness-free taps to loop — can't be cast and loop same turn)
-          // Include elderUntapBonus: if Elder + an untapper (Ranger/Symbiote+elf) is on board
-          // and non-sick, the Elder+untapper sequence can generate extra mana before casting.
-          const simElderOnBoard = battlefield.includes("Argothian Elder") && !sickSet.has("Argothian Elder");
-          const simRangerOnBoard = battlefield.includes("Quirion Ranger") || battlefield.includes("Scryb Ranger");
-          const simSymbioteElf = battlefield.includes("Wirewood Symbiote") &&
-            battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder" && getCard(c)?.tags?.includes("elf"));
-          const simHasElderUntapper = simRangerOnBoard || simSymbioteElf;
-          const simYavimaya = battlefield.includes("Yavimaya, Cradle of Growth");
-          const simForestCount = battlefield.filter(c => {
-            const cd = getCard(c);
-            if (cd?.type !== "land") return false;
-            return simYavimaya || cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
-          }).length;
-          const simElderBonus = (simElderOnBoard && simHasElderUntapper && simForestCount >= 2)
-            ? (simYavimaya ? 3 : 2)
-            : 0;
+          // Include elderUntapBonus: if Elder is on board and non-sick, the Elder
+          // sequence can generate extra mana before casting (see simElderManaBonus).
+          const simElderBonus = simElderManaBonus(battlefield, sickSet);
           let remainingGreen = manaPool.green + simElderBonus;
           let remainingColorless = manaPool.colorless;
           const mustPre = new Set(activeCombo.mustPreExist ?? []);
@@ -17994,7 +18108,14 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         isMyTurn, deckList: activeDeck ? new Set(deckCards) : null,
         attachments: untappedAttachments,
         yisanCounters: gfYisanCounters,
+        landPlayed,
       });
+      // Post-filter: suppress any advice that requires playing a land if we've already
+      // used our land drop this turn (T1 SETUP is already gated inside analyzeGameState;
+      // this catches fetch/utility/land-tutor results tagged requiresLandDrop).
+      if (landPlayed && result?.results) {
+        result.results = result.results.filter(r => !r.requiresLandDrop);
+      }
       // Auto-detect milestones
       if (phase === "playing") {
         const hasDork = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
