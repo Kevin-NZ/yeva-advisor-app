@@ -2136,18 +2136,34 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const symbioteCanUntapElder = hasSymbiote && elderOnBoard &&
     battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder" && getCard(c)?.tags?.includes("elf"));
   const hasElderUntapper = rangerOnBoard || symbioteCanUntapElder;
-  if (elderOnBoard && hasElderUntapper && isMyTurn) {
+  if (elderOnBoard && isMyTurn) {
     const yavimayaOnBoard = board.has("Yavimaya, Cradle of Growth");
-    const forestTypeLands = battlefield.filter(c => {
-      const cd = getCard(c);
-      if (cd?.type !== "land") return false;
-      if (yavimayaOnBoard) return true;
-      return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
-    }).length;
-    if (forestTypeLands >= 2) {
-      // Yavimaya: all lands are valid Elder targets → both activations reliably produce mana → +3
-      // Without Yavimaya: conservative +2 (second activation may hit a non-mana land)
-      elderUntapBonus = yavimayaOnBoard ? 3 : 2;
+    // Gather all valid Elder untap targets — forest-type lands (or all lands with Yavimaya).
+    // Sort by mana output descending to pick the best targets.
+    const _elderCtx = buildBoardContext(battlefield);
+    const elderTargets = battlefield
+      .filter(c => {
+        const cd = getCard(c);
+        if (cd?.type !== "land") return false;
+        if (yavimayaOnBoard) return true;
+        return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
+      })
+      .map(c => {
+        const cd = getCard(c);
+        const { green, colorless } = cardManaContribution(c, cd, _elderCtx);
+        return green + colorless;
+      })
+      .sort((a, b) => b - a); // best targets first
+    if (hasElderUntapper) {
+      // With Quirion/Scryb/Symbiote: Elder can activate twice.
+      // Quirion/Scryb bounces a Forest to untap Elder (loses that land's tap) → cost -1.
+      // Wirewood Symbiote bounces an elf (not a land) → cost 0.
+      const untapCost = rangerOnBoard ? 1 : 0;
+      const top4 = elderTargets.slice(0, 4).reduce((s, m) => s + m, 0);
+      elderUntapBonus = Math.max(0, top4 - untapCost);
+    } else {
+      // Single activation: top-2 land outputs
+      elderUntapBonus = elderTargets.slice(0, 2).reduce((s, m) => s + m, 0);
     }
   }
   // Keep old name as alias so nrEffectiveMana reference below still compiles
@@ -7498,7 +7514,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const deckSet = deckList ? new Set(deckList) : null;
     // #4: Cache the findReachableLines result — it's expensive (~1-2ms) and called twice
     // (once here for the path planner, once below for the turn clock).
-    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters);
     const lines = _cachedFRL;
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
@@ -9985,7 +10001,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     try {
       const deckSet = deckList ? new Set(deckList) : null;
       // #4: Reuse cached result from path planner if available
-      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, mana, deckSet, yisanCounters);
+      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters);
       const lines = _cachedFRL;
       if (lines.length > 0) {
         const best = lines[0];
@@ -10519,6 +10535,45 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   const elvesNow     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creaturesNow = battlefield.filter(c => getCard(c)?.type === "creature").length;
   const devotionNow  = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
+
+  // ── Argothian Elder mana bonus ─────────────────────────────────────────────
+  // Elder's {T}: Untap two target lands — tap Elder, untap 2 lands, retap them.
+  // With a creature untapper (Quirion/Scryb Ranger or Wirewood Symbiote + elf target),
+  // Elder can activate twice: bonus = top-4 land outputs - 1 (cost of Quirion's Forest bounce).
+  // Without an untapper: single activation = top-2 land outputs.
+  const elderOnBoardFRL = board.has("Argothian Elder");
+  const yavimayaOnBoardFRL = board.has("Yavimaya, Cradle of Growth");
+  const quirionOnBoardFRL = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+  const symbioteElderFRL = board.has("Wirewood Symbiote") &&
+    battlefield.some(c => c !== "Wirewood Symbiote" && c !== "Argothian Elder" && getCard(c)?.tags?.includes("elf"));
+  const hasElderUntapperFRL = quirionOnBoardFRL || symbioteElderFRL;
+  let elderBonusFRL = 0;
+  if (elderOnBoardFRL) {
+    const _frlCtx = buildBoardContext(battlefield);
+    const elderTargetsFRL = battlefield
+      .filter(c => {
+        const cd = getCard(c);
+        if (cd?.type !== "land") return false;
+        if (yavimayaOnBoardFRL) return true;
+        return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") || c === "Forest";
+      })
+      .map(c => {
+        const cd = getCard(c);
+        const { green, colorless } = cardManaContribution(c, cd ?? {}, _frlCtx);
+        return green + colorless;
+      })
+      .sort((a, b) => b - a);
+    if (hasElderUntapperFRL) {
+      // Two activations: top-4 outputs.
+      // Quirion/Scryb bounces a Forest to hand (loses that land's tap this turn) → -1.
+      // Wirewood Symbiote bounces an elf (not a land) → no mana loss.
+      const untapCost = quirionOnBoardFRL ? 1 : 0;
+      elderBonusFRL = Math.max(0, elderTargetsFRL.slice(0, 4).reduce((s, m) => s + m, 0) - untapCost);
+    } else {
+      // Single activation: top-2 outputs
+      elderBonusFRL = elderTargetsFRL.slice(0, 2).reduce((s, m) => s + m, 0);
+    }
+  }
 
   // ── Tutor registry ─────────────────────────────────────────────────────────
   // Each entry: { name, finds, baseCost, usable, putsToBattlefield, constraint,
@@ -11106,7 +11161,14 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     const loopStartCost = 0; // already included in cast costs above
 
     const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost + extraHandCastCost - ashayaMidSequenceMana;
-    const canAfford = totalMana <= mana;
+    // Apply Elder's untap-two-lands bonus when Elder is already on the battlefield
+    // (mustPreExist ensures it — Elder tapped as a combo participant, not newly cast).
+    const elderApplies = elderBonusFRL > 0 && (
+      (combo.mustPreExist ?? []).includes("Argothian Elder") ||
+      ((combo.requires ?? []).includes("Argothian Elder") && board.has("Argothian Elder"))
+    );
+    const effectiveManaFRL = mana + (elderApplies ? elderBonusFRL : 0);
+    const canAfford = totalMana <= effectiveManaFRL;
     const nextTurn  = preStatus.nextTurn;
     const stepCount = allSteps.length;
 
@@ -19288,7 +19350,7 @@ if (card === "Elvish Harbinger") {
     });
     addLog(`Elvish Harbinger ETB → ${chosen} on top of library. Library shuffled.`, COLORS.green2);
   });
-  setShowTutor(true); setTutorQuery("elf");
+  setShowTutor(true); setTutorQuery("");
   setTimeout(() => tutorInputRef.current?.focus(), 50);
   addLog(`Elvish Harbinger ETB — search for any Elf card → top of library.`, COLORS.green2);
 }
@@ -21146,7 +21208,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 fireETB(chosen);
                 addLog(`Skyshroud Poacher → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
               });
-              setShowTutor(true); setTutorQuery("elf");
+              setShowTutor(true); setTutorQuery("");
               setTimeout(() => tutorInputRef.current?.focus(), 50);
               addLog(`Skyshroud Poacher: paid {3}{G}, tapped — search for an Elf.`, COLORS.purple);
               closeContextMenu();
@@ -23902,7 +23964,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       setHand(prev => [...prev, chosen]);
                       addLog(`Nissa, Resurgent Animist landfall → ${chosen} → hand. Library shuffled.`, COLORS.green3);
                     });
-                    setShowTutor(true); setTutorQuery("elf");
+                    setShowTutor(true); setTutorQuery("");
                     setTimeout(() => tutorInputRef.current?.focus(), 50);
                     addLog(`Nissa landfall triggered — search for an Elf or Elemental.`, COLORS.green3);
                   }} style={{ ...btnStyle(COLORS.green3), background: "#0a1e0a" }}
