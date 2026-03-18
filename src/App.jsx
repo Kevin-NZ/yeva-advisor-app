@@ -355,6 +355,31 @@ const COMBOS = [
       "Repeat for infinite green mana.",
     ]
   },
+  // ── 6b. Earthcraft + Ashaya + Quirion Ranger + Eternal Witness (no Yavimaya) ──
+  {
+    id: "earthcraft_ashaya_quirion_forest",
+    name: "Earthcraft + Ashaya + Quirion Ranger + Eternal Witness + Forest",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger", "Eternal Witness"],
+    description: "Infinite mana without Yavimaya. Ashaya makes all creatures Forest lands. " +
+      "Summoner's Pact finds Witness, Witness ETB retrieves Pact, Pact finds Quirion. " +
+      "Earthcraft taps sick Witness to untap a Forest, paying for Quirion. " +
+      "Quirion + Witness + Earthcraft + Forest = infinite mana loop.",
+    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger", "Eternal Witness"],
+    mustPreExist: [],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "1. Cast Summoner's Pact → find Eternal Witness (free, pay {2}{G}{G} next upkeep).",
+      "2. Cast Eternal Witness ({2}{G}) — ETB retrieves Summoner's Pact from graveyard.",
+      "3. Cast Summoner's Pact → find Quirion Ranger (free, pay {2}{G}{G} next upkeep).",
+      "4. Earthcraft: tap Eternal Witness (has summoning sickness but Earthcraft bypasses it) → untap a Forest → tap Forest for {G}. Cast Quirion Ranger ({G}).",
+      "5. You now have infinite mana: Quirion Ranger bounces itself (a Forest via Ashaya) → untaps Witness → tap Witness ({G}) → Earthcraft taps Quirion → untap Forest → tap Forest ({G}) → recast Quirion ({G}) → net +{G} per loop.",
+      "6. Bounce Witness with Quirion Ranger (Witness is a Forest via Ashaya — valid bounce target).",
+      "7. Cast Eternal Witness ({2}{G} — free with infinite mana) — ETB retrieves Summoner's Pact.",
+      "8. Cast Summoner's Pact → find Duskwatch Recruiter (free).",
+      "9. Cast Duskwatch Recruiter ({1}{G}) and activate with infinite mana to draw your entire library → WIN.",
+    ]
+  },
   // ── 6. Magus of the Candelabra + Ashaya + Dork/Land (≥3 mana) ─────────
   {
     id: "magus_ashaya",
@@ -1881,6 +1906,13 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     return { green: 0, colorless: 0 };
   }
 
+  // Ashaya, Soul of the Wild: all nontoken creatures become Forest lands → tap for {G}.
+  // Applies to any creature not already handled as dork/big-dork above.
+  if (data.type === "creature" && ctx.board.has("Ashaya, Soul of the Wild")) {
+    if (sickSet && sickSet.has(card)) return { green: 0, colorless: 0 };
+    return { green: 1, colorless: 0 };
+  }
+
   return { green: 0, colorless: 0 };
 }
 
@@ -1922,10 +1954,27 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
     if (ctx.board.has("Elvish Guidance")) green += Math.max(0, ctx.elves - 1);
   }
 
-  // Earthcraft: each non-sick creature taps to untap a basic land
-  if (ctx.board.has("Earthcraft")) {
+  // Earthcraft: {T}: tap any creature you control → untap target basic land.
+  // IMPORTANT: Earthcraft's tap ability can target ANY creature, including sick ones.
+  // Summoning sickness only prevents a creature's own {T} abilities — Earthcraft's
+  // ability is on the enchantment, so it can tap newly-cast creatures immediately.
+  // Without Ashaya: non-dork creatures produce 0 mana directly; Earthcraft gives +1G
+  // by letting them untap a basic Forest (net +1G per creature used, up to forest count).
+  // With Ashaya: all creatures already tap for {G} as Forests via cardManaContribution.
+  // Using them via Earthcraft nets 0 (trade 1G creature tap for 1G forest re-tap = no gain).
+  // Only grant the Earthcraft bonus when Ashaya is NOT on board.
+  if (ctx.board.has("Earthcraft") && !ctx.board.has("Ashaya, Soul of the Wild")) {
     const untapTargets = ctx.hasYavimaya ? ctx.landCount : ctx.basicForests;
-    green += Math.min(ctx.activeCreatures.length, untapTargets);
+    // Use ALL creatures including sick ones — Earthcraft bypasses summoning sickness.
+    const allCreatures = battlefield.filter(c => {
+      const cd = getCard(c);
+      return cd?.type === "creature" || c === "Dryad Arbor";
+    });
+    const nonDorkCreatures = allCreatures.filter(c => {
+      const cd = getCard(c);
+      return !cd?.tags?.includes("dork") && !cd?.tags?.includes("big-dork");
+    }).length;
+    green += Math.min(nonDorkCreatures, untapTargets);
   }
 
   // SIM GROUP 5: Leyline of Abundance: whenever you tap a creature for mana, add {G}.
@@ -10606,11 +10655,13 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     // ── Hand spells ─────────────────────────────────────────────────────────
     { name:"Summoner's Pact",      finds:"creature-green", baseCost:0,  usable: inHand.has("Summoner's Pact") && (() => {
         // Summoner's Pact requires paying {2}{G}{G} next upkeep or lose.
-        // Only allow it as a tutor option if the full battlefield mana can cover 4 mana, 2 green.
+        // Require at least 2 green mana from the battlefield (for the {G}{G} pips).
+        // The {2} generic can come from any source including the creature just found.
+        // Don't check for 4 total here — after getting infinite mana the upkeep is trivial.
         const nextUpkeep = sumManaPool(battlefield);
-        return nextUpkeep.green >= 2 && (nextUpkeep.green + nextUpkeep.colorless) >= 4;
+        return nextUpkeep.green >= 2;
       })(),
-      note:"free — pay {2}{G}{G} next upkeep or lose",          nextTurnCost:4 },
+      note:"free — pay {2}{G}{G} next upkeep or lose", putsToBattlefield: true, nextTurnCost:4 },
     { name:"Green Sun's Zenith",   finds:"creature-green", baseCost:"cmc+2", usable: inHand.has("Green Sun's Zenith"),
       note:"{X}{G}{G}: find green creature MV≤X → battlefield", putsToBattlefield:true },
     { name:"Nature's Rhythm",      finds:"creature",       baseCost:"cmc+2", usable: inHand.has("Nature's Rhythm"),
@@ -10659,10 +10710,16 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       note:"{G}{G}{G}: find Forest land → battlefield",          putsToBattlefield:true, sorcerySpeed:true },
     // Eternal Witness: ETB retrieves any card from graveyard → hand.
     // Usable as a tutor when EW is in hand (cast it) or on board with a bouncer (recast).
-    // It can retrieve any card type from graveyard — crucial for recursion loops.
+    // Also usable when EW is NOT yet in hand but could be found by another tutor (handled in BFS).
+    // Graveyard check: real graveyard has cards, OR hand has one-shot tutors that resolve to
+    // graveyard mid-path (e.g. Summoner's Pact → EW → EW retrieves Pact from graveyard).
     ...( (inHand.has("Eternal Witness") || (board.has("Eternal Witness") &&
           (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")))) &&
-         graveyard.length > 0
+         (graveyard.length > 0 || hand.some(c => {
+           const cd = getCard(c);
+           return cd && !cd.tags?.includes("dork") && !cd.tags?.includes("land") &&
+                  cd.type !== "land" && cd.type !== "creature"; // spells that resolve to graveyard
+         }))
       ? [{ name:"Eternal Witness",  finds:"creature",  baseCost: inHand.has("Eternal Witness") ? 3 : 4,
            usable: true,
            note: inHand.has("Eternal Witness")
@@ -10676,11 +10733,14 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   const activeTutors = TUTOR_DEFS.filter(t => t.usable);
 
   // ── Can tutor T find card C? ───────────────────────────────────────────────
-  function tutorCanFind(t, cardName) {
+  function tutorCanFind(t, cardName, poolGraveyard = null) {
     const cd = getCard(cardName);
     if (!cd) return false;
-    // Eternal Witness retrieves from graveyard — target must actually be in graveyard
-    if (t.graveyardTutor) return graveyard.includes(cardName);
+    // Eternal Witness retrieves from graveyard — target must be in the real graveyard
+    // OR in the pool's mid-path graveyard (spells that resolved and went to graveyard during this path)
+    if (t.graveyardTutor) {
+      return graveyard.includes(cardName) || (poolGraveyard?.has(cardName) ?? false);
+    }
     // Eldritch Evolution CMC cap: target must have CMC ≤ best sac target + 2
     if (t.maxTargetCmc !== undefined && (cd.cmc ?? 0) > t.maxTargetCmc) return false;
     switch (t.finds) {
@@ -10742,6 +10802,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       nextTurnPieces: new Set(),
       discards: 0,
       usedTutors: new Set(),
+      usedGraveyard: new Set(), // one-shot hand spells that resolved → now in graveyard mid-path
     };
   }
   function clonePool(p) {
@@ -10752,6 +10813,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       nextTurnPieces: new Set(p.nextTurnPieces),
       discards: p.discards,
       usedTutors: new Set(p.usedTutors),
+      usedGraveyard: new Set(p.usedGraveyard ?? []),
     };
   }
 
@@ -10769,7 +10831,10 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       "Skyshroud Poacher", "Elvish Reclaimer", "Formidable Speaker",
     ]);
     if (!ON_BOARD_REUSABLE.has(tutor.name) && pool.usedTutors.has(tutor.name)) {
-      return null; // this hand spell was already consumed in this path
+      // Exception: if this tutor was retrieved back into the pool by Eternal Witness,
+      // it's playable again — remove it from usedTutors for this path check.
+      const retrievedByEW = pool.have.has(tutor.name) && pool.usedGraveyard.has(tutor.name);
+      if (!retrievedByEW) return null; // this hand spell was already consumed in this path
     }
     // Sacrifice-constraint tutors (Natural Order, Eldritch Evolution) need a non-loop-piece
     // sac target. Sacrificing a ranger or the only big dork breaks the infinite mana loop.
@@ -10800,6 +10865,34 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     const np = clonePool(pool);
     np.manaSpent += cost;
     np.have.add(target);
+    // Eternal Witness ETB: when EW is tutored to hand or battlefield, it immediately
+    // retrieves any card from the graveyard (real graveyard + mid-path usedGraveyard).
+    // Add the best retrievable card to the pool now, simulating EW's ETB.
+    // This enables chains like: Pact→EW→EW retrieves Pact→Pact→Quirion.
+    if (target === "Eternal Witness") {
+      const ewGraveyard = [...graveyard, ...np.usedGraveyard];
+      // Pick the most useful card EW can retrieve (prioritise tutors, then combo pieces)
+      const TUTOR_PRIORITY_EW = new Set([
+        "Summoner's Pact","Worldly Tutor","Natural Order","Green Sun's Zenith",
+        "Chord of Calling","Finale of Devastation","Eldritch Evolution","Nature's Rhythm",
+      ]);
+      const retrieved = ewGraveyard.find(c => TUTOR_PRIORITY_EW.has(c) && !np.have.has(c))
+        ?? ewGraveyard.find(c => !np.have.has(c));
+      if (retrieved) {
+        np.have.add(retrieved);
+        np.steps.push({
+          tutor: "Eternal Witness",
+          target: retrieved,
+          mana: 0,
+          note: "ETB: retrieve from graveyard → hand",
+          putsToBattlefield: false,
+          isExtra: true,
+          label: `EW ETB retrieves ${retrieved}`,
+        });
+        // If retrieved card is a one-shot tutor, add it to usedGraveyard when it eventually resolves
+        // (the BFS will use it in a subsequent step)
+      }
+    }
     // Shared Summons (creature×2): finds TWO creatures in one step. When this tutor is used
     // to find the first target, also speculatively add the best second target from remaining
     // needed combo pieces — simulating getting both pieces at once.
@@ -10827,9 +10920,15 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     }
     np.steps.push(step);
     if (tutor.constraint === "discard") np.discards++;
-    // Mark one-shot hand tutors as consumed so they can't be reused in this path
+    // Mark one-shot hand tutors as consumed so they can't be reused in this path.
+    // Also add them to usedGraveyard — they resolve and go to the graveyard,
+    // making them retrievable by Eternal Witness in a subsequent step.
     if (!ON_BOARD_REUSABLE.has(tutor.name)) {
       np.usedTutors.add(tutor.name);
+      if (inHand.has(tutor.name)) np.usedGraveyard.add(tutor.name);
+      // If this tutor was retrieved from graveyard by EW and is now being used again,
+      // remove it from usedGraveyard so it can't be retrieved a third time.
+      if (pool.usedGraveyard.has(tutor.name)) np.usedGraveyard.delete(tutor.name);
     }
     return np;
   }
@@ -10858,9 +10957,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         // Try to find one via remaining tutors
         const found = candidates.find(c =>
           !pool.have.has(c) && inDeckFn(c) &&
-          availableTutors.some(t => t.usable && tutorCanFind(t, c)));
+          availableTutors.some(t => t.usable && tutorCanFind(t, c, pool.usedGraveyard)));
         if (!found) return null; // none findable
-        const tutor = availableTutors.find(t => t.usable && tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => t.usable && tutorCanFind(t, found, pool.usedGraveyard));
         const isLand = getCard(found)?.type === "land";
         extraSteps.push({
           tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
@@ -10894,9 +10993,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
           "Selvala, Heart of the Wilds","Karametra's Acolyte","Wirewood Channeler","Marwyn, the Nurturer"]
           .filter(c => !pool.have.has(c) && inDeckFn(c));
         const found = candidates.find(c =>
-          availableTutors.some(t => t.usable && tutorCanFind(t, c)));
+          availableTutors.some(t => t.usable && tutorCanFind(t, c, pool.usedGraveyard)));
         if (!found) return null; // can't satisfy
-        const tutor = availableTutors.find(t => t.usable && tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => t.usable && tutorCanFind(t, found, pool.usedGraveyard));
         extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
           isExtra: true, label: `big dork (≥${min} mana)` });
@@ -10909,9 +11008,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       const hasBouncer = pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape");
       if (!hasBouncer && depth < 3) {
         const bouncers = ["Temur Sabertooth","Kogla, the Titan Ape"].filter(c => !pool.have.has(c) && inDeckFn(c));
-        const found = bouncers.find(c => availableTutors.some(t => tutorCanFind(t, c)));
+        const found = bouncers.find(c => availableTutors.some(t => tutorCanFind(t, c, pool.usedGraveyard)));
         if (!found) return null;
-        const tutor = availableTutors.find(t => tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => tutorCanFind(t, found, pool.usedGraveyard));
         extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, isExtra: true, label: "bouncer" });
         extraMana += tutorCost(tutor, found);
@@ -10923,9 +11022,9 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       const rangers = ["Quirion Ranger","Scryb Ranger"];
       const hasRanger = rangers.some(r => pool.have.has(r));
       if (!hasRanger && depth < 3) {
-        const found = rangers.find(c => !pool.have.has(c) && inDeckFn(c) && availableTutors.some(t => tutorCanFind(t, c)));
+        const found = rangers.find(c => !pool.have.has(c) && inDeckFn(c) && availableTutors.some(t => tutorCanFind(t, c, pool.usedGraveyard)));
         if (!found) return null;
-        const tutor = availableTutors.find(t => tutorCanFind(t, found));
+        const tutor = availableTutors.find(t => tutorCanFind(t, found, pool.usedGraveyard));
         extraSteps.push({ tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, isExtra: true, label: "ranger" });
         extraMana += tutorCost(tutor, found);
@@ -11018,6 +11117,12 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       if (elvesNow < combo.needsMinElves) return null;
     }
 
+    // needsMinCreatures: need at least N total creatures on board (beyond the named requires)
+    // Used by earthcraft_ashaya_quirion_forest which needs a second creature for the loop
+    if (combo.needsMinCreatures) {
+      if (creaturesNow < combo.needsMinCreatures) return null;
+    }
+
     return { extraSteps, extraMana };
   }
 
@@ -11034,7 +11139,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       if (board.has(r)) continue; // fine
       if (!pool.have.has(r)) {
         // Need to tutor for it — it'll have summoning sickness
-        const tutor = activeTutors.find(t => tutorCanFind(t, r) && inDeckFn(r));
+        const tutor = activeTutors.find(t => tutorCanFind(t, r, pool.usedGraveyard) && inDeckFn(r));
         if (!tutor) return null; // can't get this piece at all
         preSteps.push({ tutor: tutor.name, target: r, mana: tutorCost(tutor, r),
           note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
@@ -11077,7 +11182,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       // Try to resolve each remaining piece
       for (const target of remaining) {
         for (const tutor of activeTutors) {
-          if (!tutorCanFind(tutor, target)) continue;
+          if (!tutorCanFind(tutor, target, pool.usedGraveyard)) continue;
           const key = `${depth}:${tutor.name}:${target}`;
           if (visited.has(key)) continue;
           visited.add(key);
@@ -11086,7 +11191,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
           // Shared Summons (creature×2): also add the best second remaining piece for free
           if (np._sharedSummonsFreeCreature) {
             delete np._sharedSummonsFreeCreature;
-            const secondTarget = remaining.find(r => r !== target && tutorCanFind(tutor, r) && !np.have.has(r));
+            const secondTarget = remaining.find(r => r !== target && tutorCanFind(tutor, r, np.usedGraveyard) && !np.have.has(r));
             if (secondTarget) {
               np.have.add(secondTarget);
               np.steps.push({ tutor: tutor.name, target: secondTarget, mana: 0,
@@ -11122,22 +11227,25 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       outlet: "Duskwatch Recruiter via Harmonize",
       steps: ["Nature's Rhythm is now in graveyard — Harmonize it (X=2, {2}{G}{G}{G}{G}) to find Duskwatch Recruiter → battlefield."],
       note: "Harmonize Nature's Rhythm → Duskwatch" };
-    // Filter tutors: exclude one-shot hand spells already consumed assembling infinite mana
+    // Filter tutors: exclude one-shot hand spells already consumed assembling infinite mana.
+    // Exception: Summoner's Pact — with infinite mana the {2}{G}{G} upkeep is trivially payable,
+    // so Pact can be cast again even after being used to assemble the combo.
     const ON_BOARD_REUSABLE_WIN = new Set([
       "Fauna Shaman", "Survival of the Fittest", "Yisan, the Wanderer Bard",
       "Skyshroud Poacher", "Elvish Reclaimer", "Formidable Speaker",
+      "Summoner's Pact",  // free + upkeep trivial with infinite mana
     ]);
     const usedTutors = poolAfterInfinite.usedTutors ?? new Set();
     const winTutors = activeTutors.filter(t =>
       ON_BOARD_REUSABLE_WIN.has(t.name) || !usedTutors.has(t.name));
     // Tutor for Duskwatch
-    const duskwatchTutor = winTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter"));
+    const duskwatchTutor = winTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter", poolAfterInfinite.usedGraveyard));
     if (duskwatchTutor) return {
       outlet: "Duskwatch Recruiter",
       steps: [`${duskwatchTutor.name} → Duskwatch Recruiter (${duskwatchTutor.note ?? ""})`],
       note: `tutor via ${duskwatchTutor.name}` };
     // Tutor for Formidable Speaker → finds Duskwatch
-    const speakerTutor = winTutors.find(t => tutorCanFind(t, "Formidable Speaker"));
+    const speakerTutor = winTutors.find(t => tutorCanFind(t, "Formidable Speaker", poolAfterInfinite.usedGraveyard));
     if (speakerTutor && inDeckFn("Formidable Speaker") && inDeckFn("Duskwatch Recruiter")) return {
       outlet: "Duskwatch Recruiter via Formidable Speaker",
       steps: [`${speakerTutor.name} → Formidable Speaker → ETB: discard → find Duskwatch Recruiter.`],
@@ -11214,15 +11322,13 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     // that makes subsequent steps (e.g. Shared Summons) affordable.
     // Compute extra mana unlocked when Ashaya enters: each untapped non-land creature
     // that doesn't already tap for mana (not a dork) becomes a Forest tapping for {G}.
-    // Dorks already contribute to sumManaPool; Ashaya adds the non-dork creatures + herself.
+    // Conservative: only count Ashaya's own tap (+1{G} as a Forest) as mid-sequence mana.
+    // Non-dork creatures gaining tap-for-G is real but can't be relied on to pay the
+    // ASSEMBLY cost (those creatures may tap during the loop, not the tutor sequence).
     let ashayaMidSequenceMana = 0;
     if (handPieces.includes("Ashaya, Soul of the Wild")) {
-      const preBfPool = sumManaPool(battlefield);
-      const postBfPool = sumManaPool([...battlefield, "Ashaya, Soul of the Wild"]);
-      // Extra mana = the difference (Ashaya makes non-dork creatures tap for {G})
-      ashayaMidSequenceMana = Math.max(0,
-        (postBfPool.green + postBfPool.colorless) - (preBfPool.green + preBfPool.colorless)
-      );
+      // Ashaya herself taps for {G} as a Forest once she enters.
+      ashayaMidSequenceMana = 1;
     }
     // Minimum loop startup: cast the ranger once ({G} for Quirion, {1}{G} for Scryb)
     const rangerInNeeded = path.needed.includes("Quirion Ranger") || path.needed.includes("Scryb Ranger");
@@ -11231,7 +11337,32 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     // If ranger goes to hand (not battlefield), its cast cost is already in castCostForHand
     const loopStartCost = 0; // already included in cast costs above
 
-    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost + extraHandCastCost - ashayaMidSequenceMana;
+    // Earthcraft mid-sequence mana: when Earthcraft + Ashaya are on board, each creature
+    // that enters the battlefield during assembly can immediately tap via Earthcraft →
+    // untap a basic Forest → Forest taps for {G}. Net: +1G per creature entered, up to
+    // the number of basic Forests available as untap targets.
+    // This is real mana that reduces assembly cost (e.g. Witness enters, EC taps Witness →
+    // untap Forest → Forest gives {G} to pay Quirion's cast cost).
+    let earthcraftMidSequenceMana = 0;
+    if (board.has("Earthcraft") && board.has("Ashaya, Soul of the Wild")) {
+      const basicForestsForEC = battlefield.filter(c => getCard(c)?.tags?.includes("basic")).length;
+      if (basicForestsForEC > 0) {
+        // Count creatures that will enter the battlefield during assembly:
+        // (a) tutored directly to battlefield
+        // (b) tutored to hand and then cast (putsToBattlefield=false, type=creature)
+        // (c) combo requires pieces already in hand that will be cast
+        const tutoredCreatures = [...path.tutorSteps, ...extrasResult.extraSteps]
+          .filter(s => getCard(s.target)?.type === "creature").length;
+        const handCastCreatureCount = handPieces.filter(r => getCard(r)?.type === "creature").length;
+        const creaturesEntering = tutoredCreatures + handCastCreatureCount;
+        // Each creature entering can tap via Earthcraft → untap a basic Forest → +1G net
+        // But only if Ashaya is already on board BEFORE the creature enters (so she makes it a Forest)
+        // Ashaya is on board here, so all entering creatures are immediately Forests.
+        earthcraftMidSequenceMana = Math.min(creaturesEntering, basicForestsForEC);
+      }
+    }
+
+    const totalMana = path.pool.manaSpent + extrasResult.extraMana + castCostForHand + extraCastCost + handCastCost + extraHandCastCost - ashayaMidSequenceMana - earthcraftMidSequenceMana;
 
     // ── Mid-sequence mana bonuses ────────────────────────────────────────────
     // Fast mana in hand that can contribute to this turn's mana pool:
@@ -14845,7 +14976,7 @@ function simFireLandfall(simState, triggerCount, newTriggers) {
   }
 }
 
-function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
+function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts = {}) {
   const MAX_TURNS = maxTurns;
   let hand, library;
 
@@ -14866,7 +14997,25 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     "Castle Garenbrig",           // taps for {G} or {G}{G}
     "Turntimber Symbiosis",       // land face taps for {G}
   ]);
+
+  // Fixed-hand mode: skip mulligan, start with the provided hand and a library
+  // built from the remaining deck cards (shuffled). Used for sim-based grading.
   let mulligans = 0;
+  if (opts.fixedHand) {
+    const fixedCards = opts.fixedHand;
+    const remaining = [...deckCards];
+    for (const c of fixedCards) {
+      const idx = remaining.indexOf(c);
+      if (idx >= 0) remaining.splice(idx, 1);
+    }
+    // Shuffle remaining
+    for (let i = remaining.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+    }
+    hand = [...fixedCards];
+    library = remaining;
+  } else {
   for (let m = 0; m <= mullLimit; m++) {
     library = buildLibrary(deckCards);
     hand = library.slice(0, 7);
@@ -14876,22 +15025,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     const oneDrop     = hand.filter(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1).length;
     const dorks       = hand.filter(c => getCard(c)?.tags?.includes("dork")).length;
     const tutors      = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
-    // Use lookahead projection to decide keep/mull
-    let keep = false;
-    try {
-      const proj = projectHandSpeed(hand);
-      // Keep if the hand projects to win T5 or sooner (speed 0 or 1)
-      // Also keep borderline hands (speed 2) if they have T1 dork + tutor
-      if (proj.speed <= 1) keep = true;
-      else if (proj.speed === 2 && proj.t1Dork && tutors >= 1) keep = true;
-      else if (proj.speed === 2 && proj.hasComboPath && dorks >= 2) keep = true;
-    } catch {
-      // Fallback to static heuristic if projection fails
-      const hasGreen = greenLands >= 1 || (fastMana >= 1 && oneDrop >= 1);
-      const hasBase  = hasGreen && oneDrop >= 1;
-      const hasAction = tutors >= 1 || dorks >= 2;
-      keep = hasBase && hasAction;
-    }
+    // Use the shared gradeOpeningHand rubric — same logic as GoldfishModal gradeHand()
+    const { label: handGrade } = gradeOpeningHand(hand, 7);
+    const keep = handGrade === "KEEP" || (handGrade === "BORDERLINE" && m === mullLimit);
     if (keep || m === mullLimit) {
       // Bottom cards for mulligans
       if (m > 0) {
@@ -14953,6 +15089,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
     }
     mulligans = m + 1;
   }
+  } // end else (normal mulligan mode)
 
   const openingHand = [...hand];
   const t1DorkInHand = hand.some(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
@@ -15122,7 +15259,6 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
         manaPool = rawPool;
       }
       const mana = manaPool.total;
-      if (manaCurve.length < turn) manaCurve.push(mana);
 
       // Track T1 dork
       if (turn === 1 && battlefield.some(c => getCard(c)?.tags?.includes("dork"))) t1Dork = true;
@@ -15379,6 +15515,17 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20) {
 
       // Nothing left to do this turn
       break;
+    }
+
+    // Record mana curve: use turnManaCapacity (final board mana after land + dorks entered)
+    // if it was computed this turn, otherwise recalculate from current battlefield.
+    // This is done AFTER the while loop so we capture the full board state after all
+    // T1 plays (land + dork), not a mid-iteration snapshot that may show 0.
+    if (manaCurve.length < turn) {
+      const curveMana = turnManaCapacity >= 0
+        ? turnManaCapacity
+        : calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null).total;
+      manaCurve.push(curveMana);
     }
 
     if (winTurn !== null) break;
@@ -17366,18 +17513,29 @@ function projectHandSpeed(cards) {
   return { speed, t1Dork, manaT2, hasComboPath };
 }
 
-function gradeHandLabel(cards) {
+// ── Shared hand grader (module-level, no React deps) ─────────────────────────
+// Returns { label, passCount, criteria } where label = "KEEP" | "BORDERLINE" | "MULLIGAN".
+// Used by both the auto-simulator and GoldfishModal.gradeHand() so they share
+// identical mulligan logic — gradeHand() layers notes and advisor enrichment on top.
+function gradeOpeningHand(cards, handSize = 7) {
   const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
-  const rockCards   = cards.filter(c => getCard(c)?.tags?.includes("rock"));
+  const dorks       = dorkCards.length;
+  const dork1Cards  = dorkCards.filter(c => getCard(c)?.tags?.includes("1drop"));
+  const dorks1      = dork1Cards.length;
+  const bigDorkCards = dorkCards.filter(c => getCard(c)?.tags?.includes("big-dork"));
+  const bigDorks    = bigDorkCards.length;
   const hasForestInHand = cards.some(c => c === "Forest" || getCard(c)?.tags?.includes("forest"));
   const enchantLandRamp = cards.filter(c => {
     if (!getCard(c)?.tags?.includes("enchant-land")) return false;
     if (c === "Utopia Sprawl") return hasForestInHand;
     return true;
   }).length;
-  const rampCount   = dorkCards.length + enchantLandRamp + rockCards.length;
+  const rockCards   = cards.filter(c => getCard(c)?.tags?.includes("rock"));
+  const rocks       = rockCards.length;
+  const rampCount   = dorks + enchantLandRamp + rocks;
   const tutorCards  = cards.filter(c => getCard(c)?.tags?.includes("tutor"));
   const tutors      = tutorCards.length;
+  const hasYisan    = cards.includes("Yisan, the Wanderer Bard");
   const landCards   = cards.filter(c => getCard(c)?.type === "land");
   const realLands   = landCards.filter(c =>
     c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun").length;
@@ -17390,56 +17548,128 @@ function gradeHandLabel(cards) {
   const greenLands  = landCards.filter(c => isGreenLand(c)).length;
   const colourlessOnlyLands = landCards.filter(c =>
     c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" && !isGreenLand(c));
-  const dork1Cards  = dorkCards.filter(c => getCard(c)?.tags?.includes("1drop"));
+  const hasCradle   = cards.includes("Gaea's Cradle");
+  const hasCradleOnly = landCards.length > 0 && realLands === 0;
+  const isManaFlood = realLands >= 5 && tutors === 0 && rampCount === 0;
+  const hasGSZT1    = cards.includes("Green Sun's Zenith") && greenLands >= 1;
+  const hasT1Play   = (dorks1 >= 1 && greenLands >= 1) ||
+                      (enchantLandRamp >= 1 && greenLands >= 1) ||
+                      (rockCards.some(c => (getCard(c)?.cmc ?? 99) <= 1)) ||
+                      hasGSZT1;
+  const allRampIsSlow = rampCount >= 1 && !hasT1Play;
+  const COMBO_TAGS  = new Set(["ashaya","duskwatch","quirion","earthcraft","wirewood",
+    "ranger","symbiote","sabertooth","scout","bounce","infinite-dork","key","untap","untap-lands"]);
+  const combo       = cards.filter(c => getCard(c)?.tags?.some(t => COMBO_TAGS.has(t))).length;
 
-  // Gate 1: no green source — hard MULLIGAN (unless fast mana bridges)
+  // ── Hard gates ──────────────────────────────────────────────────────────────
+  // Gate 1: no green source
   if (greenLands === 0) {
     const greenFastMana = cards.filter(c =>
       getCard(c)?.tags?.includes("mox") || c === "Lotus Petal" || c === "Elvish Spirit Guide");
-    if (cards.includes("Birds of Paradise") && greenFastMana.length > 0) return "BORDERLINE";
-    if (greenFastMana.length > 0 && dork1Cards.length >= 1 && colourlessOnlyLands.length > 0) return "BORDERLINE";
-    return "MULLIGAN";
+    if (cards.includes("Birds of Paradise") && greenFastMana.length > 0)
+      return { label: "BORDERLINE", passCount: 0, criteria: {} };
+    if (greenFastMana.length > 0 && dork1Cards.length >= 1 && colourlessOnlyLands.length > 0)
+      return { label: "BORDERLINE", passCount: 0, criteria: {} };
+    return { label: "MULLIGAN", passCount: 0, criteria: {}, hardMulligan: true };
   }
-  // Gate 2: 0 real lands + 0 rocks
-  if (realLands === 0 && rockCards.length === 0) return "MULLIGAN";
-  // Gate 3: no ramp and no tutors — hard MULLIGAN
-  if (rampCount === 0 && tutors === 0) return "MULLIGAN";
-
-  // ── LOOKAHEAD GRADING: project the hand forward to estimate win speed ──
-  // This replaces the old static "has ramp + tutor + land = KEEP" heuristic
-  // with actual forward simulation that considers card interactions.
-  try {
-    const proj = projectHandSpeed(cards);
-
-    // speed 0 = T3 or sooner (explosive), 1 = T4-T5 (good), 2 = T6+ (slow), 3 = no path
-    if (proj.speed === 0) return "KEEP";    // Fast combo path — always keep
-    if (proj.speed === 1) {
-      // Good hand: T4-T5 projected win
-      if (proj.t1Dork && tutors >= 1) return "KEEP"; // T1 dork + tutor = very keepable
-      return "BORDERLINE"; // Solid but not explosive
-    }
-    if (proj.speed === 2) {
-      // Slow but functional: has a path, just needs time
-      if (proj.t1Dork && rampCount >= 2) return "BORDERLINE"; // Can still develop
-      if (proj.hasComboPath) return "BORDERLINE"; // Has a route, just slow
-      return "MULLIGAN"; // Too slow, no clear path
-    }
-    // speed 3: no combo path found at all
-    if (rampCount >= 1 && tutors >= 1 && realLands >= 2) return "BORDERLINE"; // Marginal — static checks say functional
-    return "MULLIGAN";
-  } catch {
-    // Fallback to static grading if projection fails
-    if (rampCount === 0) {
-      const tutorRampOut = (tutors >= 2 || cards.includes("Crop Rotation")) && realLands >= 2;
-      if (tutorRampOut) return "BORDERLINE";
-      return "MULLIGAN";
-    }
-    const hasGSZT1fb = cards.includes("Green Sun's Zenith") && greenLands >= 1;
-    const hasT1Play = (dork1Cards.length >= 1 && greenLands >= 1) || (enchantLandRamp >= 1 && greenLands >= 1) || hasGSZT1fb;
-    if (realLands >= 2 && rampCount >= 1 && tutors >= 1 && hasT1Play) return "KEEP";
-    if (realLands >= 1 && rampCount >= 1) return "BORDERLINE";
-    return "MULLIGAN";
+  // Gate 2: no real mana sources at all
+  if (realLands === 0 && rocks === 0)
+    return { label: "MULLIGAN", passCount: 0, criteria: {}, hardMulligan: true };
+  // Gate 3: no ramp
+  if (rampCount === 0) {
+    const tutorRampOut = (tutors >= 2 || cards.includes("Crop Rotation")) && realLands >= 2 && combo >= 1;
+    if (tutorRampOut) return { label: "BORDERLINE", passCount: 0, criteria: {} };
+    if (isManaFlood)  return { label: "MULLIGAN", passCount: 0, criteria: {}, hardMulligan: true };
+    return { label: "MULLIGAN", passCount: 0, criteria: {}, hardMulligan: true };
   }
+  if (isManaFlood) return { label: "MULLIGAN", passCount: 0, criteria: {} };
+
+  // ── Six-pillar rubric (matches gradeHand criteria A–F) ──────────────────────
+  const criteria = {
+    A: hasT1Play,
+    B: rampCount >= 2 || (rampCount >= 1 && tutors >= 1) || bigDorks >= 1,
+    C: tutors >= 1 || hasYisan,
+    D: realLands >= 2 && realLands <= 4,
+    E: combo >= 1 || bigDorks >= 1,
+    F: false, // synergy detection not needed here — rubric works without it
+  };
+  const passCount = Object.values(criteria).filter(Boolean).length;
+
+  const keepThreshold       = Math.max(2, 5 - (7 - handSize));
+  const borderlineThreshold = Math.max(1, keepThreshold - 2);
+
+  let label;
+  if (passCount >= keepThreshold) {
+    label = "KEEP";
+  } else if (passCount >= borderlineThreshold) {
+    label = (!criteria.A && !criteria.C && !criteria.D) ? "MULLIGAN" : "BORDERLINE";
+  } else {
+    label = "MULLIGAN";
+  }
+
+  // Sharpen BORDERLINE → KEEP if core plan is fully operational
+  if (label === "BORDERLINE" && rampCount >= 1 && tutors >= 1 && criteria.A && !allRampIsSlow)
+    label = "KEEP";
+  if (handSize <= 5 && label === "BORDERLINE" && criteria.A && rampCount >= 1)
+    label = "KEEP";
+
+  return { label, passCount, criteria };
+}
+
+// ── Simulation-based hand grading ──────────────────────────────────────────
+// Runs N games (default 10) with max 6 turns each, using this exact opening
+// hand with different library shuffles each time. Measures both win rate AND
+// T1/T2 mana development — together these give a robust signal.
+//
+// Win rate alone is unreliable at small N (variance too high) and can be
+// dominated by combo pieces in hand rather than mana development. Combining
+// with T1/T2 mana catches hands that look structural (lands+dorks) but can't
+// actually execute, and hands with no lands that happen to have all combo pieces.
+//
+// Returns { wins, total, winRate, t1Mana, t2Mana, t1DorkRate, simLabel }
+// simLabel: "SIM_STRONG" | "SIM_OK" | "SIM_WEAK" | "SIM_DEAD"
+function simGradeHand(fixedHand, deckCards, n = 10, maxTurns = 20) {
+  if (!deckCards || deckCards.length < 20) return null;
+  let winsTotal = 0, winsBy8 = 0, totalWinTurn = 0;
+  let totalT1 = 0, totalT2 = 0, t1DorkGames = 0, validGames = 0;
+  for (let i = 0; i < n; i++) {
+    try {
+      const result = simulateOneGame(deckCards, null, 0, maxTurns, { fixedHand });
+      if (result.manaCurve) {
+        validGames++;
+        totalT1 += result.manaCurve[0] ?? 0;
+        totalT2 += result.manaCurve[1] ?? 0;
+        if (result.t1Dork) t1DorkGames++;
+        if (result.winTurn !== null) {
+          winsTotal++;
+          totalWinTurn += result.winTurn;
+          if (result.winTurn <= 8) winsBy8++;
+        }
+      }
+    } catch { /* ignore individual game errors */ }
+  }
+  if (validGames === 0) return null;
+
+  const t1Mana     = totalT1 / validGames;
+  const t2Mana     = totalT2 / validGames;
+  const t1DorkRate = t1DorkGames / validGames;
+  const avgWinTurn = winsTotal > 0 ? (totalWinTurn / winsTotal) : null;
+
+  // Grade based on wins-by-T8 (primary: can the hand win quickly?) and T2 mana
+  // (secondary: does the hand develop its board, not just rely on library draws?).
+  // T2 mana < 1 = SIM_DEAD regardless of wins (combo-in-hand library wins don't count).
+  const manaPoints = t2Mana >= 3 ? 2 : t2Mana >= 2 ? 1 : 0;
+  const dorkBonus  = t1DorkRate >= 0.7 ? 1 : 0;
+  const score      = winsBy8 + manaPoints * 2 + dorkBonus * 2;
+
+  let simLabel;
+  if (t2Mana < 1)        simLabel = "SIM_DEAD";
+  else if (score >= 10)  simLabel = "SIM_STRONG";
+  else if (score >= 5)   simLabel = "SIM_OK";
+  else if (winsBy8 > 0 || t2Mana >= 1) simLabel = "SIM_WEAK";
+  else                   simLabel = "SIM_DEAD";
+
+  return { winsBy8, winsTotal, total: validGames, avgWinTurn, t1Mana, t2Mana, t1DorkRate, simLabel };
 }
 
 function useTour() {
@@ -20117,9 +20347,40 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
   }
 
   // ── HAND GRADER ─────────────────────────────────────────────
-  function gradeHand(cards, advisorAnalysis, handSize = 7) {
-    // ── RAW COUNTS ───────────────────────────────────────────────
-    // All mana dorks (any creature with tapsFor mana)
+  function gradeHand(cards, advisorAnalysis, handSize = 7, deckCards = null) {
+    // ── Grade label via shared module-level function ──────────────
+    // gradeOpeningHand() runs the same six-pillar rubric used by the auto-simulator.
+    // gradeHand() only adds human-readable notes and advisor enrichment on top.
+    let { label: gradeLabel } = gradeOpeningHand(cards, handSize);
+
+    // ── Simulation probe (10 games with this exact hand) ─────────
+    // Run only when a deck is loaded so we have a real library to draw from.
+    const simResult = (deckCards && deckCards.length >= 20 && handSize >= 5)
+      ? simGradeHand(cards, deckCards, 10, 20)
+      : null;
+
+    // ── Sim note builder — used by hard gates AND the normal path ──
+    // Hard gates return early, so we build the sim note once here and inject it
+    // into notes before any return. Grade adjustments only apply on the normal path.
+    function addSimNote(notesArr) {
+      if (!simResult) return;
+      const { simLabel, winsBy8, winsTotal, total, avgWinTurn, t1Mana, t2Mana, t1DorkRate } = simResult;
+      const winsStr  = `${winsBy8}/${total} wins ≤T8`;
+      const avgStr   = avgWinTurn != null ? `, avg T${avgWinTurn.toFixed(1)}` : "";
+      const manaStr  = `T1: ${t1Mana.toFixed(1)}G, T2: ${t2Mana.toFixed(1)}G`;
+      const dorkStr  = t1DorkRate >= 0.8 ? " · T1 dork reliable"
+                     : t1DorkRate >= 0.5 ? " · T1 dork sometimes" : "";
+      if (simLabel === "SIM_STRONG")
+        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}${dorkStr}) — develops and wins`);
+      else if (simLabel === "SIM_OK")
+        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}${dorkStr})`);
+      else if (simLabel === "SIM_WEAK")
+        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}) — slower than it looks`);
+      else
+        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}) — hand produces no T2 mana`);
+    }
+
+    // ── RAW COUNTS (needed for notes) ────────────────────────────
     const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
     const dorks       = dorkCards.length;
     // 1-drop dorks: castable T1 off a single green land — highest priority ramp
@@ -20298,7 +20559,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const isTight     = greenLands === 1 && rampCount === 1 && tutors === 0;
 
     // ════════════════════════════════════════════════════════════
-    // HARD GATES — return immediately with forced grade
+    // HARD GATES — build notes then fall through to final grade
+    // Grade label comes from gradeOpeningHand() at top of function.
     // ════════════════════════════════════════════════════════════
     let notes = [];
 
@@ -20312,21 +20574,23 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         notes.push(`⚠️ No green land — ${greenFastMana.join(", ")} can produce {G} T1 to cast Birds of Paradise`);
         notes.push("Birds of Paradise provides green from T2 — fragile but functional");
         notes.push("Any removal before T2 ends your green production entirely");
-        return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+        addSimNote(notes);
+        return enrichWithAnalysis({ grade: { label: gradeLabel, color: COLORS.gold }, notes }, advisorAnalysis);
       }
       if (greenFastMana.length > 0 && dorks1 >= 1 && colourlessOnlyLands.length > 0) {
         notes.push(`⚠️ No green land — ${greenFastMana.join(", ")} → {G} T1 to cast ${dork1Cards[0]}`);
         notes.push(`${colourlessOnlyLands[0]} gives colourless from T2; ${dork1Cards[0]} provides green once in play`);
         notes.push("Fragile: dork removal before T2 = stranded");
-        return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+        addSimNote(notes);
+        return enrichWithAnalysis({ grade: { label: gradeLabel, color: COLORS.gold }, notes }, advisorAnalysis);
       }
       const landDesc = colourlessOnlyLands.length > 0
         ? `${colourlessOnlyLands.join(", ")} produce${colourlessOnlyLands.length === 1 ? "s" : ""} no green`
         : "0 lands that tap for {G}";
       notes.push(`⚠️ No green mana source ✗ — ${landDesc}`);
       notes.push("Cannot cast any spell T1 or T2 without a green-producing land");
-      // Hard gate — combo nearness cannot save a hand with zero green production
-      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
+      addSimNote(notes);
+      return enrichWithAnalysis({ grade: { label: gradeLabel, color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
     }
 
     // Gate 2: 0 real lands + 0 rocks → dorks can't cast themselves
@@ -20337,18 +20601,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       } else {
         notes.push("0 lands, 0 ramp, 0 rocks ✗ — completely stranded");
       }
-      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
+      addSimNote(notes);
+      return enrichWithAnalysis({ grade: { label: gradeLabel, color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
     }
 
     // Gate 3: No ramp of any kind → can't execute game plan
-    // Exception: instant-speed land tutor (Crop Rotation) can find Dryad Arbor T1 as a
-    // functional ramp play, and multiple tutors can chain into ramp by T2.
     if (rampCount === 0) {
       const hasCropRotation = cards.includes("Crop Rotation");
       const hasSylvanScrying = cards.includes("Sylvan Scrying");
-      const instantLandTutor = hasCropRotation; // Can fetch Dryad Arbor T1
-      // Borderline exception: ≥2 tutors OR instant land tutor (Crop Rotation → Dryad Arbor T1)
-      // with enough lands to cast them and meaningful combo/card quality to justify the slow start.
+      const instantLandTutor = hasCropRotation;
       const tutorRampOut = (tutors >= 2 || instantLandTutor) && realLands >= 2 && combo >= 1;
       if (tutorRampOut) {
         if (hasCropRotation) {
@@ -20359,7 +20620,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           notes.push("Slow start: no T1 play, but tutors give strong T2 recovery");
         }
         if (combo >= 2) notes.push(`${combo} combo pieces present (${comboPieces.slice(0,2).join(", ")}) — hand has strategic depth despite slow ramp`);
-        return enrichWithAnalysis({ grade: { label: "BORDERLINE", color: COLORS.gold }, notes }, advisorAnalysis);
+        addSimNote(notes);
+        return enrichWithAnalysis({ grade: { label: gradeLabel, color: COLORS.gold }, notes }, advisorAnalysis);
       }
       if (tutors >= 1) {
         notes.push(`${tutors} tutor${tutors > 1 ? "s" : ""} but no ramp ✗ — can find a dork but nothing to cast it T1`);
@@ -20369,7 +20631,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         notes.push("No ramp, no tutors ✗ — can't execute the game plan");
         if (combo >= 1) notes.push(`${combo} combo piece${combo > 1 ? "s" : ""} present but no way to develop the board`);
       }
-      return enrichWithAnalysis({ grade: { label: "MULLIGAN", color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
+      addSimNote(notes);
+      return enrichWithAnalysis({ grade: { label: gradeLabel, color: COLORS.red }, notes, hardMulligan: true }, advisorAnalysis);
     }
 
     // ════════════════════════════════════════════════════════════
@@ -20481,37 +20744,22 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       notes.push(`⚠️ All ramp is slow — earliest T2 (${slowNames || "2-drop dork"})`);
     }
 
-    // ── Final grade from rubric ───────────────────────────────────
-    // Thresholds scale with hand size (Improvement 7):
-    // 7-card: KEEP ≥5, BORDERLINE 3-4, MULLIGAN <3
-    // 6-card: KEEP ≥4, BORDERLINE 3,   MULLIGAN <3
-    // 5-card: KEEP ≥3, BORDERLINE 2,   MULLIGAN <2
-    // 4-card: KEEP ≥2, BORDERLINE 1,   MULLIGAN <1  (desperation keep)
-    const keepThreshold       = Math.max(2, 5 - (7 - handSize));
-    const borderlineThreshold = Math.max(1, keepThreshold - 2);
-    let grade;
-    if (isManaFlood) {
-      grade = { label: "MULLIGAN", color: COLORS.red };
-    } else if (passCount >= keepThreshold) {
-      grade = { label: "KEEP", color: COLORS.green2 };
-    } else if (passCount >= borderlineThreshold) {
-      if (!criteria.A && !criteria.C && !criteria.D) {
-        grade = { label: "MULLIGAN", color: COLORS.red };
-      } else {
-        grade = { label: "BORDERLINE", color: COLORS.gold };
-      }
-    } else {
-      grade = { label: "MULLIGAN", color: COLORS.red };
+    // ── Final grade — delegate to gradeOpeningHand, map label to grade object ──
+    // Apply sim-based grade adjustments (only on the normal path — hard gates already returned).
+    if (simResult) {
+      const { simLabel } = simResult;
+      if (simLabel === "SIM_STRONG" && gradeLabel === "BORDERLINE") gradeLabel = "KEEP";
+      else if (simLabel === "SIM_WEAK"  && gradeLabel === "KEEP")       gradeLabel = "BORDERLINE";
+      else if (simLabel === "SIM_DEAD"  && gradeLabel !== "MULLIGAN")   gradeLabel = "MULLIGAN";
     }
+    addSimNote(notes);
 
-    // Sharpen BORDERLINE → KEEP if core plan is fully operational
-    if (grade.label === "BORDERLINE" && rampCount >= 1 && tutors >= 1 && criteria.A && !allRampIsSlow) {
-      grade = { label: "KEEP", color: COLORS.green2 };
-    }
-    // Small hands (≤5): upgrade a functional hand to KEEP even without tutor
-    if (handSize <= 5 && grade.label === "BORDERLINE" && criteria.A && rampCount >= 1) {
-      grade = { label: "KEEP", color: COLORS.green2 };
-    }
+    const GRADE_COLORS = {
+      KEEP:       COLORS.green2,
+      BORDERLINE: COLORS.gold,
+      MULLIGAN:   COLORS.red,
+    };
+    const grade = { label: gradeLabel, color: GRADE_COLORS[gradeLabel] ?? COLORS.textDim };
 
     return enrichWithAnalysis({ grade, notes }, advisorAnalysis);
   }
@@ -21402,6 +21650,91 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
               ⚡ Tap — untap 2 lands
+            </div>
+          );
+        })()}
+
+        {/* ── Earthcraft: tap a creature → untap a basic land ── */}
+        {isBF && card === "Earthcraft" && (() => {
+          const ashayaOnBoard = battlefield.includes("Ashaya, Soul of the Wild");
+          const yavimayaOnBoard = battlefield.includes("Yavimaya, Cradle of Growth");
+          // Valid creature targets: untapped creatures on the battlefield
+          const untappedCreatures = battlefield
+            .map((c, i) => ({ c, i }))
+            .filter(({ c, i }) => {
+              const cd = getCard(c);
+              return (cd?.type === "creature" || c === "Dryad Arbor") && !tapped.has(cardKey(c, i));
+            });
+          // Valid land targets: tapped lands that Earthcraft can untap.
+          // Standard: basic lands only. With Yavimaya: all lands are basic forests.
+          // With Ashaya: creature-Forests are also valid but we stick to real lands for clarity.
+          const tappedBasicLands = battlefield
+            .map((c, i) => ({ c, i }))
+            .filter(({ c, i }) => {
+              const cd = getCard(c);
+              if (cd?.type !== "land") return false;
+              if (!tapped.has(cardKey(c, i))) return false; // must be tapped
+              if (yavimayaOnBoard) return true; // all lands are basic forests
+              return cd?.tags?.includes("basic"); // normally: basic lands only
+            });
+          if (untappedCreatures.length === 0 || tappedBasicLands.length === 0) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Tap creature → untap land — {untappedCreatures.length === 0 ? "no untapped creatures" : "no tapped basic lands"}
+            </div>
+          );
+          return (
+            <div onClick={() => {
+              pushUndo();
+              // Step 1: pick an untapped creature to tap
+              setPendingPicker({
+                label: "EARTHCRAFT — TAP A CREATURE",
+                color: "#f39c12",
+                items: untappedCreatures.map(({ c, i }) => ({
+                  label: c,
+                  sub: `creature · tap to untap a basic land${ashayaOnBoard ? " (Forest via Ashaya)" : ""}`,
+                  key: `${c}:${i}`, c, i,
+                })),
+                onSelect: ({ c: creatureCard, i: creatureIdx }) => {
+                  // Tap the creature
+                  setTapped(prev => new Set([...prev, cardKey(creatureCard, creatureIdx)]));
+                  addLog(`Earthcraft: tapped ${creatureCard}. Now choose a basic land to untap.`, "#f39c12");
+                  // Step 2: pick a tapped basic land to untap
+                  const currentTappedLands = battlefield
+                    .map((bc, bi) => ({ c: bc, i: bi }))
+                    .filter(({ c: bc, i: bi }) => {
+                      const cd = getCard(bc);
+                      if (cd?.type !== "land") return false;
+                      // Note: use the pre-tap tappedBasicLands list since tapped state updates asynchronously
+                      if (!tappedBasicLands.some(x => x.i === bi)) return false;
+                      return true;
+                    });
+                  setPendingPicker({
+                    label: "EARTHCRAFT — UNTAP A BASIC LAND",
+                    color: "#f39c12",
+                    items: currentTappedLands.map(({ c: lc, i: li }) => ({
+                      label: lc,
+                      sub: "● tapped → will untap",
+                      key: `${lc}:${li}`, c: lc, i: li,
+                    })),
+                    onSelect: ({ c: landCard, i: landIdx }) => {
+                      setTapped(prev => {
+                        const next = new Set(prev);
+                        next.delete(cardKey(landCard, landIdx));
+                        return next;
+                      });
+                      addLog(`Earthcraft: untapped ${landCard}.`, "#f39c12");
+                    },
+                    onSkip: () => addLog(`Earthcraft: no land untap chosen.`, COLORS.textDim),
+                  });
+                  setPickerSelected([]);
+                },
+              });
+              setPickerSelected([]);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: "#f39c12", letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#1e1600"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ Tap creature → untap basic land
             </div>
           );
         })()}
@@ -23982,7 +24315,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 });
               } catch (e) {}
               // Improvement 7: pass hand size so grader adjusts threshold for small hands
-              const { grade, notes } = gradeHand(hand, mulliganAnalysis, hand.length);
+              const { grade, notes } = gradeHand(hand, mulliganAnalysis, hand.length, deckCards);
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px" }}>
                   {/* Improvement 3: action buttons on their own row, full-width, no collision */}
