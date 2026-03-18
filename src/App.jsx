@@ -14064,20 +14064,53 @@ function HelpModal({ onClose, onStartTour }) {
     ),
     combos: (
       <>
-        <H>INFINITE MANA LOOPS</H>
-        <Tip label="Priest / Archdruid + Wirewood Lodge">Tap a big elf dork (Priest of Titania, Elvish Archdruid) for N mana. Pay {"{G}"} to use Lodge to untap it. Net N−1 mana per loop. Requires N ≥ 2 elves in play.</Tip>
-        <Tip label="Argothian Elder + Wirewood Lodge + Big Land">Tap a land producing ≥2 mana (Cradle, Nykthos, enchanted Forest). Elder untaps that land and Lodge. Lodge untaps Elder. Net mana each loop.</Tip>
-        <Tip label="Earthcraft + Squirrel Nest">Tap a creature to untap a basic Forest via Earthcraft. Forest creates a Squirrel token via Nest. Tap Squirrel to untap Forest again. Infinite creatures and mana.</Tip>
-        <Tip label="Ashaya + Quirion Ranger / Scryb Ranger">With Ashaya, creatures are Forests. Bounce a creature to hand to untap a Forest (which is another creature). Return it to play. Generates mana each loop with a mana dork involved.</Tip>
+        <H>INFINITE MANA — ASHAYA LOOPS</H>
+        <Tip label="Ashaya + Quirion Ranger + Dork (≥2 mana)">With Ashaya, creatures are Forests. Quirion Ranger bounces itself (a Forest) to untap a creature. If that creature taps for ≥2 mana (Priest of Titania, Elvish Archdruid, etc.), the loop nets {"{G}"}+ per cycle.</Tip>
+        <Tip label="Ashaya + Scryb Ranger + Dork (≥3 mana)">Same as Quirion variant but Scryb has flash and costs {"{1}{G}"} to recast, so the big dork needs ≥3 mana output. Goes off at instant speed on any turn.</Tip>
+        <Tip label="Ashaya + Argothian Elder (2-Card!)">Ashaya makes Elder a Forest. Elder taps to untap two lands — including itself (a Forest/land). With one other Forest producing ≥1 mana, this is a 2-card infinite mana engine requiring only Elder to pre-exist on board.</Tip>
+        <Tip label="Fanatic of Rhonas + Ashaya + Quirion/Scryb Ranger">Fanatic of Rhonas has Ferocious: {"{T}"}: add {"{G}{G}{G}{G}"}. With Ashaya (Ferocious enabled), Quirion loops Fanatic. Needs only a 4/4 or greater for Ferocious — Ashaya herself qualifies with enough creatures.</Tip>
+        <Tip label="Tireless Provisioner + Ashaya + Quirion Ranger">Tireless Provisioner creates a Treasure on landfall. Bouncing a creature-Forest with Quirion triggers landfall → Treasure. Cash Treasure + tap dork → net mana. Infinite with enough dork output.</Tip>
+        <Tip label="Arbor Elf + Ashaya + Quirion Ranger (enchanted Forest or Yavimaya)">Arbor Elf untaps any Forest. With Wild Growth / Utopia Sprawl on a Forest (producing ≥2), or Yavimaya making all lands Forests, Ashaya + Quirion loop nets {"{G}"}+ per cycle.</Tip>
+        <Tip label="Earthcraft + Ashaya + Quirion Ranger + Eternal Witness + Forest">Earthcraft taps any creature (even sick) to untap a basic land. Loop: Earthcraft taps Quirion → untap Forest → tap Forest ({"{G}"}). Quirion bounces itself → untaps Witness. Tap Witness ({"{G}"}). Recast Quirion ({"{G}"}). Net +{"{G}"} per loop. Assembly: Pact → Witness (ETB retrieves Pact) → Pact → Quirion.</Tip>
+        <Tip label="Earthcraft + Ashaya + Quirion/Scryb Ranger + Yavimaya">Yavimaya makes all lands basic Forests. Earthcraft + Ashaya creatures → all lands (including creature-lands) become valid untap targets. Quirion or Scryb Ranger loops for infinite mana without needing an enchanted Forest.</Tip>
+        <Tip label="Magus of the Candelabra + Ashaya + Dork (≥3 mana)">Ashaya makes the big dork a Forest/land. Magus pays {"{2}"} to untap X lands (including the dork). With dork producing ≥3, net +{"{G}"}+ per loop. Magus needs to pre-exist (no summoning sickness).</Tip>
+
+        <H>INFINITE MANA — CLASSIC LOOPS</H>
+        <Tip label="Argothian Elder + Wirewood Lodge + Big Land (≥2 mana)">Tap big land (Cradle, Nykthos, enchanted Forest) for N mana. Elder untaps that land and Wirewood Lodge. Lodge untaps Elder. Net N−2 mana per loop. Elder must pre-exist.</Tip>
+        <Tip label="Argothian Elder + Deserted Temple + Wirewood Lodge + Big Land">Extended Elder loop: Temple untaps Cradle, giving an extra Cradle activation. Elder + Lodge handle the untap chain. More robust with high creature counts.</Tip>
+        <Tip label="Elvish Guidance + Arbor Elf + Wirewood Lodge (≥2 elves)">Elvish Guidance enchants a Forest to tap for {"{G}"} per elf. With ≥2 elves, Forest taps for ≥2. Arbor Elf untaps it. Lodge untaps Arbor Elf. Net mana scales with elf count.</Tip>
+        <Tip label="Circle of Dreams Druid / Karametra's Acolyte + Wirewood Symbiote or Hyrax Tower Scout">Big dork produces X mana where X = elf count or devotion. Symbiote (bounce an elf to untap) or Scout (ETB untap, bounced by Sabertooth/Kogla) resets it. Net X−1 mana per loop when X ≥ 2.</Tip>
+        <Tip label="Temur Sabertooth + Wirewood Symbiote + 1-Drop Elf + Dork (≥5 mana)">Symbiote bounces 1-drop elf to untap big dork. Sabertooth bounces Symbiote (resetting its once-per-turn). Recast both. Net positive when dork produces ≥5 mana.</Tip>
+        <Tip label="Temur Sabertooth / Kogla + Hyrax Tower Scout + Dork (≥6 mana)">Scout ETB untaps target creature (the big dork). Sabertooth or Kogla bounces Scout back to hand for {"{1}{G}"}. Net positive when dork produces ≥6 mana.</Tip>
+        <Tip label="Hope Tender + Kogla + Big Land (≥4 mana)">Kogla bounces Hope Tender (a Human) to hand each time a creature enters. Hope Tender ETB: untap target land. With land producing ≥4 (Cradle with many creatures), net positive per loop.</Tip>
+        <Tip label="Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout">Automaton gives all creatures {"{T}"}: tap/untap a Forest. With Ashaya, creatures are Forests, creating recursive tap chains. Combine with Quirion/Symbiote/Scout for net mana.</Tip>
+        <Tip label="Magus of the Candelabra + Wirewood Symbiote + Sabertooth + Big Land (≥5 mana)">Classic non-Ashaya Magus loop. Symbiote bounces an elf to untap Magus. Sabertooth bounces Symbiote. Magus untaps big land. Net positive at ≥5 mana from land.</Tip>
+
+        <H>DRAW / TUTOR ENGINES</H>
+        <Tip label="Mana-Neutral Draw Loop (Ashaya + Ranger + 1-Drop Dork + Draw Engine)">With Beast Whisperer or Glademuse, each creature cast draws a card. Loop recasting a 1-drop dork via Quirion/Scryb Ranger. Net card draw without infinite mana — draws into combo pieces.</Tip>
+        <Tip label="Ashaya + Quirion Ranger + Glademuse (Instant-Speed Library Draw)">At instant speed: Glademuse draws when an opponent casts a spell. With Ashaya + Quirion, recasting dorks at flash speed triggers draws. Can win the table's draw step.</Tip>
+        <Tip label="Formidable Speaker + Ashaya + Quirion Ranger (Repeating Tutor)">Speaker ETB: discard a card, find any creature. With infinite mana and Quirion bouncing Speaker, find any creature repeatedly. Essentially a creature-only Survival of the Fittest loop.</Tip>
+        <Tip label="Survival of the Fittest + Eternal Witness">Discard a creature to Survival, find a target. Cast Witness (retrieves discarded card). Repeat. With enough mana, chains through your entire creature toolbox.</Tip>
+        <Tip label="Regal Force Draw Loop (Infinite Mana + Temur Sabertooth)">Cast Regal Force: draw cards equal to green creatures. Sabertooth bounces it back to hand. Recast. With infinite mana and green creatures, draw your entire library.</Tip>
+        <Tip label="Eladamri, Korvecdal (Library Casting Engine)">Eladamri lets you cast creatures from the top of your library. With infinite mana and a large library, cast creatures until you find Duskwatch or another win condition.</Tip>
+        <Tip label="Yisan the Wanderer Bard — Verse Tutor Chain">Each activation: pay {"{2}{G}"} + tap Yisan + add a verse counter, find a creature of that CMC. Chain: T1 Llanowar (CMC1) → T2 Quirion/Symbiote (CMC1–2) → T3 big dork → T4 Ashaya → combo.</Tip>
+        <Tip label="Seedborn Muse — Untap Engine">Untap all permanents on each opponent's untap step. With Yisan, Survival, Fauna Shaman, or Wirewood Lodge, get free activations on every player's turn. Dramatically accelerates tutoring speed.</Tip>
+
         <H>WIN CONDITIONS</H>
-        <Tip label="Thassa's Oracle">With infinite mana and a tutor chain, draw your entire deck. Cast Oracle with an empty library for an immediate win.</Tip>
-        <Tip label="Duskwatch Recruiter">With infinite mana, activate repeatedly to draw every creature from your deck. Win with an arbitrarily large board.</Tip>
-        <Tip label="Walking Ballista">With infinite mana, cast for X=∞ and deal infinite damage to each opponent.</Tip>
-        <Tip label="Natural Order / Green Sun's Zenith">With enough mana, tutor directly for Craterhoof Behemoth or another finisher. GSZ shuffles back and can be cast again.</Tip>
+        <Tip label="Duskwatch Recruiter (Primary Win)">With infinite mana, activate repeatedly ({"{1}{G}"} each) to look at top 2 cards and put any creature into hand. Cast all creatures. With Ashaya + many creatures, swing for lethal. Or find a direct-damage piece.</Tip>
+        <Tip label="Finale of Devastation (X≥10) + Ashaya + Destiny Spinner">Cast Finale (X≥10): find any creature, put it onto the battlefield, give all creatures +X/+X and haste. With Ashaya, all creatures are Forests (trample via Destiny Spinner). Swing for lethal.</Tip>
+        <Tip label="Infectious Bite Loop (Poison Win)">With infinite mana and Eternal Witness + Temur Sabertooth/Kogla, loop Infectious Bite: target creature fights one of your creatures, opponent's creature gets −2/−2. Opponent takes 1 poison counter per loop. 10 = win.</Tip>
+        <Tip label="Sanitarium Mill — Temur/Kogla/Ashaya Variants">With infinite mana, loop Endurance ETB (shuffle graveyard into library) while Geier Reach Sanitarium makes opponents discard. Three variants: Temur Sabertooth bounce, Kogla + Eternal Witness, or Ashaya + Quirion Ranger.</Tip>
+        <Tip label="Disciple of Freyalise + Bouncer + Infinite Mana">With infinite mana, loop Disciple ETB (sacrifice a creature: draw a card, each opponent loses 1 life). With Sabertooth bouncing Disciple, drain all opponents to zero.</Tip>
+        <Tip label="Badgermole Cub + Bouncer + Infinite Mana">Badgermole Cub ETB: +1/+1 counter on all other creatures. With Sabertooth looping Cub and infinite mana, all creatures grow infinitely large. Swing for lethal.</Tip>
+        <Tip label="Natural Order / Green Sun's Zenith — Craterhoof">With enough mana, Natural Order (sacrifice a green creature, find any green creature to battlefield) or GSZ (X≥ Craterhoof CMC, finds and plays it) puts Craterhoof Behemoth directly into play. With a full board, lethal in combat.</Tip>
+        <Tip label="Shifting Woodland (Argothian Elder Copy)">Shifting Woodland can become a copy of Argothian Elder in the graveyard. Enables the 2-card Ashaya+Elder infinite combo from the graveyard as a backup line.</Tip>
+
         <H>KEY SYNERGIES</H>
-        <Tip label="Yavimaya, Cradle of Growth">Makes all lands Forests. Enables Arbor Elf to untap any land, dramatically expanding the mana available per turn.</Tip>
-        <Tip label="Utopia Sprawl / Wild Growth">Enchant a Forest to tap for an extra mana. With Arbor Elf, each untap of the enchanted land produces bonus mana.</Tip>
-        <Tip label="Gaea's Cradle / Itlimoc">Taps for mana equal to the number of creatures you control. Goes infinite with any untap effect and enough creatures.</Tip>
+        <Tip label="Yavimaya, Cradle of Growth">Makes all lands Forests. Enables Arbor Elf to untap any land, unlocks Forest-requiring combos without needing basic Forests, and makes all non-basic lands valid Earthcraft targets.</Tip>
+        <Tip label="Utopia Sprawl / Wild Growth">Enchant a Forest to tap for an extra mana. With Arbor Elf, each untap of the enchanted land produces bonus mana — a T1/T2 explosive mana setup that feeds into Ashaya loops.</Tip>
+        <Tip label="Gaea's Cradle / Itlimoc">Taps for mana equal to creatures you control. Goes infinite with any untap effect (Elder, Lodge, Sabertooth loops) and enough creatures. Itlimoc transforms into Cradle once you have 4+ creatures.</Tip>
+        <Tip label="Earthcraft (Haste for Creatures)">All creatures can tap for mana immediately via Earthcraft (tap creature → untap a basic land → tap land). Bypasses summoning sickness. With Ashaya, every creature is a basic Forest for Earthcraft purposes (via Yavimaya).</Tip>
       </>
     ),
     rulings: (() => {
@@ -20691,7 +20724,10 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         if (fastRock) notes.push(`Fast rock T1 ✓ — ${fastRock}`);
       }
     } else {
-      notes.push("⚠️ No T1 play — earliest action is T2");
+      const missingT1 = greenLands >= 1
+        ? "no 1-drop dork or enchant-land to cast T1"
+        : "no green land to cast anything T1";
+      notes.push(`⚠️ No T1 play — ${missingT1} — earliest action is T2`);
     }
 
     // Big dorks
@@ -20711,7 +20747,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     } else if (hasYisan) {
       notes.push("Yisan ✓ — tutor-on-a-clock (charge on T3+)");
     } else {
-      notes.push("No tutor — relying on draw steps to find combo pieces");
+      notes.push("⚠️ No tutor — success depends on drawing combo pieces naturally");
     }
 
     // Synergies
@@ -20736,7 +20772,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
     // Miscellaneous flags
     if (isTight) notes.push("⚠️ Tight mana: 1 green land, 1 dork, no tutors — screw risk");
-    if (realLands >= 5 && !isManaFlood) notes.push(`⚠️ ${realLands} lands — mana-heavy, watch for flood`);
+    if (realLands >= 5 && !isManaFlood) notes.push(`⚠️ ${realLands} lands — mana-heavy, likely to flood without more action`);
     if (allRampIsSlow) {
       const slowNames = dorkCards
         .filter(c => !getCard(c)?.tags?.includes("1drop"))
@@ -20744,14 +20780,48 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       notes.push(`⚠️ All ramp is slow — earliest T2 (${slowNames || "2-drop dork"})`);
     }
 
+    // ── Sim note helper — placed FIRST so it's the most prominent signal ──────
+    function addSimNote(notesArr) {
+      if (!simResult) return;
+      const { simLabel, winsBy8, winsTotal, total, avgWinTurn, t1Mana, t2Mana, t1DorkRate } = simResult;
+      const winsStr  = `${winsBy8}/${total} wins ≤T8`;
+      const avgStr   = avgWinTurn != null
+        ? `, avg T${avgWinTurn.toFixed(1)}`
+        : winsTotal === 0 ? ", no wins in simulation" : "";
+      const manaStr  = `T1: ${t1Mana.toFixed(1)}G, T2: ${t2Mana.toFixed(1)}G`;
+      const dorkStr  = t1DorkRate >= 0.8 ? " · T1 dork reliable"
+                     : t1DorkRate >= 0.5 ? " · T1 dork sometimes" : "";
+      if (simLabel === "SIM_STRONG")
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — hand develops and wins consistently (${manaStr}${dorkStr})`);
+      else if (simLabel === "SIM_OK")
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} (${manaStr}${dorkStr})`);
+      else if (simLabel === "SIM_WEAK")
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — slower than it looks (${manaStr})`);
+      else
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — no T2 mana from hand (${manaStr})`);
+    }
+
     // ── Final grade — delegate to gradeOpeningHand, map label to grade object ──
     // Apply sim-based grade adjustments (only on the normal path — hard gates already returned).
     if (simResult) {
-      const { simLabel } = simResult;
-      if (simLabel === "SIM_STRONG" && gradeLabel === "BORDERLINE") gradeLabel = "KEEP";
-      else if (simLabel === "SIM_WEAK"  && gradeLabel === "KEEP")       gradeLabel = "BORDERLINE";
-      else if (simLabel === "SIM_DEAD"  && gradeLabel !== "MULLIGAN")   gradeLabel = "MULLIGAN";
+      const { simLabel, winsBy8, t2Mana } = simResult;
+      // Upgrade: sim strongly wins fast — BORDERLINE → KEEP
+      if ((simLabel === "SIM_STRONG" || winsBy8 >= 7) && gradeLabel === "BORDERLINE")
+        gradeLabel = "KEEP";
+      // Downgrade: sim never wins fast even though rubric is happy — KEEP → BORDERLINE
+      else if ((simLabel === "SIM_WEAK" || winsBy8 === 0) && gradeLabel === "KEEP"
+               && t2Mana < 3) // only downgrade if T2 mana is also underwhelming
+        gradeLabel = "BORDERLINE";
+      // Dead hand: no T2 mana → MULLIGAN
+      else if (simLabel === "SIM_DEAD" && gradeLabel !== "MULLIGAN")
+        gradeLabel = "MULLIGAN";
     }
+
+    // Flood penalty: ≥4 lands with no T1 dork and no combo pieces → KEEP → BORDERLINE
+    // The rubric passes ABCD but the hand is land-heavy and won't assemble quickly.
+    if (gradeLabel === "KEEP" && realLands >= 4 && !criteria.A && combo === 0)
+      gradeLabel = "BORDERLINE";
+
     addSimNote(notes);
 
     const GRADE_COLORS = {
@@ -26681,7 +26751,7 @@ function YevaAdvisor() {
                 color: turnClock.turns === 0 ? "#58d68d" : turnClock.turns <= 2 ? "#c8a800" : "#e74c3c",
                 fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", cursor: "help",
               }}>
-                ⏱ T{turnClock.turns === 0 ? "NOW" : `+${turnClock.turns}`}
+                ⏱ {turnClock.turns === 0 ? "NOW" : `T+${turnClock.turns}`}
               </div>
             )}
             {/* GROUP 2: Win Conversion Paths */}
@@ -26889,7 +26959,8 @@ function YevaAdvisor() {
                       color: jsonCopied ? "#5dade2" : COLORS.textMid,
                       cursor: "pointer", fontSize: "11px",
                       transition: "color 0.2s",
-                    }}>{jsonCopied ? "✓ Copied!" : "📋 Copy JSON"}</button>
+                    }} title="Copy the current game state as JSON — paste into a bug report or share with others"
+                    >{jsonCopied ? "✓ Copied!" : "📋 Copy JSON"}</button>
                     <button onClick={() => {
                       const state = { hand, battlefield, graveyard, greenMana: parseInt(greenMana) || 0, colorlessMana: parseInt(colorlessMana) || 0, isMyTurn, yisanCounters };
                       compressState(state).then(encoded => {
@@ -26904,7 +26975,8 @@ function YevaAdvisor() {
                       color: linkCopied ? "#5dade2" : COLORS.textMid,
                       cursor: "pointer", fontSize: "11px",
                       transition: "color 0.2s",
-                    }}>{linkCopied ? "✓ Copied!" : "🔗 Copy Link"}</button>
+                    }} title="Copy a shareable URL that encodes the current hand, battlefield, and mana — anyone with the link can load this exact state"
+                    >{linkCopied ? "✓ Copied!" : "🔗 Copy Link"}</button>
                     <button onClick={() => setShowDebug(false)} style={{
                       background: "none", border: `1px solid ${COLORS.border}`,
                       borderRadius: "5px", padding: "4px 10px",
