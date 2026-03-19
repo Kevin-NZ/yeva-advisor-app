@@ -277,6 +277,7 @@ const COMBOS = [
     mustPreExist: ["Argothian Elder"],
     description: "Infinite mana with only 2 cards. Ashaya turns Argothian Elder into a Forest/land. Elder's tap ability untaps two target lands — and can target ITSELF (since it's a land via Ashaya). Tap Elder for the untap ability (targeting Elder + any other land): Elder re-untaps itself, and the second land also untaps. Then tap that second land for mana. Repeat forever.",
     requires: ["Ashaya, Soul of the Wild", "Argothian Elder"],
+    needsExtraLand: true, // Elder self-untaps but needs at least ONE other land to tap for mana
     priority: 10,
     type: "infinite-mana",
     lines: [
@@ -298,6 +299,7 @@ const COMBOS = [
     description: "Infinite mana. Tap a land producing ≥2 mana (Gaea's Cradle, Nykthos, Itlimoc, or a Forest enchanted with Utopia Sprawl/Wild Growth). Elder untaps that land + Lodge. Lodge untaps Elder. Net mana each loop.",
     requires: ["Argothian Elder", "Wirewood Lodge"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    needsAlsoMin: 2,
     needsAuraLand: true,
     priority: 9,
     type: "infinite-mana",
@@ -320,6 +322,7 @@ const COMBOS = [
     description: "Infinite mana. Elder taps two lands: Cradle + Deserted Temple. Temple then untaps Cradle for a second tap. Lodge untaps Elder. Result: Cradle taps twice per loop while only spending {G} (Lodge). Net: (2 × Cradle output) − 1 per loop. Enormous output with even a modest Cradle.",
     requires: ["Argothian Elder", "Deserted Temple", "Wirewood Lodge"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    needsAlsoMin: 1,
     priority: 10,
     type: "infinite-mana",
     lines: [
@@ -467,17 +470,19 @@ const COMBOS = [
     name: "Magus of the Candelabra + Ashaya + Dork or Land (≥3 mana)",
     onBattlefield: ["Magus of the Candelabra", "Ashaya, Soul of the Wild"],
     mustPreExist: ["Magus of the Candelabra"],
-    description: "Infinite mana. Ashaya makes your big dork count as a land for Magus to target. Tap the dork for ≥3 mana, spend {2} activating Magus (X=2) to untap itself and the dork. Net {G}+ each loop. The mana source doesn't have to be a real land — any big dork becomes a valid target via Ashaya.",
+    description: "Infinite mana. Ashaya makes all creatures Forest lands — Magus can untap any of them. Tap a dork or real land producing ≥3 mana, pay {2} to activate Magus (X=2) untapping itself AND the source. Net {G}+ per loop. Works with: Priest of Titania (≥3 elves), Elvish Archdruid (≥3 elves), Circle of Dreams Druid (≥3 creatures), Karametra's Acolyte (devotion ≥3), Selvala (≥3-power creature), real lands like Nykthos (devotion ≥5) or Gaea's Cradle (≥3 creatures).",
     requires: ["Magus of the Candelabra", "Ashaya, Soul of the Wild"],
-    needsBigDork: 3,
+    needsBigDork: 3,        // checks dork-tagged creatures (Priest, Archdruid, etc.)
+    needsMagusManaSource: 3, // additionally checks real lands (Nykthos, Cradle) via Magus's untap
     priority: 9,
     type: "infinite-mana",
     lines: [
       "Magus of the Candelabra + Ashaya + a dork or land producing ≥3 mana on battlefield.",
-      "Tap the dork/land for ≥3 mana (it's a Forest/land via Ashaya, so Magus can target it).",
-      "Pay {2}: activate Magus with X=2, untapping itself AND the big dork/land.",
+      "Via Ashaya: all your creatures are Forest lands — Magus can untap any of them.",
+      "Tap the dork/land for ≥3 mana.",
+      "Pay {2}: activate Magus with X=2, untapping itself AND the mana source.",
       "Net: ≥{G} per loop. Repeat for infinite mana.",
-      "NOTE: Even a non-land dork like Priest of Titania counts as a land via Ashaya for Magus to untap.",
+      "Works with any single source producing ≥3: Priest of Titania, Elvish Archdruid, Circle of Dreams Druid, Karametra's Acolyte, Selvala, Nykthos (devotion ≥5), Gaea's Cradle (≥3 creatures), or a Forest enchanted with Utopia Sprawl.",
     ]
   },
 
@@ -531,6 +536,7 @@ const COMBOS = [
     description: "Infinite mana. Cast Woodcaller Automaton at prototype cost ({2}{G}{G}, CMC 4, enters as 3/3). ETB: untap one target land — it becomes a 3/3 Treefolk creature with haste (still a land). Bounce Automaton with Sabertooth ({1}{G}) and recast ({2}{G}{G}). Loop cost: 6 mana total. Net positive when the animated land taps for ≥7. With Ashaya, the animated land-creature is also a Forest, enabling Ranger loops.",
     requires: ["Temur Sabertooth", "Woodcaller Automaton"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx"],
+    needsAlsoMin: 7,
     priority: 8,
     type: "infinite-mana",
     lines: [
@@ -681,7 +687,7 @@ const COMBOS = [
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger"],
     needsDrawEngine: true,
     needsOneDrop: true,
-    needsInfiniteMana: true,   // mana-neutral loop alone cannot convert to a win without inf mana
+    // NOTE: No needsInfiniteMana — this IS the path to infinite mana (draws library → finds ESG/Provisioner).
     priority: 9,
     type: "win-draw",
     lines: [
@@ -951,6 +957,7 @@ const COMBOS = [
     description: "Infinite mana. Hope Tender has two activated abilities (both cost {1}): {1},{T}: Untap target land; and {1},{T}, Exert: Untap two target lands (skips next untap). Use Kogla's {1}{G} activated ability to return Hope Tender (Human) to hand, resetting the exert restriction. Loop: exert Hope Tender to untap big land, tap land for N, pay {1}{G} Kogla + recast {1}{G} Hope Tender. Net: (land output − 3) per loop. Need land ≥ 4.",
     requires: ["Hope Tender", "Kogla, the Titan Ape"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    needsAlsoMin: 5,
     priority: 10,
     type: "infinite-mana",
     lines: [
@@ -1014,6 +1021,7 @@ const COMBOS = [
     description: "Infinite mana. Tap big land for N. Pay {1} to Magus to untap it, tap again. Symbiote bounces 1-drop elf to untap Magus. Sabertooth bounces Symbiote resetting its once-per-turn restriction. Recast both. Total cost per loop: {1}+{1}{G}+{G}+{G} = {3}{G}+{2}. Net positive when land produces ≥5.",
     requires: ["Magus of the Candelabra", "Wirewood Symbiote"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    needsAlsoMin: 5,
     needsAuraLand: true,
     needsAuraLand3: true,
     needsOneDrop: true,
@@ -1579,6 +1587,7 @@ const COMBOS = [
     description: "Castle Garenbrig produces {G} that can only be spent to cast creatures or activated abilities of creatures. Hope Tender's exert ability ({T}, exert: untap up to two lands) combined with Castle Garenbrig's output enables sequences where restricted mana is filtered through creature costs. Garenbrig + Hope Tender exert untaps Cradle/Nykthos, effectively converting the restriction into free mana generation.",
     requires: ["Hope Tender", "Castle Garenbrig"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
+    needsAlsoMin: 4,
     priority: 7,
     type: "engine",
     lines: [
@@ -2206,6 +2215,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const canAfford = (cmc, greenPips = 0) =>
     maxGreen >= greenPips && (maxGreen + maxColorless) >= cmc;
 
+  // ── Stax cost adjustments ─────────────────────────────────────────────────
+  // When we have stax on the battlefield that raises spell costs, canAfford must
+  // account for the increased cost. These affect us too.
+  //   Thorn of Amethyst: non-creature, non-land spells cost {1} more.
+  //   Trinisphere: every spell costs at minimum {3} (after other adjustments).
+  //   Orb of Dreams: all permanents enter tapped — doesn't affect casting cost.
+  const hasThorn       = board.has("Thorn of Amethyst");
+  const hasTrinisphere = board.has("Trinisphere");
+  // Adjust a spell's effective CMC for stax taxes.
+  // cardType: "creature" | "noncreature" (sorcery/instant/enchantment/artifact)
+  function staxAdjustedCmc(cmc, cardType) {
+    let adjusted = cmc;
+    if (hasThorn && cardType !== "creature" && cardType !== "land") adjusted += 1;
+    if (hasTrinisphere) adjusted = Math.max(adjusted, 3);
+    return adjusted;
+  }
+  // canAffordSpell: like canAfford but applies stax tax for the given card type.
+  function canAffordSpell(cmc, greenPips = 0, cardType = "noncreature") {
+    const adj = staxAdjustedCmc(cmc, cardType);
+    return maxGreen >= greenPips && (maxGreen + maxColorless) >= adj;
+  }
+
   // ── Ranger Mana Trick ──────────────────────────────────────────────────
   // Quirion Ranger / Scryb Ranger can bounce a Forest to hand then replay it
   // as the land drop, netting +1{G} per ranger. This only works if:
@@ -2329,7 +2360,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }).length;
   const canAffordWithTricks = (cmc, greenPips = 0, cardName = null) => {
     const bonus = effectiveManaBonus + (cardName === "Chord of Calling" ? convokeCreatures : 0);
-    return (maxGreen + bonus) >= greenPips && (maxGreen + maxColorless + bonus) >= cmc;
+    // Apply stax tax when a card name is known
+    const cardType = cardName ? (getCard(cardName)?.type ?? "noncreature") : "noncreature";
+    const adjCmc = cardName ? staxAdjustedCmc(cmc, cardType) : cmc;
+    return (maxGreen + bonus) >= greenPips && (maxGreen + maxColorless + bonus) >= adjCmc;
   };
 
   // Legacy alias used in many string interpolations and simple threshold checks
@@ -2441,11 +2475,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       ? hand.filter(c => getCard(c)?.tags?.includes("elf")).length
       : 0;
     const all = [...battlefield, ...hand];
+    // Leyline of Abundance adds +1G to every creature mana activation.
+    const leylineBonus = board.has("Leyline of Abundance") ? 1 : 0;
     const candidates = all.filter(c => {
       if (!getCard(c)?.tags?.includes("dork") && !getCard(c)?.tags?.includes("big-dork")) return false;
       // If the dork itself is in hand and is an elf, don't double-count it in the bonus
       const effectiveBonus = Math.max(0, (inHand.has(c) && getCard(c)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      const rawOutput = estimateDorkOutput(c, effectiveBonus);
+      const rawOutput = estimateDorkOutput(c, effectiveBonus) + leylineBonus;
       // If dork is in hand and mana is finite, first loop must also cover its cast cost
       const castCostPenalty = (inHand.has(c) && !_infMana) ? (getCard(c)?.cmc ?? 0) : 0;
       return (rawOutput - castCostPenalty) >= threshold;
@@ -2454,7 +2490,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     return candidates.sort((a, b) => {
       const bonusA = Math.max(0, (inHand.has(a) && getCard(a)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
       const bonusB = Math.max(0, (inHand.has(b) && getCard(b)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
-      return estimateDorkOutput(b, bonusB) - estimateDorkOutput(a, bonusA);
+      return (estimateDorkOutput(b, bonusB) + leylineBonus) - (estimateDorkOutput(a, bonusA) + leylineBonus);
     })[0];
   }
 
@@ -2469,7 +2505,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   //           UNLESS a haste enabler (Ashaya + Destiny Spinner on board) is clearly present.
   let _inf = false, _infName = null, _trueInf = false;
   for (const combo of COMBOS) {
-    if (combo.type !== "infinite-mana") continue;
+    if (combo.type !== "infinite-mana" && combo.id !== "draw_loop_neutral") continue;
     const allOnBoard = combo.requires.every(r => board.has(r));
     if (!allOnBoard) continue;
     // If any mustPreExist piece is sick, the combo can't fire this turn
@@ -2480,13 +2516,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
   if (!_inf) {
     const _castable = isMyTurn || yevaFlash;
-    // Bootstrap haste enabler: Ashaya + (Destiny Spinner OR Badgermole Cub+bouncer) must be on board.
-    // Badgermole Cub animates lands just like Destiny Spinner when Temur Sabertooth is present.
+    // Bootstrap haste enabler: some cards grant haste to freshly cast creatures, allowing
+    // mustPreExist pieces (like Magus of the Candelabra) to activate immediately after casting.
     const _badgermoleHaste = board.has("Badgermole Cub") && board.has("Temur Sabertooth");
-    const _hasteOnBoard = board.has("Ashaya, Soul of the Wild") && (board.has("Destiny Spinner") || _badgermoleHaste);
+    const _hasteOnBoard = (board.has("Ashaya, Soul of the Wild") && (board.has("Destiny Spinner") || _badgermoleHaste))
+      || board.has("Thousand-Year Elixir")
+      || board.has("Concordant Crossroads");
     if (_castable) {
       for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
+        if (combo.type !== "infinite-mana" && combo.id !== "draw_loop_neutral") continue;
         const mustPre = combo.mustPreExist ?? [];
         // Skip if any mustPreExist piece on board is sick — can't activate this turn
         if (sickCreatures && mustPre.some(r => board.has(r) && sickCreatures.has(r))) continue;
@@ -2543,7 +2581,34 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // needsBigDork: need a dork producing >= N mana
     if (combo.needsBigDork) {
       const dork = findBigDork(combo.needsBigDork);
-      if (!dork) return { ok: false, missing: `a mana dork producing ≥${combo.needsBigDork} mana (e.g. Priest of Titania with ${combo.needsBigDork}+ elves, Circle of Dreams Druid, Karametra's Acolyte)` };
+      if (!dork) {
+        if (!combo.needsMagusManaSource) {
+          return { ok: false, missing: `a mana dork producing ≥${combo.needsBigDork} mana (e.g. Priest of Titania with ${combo.needsBigDork}+ elves, Circle of Dreams Druid, Karametra's Acolyte)` };
+        }
+      }
+    }
+
+    // needsMagusManaSource: Magus combo accepts any high-output source — dork OR real land.
+    if (combo.needsMagusManaSource) {
+      const min = combo.needsMagusManaSource;
+      const dorkOk = !!findBigDork(min);
+      if (!dorkOk) {
+        const ctx = buildBoardContext(battlefield, sickCreatures, null);
+        const landOk = battlefield.some(c => {
+          const cd = getCard(c);
+          if (!cd || cd.type !== "land") return false;
+          const { green, colorless } = cardManaContribution(c, cd, ctx, sickCreatures);
+          return (green + colorless) >= min;
+        });
+        const auraForestOk = !landOk && (() => {
+          const aurasOnBoard = (board.has("Utopia Sprawl") ? 1 : 0) + (board.has("Wild Growth") ? 1 : 0);
+          const forestOnBoard = board.has("Forest") || board.has("Dryad Arbor");
+          return aurasOnBoard >= 1 && forestOnBoard && (2 + 1) >= min;
+        })();
+        if (!landOk && !auraForestOk) {
+          return { ok: false, missing: `a mana source producing ≥${min} mana — a big dork OR a real land (Nykthos with devotion ≥${min + 2}, Gaea's Cradle with ≥${min} creatures, or an enchanted Forest)` };
+        }
+      }
     }
 
     // needsOneDrop: need a 1-drop elf (for Symbiote combo and draw loop).
@@ -2556,6 +2621,26 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         || getCard(c)?.tags?.includes("changeling") // changeling = all types including elf
       );
       if (!hasOneDrop) return { ok: false, missing: "a 1-drop elf (Llanowar Elves, Elvish Mystic, Fyndhorn Elves, etc.) — or Chomping Changeling as an elf of any cost" };
+    }
+
+    // needsExtraLand: loops by self-untapping but needs a mana-producing second source.
+    // Ashaya herself is the enabler, so she's excluded.
+    if (combo.needsExtraLand) {
+      const untappers = new Set([...(combo.mustPreExist ?? []), "Ashaya, Soul of the Wild"]);
+      const ctx = buildBoardContext(battlefield, sickCreatures, null);
+      const hasManaSource = battlefield.some(c => {
+        if (untappers.has(c)) return false;
+        const cd = getCard(c);
+        if (!cd) return false;
+        const isLand = cd.type === "land";
+        const isCreatureForest = board.has("Ashaya, Soul of the Wild") && cd.type === "creature";
+        if (!isLand && !isCreatureForest) return false;
+        const { green, colorless } = cardManaContribution(c, cd, ctx, sickCreatures);
+        return (green + colorless) >= 1;
+      });
+      if (!hasManaSource) {
+        return { ok: false, missing: "at least one other mana-producing land or creature (via Ashaya) — Elder self-untaps but needs a second source to generate mana per loop" };
+      }
     }
 
     // needsAlsoBouncer: need Temur Sabertooth or Kogla.
@@ -2684,15 +2769,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsAlso / needsAuraLand: combo needs one of the named lands OR an enchanted Forest.
-    // For Hope Tender + Lodge we need ≥3 mana output — needsAuraLand3 flag.
-    // When attachments are known, we check precisely whether an aura is on a Forest.
-    if (combo.needsAlso) {
-      const hasNamedLand = combo.needsAlso.some(c => {
-        if (board.has(c)) return true;
-        // Lands in hand can only satisfy the requirement on our turn (play the land first).
-        // They cannot tap mid-combo from hand — don't count them as ready.
-        if (inHand.has(c) && getCard(c)?.type === "land") return false;
-        return inHand.has(c);
+    // Cradle/Nykthos must produce ≥needsAlsoMin mana (defaults to 2) for the combo to be viable.
+    // IMPORTANT: needsAuraLand is checked even when needsAlso is absent (e.g. arbor_ashaya_loop).
+    if (combo.needsAlso || combo.needsAuraLand) {
+      const minOutput = combo.needsAlsoMin ?? 2;
+      const hasNamedLand = (combo.needsAlso ?? []).some(c => {
+        if (!board.has(c)) {
+          // Lands in hand can only satisfy the requirement on our turn (play the land first).
+          if (inHand.has(c) && getCard(c)?.type === "land") return false;
+          return inHand.has(c);
+        }
+        // Validate output threshold for Cradle/Nykthos — they produce 0 with empty boards.
+        if (c === "Gaea's Cradle" || c === "Itlimoc, Cradle of the Sun") {
+          return creaturesOnBoard >= minOutput;
+        }
+        if (c === "Nykthos, Shrine to Nyx") {
+          return devotionOnBoard >= minOutput + 2; // Nykthos nets devotion−2
+        }
+        return true;
       });
       // Precise check: use boardCtx.hasAuraOnForest when attachments are provided.
       // needsAuraLand3 requires ≥2 auras on Forests, or Elvish Guidance with ≥3 elves.
@@ -2722,7 +2816,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           : aurasOnBoard >= 1;
       })();
       if (!hasNamedLand && !auraLandReady) {
-        return { ok: false, missing: combo.needsAlso.join(" or ") + (combo.needsAuraLand ? " (or a Forest enchanted with Utopia Sprawl/Wild Growth — both must be on the battlefield)" : "") };
+        const missingParts = combo.needsAlso?.join(" or ") ?? "";
+        const auraPart = combo.needsAuraLand ? " (or a Forest enchanted with Utopia Sprawl/Wild Growth)" : "";
+        return { ok: false, missing: (missingParts + auraPart).trim() };
       }
     }
 
@@ -4501,7 +4597,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   if (inHand.has("Natural Order") && isMyTurn) {
     const hasSacTarget = battlefield.some(c => getCard(c)?.type === "creature");
-    if (hasSacTarget && (mana >= 4 || infiniteManaActive)) {
+    if (hasSacTarget && (mana >= staxAdjustedCmc(4, "sorcery") || infiniteManaActive)) {
       // Ashaya win line already handled above — only show generic advice if no win line
       if (results.some(r => r.combo === "natural_order_ashaya_win")) {
         // Win line already emitted — skip generic advice
@@ -4590,7 +4686,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Or: sac 3-drop → find CMC<=5 (Ashaya!)
     const sacCandidates = battlefield.filter(c => getCard(c)?.type === "creature")
       .sort((a,b) => (getCard(a)?.cmc ?? 0) - (getCard(b)?.cmc ?? 0));
-    if (sacCandidates.length > 0 && (mana >= 3 || infiniteManaActive)) {
+    if (sacCandidates.length > 0 && (mana >= staxAdjustedCmc(3, "sorcery") || infiniteManaActive)) {
       const bestSac = sacCandidates[0]; // lowest CMC to sacrifice
       const maxCmc  = (getCard(bestSac)?.cmc ?? 1) + 2;
       // Graveyard value: Eternal Witness is only worth tutoring if there's something
@@ -4676,7 +4772,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             "Finale of Devastation","Invasion of Ikoria","Shared Summons"]);
           return graveyard.some(c => HV.has(c));
         })() },
-    ].filter(t => !t.skip && !board.has(t.name) && !inHand.has(t.name) && (mana >= t.xCost + 1 || infiniteManaActive));
+    ].filter(t => !t.skip && !board.has(t.name) && !inHand.has(t.name) && (mana >= staxAdjustedCmc(t.xCost + 1, "sorcery") || infiniteManaActive));
     if (gsTargets.length > 0) {
       const best = gsTargets[0];
 
@@ -5051,7 +5147,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- SYLVAN SCRYING ----
-  if (inHand.has("Sylvan Scrying") && isMyTurn && (mana >= 2 || infiniteManaActive)) {
+  if (inHand.has("Sylvan Scrying") && isMyTurn && (mana >= staxAdjustedCmc(2, "sorcery") || infiniteManaActive)) {
     const scryfLands = [
       { land: "Gaea's Cradle",           reason: "taps for {G} per creature — often 4-8+ mana immediately" },
       { land: "Itlimoc, Cradle of the Sun", reason: `taps for {G} per creature (${creaturesOnBoard} now) — Gaea's Cradle as a land, if Cradle is already in play` },
@@ -5137,7 +5233,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- SHARED SUMMONS ----
-  if (inHand.has("Shared Summons") && (mana >= 5 || infiniteManaActive)) {
+  if (inHand.has("Shared Summons") && (mana >= staxAdjustedCmc(5, "instant") || infiniteManaActive)) {
     // Finds any two creatures, instant speed — great end-step setup
     const sharedTargets = [
       "Duskwatch Recruiter","Ashaya, Soul of the Wild","Eternal Witness",
@@ -7078,6 +7174,44 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- ACTIVE STAX COST WARNING ----
+  // When Thorn of Amethyst or Trinisphere is on the battlefield (cast by us),
+  // warn the player that their own noncreature/all spell costs are inflated.
+  if (hasThorn || hasTrinisphere) {
+    const affectedInHand = hand.filter(c => {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") return false;
+      const baseCmc = cd.cmc ?? 0;
+      const adjCmc  = staxAdjustedCmc(baseCmc, cd.type);
+      return adjCmc > baseCmc;
+    });
+    if (affectedInHand.length > 0) {
+      const pieces = affectedInHand.map(c => {
+        const cd = getCard(c);
+        const adj = staxAdjustedCmc(cd.cmc ?? 0, cd.type);
+        return `${c} (now costs ${adj})`;
+      }).slice(0, 4);
+      results.push({
+        priority: 14,
+        category: "⚠️ STAX SELF-TAX",
+        headline: hasTrinisphere
+          ? `Trinisphere active — your spells cost at least {3}`
+          : `Thorn of Amethyst active — your non-creature spells cost {1} more`,
+        detail: hasTrinisphere
+          ? `Trinisphere forces all spells to cost a minimum of 3 mana. Your affected cards in hand: ${pieces.join(", ")}. Plan your mana before casting or reconsider sequencing.`
+          : `Thorn of Amethyst adds {1} to all non-creature spells. Your affected cards in hand: ${pieces.join(", ")}.`,
+        steps: [
+          hasTrinisphere
+            ? "Every spell now costs at least {3} — your 1-drop dorks cost {3}, Worldly Tutor costs {3}, etc."
+            : "Non-creature spells (tutors, instants, sorceries, enchantments, artifacts) cost {1} more.",
+          `Affected cards in hand: ${pieces.join(", ")}.`,
+          "Creatures are NOT affected by Thorn — prioritise creature-based lines.",
+        ],
+        color: "#e67e22",
+      });
+    }
+  }
+
   // ---- OPEN MANA WARNING ----
   // When opponents have open mana and we lack protection, warn before going for the win.
   if (opponentOpenMana) {
@@ -7404,7 +7538,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       return cd?.tags?.includes("dork") || cd?.tags?.includes("big-dork");
     });
     const safeToSacLand = landsOnBoard >= 2 || infiniteManaActive || (hasDorkOnBoard && landsOnBoard >= 1);
-    if (!safeToSacLand || mana < 1) { /* skip — can't safely sacrifice a land */ } else {
+    if (!safeToSacLand || mana < staxAdjustedCmc(1, "instant")) { /* skip — can't safely sacrifice a land */ } else {
     const keyLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Geier Reach Sanitarium","Wirewood Lodge","Deserted Temple"];
     const missingKeyLands = keyLands.filter(l => !board.has(l));
 
@@ -7693,7 +7827,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const deckSet = deckList ? new Set(deckList) : null;
     // #4: Cache the findReachableLines result — it's expensive (~1-2ms) and called twice
     // (once here for the path planner, once below for the turn clock).
-    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures);
+    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive);
     const lines = _cachedFRL;
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
@@ -8497,7 +8631,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // Tier 3: A key infinite-mana combo piece is in the graveyard and its retrieval
       // would complete an otherwise-assembled combo on the board
       for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
+        if (combo.type !== "infinite-mana" && combo.id !== "draw_loop_neutral") continue;
         // Find named pieces that are missing from board/hand but ARE in graveyard
         const missingFromPlay = combo.requires.filter(r => !board.has(r) && !inHand.has(r));
         const inGraveyard     = missingFromPlay.filter(r => inGrave.has(r));
@@ -10226,7 +10360,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     try {
       const deckSet = deckList ? new Set(deckList) : null;
       // #4: Reuse cached result from path planner if available
-      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures);
+      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive);
       const lines = _cachedFRL;
       if (lines.length > 0) {
         const best = lines[0];
@@ -10751,7 +10885,7 @@ function buildMillSequence(board, hand, pileNeeded = []) {
 // which infinite-mana and win-now combos are reachable, then rank by:
 //   1. Same-turn feasibility  2. Step count  3. Mana cost  4. Combo priority
 // ─────────────────────────────────────────────────────────────────────────────
-function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null) {
+function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null, infiniteManaActive = false) {
   const board    = new Set(battlefield);
   const inHand   = new Set(hand);
   const inDeckFn = deckList ? (c) => deckList.has(c) : () => true;
@@ -10937,16 +11071,23 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     else if (t.baseCost === "cmc+3") cost = cmc + 3;
     else cost = t.baseCost;
     // Chord of Calling: convoke — each non-sick creature on battlefield taps to pay {1} or {G}
-    // Subtract convokeable creatures from the cost. sickCreatures is passed in from
-    // analyzeGameState, so we can accurately exclude summoning-sick creatures.
     if (t.name === "Chord of Calling") {
       const convoke = battlefield.filter(c => {
         const cd = getCard(c);
         if (!(cd?.type === "creature" || c === "Dryad Arbor")) return false;
-        if (sickCreatures?.has(c)) return false; // sick — can't tap for convoke
+        if (sickCreatures?.has(c)) return false;
         return true;
       }).length;
       cost = Math.max(0, cost - convoke);
+    }
+    // Stax tax: Thorn of Amethyst (+1 noncreature), Trinisphere (min 3)
+    if (t.type === "spell" || (!t.constraint?.includes("activate") && t.baseCost !== "activated")) {
+      const tutorCard = getCard(t.name);
+      const isSorceryOrInstant = tutorCard?.type === "instant" || tutorCard?.type === "sorcery";
+      if (isSorceryOrInstant) {
+        if (board.has("Thorn of Amethyst")) cost += 1;
+        if (board.has("Trinisphere")) cost = Math.max(cost, 3);
+      }
     }
     return cost;
   }
@@ -11096,9 +11237,14 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     // Mark one-shot hand tutors as consumed so they can't be reused in this path.
     // Also add them to usedGraveyard — they resolve and go to the graveyard,
     // making them retrievable by Eternal Witness in a subsequent step.
+    // CRITICAL: also remove the tutor from pool.have so that the EW-retrieval check
+    // (pool.have.has(tutor) && pool.usedGraveyard.has(tutor)) doesn't falsely fire.
     if (!ON_BOARD_REUSABLE.has(tutor.name)) {
       np.usedTutors.add(tutor.name);
-      if (inHand.has(tutor.name)) np.usedGraveyard.add(tutor.name);
+      if (inHand.has(tutor.name)) {
+        np.have.delete(tutor.name); // consumed from hand — no longer available
+        np.usedGraveyard.add(tutor.name);
+      }
       // If this tutor was retrieved from graveyard by EW and is now being used again,
       // remove it from usedGraveyard so it can't be retrieved a third time.
       if (pool.usedGraveyard.has(tutor.name)) np.usedGraveyard.delete(tutor.name);
@@ -11148,16 +11294,18 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     if (combo.needsBigDork) {
       const min = combo.needsBigDork;
       const poolArr = [...pool.have];
+      // Leyline of Abundance adds +1G to every creature mana tap
+      const leylineBonus = pool.have.has("Leyline of Abundance") ? 1 : 0;
       let hasDork = poolArr.some(c => {
         const cd = getCard(c);
         if (!cd || cd.type !== "creature") return false;
-        if (typeof cd.tapsFor === "number") return cd.tapsFor >= min;
-        if (cd.tapsFor === "elves")     return cd.tags?.includes("big-dork") && elvesNow >= min;
-        if (cd.tapsFor === "marwyn")    return cd.tags?.includes("big-dork") && Math.max(1, elvesNow - 1) >= min;
-        if (cd.tapsFor === "joraga")    return elvesNow >= 5 ? (elvesNow * 2 >= min) : (2 >= min);
-        if (cd.tapsFor === "creatures") return cd.tags?.includes("big-dork") && creaturesNow >= min;
-        if (cd.tapsFor === "devotion")  return cd.tags?.includes("big-dork") && devotionNow >= min;
-        if (cd.tapsFor === "power")     return cd.tags?.includes("big-dork") && creaturesNow >= min;
+        if (typeof cd.tapsFor === "number") return cd.tapsFor + leylineBonus >= min;
+        if (cd.tapsFor === "elves")     return cd.tags?.includes("big-dork") && elvesNow + leylineBonus >= min;
+        if (cd.tapsFor === "marwyn")    return cd.tags?.includes("big-dork") && Math.max(1, elvesNow - 1) + leylineBonus >= min;
+        if (cd.tapsFor === "joraga")    return elvesNow >= 5 ? (elvesNow * 2 + leylineBonus >= min) : (2 + leylineBonus >= min);
+        if (cd.tapsFor === "creatures") return cd.tags?.includes("big-dork") && creaturesNow + leylineBonus >= min;
+        if (cd.tapsFor === "devotion")  return cd.tags?.includes("big-dork") && devotionNow + leylineBonus >= min;
+        if (cd.tapsFor === "power")     return cd.tags?.includes("big-dork") && creaturesNow + leylineBonus >= min;
         return false;
       });
       // Ashaya special case: all creatures are Forests tapping for {G}.
@@ -11176,10 +11324,24 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         if (maxSingleSource >= min) hasDork = true;
       }
       if (!hasDork && depth < 3) {
-        // Try to find one via remaining tutors
+        // Try to find one via remaining tutors — but only if the found dork would ACTUALLY
+        // produce >= min mana given the current board state (elf count, creature count, devotion).
         const candidates = ["Elvish Archdruid","Priest of Titania","Circle of Dreams Druid",
           "Selvala, Heart of the Wilds","Karametra's Acolyte","Wirewood Channeler","Marwyn, the Nurturer"]
-          .filter(c => !pool.have.has(c) && inDeckFn(c));
+          .filter(c => {
+            if (pool.have.has(c) || !inDeckFn(c)) return false;
+            const cd = getCard(c);
+            if (!cd) return false;
+            const t = cd.tapsFor;
+            if (typeof t === "number") return t >= min;
+            if (t === "elves")    return elvesNow + 1 >= min;
+            if (t === "marwyn")   return Math.max(1, elvesNow) >= min;
+            if (t === "joraga")   return elvesNow >= 5 ? elvesNow * 2 >= min : 2 >= min;
+            if (t === "creatures") return creaturesNow + 1 >= min;
+            if (t === "devotion") return devotionNow + (cd.greenPips ?? 0) >= min;
+            if (t === "power")    return creaturesNow >= min;
+            return false;
+          });
         const found = candidates.find(c =>
           availableTutors.some(t => t.usable && tutorCanFind(t, c, pool.usedGraveyard)));
         if (!found) return null; // can't satisfy
@@ -11265,8 +11427,19 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     }
 
     // needsAlso: requires one of the named lands/cards (Cradle, Nykthos, etc.)
+    // Validate output threshold using combo.needsAlsoMin (defaults to 2).
     if (combo.needsAlso) {
-      const hasNamedLand = combo.needsAlso.some(c => pool.have.has(c));
+      const minOutput = combo.needsAlsoMin ?? 2;
+      const hasNamedLand = combo.needsAlso.some(c => {
+        if (!pool.have.has(c)) return false;
+        if (c === "Gaea's Cradle" || c === "Itlimoc, Cradle of the Sun") {
+          return creaturesNow >= minOutput;
+        }
+        if (c === "Nykthos, Shrine to Nyx") {
+          return devotionNow >= minOutput + 2;
+        }
+        return true;
+      });
       // Also check enchanted Forest (aura land) if needsAuraLand is set
       let auraLandOk = false;
       if (combo.needsAuraLand) {
@@ -11286,6 +11459,21 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         (pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape"));
       const hasElderLoop = pool.have.has("Argothian Elder") && pool.have.has("Wirewood Lodge");
       if (!hasQR && !hasSym && !hasHyraxLoop && !hasElderLoop) return null;
+    }
+
+    // needsExtraLand: loop self-untaps but needs a separate mana-producing source.
+    // Ashaya herself is the enabler — exclude her from mana-source count.
+    if (combo.needsExtraLand) {
+      const untappers = new Set([...(combo.mustPreExist ?? []), "Ashaya, Soul of the Wild"]);
+      const hasSource = [...pool.have].some(c => {
+        if (untappers.has(c)) return false;
+        const cd = getCard(c);
+        if (!cd) return false;
+        if (cd.type === "land") return true;
+        if (pool.have.has("Ashaya, Soul of the Wild") && cd.type === "creature") return true;
+        return false;
+      });
+      if (!hasSource) return null;
     }
 
     // needsDrawEngine: need Beast Whisperer, Glademuse, or Nissa+Ashaya
@@ -11464,6 +11652,11 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     if (!TARGET_TYPES.has(combo.type)) continue;
     // Only surface infinite-mana and win-now in the path planner
     if (combo.type !== "infinite-mana" && combo.type !== "win-now") continue;
+    // Combos that require infinite mana to function cannot be path-planned without it.
+    if (combo.needsInfiniteMana) {
+      const hasInfinite = infiniteManaActive || mana >= EFFECTIVELY_INFINITE_MANA;
+      if (!hasInfinite) continue;
+    }
 
     const path = findPathForCombo(combo, 3);
     if (!path) continue;
@@ -11659,6 +11852,16 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
   const inHand = new Set(hand);
   const inGrave = new Set(graveyard);
 
+  // Local stax adjuster — mirrors analyzeGameState's staxAdjustedCmc
+  const _hasThorn       = board.has("Thorn of Amethyst");
+  const _hasTrinisphere = board.has("Trinisphere");
+  function _staxCmc(cmc, cardType) {
+    let adj = cmc;
+    if (_hasThorn && cardType !== "creature" && cardType !== "land") adj += 1;
+    if (_hasTrinisphere) adj = Math.max(adj, 3);
+    return adj;
+  }
+
   // No tutor needed if the card is already accessible
   if (inHand.has(target) || board.has(target)) return options;
   const witnessRetrievableLocal = (c) => inGrave.has(c) && inHand.has("Eternal Witness") && !board.has("Eternal Witness");
@@ -11678,12 +11881,12 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
     if (accessible("Formidable Speaker") && !board.has("Formidable Speaker")
         && getCard(target)?.type === "creature"
         && speakerDiscardAvail
-        && (mana >= 3 || infiniteMana)) options.push("Formidable Speaker (cast → ETB finds any creature)");
+        && (mana >= _staxCmc(3, "creature") || infiniteMana)) options.push("Formidable Speaker (cast → ETB finds any creature)");
     // Elvish Harbinger: ETB puts any elf on top of library. Cost {2}{G}, elf itself.
     if (inHand.has("Elvish Harbinger")
         && getCard(target)?.tags?.includes("elf")
-        && (mana >= 3 || infiniteMana)) options.push("Elvish Harbinger (ETB → top of library next draw)");
-    if (accessible("Worldly Tutor") && (mana >= 1 + (inGrave.has("Worldly Tutor") ? 3 : 0) || infiniteMana) && getCard(target)?.type === "creature") options.push("Worldly Tutor");
+        && (mana >= _staxCmc(3, "creature") || infiniteMana)) options.push("Elvish Harbinger (ETB → top of library next draw)");
+    if (accessible("Worldly Tutor") && (mana >= _staxCmc(1 + (inGrave.has("Worldly Tutor") ? 3 : 0), "instant") || infiniteMana) && getCard(target)?.type === "creature") options.push("Worldly Tutor");
     // Summoner's Pact: only suggest if the player can afford {2}{G}{G} next upkeep.
     // Next-upkeep mana = full battlefield production (all permanents untap).
     if (accessible("Summoner's Pact") && getCard(target)?.type === "creature") {
@@ -11691,41 +11894,42 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
       const canPayPact = infiniteMana || (nextUpkeepPool.green >= 2 && (nextUpkeepPool.green + nextUpkeepPool.colorless) >= 4);
       if (canPayPact) options.push("Summoner's Pact");
     }
-    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 1: find creature or land)");
+    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= _staxCmc(3, "instant") || infiniteMana)) options.push("Archdruid's Charm (mode 1: find creature or land)");
     if (inHand.has("Chord of Calling")) {
       const targetCmc = getCard(target)?.cmc ?? 2;
       const convokers = battlefield.filter(c => {
         const cd = getCard(c);
         return (cd?.type === "creature" || c === "Dryad Arbor") && !sickCreatures?.has(c);
       }).length;
-      const chordCost = Math.max(0, targetCmc + 3 - convokers);
+      // Chord is an instant — Thorn taxes it, but convoke can offset that
+      const chordCost = Math.max(0, _staxCmc(targetCmc + 3, "instant") - convokers);
       if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, convokers)} creatures)`);
     }
     if (accessible("Green Sun's Zenith") && !inGrave.has("Green Sun's Zenith")) {
       const targetCmc = getCard(target)?.cmc ?? getCard(target)?.cmc ?? 0;
-      const gszCost = targetCmc + 1; // X=CMC plus {G}
+      const gszCost = _staxCmc(targetCmc + 1, "sorcery"); // X=CMC plus {G}, taxed as sorcery
       if (mana >= gszCost || infiniteMana) options.push("Green Sun's Zenith");
     }
     if (accessible("Green Sun's Zenith") && inGrave.has("Green Sun's Zenith")) {
       // Needs Eternal Witness to retrieve first — don't suggest as immediate tutor
     }
     if (board.has("Survival of the Fittest") && (mana >= 1 || infiniteMana) && hand.some(c => getCard(c)?.type === "creature")) options.push("Survival of the Fittest");
-    if (inHand.has("Crop Rotation") && getCard(target)?.type === "land" && (mana >= 1 || infiniteMana)) options.push("Crop Rotation");
+    if (inHand.has("Crop Rotation") && getCard(target)?.type === "land" && (mana >= _staxCmc(1, "instant") || infiniteMana)) options.push("Crop Rotation");
     if ((board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && getCard(target)?.type === "land") options.push("Elvish Reclaimer");
-    if (inHand.has("Sylvan Scrying") && getCard(target)?.type === "land" && (mana >= 2 || infiniteMana)) options.push("Sylvan Scrying");
-    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "land" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm");
-    if (accessible("Natural Order") && (mana >= 4 + (inGrave.has("Natural Order") ? 3 : 0) || infiniteMana)) options.push("Natural Order");
+    if (inHand.has("Sylvan Scrying") && getCard(target)?.type === "land" && (mana >= _staxCmc(2, "sorcery") || infiniteMana)) options.push("Sylvan Scrying");
+    if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "land" && (mana >= _staxCmc(3, "instant") || infiniteMana)) options.push("Archdruid's Charm");
+    if (accessible("Natural Order") && (mana >= _staxCmc(4 + (inGrave.has("Natural Order") ? 3 : 0), "sorcery") || infiniteMana)) options.push("Natural Order");
     // Finale of Devastation: finds any creature from library or graveyard (X ≥ CMC). At X≥10 gives +X/+X and haste.
     if (accessible("Finale of Devastation") && getCard(target)?.type === "creature") {
       const targetCmc = getCard(target)?.cmc ?? 0;
-      const finaleCost = targetCmc + 2; // X=CMC plus {X}{G}{G}
+      const finaleCost = _staxCmc(targetCmc + 2, "sorcery"); // X=CMC plus {X}{G}{G}
       if (mana >= finaleCost || infiniteMana) options.push(`Finale of Devastation (X=${targetCmc} — finds ${target} from library or graveyard)`);
     }
     // Invasion of Ikoria: finds any non-Human creature from library (CMC ≤ X). Defends = flip.
     if (accessible("Invasion of Ikoria") && getCard(target)?.type === "creature"
         && !getCard(target)?.tags?.includes("human")) {
       const targetCmc = getCard(target)?.cmc ?? 0;
-      const ikoriaCost = targetCmc + 4; // {X}{G}{G}{G}{G}, X ≥ CMC
+      const ikoriaCost = _staxCmc(targetCmc + 4, "sorcery"); // {X}{G}{G}{G}{G}, X ≥ CMC
       if (mana >= ikoriaCost || infiniteMana) options.push(`Invasion of Ikoria (X=${targetCmc})`);
     }
     // Skyshroud Poacher: {3}{G} activated ability, search library for an elf, put into play tapped.
@@ -11736,7 +11940,7 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
     // Fetches: Heartwood Storyteller, Lignify, Great Oak Guardian, Treefolk Harbinger itself.
     if (accessible("Treefolk Harbinger")
         && (getCard(target)?.tags?.includes("treefolk") || target === "Heartwood Storyteller" || target === "Great Oak Guardian" || target === "Lignify")
-        && (mana >= 1 || infiniteMana)) options.push("Treefolk Harbinger (cast → top of library next draw)");
+        && (mana >= _staxCmc(1, "creature") || infiniteMana)) options.push("Treefolk Harbinger (cast → top of library next draw)");
     // Woodland Bellower: ETB puts any non-legendary green creature with CMC ≤ 3 directly onto the battlefield.
     // It is itself CMC 6 — Bellower in hand is castable when we have 6+ mana or infinite mana.
     if ((inHand.has("Woodland Bellower") || board.has("Woodland Bellower"))
@@ -17771,7 +17975,11 @@ function gradeOpeningHand(cards, handSize = 7) {
     return true;
   }).length;
   const rockCards   = cards.filter(c => getCard(c)?.tags?.includes("rock"));
-  const rocks       = rockCards.length;
+  // Chrome Mox requires a non-land non-artifact imprint target — don't count it as ramp
+  // if there's nothing in hand to imprint onto it.
+  const nonLandNonArtifact = cards.some(c => c !== "Chrome Mox" && getCard(c)?.type !== "land" && getCard(c)?.type !== "artifact");
+  const effectiveRockCards = rockCards.filter(c => c !== "Chrome Mox" || nonLandNonArtifact);
+  const rocks       = effectiveRockCards.length;
   const rampCount   = dorks + enchantLandRamp + rocks;
   const tutorCards  = cards.filter(c => getCard(c)?.tags?.includes("tutor"));
   const tutors      = tutorCards.length;
@@ -17792,9 +18000,12 @@ function gradeOpeningHand(cards, handSize = 7) {
   const hasCradleOnly = landCards.length > 0 && realLands === 0;
   const isManaFlood = realLands >= 5 && tutors === 0 && rampCount === 0;
   const hasGSZT1    = cards.includes("Green Sun's Zenith") && greenLands >= 1;
+  // Chrome Mox requires imprinting a non-land, non-artifact card to produce mana.
+  const chromeMoxUsable = cards.includes("Chrome Mox") && nonLandNonArtifact;
   const hasT1Play   = (dorks1 >= 1 && greenLands >= 1) ||
                       (enchantLandRamp >= 1 && greenLands >= 1) ||
-                      (rockCards.some(c => (getCard(c)?.cmc ?? 99) <= 1)) ||
+                      (effectiveRockCards.some(c => c !== "Chrome Mox" && (getCard(c)?.cmc ?? 99) <= 1)) ||
+                      chromeMoxUsable ||
                       hasGSZT1;
   const allRampIsSlow = rampCount >= 1 && !hasT1Play;
   const COMBO_TAGS  = new Set(["ashaya","duskwatch","quirion","earthcraft","wirewood",
