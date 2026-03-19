@@ -333,25 +333,31 @@ const COMBOS = [
     ]
   },
 
-  // ── 5. Earthcraft + Ashaya + Quirion/Scryb Ranger + Yavimaya ─────────
-  // IMPORTANT: Ashaya makes creatures Forest lands but NOT basic lands.
-  // Earthcraft requires "basic land" — needs Yavimaya to make lands basic Forests.
-  // Quirion Ranger variant: costs {G} to recast, needs 1 Earthcraft target per loop.
-  // Scryb Ranger variant: costs {1}{G} to recast (needs 2 Earthcraft targets), but has flash.
+  // ── 5. Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest ──────
+  // IMPORTANT: Ashaya makes creatures Forest lands but NOT basic.
+  // Yavimaya makes lands Forests but NOT basic. Neither grants the basic supertype.
+  // Earthcraft requires "basic land" — only actual basic lands (Forest, Dryad Arbor) work.
+  // This combo works because the basic Forest untapped by Earthcraft is a real land,
+  // and Ashaya creature-Forests are used as the Ranger's untap targets (not Earthcraft targets).
   {
     id: "earthcraft_ashaya_ranger",
-    name: "Earthcraft + Ashaya + Quirion/Scryb Ranger + Yavimaya",
-    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Yavimaya, Cradle of Growth"],
-    description: "Infinite mana. Earthcraft requires basic lands — Ashaya makes creatures Forest lands but NOT basic. Yavimaya fixes this by making all lands (including Ashaya creature-lands) basic Forests. Quirion Ranger (recast {G}, 1 Earthcraft target) or Scryb Ranger (recast {1}{G}, 2 targets, has flash) both work. Net {G} per loop.",
-    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Yavimaya, Cradle of Growth"],
+    name: "Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild"],
+    description: "Infinite mana. Earthcraft requires a basic land target — only actual basic lands (Forest, Dryad Arbor) qualify. Yavimaya does NOT help here (it makes lands Forests, not basic). " +
+      "Loop: Earthcraft taps any creature → untaps a basic Forest → tap Forest ({G}). " +
+      "Tap a creature-Forest via Ashaya ({G}). " +
+      "Quirion/Scryb Ranger bounces itself → untaps that creature. Recast Ranger. Net {G} per loop.",
+    requires: ["Earthcraft", "Ashaya, Soul of the Wild"],
     needsRanger: true,
+    needsBasicForest: true,
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Earthcraft + Ashaya + Yavimaya + Quirion Ranger OR Scryb Ranger on battlefield.",
-      "WHY YAVIMAYA: Ashaya makes creatures Forests but not BASIC. Earthcraft needs basic lands. Yavimaya makes all lands basic Forests — including creature-lands.",
-      "QUIRION variant (1 Earthcraft target per loop): Tap Quirion Ranger as a Forest for {G}. Tap one creature via Earthcraft to untap Quirion Ranger. Activate Ranger: return itself to hand, untapping any creature. Recast for {G}. Net: {G} per loop.",
-      "SCRYB variant (flash! 2 Earthcraft targets per loop): Tap Scryb Ranger as a Forest for {G}. Tap two creatures via Earthcraft to untap Scryb Ranger + one other. Activate Ranger: return itself to hand, untapping any creature. Recast for {1}{G}. Net: {G} per loop — goes off at instant speed on any opponent's turn.",
+      "Earthcraft + Ashaya + Quirion or Scryb Ranger + a basic Forest on battlefield.",
+      "KEY RULE: Earthcraft untaps BASIC lands only. Yavimaya makes lands Forests, not basic — it does NOT make non-basic lands valid Earthcraft targets.",
+      "Ashaya makes creatures Forest lands (not basic) — they are tapped for {G} as the loop's mana source, NOT as Earthcraft targets.",
+      "QUIRION variant: Earthcraft taps any creature → untap basic Forest → tap Forest ({G}). Tap another creature-Forest ({G}). Quirion bounces itself → untaps that creature. Recast Quirion ({G}). Net: +{G} per loop.",
+      "SCRYB variant (flash!): Same loop but Scryb costs {1}{G} to recast — needs 2 Earthcraft targets or 2 mana sources. Goes off at instant speed on any opponent's turn.",
       "Repeat for infinite green mana.",
     ]
   },
@@ -378,6 +384,81 @@ const COMBOS = [
       "7. Cast Eternal Witness ({2}{G} — free with infinite mana) — ETB retrieves Summoner's Pact.",
       "8. Cast Summoner's Pact → find Duskwatch Recruiter (free).",
       "9. Cast Duskwatch Recruiter ({1}{G}) and activate with infinite mana to draw your entire library → WIN.",
+    ]
+  },
+  // ── 6c. Concordant Crossroads + Ashaya + Quirion Ranger + Eternal Witness ──
+  {
+    id: "concordant_ashaya_quirion_witness",
+    name: "Concordant Crossroads + Ashaya + Quirion Ranger + Eternal Witness",
+    onBattlefield: ["Concordant Crossroads", "Ashaya, Soul of the Wild", "Quirion Ranger", "Eternal Witness"],
+    description: "Infinite mana. Concordant Crossroads gives all creatures haste — " +
+      "combined with Ashaya making creatures into Forest lands, every creature can tap for {G} immediately. " +
+      "No Earthcraft or basic Forest required. " +
+      "Loop: tap Witness(1G) + tap Quirion(1G) → Quirion bounces itself → untaps Witness → recast Quirion(1G) → net +{G}. " +
+      "Assembly identical to Earthcraft variant: Pact → Witness (ETB retrieves Pact) → Pact → Quirion. " +
+      "Witness has haste via Concordant, so it taps for {G} immediately to pay Quirion's cast cost.",
+    requires: ["Concordant Crossroads", "Ashaya, Soul of the Wild", "Quirion Ranger", "Eternal Witness"],
+    mustPreExist: [],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "1. Cast Summoner's Pact → find Eternal Witness (free, pay {2}{G}{G} next upkeep).",
+      "2. Cast Eternal Witness ({2}{G}) — ETB retrieves Summoner's Pact. Witness has haste via Concordant Crossroads.",
+      "3. Cast Summoner's Pact → find Quirion Ranger (free, pay {2}{G}{G} next upkeep).",
+      "4. Tap Eternal Witness for {G} (Forest via Ashaya + haste via Concordant). Cast Quirion Ranger ({G}). Quirion also has haste.",
+      "5. Infinite mana loop: tap Witness ({G}) + tap Quirion ({G}) = 2G → Quirion bounces itself (Forest via Ashaya) → untaps Witness → recast Quirion ({G}) → net +{G} per loop.",
+      "6. Bounce Witness with Quirion → recast Witness → ETB retrieves Summoner's Pact.",
+      "7. Cast Summoner's Pact → find Duskwatch Recruiter → activate with infinite mana → WIN.",
+      "KEY DIFFERENCE from Earthcraft variant: no basic Forest needed, no Earthcraft needed — Concordant haste lets Witness tap for {G} directly.",
+    ]
+  },
+  // ── 5c. Concordant Crossroads + Ashaya + Quirion Ranger (minimal 3-piece) ─
+  {
+    id: "concordant_ashaya_quirion",
+    name: "Concordant Crossroads + Ashaya + Quirion Ranger",
+    onBattlefield: ["Concordant Crossroads", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    description: "Infinite mana. Concordant Crossroads gives all creatures haste. " +
+      "Ashaya makes all creatures Forest lands — including herself. " +
+      "Loop: tap Ashaya ({G}) + tap Quirion ({G}) → Quirion bounces itself → untaps Ashaya → " +
+      "recast Quirion ({G}, has haste immediately) → net +{G}. " +
+      "Pure 3-piece combo — no extra creatures, no basic Forest, no Earthcraft needed.",
+    requires: ["Concordant Crossroads", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Concordant Crossroads + Ashaya + Quirion Ranger on battlefield.",
+      "All creatures have haste (Concordant) and are Forest lands (Ashaya) — tap for {G} immediately.",
+      "Loop: Tap Ashaya for {G} (she is a Forest land via her own effect).",
+      "Tap Quirion Ranger for {G} (Forest via Ashaya, haste via Concordant).",
+      "Quirion Ranger: return itself to hand (Forest via Ashaya) → untap Ashaya.",
+      "Recast Quirion Ranger ({G}) — has haste immediately via Concordant Crossroads.",
+      "Net: {G}+{G}−{G} = +{G} per loop. Repeat for infinite green mana.",
+      "Pure 3-piece combo. No Eternal Witness, no Earthcraft, no basic Forest required.",
+    ]
+  },
+  // ── 5d. Earthcraft + Ashaya + Quirion Ranger (minimal, no Witness needed) ─
+  {
+    id: "earthcraft_ashaya_quirion_minimal",
+    name: "Earthcraft + Ashaya + Quirion Ranger (+ basic Forest)",
+    onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    description: "Infinite mana without Eternal Witness or Yavimaya. " +
+      "Earthcraft taps Quirion → untap basic Forest → tap Forest ({G}). " +
+      "Tap Ashaya for {G} (she's a Forest via her own effect). " +
+      "Quirion bounces itself → untaps Ashaya. Recast Quirion ({G}). " +
+      "Net: Earthcraft-{G} + Ashaya-{G} − Quirion recast-{G} = +{G} per loop. " +
+      "Only 3 named pieces + a basic Forest required — Ashaya herself is the second tap target.",
+    requires: ["Earthcraft", "Ashaya, Soul of the Wild", "Quirion Ranger"],
+    needsBasicForest: true,
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Earthcraft + Ashaya + Quirion Ranger + a basic Forest on battlefield.",
+      "Ashaya makes all creatures Forest lands — she herself taps for {G}.",
+      "Loop: Earthcraft: tap Quirion Ranger → untap basic Forest → tap Forest for {G}. (+{G} from Earthcraft)",
+      "Tap Ashaya for {G} (she is a Forest land via her own effect).",
+      "Quirion Ranger: return itself to hand (Forest via Ashaya) → untap Ashaya.",
+      "Recast Quirion Ranger ({G}). Net: +{G} per loop. Repeat for infinite green mana.",
+      "Note: No second creature needed — Ashaya is always the tap target. Any basic Forest suffices.",
     ]
   },
   // ── 6. Magus of the Candelabra + Ashaya + Dork/Land (≥3 mana) ─────────
@@ -1899,6 +1980,11 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     return { green: amt, colorless: 0 }; // all other dorks produce {G}
 
   } else if (data.tags?.includes("rock")) {
+    // Collector Ouphe and Null Rod shut down ALL artifact activated abilities,
+    // including mana rocks. When either is on the battlefield, rocks produce nothing.
+    if (ctx.board.has("Collector Ouphe") || ctx.board.has("Null Rod")) {
+      return { green: 0, colorless: 0 };
+    }
     if (card === "Sol Ring")    return { green: 0, colorless: 2 };
     if (card === "Chrome Mox")  return { green: 1, colorless: 0 };
     if (card === "Mox Diamond") return { green: 1, colorless: 0 };
@@ -1964,7 +2050,9 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
   // Using them via Earthcraft nets 0 (trade 1G creature tap for 1G forest re-tap = no gain).
   // Only grant the Earthcraft bonus when Ashaya is NOT on board.
   if (ctx.board.has("Earthcraft") && !ctx.board.has("Ashaya, Soul of the Wild")) {
-    const untapTargets = ctx.hasYavimaya ? ctx.landCount : ctx.basicForests;
+    // Earthcraft: {T}: untap target BASIC land — Yavimaya makes lands Forests but NOT basic.
+    // Only actual basic lands (Forest, basic fetches, Dryad Arbor) are valid targets.
+    const untapTargets = ctx.basicForests;
     // Use ALL creatures including sick ones — Earthcraft bypasses summoning sickness.
     const allCreatures = battlefield.filter(c => {
       const cd = getCard(c);
@@ -2040,7 +2128,7 @@ function calculateCardManaForPool(card, battlefield) {
   return green + colorless;
 }
 
-function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false }) {
+function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false, sickCreatures = null }) {
   // deckList: Set of card names in the player's deck. When set, ONE PIECE AWAY advice and
   // combo suggestions are filtered to only show cards that are actually in the deck.
   // null = no filter (all cards valid, legacy behaviour).
@@ -2174,8 +2262,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // letting it untap two more lands for a second activation.
   // Sequence: tap all lands (base mana) → Elder untaps 2 Forests → tap them (+2) →
   //   untapper resets Elder → Elder untaps remaining Forest+land → tap Forest (+1)
-  // Net extra = +3 with Yavimaya (all lands valid Elder targets).
-  // Without Yavimaya, ≥2 basic Forests: net extra = +2 conservatively.
+  // Net extra = +3 with Yavimaya (all lands produce {G}, maximising untap value).
+  // Without Yavimaya, ≥2 Forest-type lands: net extra = +2 conservatively.
+  // NOTE: Elder can untap ANY two lands (no basic restriction) — Yavimaya's value here
+  // is making non-basic lands produce {G} when tapped, not unlocking new untap targets.
   // Symbiote bounces an elf (costs one elf from board) to untap Elder — same net mana result.
   // Requires: Elder on board, one untapper (Quirion/Scryb OR Symbiote+elf), ≥2 Forest-type lands, isMyTurn.
   let elderUntapBonus = 0;
@@ -2229,10 +2319,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const esgBonus = esgInHand ? 1 : 0;
 
   const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus + elderUntapBonus;
-  // #8: Convoke bonus for Chord of Calling — each non-sick creature can tap to pay {1} or {G}
+  // #8: Convoke bonus for Chord of Calling — each untapped (non-sick) creature can tap to pay {1} or {G}.
+  // Summoning-sick creatures cannot tap, so they don't contribute to convoke.
   const convokeCreatures = battlefield.filter(c => {
     const cd = getCard(c);
-    return cd?.type === "creature" || c === "Dryad Arbor";
+    if (!(cd?.type === "creature" || c === "Dryad Arbor")) return false;
+    if (sickCreatures?.has(c)) return false; // sick — can't tap for convoke
+    return true;
   }).length;
   const canAffordWithTricks = (cmc, greenPips = 0, cardName = null) => {
     const bonus = effectiveManaBonus + (cardName === "Chord of Calling" ? convokeCreatures : 0);
@@ -2310,7 +2403,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       return 1 + badgermoleBonus;
     }
     // Ferocious: Fanatic of Rhonas taps for 4 if power 4+ creature on board, else 1
-    if (t === "ferocious") return badgermoleBonus + (creaturesOnBoard >= 4 ? 4 : 1);
+    if (t === "ferocious") {
+      // Ferocious requires a creature with power 4+ on the battlefield.
+      // Fanatic of Rhonas itself is 3/2 — it cannot enable its own ferocious.
+      // Ashaya's power = number of Forests controlled (all creatures become Forests with Ashaya).
+      // So Ashaya is power 4+ when you control ≥4 creatures (each is a Forest via Ashaya).
+      // Use boardCtx.hasFerocious which already computes this correctly.
+      return badgermoleBonus + (boardCtx.hasFerocious ? 4 : 1);
+    }
     return 0;
   }
 
@@ -2372,6 +2472,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (combo.type !== "infinite-mana") continue;
     const allOnBoard = combo.requires.every(r => board.has(r));
     if (!allOnBoard) continue;
+    // If any mustPreExist piece is sick, the combo can't fire this turn
+    const mustPre = combo.mustPreExist ?? [];
+    if (sickCreatures && mustPre.some(r => sickCreatures.has(r))) continue;
     const extras = comboExtrasSatisfied(combo, false);
     if (extras.ok) { _inf = true; _trueInf = true; _infName = combo.name; break; }
   }
@@ -2385,6 +2488,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       for (const combo of COMBOS) {
         if (combo.type !== "infinite-mana") continue;
         const mustPre = combo.mustPreExist ?? [];
+        // Skip if any mustPreExist piece on board is sick — can't activate this turn
+        if (sickCreatures && mustPre.some(r => board.has(r) && sickCreatures.has(r))) continue;
         let castCostFromHand = 0;
         const allReachable = combo.requires.every(r => {
           if (board.has(r)) return true;
@@ -2423,11 +2528,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // GROUP 4: Earthcraft as pseudo-haste enabler — a freshly cast creature can immediately
   // tap via Earthcraft to untap a basic land, effectively producing mana the turn it enters.
   // This is functionally equivalent to haste for mana production purposes.
-  // Requires: Earthcraft on board + at least 1 basic land (or Yavimaya making all lands basic).
-  const earthcraftHaste = board.has("Earthcraft") && (
-    battlefield.some(c => c === "Forest" || getCard(c)?.tags?.includes("basic")) ||
-    board.has("Yavimaya, Cradle of Growth")
-  );
+  // Requires: Earthcraft on board + at least 1 actual basic land on battlefield.
+  // NOTE: Yavimaya makes lands Forests but does NOT grant the basic supertype —
+  // non-basic lands remain invalid Earthcraft targets even with Yavimaya in play.
+  const earthcraftHaste = board.has("Earthcraft") &&
+    battlefield.some(c => c === "Forest" || getCard(c)?.tags?.includes("basic"));
   const hasHasteEnabler      = (ashayaAvailable && landAnimateOnBoard) || earthcraftHaste;
 
   const results = [];
@@ -2723,11 +2828,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     }
 
+    // needsBasicForest: combo requires at least one basic Forest-type land on battlefield
+    if (combo.needsBasicForest) {
+      const hasBasic = battlefield.some(c => {
+        const cd = getCard(c);
+        return cd?.type === "land" && (cd?.tags?.includes("basic") || c === "Forest");
+      });
+      if (!hasBasic) return { ok: false, missing: "a basic Forest on the battlefield (for Earthcraft to untap)" };
+    }
+
+    // needsMinCreatures: need at least N creatures on battlefield total
+    if (combo.needsMinCreatures) {
+      const creatureCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
+      if (creatureCount < combo.needsMinCreatures)
+        return { ok: false, missing: `at least ${combo.needsMinCreatures} creatures on battlefield (have ${creatureCount})` };
+    }
+
     return { ok: true };
   }
-
-
-  // ---- YEVA FLASH TIMING ADVICE ----
   // Fires when: Yeva on board (free flash), OR infinite mana active (cast from command zone free),
   // OR ≥4 mana available (cast Yeva from command zone for {2}{G}{G}).
   if (!isMyTurn && yevaAvailable) {
@@ -3516,23 +3634,26 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // ---- CAST EARTHCRAFT FROM HAND ----
   // Earthcraft: tap a creature → untap a basic land (instant-speed land untap engine).
   // Value: each creature on board can untap a basic land once per turn, generating +1G per tap.
-  // With Ashaya + Yavimaya this becomes the infinite mana engine (all lands become basic Forests).
+  // RULE: Earthcraft requires a BASIC land target. Yavimaya makes lands Forests but NOT basic —
+  // non-basic lands remain invalid Earthcraft targets even with Yavimaya in play.
+  // The infinite engine is Earthcraft + Ashaya + Quirion/Scryb Ranger + a basic Forest.
   if (inHand.has("Earthcraft") && !board.has("Earthcraft") && canAfford(2, 1)) {
     const basicLands = battlefield.filter(c => {
       const cd = getCard(c);
-      return cd?.type === "land" && (cd?.tags?.includes("basic") || cd?.tags?.includes("forest") || c === "Forest");
+      // Only actual basic lands: Forest, Dryad Arbor (land-creature with basic Forest type).
+      // Yavimaya does NOT grant basic supertype — non-basics excluded.
+      return cd?.type === "land" && (cd?.tags?.includes("basic") || c === "Forest");
     }).length;
     const tappableCreatures = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
     const extraMana = Math.min(tappableCreatures, basicLands); // each creature can untap one basic
 
     if (basicLands > 0 && tappableCreatures > 0) {
       const hasAshaya = board.has("Ashaya, Soul of the Wild") || inHand.has("Ashaya, Soul of the Wild");
-      const hasYavimaya = board.has("Yavimaya, Cradle of Growth");
       const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger") || inHand.has("Quirion Ranger") || inHand.has("Scryb Ranger");
-      const comboHint = (hasAshaya || hasYavimaya) && hasRanger
-        ? " With Ashaya + Yavimaya + a Ranger this IS the infinite mana engine."
-        : hasAshaya || hasYavimaya
-          ? " One Ranger away from the Earthcraft infinite mana loop."
+      const comboHint = hasAshaya && hasRanger
+        ? " With Ashaya + a Ranger this IS the infinite mana engine (Ranger loops creature-Forests; Earthcraft uses the basic as untap target)."
+        : hasAshaya
+          ? " One Ranger away from the Earthcraft + Ashaya infinite mana loop."
           : "";
       results.push({
         priority: extraMana >= 2 ? 8 : 7,
@@ -3889,11 +4010,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       priority: 8,
       category: "🔄 ENGINE ACTIVE",
       headline: "Earthcraft is online — chain tap/untap for explosive mana",
-      detail: `With ${creaturesOnBoard} creatures, Earthcraft lets you tap each creature to untap a basic land. With Yavimaya in play, ALL lands are basic Forests — enormous mana acceleration.`,
+      detail: `With ${creaturesOnBoard} creatures, Earthcraft lets you tap each creature to untap a basic land. Earthcraft requires a BASIC land target — Yavimaya makes lands Forests but does NOT grant the basic supertype, so non-basic lands are still invalid Earthcraft targets.`,
       steps: [
-        "Tap each creature via Earthcraft to untap a basic Forest.",
-        `${creaturesOnBoard} creatures = ${creaturesOnBoard} untaps. Stack with Wild Growth/Utopia Sprawl for double value.`,
-        "If Ashaya + Yavimaya both resolve: Yavimaya makes all lands (including creature-lands) basic Forests → each creature taps to untap another → infinite mana."
+        "Tap each creature via Earthcraft to untap a basic Forest (actual basics only — Forest, Dryad Arbor).",
+        `${creaturesOnBoard} creatures = up to ${creaturesOnBoard} untaps (limited by basic land count). Stack with Wild Growth/Utopia Sprawl on a basic Forest for double value.`,
+        "With Ashaya: creatures become Forest lands via Ashaya (not basic), and Quirion/Scryb Ranger untaps them — the loop uses Ashaya creature-Forests as mana sources, not Earthcraft targets. Earthcraft still needs a real basic land."
       ],
       color: "#f39c12",
     });
@@ -4603,7 +4724,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Instant-speed creature tutor. Convoke reduces cost by tapping creatures.
   // Key: can be cast on opponent's end step at instant speed — huge with Yeva flash.
   if (accessible("Chord of Calling")) {
-    const convokeTap   = Math.min(creaturesOnBoard, 7); // tap up to 7 creatures for convoke
+    // Only non-sick creatures can tap for convoke (summoning sickness prevents tapping).
+    const convokeAvailable = battlefield.filter(c => {
+      const cd = getCard(c);
+      return (cd?.type === "creature" || c === "Dryad Arbor") && !sickCreatures?.has(c);
+    }).length;
+    const convokeTap   = Math.min(convokeAvailable, 7); // tap up to 7 creatures for convoke
     const remainder    = Math.max(0, 7 - convokeTap);   // remaining mana needed for X=5 (Ashaya)
     const effectiveMana = mana + convokeTap;             // mana + convoke = effective casting power
 
@@ -7567,7 +7693,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const deckSet = deckList ? new Set(deckList) : null;
     // #4: Cache the findReachableLines result — it's expensive (~1-2ms) and called twice
     // (once here for the path planner, once below for the turn clock).
-    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters);
+    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures);
     const lines = _cachedFRL;
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
@@ -7578,7 +7704,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : l.sameTurn
         ? (isFirst ? "⚡ FIND INFINITE MANA" : "⚡ ALT MANA LINE")
         : (l.nextTurnOnly && l.canAfford)
-        ? (isFirst ? "⚡ FIND INFINITE MANA — NEXT TURN" : "⚡ ALT MANA LINE — NEXT TURN")
+        ? (() => {
+            // "WIN NEXT TURN" when pieces are on board but have summoning sickness (just untap).
+            // "FIND INFINITE MANA — NEXT TURN" when tutor steps are still required next turn.
+            // A line is "fully assembled" when there are no tutor steps AND it's marked next-turn
+            // purely because a mustPreExist piece needs to untap (badges has "next-turn" but no tutor steps).
+            const fullyAssembled = l.tutorSteps.length === 0 && l.needed.length === 0;
+            return fullyAssembled
+              ? (isFirst ? "⏭️ WIN NEXT TURN" : "⏭️ ALT WIN NEXT TURN")
+              : (isFirst ? "⚡ FIND INFINITE MANA — NEXT TURN" : "⚡ ALT MANA LINE — NEXT TURN");
+          })()
         : (isFirst ? `⚡ FIND INFINITE MANA — NEED ${l.totalMana} MANA` : `⚡ ALT MANA LINE — NEED ${l.totalMana} MANA`);
       // Priority tiers for path planner lines:
       // • WIN NOW (all pieces castable this turn)          → 15, 14, 13
@@ -7677,7 +7812,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const _tutorCache = new Map();
   const cachedTutorOptions = (target) => {
     if (!_tutorCache.has(target)) {
-      _tutorCache.set(target, getTutorOptions(target, hand, battlefield, mana, infiniteManaActive, graveyard));
+      _tutorCache.set(target, getTutorOptions(target, hand, battlefield, mana, infiniteManaActive, graveyard, sickCreatures));
     }
     return _tutorCache.get(target);
   };
@@ -7733,6 +7868,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // without it the loop can't repeat and the advice is misleading.
     if (combo.needsInfiniteMana && !infiniteManaActive) continue;
 
+    // Collector Ouphe / Null Rod shut down ALL artifact activated abilities.
+    // Suppress combos whose key required piece is an artifact that relies on its activated ability
+    // (e.g. Thousand-Year Elixir's {1} untap, Sol Ring tap, Chrome Mox tap, etc.).
+    // Earthcraft is an enchantment — unaffected. Mana rocks are handled in cardManaContribution.
+    const oupheLock = board.has("Collector Ouphe") || board.has("Null Rod");
+    if (oupheLock && combo.requires.some(r => {
+      const cd = getCard(r);
+      return cd?.type === "artifact" && (
+        cd.tags?.includes("rock") || cd.tags?.includes("haste") || cd.tags?.includes("untap") || cd.tags?.includes("combo")
+      );
+    })) continue;
+
     if (missing.length === 0 && extras.ok) {
       // Type metadata: label, headline prefix, priority boost, color
       const typeMeta = {
@@ -7745,6 +7892,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "engine":        { ready: "🔄 ENGINE READY",          cast: "⚡ ACTIVATE ENGINE",            readyPrefix: "ACTIVATE:",    boost: 1, color: "#a569bd" },
       }[combo.type] || { ready: "🔄 COMBO ASSEMBLED",  cast: "⚡ ASSEMBLE COMBO", readyPrefix: "EXECUTE:", boost: 3, color: "#58d68d" };
 
+      // mustPreExist sickness check: if a mustPreExist tapper is on board but has
+      // summoning sickness (passed from Goldfish via sickCreatures), the combo can't
+      // fire this turn — emit a "NEXT TURN" variant instead of "LOOP READY".
+      const mustPreExistOnBoard = mustPreExist.filter(r => board.has(r));
+      const preExistMaySick = mustPreExistOnBoard.length > 0 && sickCreatures != null &&
+        mustPreExistOnBoard.some(r => sickCreatures.has(r));
+
       // needToCast = castable-on-board cards in hand + requires-only spell cards in hand
       const needToCast = [
         ...castableOnBoard.filter(r => inHand.has(r) && !board.has(r)), // permanents to cast
@@ -7752,15 +7906,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ...mustPreExist.filter(r => inHand.has(r) && !board.has(r) && canCastNow), // mustPreExist cards in hand
       ];
       if (needToCast.length === 0) {
-        results.push({
-          priority: combo.priority + typeMeta.boost,
-          category: typeMeta.ready,
-          headline: `${typeMeta.readyPrefix} ${combo.name}`,
-          detail: combo.description,
-          steps: combo.lines,
-          combo: combo.id,
-          color: typeMeta.color,
-        });
+        if (preExistMaySick) {
+          // mustPreExist tapper is on board but has summoning sickness — can't activate until next turn
+          results.push({
+            priority: combo.priority + typeMeta.boost - 2, // slightly lower than LOOP READY
+            category: "⏭️ INFINITE MANA — NEXT TURN",
+            headline: `${combo.name} — untap to go infinite`,
+            detail: `All pieces are on board. ${mustPreExistOnBoard.join(", ")} entered this turn (summoning sickness) — activate next turn for infinite mana. ${combo.description}`,
+            steps: combo.lines,
+            combo: combo.id,
+            color: "#c8a800",
+          });
+        } else {
+          results.push({
+            priority: combo.priority + typeMeta.boost,
+            category: typeMeta.ready,
+            headline: `${typeMeta.readyPrefix} ${combo.name}`,
+            detail: combo.description,
+            steps: combo.lines,
+            combo: combo.id,
+            color: typeMeta.color,
+          });
+        }
       } else {
         const totalCost = needToCast.reduce((acc, c) => acc + (getCard(c)?.cmc || 0), 0);
         if ((mana >= totalCost || infiniteManaActive) || !isMyTurn) {
@@ -8015,8 +8182,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Helper: add mode/obligation note to tutor names in step text
   function tutorNote(name) {
     if (name === "Chord of Calling")  {
-      const convokeTap = Math.min(5, creaturesOnBoard);
-      const remainder  = Math.max(0, 5 - creaturesOnBoard);
+      // Only non-sick creatures contribute to convoke
+      const availForConvoke = battlefield.filter(c => {
+        const cd = getCard(c);
+        return (cd?.type === "creature" || c === "Dryad Arbor") && !sickCreatures?.has(c);
+      }).length;
+      const convokeTap = Math.min(5, availForConvoke);
+      const remainder  = Math.max(0, 5 - availForConvoke);
       return remainder === 0
         ? `Chord of Calling (free via convoke — tap ${convokeTap} creatures)`
         : `Chord of Calling (convoke — tap ${convokeTap} creatures, pay {${remainder}} mana)`;
@@ -10054,7 +10226,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     try {
       const deckSet = deckList ? new Set(deckList) : null;
       // #4: Reuse cached result from path planner if available
-      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters);
+      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures);
       const lines = _cachedFRL;
       if (lines.length > 0) {
         const best = lines[0];
@@ -10579,7 +10751,7 @@ function buildMillSequence(board, hand, pileNeeded = []) {
 // which infinite-mana and win-now combos are reachable, then rank by:
 //   1. Same-turn feasibility  2. Step count  3. Mana cost  4. Combo priority
 // ─────────────────────────────────────────────────────────────────────────────
-function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0) {
+function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null) {
   const board    = new Set(battlefield);
   const inHand   = new Set(hand);
   const inDeckFn = deckList ? (c) => deckList.has(c) : () => true;
@@ -10765,13 +10937,14 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     else if (t.baseCost === "cmc+3") cost = cmc + 3;
     else cost = t.baseCost;
     // Chord of Calling: convoke — each non-sick creature on battlefield taps to pay {1} or {G}
-    // Subtract convokeable creatures (those already on board and not sick) from the cost.
-    // We don't track summoning sickness in the path planner, so conservatively count
-    // all pre-existing battlefield creatures as convoke-eligible.
+    // Subtract convokeable creatures from the cost. sickCreatures is passed in from
+    // analyzeGameState, so we can accurately exclude summoning-sick creatures.
     if (t.name === "Chord of Calling") {
       const convoke = battlefield.filter(c => {
         const cd = getCard(c);
-        return cd?.type === "creature" || c === "Dryad Arbor";
+        if (!(cd?.type === "creature" || c === "Dryad Arbor")) return false;
+        if (sickCreatures?.has(c)) return false; // sick — can't tap for convoke
+        return true;
       }).length;
       cost = Math.max(0, cost - convoke);
     }
@@ -10975,7 +11148,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     if (combo.needsBigDork) {
       const min = combo.needsBigDork;
       const poolArr = [...pool.have];
-      const hasDork = poolArr.some(c => {
+      let hasDork = poolArr.some(c => {
         const cd = getCard(c);
         if (!cd || cd.type !== "creature") return false;
         if (typeof cd.tapsFor === "number") return cd.tapsFor >= min;
@@ -10987,6 +11160,21 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         if (cd.tapsFor === "power")     return cd.tags?.includes("big-dork") && creaturesNow >= min;
         return false;
       });
+      // Ashaya special case: all creatures are Forests tapping for {G}.
+      // For the ranger loop to be net-positive, a SINGLE creature must produce enough
+      // mana to cover the ranger recast cost. Quirion recast = {G} (min=2 required),
+      // Scryb recast = {1}{G} (min=3 required). We need ONE source producing >= min.
+      // Use max single-source output rather than total board mana.
+      if (!hasDork && board.has("Ashaya, Soul of the Wild")) {
+        const ctx = buildBoardContext(battlefield, null, null);
+        const maxSingleSource = battlefield.reduce((best, c) => {
+          const cd = getCard(c);
+          if (!cd) return best;
+          const { green, colorless } = cardManaContribution(c, cd, ctx, null);
+          return Math.max(best, green + colorless);
+        }, 0);
+        if (maxSingleSource >= min) hasDork = true;
+      }
       if (!hasDork && depth < 3) {
         // Try to find one via remaining tutors
         const candidates = ["Elvish Archdruid","Priest of Titania","Circle of Dreams Druid",
@@ -11118,9 +11306,18 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     }
 
     // needsMinCreatures: need at least N total creatures on board (beyond the named requires)
-    // Used by earthcraft_ashaya_quirion_forest which needs a second creature for the loop
     if (combo.needsMinCreatures) {
       if (creaturesNow < combo.needsMinCreatures) return null;
+    }
+
+    // needsBasicForest: combo requires at least one basic Forest-type land on the battlefield
+    // (e.g. Earthcraft needs a basic land to untap)
+    if (combo.needsBasicForest) {
+      const hasBasic = battlefield.some(c => {
+        const cd = getCard(c);
+        return cd?.type === "land" && (cd?.tags?.includes("basic") || c === "Forest");
+      });
+      if (!hasBasic) return null;
     }
 
     return { extraSteps, extraMana };
@@ -11132,7 +11329,12 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   function mustPreExistStatus(combo, pool) {
     const mustPre = combo.mustPreExist ?? [];
     const alreadyOnBoard = mustPre.every(r => board.has(r));
-    if (alreadyOnBoard) return { ok: true, nextTurn: false, preSteps: [] };
+    if (alreadyOnBoard) {
+      // Even if all pieces are on board, a sick mustPreExist tapper can't activate this turn
+      if (sickCreatures && mustPre.some(r => sickCreatures.has(r)))
+        return { ok: true, nextTurn: true, preSteps: [] };
+      return { ok: true, nextTurn: false, preSteps: [] };
+    }
     // Some must-pre-exist pieces are missing from board but may be in pool (hand/tutored)
     const preSteps = [];
     for (const r of mustPre) {
@@ -11451,7 +11653,7 @@ const fonts = `
 
 
 
-function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = []) {
+function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = [], sickCreatures = null) {
   const options = [];
   const board = new Set(battlefield);
   const inHand = new Set(hand);
@@ -11492,8 +11694,12 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
     if (inHand.has("Archdruid's Charm") && getCard(target)?.type === "creature" && (mana >= 3 || infiniteMana)) options.push("Archdruid's Charm (mode 1: find creature or land)");
     if (inHand.has("Chord of Calling")) {
       const targetCmc = getCard(target)?.cmc ?? 2;
-      const chordCost = Math.max(0, targetCmc + 3 - (battlefield?.length ?? 0));
-      if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, battlefield?.length ?? 0)} creatures)`);
+      const convokers = battlefield.filter(c => {
+        const cd = getCard(c);
+        return (cd?.type === "creature" || c === "Dryad Arbor") && !sickCreatures?.has(c);
+      }).length;
+      const chordCost = Math.max(0, targetCmc + 3 - convokers);
+      if (mana >= chordCost || infiniteMana) options.push(`Chord of Calling (convoke — tap ${Math.min(targetCmc + 3, convokers)} creatures)`);
     }
     if (accessible("Green Sun's Zenith") && !inGrave.has("Green Sun's Zenith")) {
       const targetCmc = getCard(target)?.cmc ?? getCard(target)?.cmc ?? 0;
@@ -14071,8 +14277,9 @@ function HelpModal({ onClose, onStartTour }) {
         <Tip label="Fanatic of Rhonas + Ashaya + Quirion/Scryb Ranger">Fanatic of Rhonas has Ferocious: {"{T}"}: add {"{G}{G}{G}{G}"}. With Ashaya (Ferocious enabled), Quirion loops Fanatic. Needs only a 4/4 or greater for Ferocious — Ashaya herself qualifies with enough creatures.</Tip>
         <Tip label="Tireless Provisioner + Ashaya + Quirion Ranger">Tireless Provisioner creates a Treasure on landfall. Bouncing a creature-Forest with Quirion triggers landfall → Treasure. Cash Treasure + tap dork → net mana. Infinite with enough dork output.</Tip>
         <Tip label="Arbor Elf + Ashaya + Quirion Ranger (enchanted Forest or Yavimaya)">Arbor Elf untaps any Forest. With Wild Growth / Utopia Sprawl on a Forest (producing ≥2), or Yavimaya making all lands Forests, Ashaya + Quirion loop nets {"{G}"}+ per cycle.</Tip>
-        <Tip label="Earthcraft + Ashaya + Quirion Ranger + Eternal Witness + Forest">Earthcraft taps any creature (even sick) to untap a basic land. Loop: Earthcraft taps Quirion → untap Forest → tap Forest ({"{G}"}). Quirion bounces itself → untaps Witness. Tap Witness ({"{G}"}). Recast Quirion ({"{G}"}). Net +{"{G}"} per loop. Assembly: Pact → Witness (ETB retrieves Pact) → Pact → Quirion.</Tip>
-        <Tip label="Earthcraft + Ashaya + Quirion/Scryb Ranger + Yavimaya">Yavimaya makes all lands basic Forests. Earthcraft + Ashaya creatures → all lands (including creature-lands) become valid untap targets. Quirion or Scryb Ranger loops for infinite mana without needing an enchanted Forest.</Tip>
+        <Tip label="Earthcraft + Ashaya + Quirion Ranger + Eternal Witness + Forest">Earthcraft taps any creature (even sick) to untap a basic land. Loop: Earthcraft taps Quirion → untap Forest → tap Forest ({"{G}"}). Quirion bounces itself → untaps Witness. Tap Witness ({"{G}"}). Recast Quirion ({"{G}"}). Net +{"{G}"} per loop. Assembly: Pact → Witness (ETB retrieves Pact) → Pact → Quirion. Earthcraft bypasses summoning sickness during assembly.</Tip>
+        <Tip label="Concordant Crossroads + Ashaya + Quirion Ranger + Eternal Witness">Concordant gives all creatures haste — with Ashaya making creatures into Forest lands, Witness can tap for {"{G}"} immediately on ETB (no Earthcraft or basic Forest needed). Loop: tap Witness ({"{G}"}) + tap Quirion ({"{G}"}) → Quirion bounces itself → untaps Witness → recast Quirion ({"{G}"}) → net +{"{G}"}. Same Pact assembly as Earthcraft variant but simpler — haste solves the summoning sickness problem directly.</Tip>
+        <Tip label="Earthcraft + Ashaya + Quirion/Scryb Ranger + Yavimaya">Yavimaya makes all lands Forests (but NOT basic). Ashaya makes creatures Forest lands. Earthcraft requires basic lands to untap — but with Ashaya, creatures ARE the basic Forests (they have summoning sickness workaround via Earthcraft). Quirion or Scryb Ranger loops for infinite mana.</Tip>
         <Tip label="Magus of the Candelabra + Ashaya + Dork (≥3 mana)">Ashaya makes the big dork a Forest/land. Magus pays {"{2}"} to untap X lands (including the dork). With dork producing ≥3, net +{"{G}"}+ per loop. Magus needs to pre-exist (no summoning sickness).</Tip>
 
         <H>INFINITE MANA — CLASSIC LOOPS</H>
@@ -14107,10 +14314,10 @@ function HelpModal({ onClose, onStartTour }) {
         <Tip label="Shifting Woodland (Argothian Elder Copy)">Shifting Woodland can become a copy of Argothian Elder in the graveyard. Enables the 2-card Ashaya+Elder infinite combo from the graveyard as a backup line.</Tip>
 
         <H>KEY SYNERGIES</H>
-        <Tip label="Yavimaya, Cradle of Growth">Makes all lands Forests. Enables Arbor Elf to untap any land, unlocks Forest-requiring combos without needing basic Forests, and makes all non-basic lands valid Earthcraft targets.</Tip>
+        <Tip label="Yavimaya, Cradle of Growth">Makes all lands Forests (not basic). Enables Arbor Elf to untap any land, unlocks Forest-requiring combos without needing basic Forests. Note: Earthcraft requires basic lands — Yavimaya alone does NOT make non-basic lands valid Earthcraft targets.</Tip>
         <Tip label="Utopia Sprawl / Wild Growth">Enchant a Forest to tap for an extra mana. With Arbor Elf, each untap of the enchanted land produces bonus mana — a T1/T2 explosive mana setup that feeds into Ashaya loops.</Tip>
         <Tip label="Gaea's Cradle / Itlimoc">Taps for mana equal to creatures you control. Goes infinite with any untap effect (Elder, Lodge, Sabertooth loops) and enough creatures. Itlimoc transforms into Cradle once you have 4+ creatures.</Tip>
-        <Tip label="Earthcraft (Haste for Creatures)">All creatures can tap for mana immediately via Earthcraft (tap creature → untap a basic land → tap land). Bypasses summoning sickness. With Ashaya, every creature is a basic Forest for Earthcraft purposes (via Yavimaya).</Tip>
+        <Tip label="Earthcraft (Haste for Creatures)">All creatures can tap for mana immediately via Earthcraft (tap creature → untap a basic land → tap land). Bypasses summoning sickness. Requires a basic land on the battlefield — non-basic lands are not valid targets even with Yavimaya.</Tip>
       </>
     ),
     rulings: (() => {
@@ -18372,6 +18579,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         attachments: untappedAttachments,
         yisanCounters: gfYisanCounters,
         landPlayed,
+        sickCreatures: sickCreatureNames,
       });
       // Post-filter: suppress any advice that requires playing a land if we've already
       // used our land drop this turn (T1 SETUP is already gated inside analyzeGameState;
@@ -21736,16 +21944,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               return (cd?.type === "creature" || c === "Dryad Arbor") && !tapped.has(cardKey(c, i));
             });
           // Valid land targets: tapped lands that Earthcraft can untap.
-          // Standard: basic lands only. With Yavimaya: all lands are basic forests.
-          // With Ashaya: creature-Forests are also valid but we stick to real lands for clarity.
+          // Earthcraft requires BASIC lands — Yavimaya makes lands Forests but NOT basic.
+          // Only actual basic lands (Forest, basic fetch targets, Dryad Arbor) are valid.
           const tappedBasicLands = battlefield
             .map((c, i) => ({ c, i }))
             .filter(({ c, i }) => {
               const cd = getCard(c);
               if (cd?.type !== "land") return false;
               if (!tapped.has(cardKey(c, i))) return false; // must be tapped
-              if (yavimayaOnBoard) return true; // all lands are basic forests
-              return cd?.tags?.includes("basic"); // normally: basic lands only
+              return cd?.tags?.includes("basic"); // basic lands only — Yavimaya doesn't add basic supertype
             });
           if (untappedCreatures.length === 0 || tappedBasicLands.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
