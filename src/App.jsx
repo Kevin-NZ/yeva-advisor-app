@@ -2728,11 +2728,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // per creature cast AND tutors an Elf/Elemental on the 2nd landfall each turn.
     // In an infinite Ranger loop, Nissa triggers every iteration.
     if (combo.needsDrawEngine) {
-      const hasEngine = board.has("Beast Whisperer") || board.has("Glademuse")
-        || inHand.has("Beast Whisperer") || inHand.has("Glademuse")
+      // Beast Whisperer triggers on any turn. Glademuse only off-turn (opponent's turn with Yeva flash).
+      const glademuseActive = (board.has("Glademuse") || inHand.has("Glademuse"))
+        && (!isMyTurn || yevaFlash);
+      const hasEngine = board.has("Beast Whisperer") || inHand.has("Beast Whisperer")
+        || glademuseActive
         || ((board.has("Nissa, Resurgent Animist") || inHand.has("Nissa, Resurgent Animist"))
             && (board.has("Ashaya, Soul of the Wild") || inHand.has("Ashaya, Soul of the Wild")));
-      if (!hasEngine) return { ok: false, missing: "Beast Whisperer, Glademuse, or Nissa (with Ashaya for landfall loop)" };
+      if (!hasEngine) return { ok: false, missing: "Beast Whisperer (any turn) or Glademuse (opponent's turn with Yeva flash) or Nissa (with Ashaya for landfall loop)" };
     }
 
     // needsMinElves: need at least N elves on the battlefield
@@ -11326,6 +11329,8 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       if (!hasDork && depth < 3) {
         // Try to find one via remaining tutors — but only if the found dork would ACTUALLY
         // produce >= min mana given the current board state (elf count, creature count, devotion).
+        // Leyline of Abundance adds +1G to each creature tap — account for it in the threshold.
+        const leylineB = pool.have.has("Leyline of Abundance") ? 1 : 0;
         const candidates = ["Elvish Archdruid","Priest of Titania","Circle of Dreams Druid",
           "Selvala, Heart of the Wilds","Karametra's Acolyte","Wirewood Channeler","Marwyn, the Nurturer"]
           .filter(c => {
@@ -11333,13 +11338,13 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
             const cd = getCard(c);
             if (!cd) return false;
             const t = cd.tapsFor;
-            if (typeof t === "number") return t >= min;
-            if (t === "elves")    return elvesNow + 1 >= min;
-            if (t === "marwyn")   return Math.max(1, elvesNow) >= min;
-            if (t === "joraga")   return elvesNow >= 5 ? elvesNow * 2 >= min : 2 >= min;
-            if (t === "creatures") return creaturesNow + 1 >= min;
-            if (t === "devotion") return devotionNow + (cd.greenPips ?? 0) >= min;
-            if (t === "power")    return creaturesNow >= min;
+            if (typeof t === "number") return t + leylineB >= min;
+            if (t === "elves")    return elvesNow + 1 + leylineB >= min;
+            if (t === "marwyn")   return Math.max(1, elvesNow) + leylineB >= min;
+            if (t === "joraga")   return elvesNow >= 5 ? elvesNow * 2 + leylineB >= min : 2 + leylineB >= min;
+            if (t === "creatures") return creaturesNow + 1 + leylineB >= min;
+            if (t === "devotion") return devotionNow + (cd.greenPips ?? 0) + leylineB >= min;
+            if (t === "power")    return creaturesNow + leylineB >= min;
             return false;
           });
         const found = candidates.find(c =>
@@ -11478,7 +11483,8 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
 
     // needsDrawEngine: need Beast Whisperer, Glademuse, or Nissa+Ashaya
     if (combo.needsDrawEngine) {
-      const hasEngine = pool.have.has("Beast Whisperer") || pool.have.has("Glademuse") ||
+      const glademuseActive = pool.have.has("Glademuse") && (!isMyTurn || yevaFlash);
+      const hasEngine = pool.have.has("Beast Whisperer") || glademuseActive ||
         (pool.have.has("Nissa, Resurgent Animist") && pool.have.has("Ashaya, Soul of the Wild"));
       if (!hasEngine) return null;
     }
@@ -21667,10 +21673,12 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       }
                       return without;
                     });
-                    // Put land onto battlefield tapped
-                    const reclaimerLandIdx = battlefield.length; // synchronous read before append
-                    setBattlefield(prev => [...prev, chosen]);
-                    setTapped(t => new Set([...t, cardKey(chosen, reclaimerLandIdx)]));
+                    // Put land onto battlefield tapped — use functional updater to get correct index.
+                    setBattlefield(prev => {
+                      const newIdx = prev.length;
+                      setTapped(t => new Set([...t, cardKey(chosen, newIdx)]));
+                      return [...prev, chosen];
+                    });
                     addLog(`Elvish Reclaimer → ${chosen} onto battlefield tapped. Library shuffled.`, COLORS.green2);
                   });
                   setShowTutor(true);
@@ -23567,25 +23575,51 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           );
         })()}
 
-        {/* ── Urza's Cave: {2}+tap — tutor for an Urza's land piece ── */}
+        {/* ── Urza's Cave: {3},{T},sac — search library for any land → battlefield tapped ── */}
         {isBF && card === "Urza's Cave" && (() => {
-          const cost = 2;
+          const cost = 3;
           if (isCardTapped || manaPool < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Tutor ({'{2}'}tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
+              ⚡ Fetch land ({'{3}'}tap+sac) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
           );
           return (
             <div onClick={() => {
-              pushUndo(); toggleTap(card, index);
+              pushUndo();
+              // Pay {3}, tap, and sacrifice Urza's Cave
               setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
-              // No Urza lands in deck — just log
-              addLog(`Urza's Cave: paid {2}, tapped — search for Urza's Bauble, Mine, Power Plant, or Tower → hand. (None in this deck by default.)`, COLORS.gold);
+              setBattlefield(prev => prev.filter((_, i) => i !== index));
+              setGraveyard(prev => [...prev, card]);
+              // Open land picker — selected land enters battlefield tapped
+              setTutorLandsOnly(true);
+              setTutorOnSelect(() => (chosen) => {
+                setLibrary(prev => {
+                  const idx = prev.indexOf(chosen);
+                  if (idx === -1) return prev;
+                  const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+                  for (let i = without.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [without[i], without[j]] = [without[j], without[i]];
+                  }
+                  return without;
+                });
+                // Put land onto battlefield tapped.
+                // Use functional updater to atomically read the pre-append length (= new card's index).
+                setBattlefield(prev => {
+                  const newIdx = prev.length; // the index the new land will occupy
+                  setTapped(t => new Set([...t, cardKey(chosen, newIdx)]));
+                  return [...prev, chosen];
+                });
+                addLog(`Urza's Cave → ${chosen} onto battlefield tapped. Library shuffled.`, COLORS.gold);
+              });
+              setShowTutor(true); setTutorQuery("");
+              setTimeout(() => tutorInputRef.current?.focus(), 50);
+              addLog(`Urza's Cave: paid {3}, tapped, sacrificed — choose a land to fetch.`, COLORS.gold);
               closeContextMenu();
             }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ {'{2}'}tap — tutor Urza's land piece
+              ⚡ {'{3}'}tap+sac — fetch any land → battlefield tapped
             </div>
           );
         })()}
