@@ -12730,10 +12730,6 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
                 lineHeight: 1.5,
               }}>{undo(line)}</div>
             ))}
-            <div style={{ marginTop: "10px", fontSize: "11px", color: COLORS.textDim,
-              fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
-              — NOT IN THE 99 —
-            </div>
           </div>
         )}
       </div>
@@ -15265,6 +15261,43 @@ function selectBottomsFromScored(scored, bottomCount) {
   return result.map(x => x.c);
 }
 
+// ── Module-level mulligan scoring ─────────────────────────────────────────
+// Shared by simulateOneGame (batch sim) and GoldfishModal's scoreMulliganHand
+// wrapper below.  Returns cards sorted ascending by score (lowest = bottom first).
+// GREEN_LANDS_SET is intentionally local so it stays in sync with the copy
+// inside selectBottomsFromScored.
+const MULLIGAN_GREEN_LANDS_SET = new Set([
+  "Forest",
+  "Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills",
+  "Yavimaya, Cradle of Growth","Castle Garenbrig","Turntimber Symbiosis",
+]);
+
+function scoreMulliganHandCards(cards) {
+  return cards.map((c, i) => {
+    const tags = getCard(c)?.tags ?? [];
+    const type = getCard(c)?.type ?? "";
+    const cmc  = getCard(c)?.cmc ?? 0;
+    let score = 0;
+    if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
+    if (tags.includes("fast-mana"))           score += 5; // Sol Ring / Chrome Mox — T1 acceleration
+    if (tags.includes("tutor"))               score += 4;
+    if (tags.includes("dork") && cmc > 1)    score += 3;
+    if (tags.includes("combo") || tags.includes("key")) score += 3;
+    if (tags.some(t => ["ashaya","quirion","earthcraft","wirewood","sabertooth","duskwatch"].includes(t))) score += 2;
+    if (type === "land" && MULLIGAN_GREEN_LANDS_SET.has(c)) {
+      const greenAlready = cards.slice(0, i).filter(cc => MULLIGAN_GREEN_LANDS_SET.has(cc)).length;
+      score += greenAlready === 0 ? 4 : 1; // first green land critical; extras less so
+    } else if (type === "land") {
+      score += 1; // non-green land still has some value
+    }
+    if (tags.includes("stax") || tags.includes("hate")) score += 1;
+    if (tags.includes("removal")) score += 1;
+    if (cmc >= 5 && !tags.includes("combo") && !tags.includes("key") && !tags.includes("dork")) score -= 2;
+    if (cmc >= 7) score -= 2;
+    return { c, i, score };
+  }).sort((a, b) => a.score - b.score);
+}
+
 // calculateSimManaPool is now an alias for sumManaPool (defined in the Mana Engine above).
 // The two were identical except calculateSimManaPool was missing Utopia Sprawl and
 // Elvish Guidance bonuses, and had a Earthcraft sick-filter bug. Both are now fixed.
@@ -15482,28 +15515,8 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
       // Bottom cards for mulligans
       if (m > 0) {
         const toBottom = m;
-        const scored = hand.map(c => {
-          const tags = getCard(c)?.tags ?? [];
-          const type = getCard(c)?.type ?? "";
-          const cmc  = getCard(c)?.cmc ?? 0;
-          let score = 0;
-          if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
-          if (tags.includes("fast-mana"))           score += 5; // chrome mox / sol ring — T1 acceleration
-          if (tags.includes("tutor"))               score += 4;
-          if (tags.includes("dork") && cmc > 1)    score += 3;
-          if (tags.includes("combo") || tags.includes("key")) score += 3;
-          if (tags.some(t => ["ashaya","quirion","earthcraft","wirewood","sabertooth","duskwatch"].includes(t))) score += 2;
-          if (type === "land" && GREEN_LANDS.has(c)) {
-            const greenAlready = hand.slice(0, hand.indexOf(c)).filter(cc => GREEN_LANDS.has(cc)).length;
-            score += greenAlready === 0 ? 4 : 1; // first green land critical; extras less so
-          } else if (type === "land") {
-            score += 1; // non-green land still useful
-          }
-          if (tags.includes("fast-mana")) score += 2;
-          if (cmc >= 5 && !tags.includes("combo") && !tags.includes("key") && !tags.includes("dork")) score -= 2;
-          if (cmc >= 7) score -= 2;
-          return { c, score };
-        }).sort((a, b) => a.score - b.score);
+        // Use the shared module-level scorer so mulligan logic lives in one place.
+        const scored = scoreMulliganHandCards(hand);
 
         // Context-aware pair protection: Chrome Mox paired with a green card to imprint,
         // and Mox Diamond paired with a land, are worth much more together than apart.
@@ -15531,8 +15544,17 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           scored.sort((a, b) => a.score - b.score);
         }
 
-        const bottomed = selectBottomsFromScored(scored, toBottom);
-        hand = hand.filter(c => !bottomed.includes(c));
+        // selectBottomsFromScored returns card names.  To correctly handle
+        // duplicate card names (e.g. two Forests), we resolve each name back
+        // to a specific hand index using the `.i` values stored in `scored`,
+        // then remove by index — not by name — so only one copy is removed.
+        const bottomedNames = selectBottomsFromScored(scored, toBottom);
+        const bottomedIndices = new Set();
+        for (const name of bottomedNames) {
+          const entry = scored.find(e => e.c === name && !bottomedIndices.has(e.i));
+          if (entry) bottomedIndices.add(entry.i);
+        }
+        hand = hand.filter((_, idx) => !bottomedIndices.has(idx));
       }
       mulligans = m;
       break;
@@ -18944,35 +18966,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setPhase("stats");
   }
 
+  // Thin wrapper so callers inside GoldfishModal can keep using the same name.
+  // All scoring logic lives in the module-level scoreMulliganHandCards function.
   function scoreMulliganHand(cards) {
-    const GREEN_LANDS_SET = new Set([
-      "Forest",
-      "Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills",
-      "Yavimaya, Cradle of Growth","Castle Garenbrig","Turntimber Symbiosis",
-    ]);
-    return cards.map((c, i) => {
-      const tags = getCard(c)?.tags ?? [];
-      const type = getCard(c)?.type ?? "";
-      const cmc  = getCard(c)?.cmc ?? 0;
-      let score = 0;
-      if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
-      if (tags.includes("tutor"))               score += 4;
-      if (tags.includes("dork") && cmc > 1)    score += 3;
-      if (tags.includes("combo") || tags.includes("key")) score += 3;
-      if (tags.some(t => ["ashaya","quirion","earthcraft","wirewood","sabertooth","duskwatch"].includes(t))) score += 2;
-      if (type === "land" && GREEN_LANDS_SET.has(c)) {
-        const greenAlready = cards.slice(0, i).filter(cc => GREEN_LANDS_SET.has(cc)).length;
-        score += greenAlready === 0 ? 4 : 1; // first green land critical; extras less so
-      } else if (type === "land") {
-        score += 1; // non-green land still has some value
-      }
-      if (tags.includes("fast-mana")) score += 2;
-      if (tags.includes("stax") || tags.includes("hate")) score += 1;
-      if (tags.includes("removal")) score += 1;
-      if (cmc >= 5 && !tags.includes("combo") && !tags.includes("key") && !tags.includes("dork")) score -= 2;
-      if (cmc >= 7) score -= 2;
-      return { c, i, score };
-    }).sort((a, b) => a.score - b.score);
+    return scoreMulliganHandCards(cards);
   }
 
   // Given a scored+sorted hand, pick exactly bottomCount cards to bottom.
@@ -27855,6 +27852,54 @@ function YevaAdvisor() {
                       fontSize: "11px", fontFamily: "'Cinzel', serif",
                     }}>▸ all</button>
                 </div>
+
+                {/* ── MULLIGAN GRADE BANNER ── */}
+                {/* Show when hand is set but nothing has been played yet — pure opening-hand eval */}
+                {hand.length > 0 && battlefield.length === 0 && graveyard.length === 0 && (() => {
+                  const { label, passCount, criteria } = gradeOpeningHand(hand, hand.length);
+                  const cfg = label === "KEEP"
+                    ? { bg: "#0a1f0a", border: "#2d6b2d", accent: "#4ecb4e", icon: "✅", word: "KEEP" }
+                    : label === "BORDERLINE"
+                    ? { bg: "#1a1400", border: "#6b5a00", accent: "#d4a017", icon: "⚠️", word: "BORDERLINE" }
+                    : { bg: "#1f0a0a", border: "#6b2d2d", accent: "#cb4e4e", icon: "❌", word: "MULLIGAN" };
+                  const pillStyle = (pass) => ({
+                    display: "inline-block",
+                    padding: "1px 7px", borderRadius: "10px", fontSize: "10px",
+                    fontFamily: "'Cinzel', serif", letterSpacing: "0.5px",
+                    background: pass ? "#0d2a0d" : "#200a0a",
+                    border: `1px solid ${pass ? "#2d6b2d" : "#6b2d2d"}`,
+                    color: pass ? "#4ecb4e" : "#cb4e4e",
+                  });
+                  const CRITERIA_LABELS = {
+                    A: "T1 play",
+                    B: "2+ ramp",
+                    C: "tutor",
+                    D: "2–4 lands",
+                    E: "combo piece",
+                  };
+                  return (
+                    <div style={{
+                      background: cfg.bg, border: `1px solid ${cfg.border}`,
+                      borderRadius: "8px", padding: "10px 14px",
+                      marginBottom: "16px", display: "flex",
+                      alignItems: "center", gap: "12px", flexWrap: "wrap",
+                    }}>
+                      <span style={{ fontSize: "14px" }}>{cfg.icon}</span>
+                      <span style={{
+                        fontFamily: "'Cinzel', serif", fontSize: "12px",
+                        letterSpacing: "2px", color: cfg.accent,
+                      }}>{cfg.word}</span>
+                      <span style={{ fontSize: "11px", color: "#6a8a6a" }}>
+                        {passCount}/{Object.keys(CRITERIA_LABELS).length} criteria
+                      </span>
+                      <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                        {Object.entries(CRITERIA_LABELS).map(([k, lbl]) => (
+                          <span key={k} style={pillStyle(criteria[k])}>{lbl}</span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {advice.map((a, i) => (
                   <AdviceCard key={i} advice={a} index={i} activeCards={new Set([...hand, ...battlefield])} collapseKey={collapseKey} />
