@@ -12483,7 +12483,7 @@ function InlineCardHover({ name }) {
 }
 
 function CardPill({ name, onRemove, zone, onDragStart, onPlay, attachedTo }) {
-  const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim };
+  const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim, exile: COLORS.purple };
   const c = zoneColors[zone] || COLORS.green1;
   const [hovered, setHovered] = useState(false);
   const [rect, setRect]       = useState(null);
@@ -12606,7 +12606,7 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
     setSecret(null);
   };
 
-  const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim };
+  const zoneColors = { hand: COLORS.green1, battlefield: COLORS.green3, graveyard: COLORS.textDim, exile: COLORS.purple };
   const c = zoneColors[zone] || COLORS.green1;
 
   return (
@@ -12816,11 +12816,12 @@ function PlayfieldCard({ name, tapped, onToggleTap, onRemove, draggable = false,
   );
 }
 
-function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefield, onMoveToBattlefield, onMoveToHand }) {
-  const [tapped,       setTapped]       = useState(new Set()); // indices into battlefield
-  const [open,         setOpen]         = useState(false);
-  const [dropOver,     setDropOver]     = useState(false);
-  const [dropOverHand, setDropOverHand] = useState(false);
+function Playfield({ hand, battlefield, exile = [], onRemoveFromHand, onRemoveFromBattlefield, onRemoveFromExile, onMoveToBattlefield, onMoveToHand, onMoveToExile }) {
+  const [tapped,         setTapped]         = useState(new Set()); // indices into battlefield
+  const [open,           setOpen]           = useState(false);
+  const [dropOver,       setDropOver]       = useState(false);
+  const [dropOverHand,   setDropOverHand]   = useState(false);
+  const [dropOverExile,  setDropOverExile]  = useState(false);
 
   // When battlefield changes, drop any out-of-range indices
   useEffect(() => {
@@ -12871,6 +12872,21 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
     const name = e.dataTransfer.getData("text/plain");
     if (!name || !battlefield.includes(name)) return;
     onMoveToHand(name);
+  };
+
+  // Exile drop handlers (any zone → exile)
+  const handleExileDragOver = e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropOverExile(true);
+  };
+  const handleExileDragLeave = () => setDropOverExile(false);
+  const handleExileDrop = e => {
+    e.preventDefault();
+    setDropOverExile(false);
+    const name = e.dataTransfer.getData("text/plain");
+    if (!name) return;
+    if (onMoveToExile) onMoveToExile(name);
   };
 
   if (!open) {
@@ -13004,7 +13020,43 @@ function Playfield({ hand, battlefield, onRemoveFromHand, onRemoveFromBattlefiel
         })}
       </div>
       <div style={{ marginTop: 6, fontSize: 10, color: COLORS.textDim, fontStyle: "italic" }}>
-        Drag hand → battlefield to cast · drag battlefield → hand to bounce · click to tap/untap
+        Drag hand → battlefield to cast · drag battlefield → hand to bounce · drag any card → exile · click to tap/untap
+      </div>
+
+      {/* Exile — drop target from any zone */}
+      {zoneLabel("Exile", exile.length, COLORS.purple, null)}
+      <div
+        onDragOver={handleExileDragOver}
+        onDragLeave={handleExileDragLeave}
+        onDrop={handleExileDrop}
+        style={{
+          display: "flex", flexWrap: "wrap", gap: 6,
+          alignItems: "flex-start", padding: "6px 0 4px",
+          minHeight: 30, borderRadius: 6,
+          border: dropOverExile ? `2px dashed ${COLORS.purple}` : "2px dashed transparent",
+          background: dropOverExile ? COLORS.purple + "11" : "transparent",
+          transition: "border-color 0.15s, background 0.15s",
+        }}
+      >
+        {exile.length === 0 && !dropOverExile && (
+          <span style={{ color: COLORS.textDim, fontSize: 11, fontStyle: "italic", padding: "4px 0" }}>
+            No exiled cards — drag here to exile
+          </span>
+        )}
+        {dropOverExile && (
+          <span style={{ color: COLORS.purple, fontSize: 11, padding: "4px 0", fontFamily: "'Cinzel', serif", letterSpacing: 1 }}>
+            EXILE
+          </span>
+        )}
+        {exile.map((name, i) => (
+          <PlayfieldCard
+            key={`${name}-${i}`} name={name}
+            tapped={false}
+            onToggleTap={() => {}}
+            onRemove={onRemoveFromExile}
+            draggable={true}
+          />
+        ))}
       </div>
     </div>
   );
@@ -18095,6 +18147,218 @@ function gradeOpeningHand(cards, handSize = 7) {
   return { label, passCount, criteria };
 }
 
+// ── Module-level hand notes builder ────────────────────────────────────────
+// Produces the human-readable bullet notes for a given opening hand.
+// Does NOT include sim results or advisor-analysis enrichment — those layers
+// are added on top by GoldfishModal's gradeHand() when available.
+// Called by the main advisor screen banner and by gradeHand() internally.
+function buildHandNotes(cards) {
+  const dorkCards   = cards.filter(c => getCard(c)?.tags?.includes("dork"));
+  const dorks       = dorkCards.length;
+  const dork1Cards  = dorkCards.filter(c => getCard(c)?.tags?.includes("1drop"));
+  const dorks1      = dork1Cards.length;
+  const bigDorkCards = dorkCards.filter(c => getCard(c)?.tags?.includes("big-dork"));
+  const bigDorks    = bigDorkCards.length;
+
+  const hasForestInHand = cards.some(c => c === "Forest" || getCard(c)?.tags?.includes("forest"));
+  const enchantLandRamp = cards.filter(c => {
+    if (!getCard(c)?.tags?.includes("enchant-land")) return false;
+    if (c === "Utopia Sprawl") return hasForestInHand;
+    return true;
+  }).length;
+
+  const rockCards   = cards.filter(c => getCard(c)?.tags?.includes("rock"));
+  const nonLandNonArtifact = cards.some(c => c !== "Chrome Mox" && getCard(c)?.type !== "land" && getCard(c)?.type !== "artifact");
+  const effectiveRockCards = rockCards.filter(c => c !== "Chrome Mox" || nonLandNonArtifact);
+  const rocks       = effectiveRockCards.length;
+  const rampCount   = dorks + enchantLandRamp + rocks;
+
+  const tutorCards  = cards.filter(c => getCard(c)?.tags?.includes("tutor"));
+  const tutors      = tutorCards.length;
+  const hasYisan    = cards.includes("Yisan, the Wanderer Bard");
+
+  const landCards   = cards.filter(c => getCard(c)?.type === "land");
+  const realLands   = landCards.filter(c => c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun").length;
+  const isGreenLand = c => {
+    const cd = getCard(c);
+    if (cd?.type !== "land") return false;
+    return cd?.tags?.includes("forest") || cd?.tags?.includes("basic") ||
+           cd?.tags?.includes("green-mana") || cd?.tags?.includes("fetch-forest") || c === "Forest";
+  };
+  const greenLands  = landCards.filter(c => isGreenLand(c)).length;
+  const fetchLands  = landCards.filter(c => getCard(c)?.tags?.includes("fetch")).length;
+  const colourlessOnlyLands = landCards.filter(c =>
+    c !== "Gaea's Cradle" && c !== "Itlimoc, Cradle of the Sun" && !isGreenLand(c));
+  const hasCradle   = cards.includes("Gaea's Cradle");
+  const hasNykthos  = cards.includes("Nykthos, Shrine to Nyx");
+  const cradleActive = hasCradle && bigDorks >= 2;
+  const hasCradleOnly = landCards.length > 0 && realLands === 0;
+  const isManaFlood = realLands >= 5 && tutors === 0 && rampCount === 0;
+  const isTight     = greenLands === 1 && rampCount === 1 && tutors === 0;
+  const hasGSZT1    = cards.includes("Green Sun's Zenith") && greenLands >= 1;
+  const hasT1Play   = (dorks1 >= 1 && greenLands >= 1) ||
+                      (enchantLandRamp >= 1 && greenLands >= 1) ||
+                      (effectiveRockCards.some(c => c !== "Chrome Mox" && (getCard(c)?.cmc ?? 99) <= 1)) ||
+                      (cards.includes("Chrome Mox") && nonLandNonArtifact) ||
+                      hasGSZT1;
+  const allRampIsSlow = rampCount >= 1 && !hasT1Play;
+
+  const COMBO_TAGS = new Set([
+    "ashaya","duskwatch","quirion","earthcraft","wirewood","ranger","symbiote","sabertooth",
+    "scout","bounce","infinite-dork","key","untap","untap-lands","survival",
+    "land-animator","haste-mana","kogla-loop",
+  ]);
+  const comboPieces = cards.filter(c => getCard(c)?.tags?.some(t => COMBO_TAGS.has(t)));
+  const combo = comboPieces.length;
+
+  // Two-card synergies
+  const synergies = (() => {
+    const syns = [];
+    const has    = name => cards.includes(name);
+    const hasTag = tag  => cards.some(c => getCard(c)?.tags?.includes(tag));
+    if ((hasTag("ranger") || hasTag("symbiote")) && dorks >= 1) {
+      const untapper = cards.find(c => getCard(c)?.tags?.includes("ranger") || getCard(c)?.tags?.includes("symbiote"));
+      syns.push(`${untapper} + ${dorkCards[0]} → untap engine`);
+    }
+    if (has("Earthcraft") && dorks >= 1) {
+      syns.push(`Earthcraft + ${dorkCards[0]} → all creatures tap for mana (haste)`);
+    }
+    if (hasTag("land-animator") && (hasCradle || hasNykthos)) {
+      const animator = cards.find(c => getCard(c)?.tags?.includes("land-animator"));
+      const land = hasCradle ? "Gaea's Cradle" : "Nykthos";
+      syns.push(`${animator} + ${land} → animated land can tap immediately`);
+    }
+    if ((has("Selvala, Heart of the Wilds") || bigDorks >= 1) && has("Great Oak Guardian"))
+      syns.push("Big dork + Great Oak Guardian → draw + untap all creatures");
+    if (has("Cloudstone Curio") && dorks >= 2)
+      syns.push(`Cloudstone Curio + ${dorkCards[0]} + ${dorkCards[1]} → bounce-cast loop`);
+    if (has("Ashaya, Soul of the Wild") && hasTag("ranger")) {
+      const ranger = cards.find(c => getCard(c)?.tags?.includes("ranger"));
+      syns.push(`Ashaya + ${ranger} → Forest taps untap your creatures`);
+    }
+    if (has("Arbor Elf") && (has("Utopia Sprawl") || has("Wild Growth") || has("Elvish Guidance"))) {
+      const aura = has("Utopia Sprawl") ? "Utopia Sprawl" : has("Wild Growth") ? "Wild Growth" : "Elvish Guidance";
+      syns.push(`Arbor Elf + ${aura} → 2+ mana T1, goes infinite with Ashaya`);
+    }
+    const LEGENDS = new Set(["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Yisan, the Wanderer Bard","Selvala, Heart of the Wilds","Eladamri, Korvecdal","Saryth, the Viper's Fang"]);
+    if (has("Delighted Halfling") && cards.some(c => LEGENDS.has(c))) {
+      const legend = cards.find(c => LEGENDS.has(c));
+      syns.push(`Delighted Halfling + ${legend} → legend uncounterable`);
+    }
+    if ((has("Survival of the Fittest") || has("Fauna Shaman")) && dorks >= 1) {
+      const engine = has("Survival of the Fittest") ? "Survival of the Fittest" : "Fauna Shaman";
+      syns.push(`${engine} + ${dorkCards[0]} → discard to find any creature`);
+    }
+    if (hasTag("fetch") && has("Tireless Provisioner"))
+      syns.push("Fetch + Tireless Provisioner → treasure on crack");
+    if (has("Eladamri, Korvecdal") && (has("Beast Whisperer") || has("Glademuse"))) {
+      const draw = has("Beast Whisperer") ? "Beast Whisperer" : "Glademuse";
+      syns.push(`Eladamri + ${draw} → cast from library triggers draw → chain spells`);
+    }
+    if (cradleActive)
+      syns.push(`Gaea's Cradle + ${bigDorks} big dork${bigDorks > 1 ? "s" : ""} → explosive mana`);
+    if (hasNykthos && dorks >= 2) {
+      const devotion = dorkCards.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
+      if (devotion >= 4) syns.push(`Nykthos (${devotion} devotion) + ${dorks} dorks → mana engine`);
+    }
+    return syns;
+  })();
+
+  const notes = [];
+
+  // Land count
+  if (hasCradleOnly) {
+    notes.push("⚠️ Gaea's Cradle only — produces 0 mana T1 with no creatures");
+  } else if (isManaFlood) {
+    notes.push(`⚠️ Mana flood: ${realLands} lands, no tutors or acceleration`);
+  } else if (greenLands >= 2 && greenLands <= 4) {
+    notes.push(`${greenLands} green land${greenLands > 1 ? "s" : ""} ✓`);
+  } else if (greenLands === 1 && rampCount >= 1) {
+    notes.push("1 green land + ramp ✓ — T1 green play available");
+  } else if (greenLands === 1) {
+    notes.push("1 green land — tight, no backup");
+  }
+  if (colourlessOnlyLands.length > 0) {
+    notes.push(`${colourlessOnlyLands.length} colourless land${colourlessOnlyLands.length > 1 ? "s" : ""} (${colourlessOnlyLands.join(", ")}) — no T1 green`);
+  }
+  if (fetchLands > 0) {
+    notes.push(`${fetchLands} fetch land${fetchLands > 1 ? "s" : ""} — crack to find a Forest`);
+  }
+
+  // T1 play
+  if (hasT1Play) {
+    if (dorks1 >= 2) {
+      notes.push(`${dorks1}× 1-drop dork ✓✓ — ${dork1Cards.join(" + ")} — explosive T1/T2`);
+    } else if (dorks1 === 1) {
+      notes.push(`1-drop dork ✓ — ${dork1Cards[0]} T1 on ${greenLands === 1 ? "the green land" : "a green land"}`);
+    } else if (enchantLandRamp >= 1) {
+      const aura = cards.find(c => getCard(c)?.tags?.includes("enchant-land"));
+      notes.push(`Enchant-land T1 ✓ — ${aura} on a Forest`);
+    } else if (hasGSZT1) {
+      notes.push("T1 play ✓ — Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield");
+    } else {
+      const fastRock = effectiveRockCards.find(c => (getCard(c)?.cmc ?? 99) <= 1);
+      if (fastRock) notes.push(`Fast rock T1 ✓ — ${fastRock}`);
+    }
+  } else {
+    const missingT1 = greenLands >= 1
+      ? "no 1-drop dork or enchant-land to cast T1"
+      : "no green land to cast anything T1";
+    notes.push(`⚠️ No T1 play — ${missingT1}`);
+  }
+
+  // Dorks
+  if (bigDorks >= 2) {
+    notes.push(`${bigDorks} big dorks ✓✓ — ${bigDorkCards.join(", ")} — high mana output`);
+  } else if (bigDorks === 1) {
+    notes.push(`Big dork ✓ — ${bigDorkCards[0]}`);
+  } else if (dorks >= 2) {
+    notes.push(`${dorks} dorks ✓ — ${dorkCards.join(", ")}`);
+  } else if (dorks === 1) {
+    notes.push(`${dorkCards[0]} — 1 dork${allRampIsSlow ? " (not a 1-drop)" : ""}`);
+  }
+
+  // Tutor
+  if (tutors >= 1 && rampCount >= 1) {
+    notes.push(`Tutor${tutors > 1 ? "s" : ""} ✓ — ${tutorCards.join(", ")}`);
+  } else if (hasYisan) {
+    notes.push("Yisan ✓ — tutor-on-a-clock (charge on T3+)");
+  } else {
+    notes.push("⚠️ No tutor — success depends on drawing combo pieces naturally");
+  }
+
+  // Synergies
+  synergies.forEach(s => notes.push(`⚡ Synergy: ${s}`));
+
+  // Premium lands
+  if (cradleActive) {
+    notes.push(`Gaea's Cradle ✓✓ — ${bigDorks} big dork${bigDorks > 1 ? "s" : ""} in hand, explosive mana once active`);
+  } else if (hasCradle && dorks >= 1) {
+    notes.push("Gaea's Cradle — productive once board develops");
+  }
+  if (hasNykthos && dorks >= 2) {
+    const devotion = dorkCards.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
+    notes.push(`Nykthos — ${devotion} devotion from dorks in hand`);
+  }
+
+  // Card-disadvantage warnings
+  if (cards.includes("Mox Diamond"))  notes.push("⚠️ Mox Diamond costs a land from hand (net card −1)");
+  if (cards.includes("Chrome Mox"))   notes.push("⚠️ Chrome Mox requires an imprinted card from hand (net card −1)");
+  if (cards.includes("Sol Ring"))     notes.push("Sol Ring — strong T1 rock but doesn't contribute to Cradle/devotion value");
+
+  // Misc flags
+  if (isTight)           notes.push("⚠️ Tight mana: 1 green land, 1 dork, no tutors — screw risk");
+  if (realLands >= 5 && !isManaFlood) notes.push(`⚠️ ${realLands} lands — mana-heavy, likely to flood`);
+  if (allRampIsSlow) {
+    const slowNames = dorkCards
+      .filter(c => !getCard(c)?.tags?.includes("1drop"))
+      .map(c => `${c} (CMC ${getCard(c)?.cmc ?? "?"})`).join(", ");
+    notes.push(`⚠️ All ramp is slow — earliest action T2 (${slowNames || "2-drop dork"})`);
+  }
+
+  return notes;
+}
+
 // ── Simulation-based hand grading ──────────────────────────────────────────
 // Runs N games (default 10) with max 6 turns each, using this exact opening
 // hand with different library shuffles each time. Measures both win rate AND
@@ -18705,9 +18969,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // ── Seed from advisor state (Shift+Goldfish) ─────────────────
   useEffect(() => {
     if (!seedState) return;
-    const { hand: sh, battlefield: sb, graveyard: sg, greenMana: sgm, colorlessMana: scm, isMyTurn: sit, attachments: sa } = seedState;
+    const { hand: sh, battlefield: sb, graveyard: sg, exile: sx, greenMana: sgm, colorlessMana: scm, isMyTurn: sit, attachments: sa } = seedState;
     // Build library from remaining deck cards not already placed in zones
-    const placed = [...(sh ?? []), ...(sb ?? []), ...(sg ?? [])];
+    const placed = [...(sh ?? []), ...(sb ?? []), ...(sg ?? []), ...(sx ?? [])];
     const placedCounts = {};
     placed.forEach(c => { placedCounts[c] = (placedCounts[c] ?? 0) + 1; });
     const remaining = [...(activeDeck?.cards ?? [])];
@@ -18721,7 +18985,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setHand(sh ?? []);
     setBattlefield(sb ?? []);
     setGraveyard(sg ?? []);
-    setExile([]);
+    setExile(sx ?? []);
     setLibrary(lib);
     setAttachments(sa ?? new Map());
     setSickCreatures(new Set()); // assume advisor state is settled
@@ -20741,6 +21005,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       hand: [...hand],
       battlefield: [...battlefield],
       graveyard: [...graveyard],
+      exile: [...exile],
       greenMana: manaPool.green,
       colorlessMana: manaPool.colorless,
       isMyTurn,
@@ -21109,98 +21374,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     };
     const passCount = Object.values(criteria).filter(Boolean).length;
 
-    // ── Build human-readable notes ────────────────────────────────
-
-    // Land count
-    if (hasCradleOnly) {
-      notes.push("⚠️ Gaea's Cradle only — produces 0 mana T1 with no creatures");
-    } else if (isManaFlood) {
-      notes.push(`⚠️ Mana flood: ${realLands} lands, no tutors or acceleration`);
-    } else if (greenLands >= 2 && greenLands <= 4) {
-      notes.push(`${greenLands} green land${greenLands > 1 ? "s" : ""} ✓`);
-    } else if (greenLands === 1 && rampCount >= 1) {
-      notes.push("1 green land + ramp ✓ — T1 green play available");
-    } else if (greenLands === 1) {
-      notes.push("1 green land — tight, no backup");
-    }
-    if (colourlessOnlyLands.length > 0) {
-      notes.push(`${colourlessOnlyLands.length} colourless land${colourlessOnlyLands.length > 1 ? "s" : ""} (${colourlessOnlyLands.join(", ")}) — no T1 green`);
-    }
-    if (fetchLands > 0) {
-      notes.push(`${fetchLands} fetch land${fetchLands > 1 ? "s" : ""} — enters untapped, crack to find a Forest`);
-    }
-
-    // T1 play
-    if (criteria.A) {
-      if (dorks1 >= 2) {
-        notes.push(`${dorks1}× 1-drop dork ✓✓ — ${dork1Cards.join(" + ")} — explosive T1/T2`);
-      } else if (dorks1 === 1) {
-        notes.push(`1-drop dork ✓ — ${dork1Cards[0]} T1 on ${greenLands === 1 ? "the green land" : "a green land"}`);
-      } else if (enchantLandRamp >= 1) {
-        const aura = cards.find(c => getCard(c)?.tags?.includes("enchant-land"));
-        notes.push(`Enchant-land T1 ✓ — ${aura} on a Forest`);
-      } else if (hasGSZT1) {
-        notes.push("T1 play ✓ — Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield. Costs {G}, doesn't use land drop. Summoning sickness applies but it's immediately a creature, elf, and Forest for synergy.");
-      } else {
-        const fastRock = rockCards.find(c => (getCard(c)?.cmc ?? 99) <= 1);
-        if (fastRock) notes.push(`Fast rock T1 ✓ — ${fastRock}`);
-      }
-    } else {
-      const missingT1 = greenLands >= 1
-        ? "no 1-drop dork or enchant-land to cast T1"
-        : "no green land to cast anything T1";
-      notes.push(`⚠️ No T1 play — ${missingT1} — earliest action is T2`);
-    }
-
-    // Big dorks
-    if (bigDorks >= 2) {
-      notes.push(`${bigDorks} big dork${bigDorks > 1 ? "s" : ""} ✓✓ — ${bigDorkCards.join(", ")} — high mana output`);
-    } else if (bigDorks === 1) {
-      notes.push(`Big dork ✓ — ${bigDorkCards[0]} — powerful mana engine`);
-    } else if (dorks >= 2) {
-      notes.push(`${dorks} dorks ✓ — ${dorkCards.join(", ")}`);
-    } else if (dorks === 1) {
-      notes.push(`${dorkCards[0]} — 1 dork${allRampIsSlow ? " (not a 1-drop)" : ""}`);
-    }
-
-    // Tutor
-    if (tutors >= 1 && rampCount >= 1) {
-      notes.push(`Tutor${tutors > 1 ? "s" : ""} ✓ — ${tutorCards.join(", ")}`);
-    } else if (hasYisan) {
-      notes.push("Yisan ✓ — tutor-on-a-clock (charge on T3+)");
-    } else {
-      notes.push("⚠️ No tutor — success depends on drawing combo pieces naturally");
-    }
-
-    // Synergies
-    synergies.forEach(s => notes.push(`⚡ Synergy: ${s}`));
-
-    // Premium land combos
-    if (cradleActive) {
-      notes.push(`Gaea's Cradle ✓✓ — ${bigDorks} big dork${bigDorks > 1 ? "s" : ""} in hand, explosive mana once active`);
-    } else if (hasCradle && dorks >= 1) {
-      notes.push("Gaea's Cradle — productive once board develops");
-    }
-    if (hasNykthos && dorks >= 2) {
-      const devotion = dorkCards.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
-      notes.push(`Nykthos — ${devotion} devotion from dorks in hand`);
-    }
-
-    // Card-disadvantage warnings
-    moxCostNotes.forEach(n => notes.push(`⚠️ ${n}`));
-    if (cards.includes("Sol Ring")) {
-      notes.push("Sol Ring — strong T1 rock but doesn't contribute to Cradle/devotion value");
-    }
-
-    // Miscellaneous flags
-    if (isTight) notes.push("⚠️ Tight mana: 1 green land, 1 dork, no tutors — screw risk");
-    if (realLands >= 5 && !isManaFlood) notes.push(`⚠️ ${realLands} lands — mana-heavy, likely to flood without more action`);
-    if (allRampIsSlow) {
-      const slowNames = dorkCards
-        .filter(c => !getCard(c)?.tags?.includes("1drop"))
-        .map(c => `${c} (CMC ${getCard(c)?.cmc ?? "?"})`).join(", ");
-      notes.push(`⚠️ All ramp is slow — earliest T2 (${slowNames || "2-drop dork"})`);
-    }
+    // ── Build human-readable notes via shared module-level function ──────────
+    // buildHandNotes() covers all structural observations (lands, T1 play,
+    // dorks, tutors, synergies, flags).  Sim results and advisor-analysis
+    // enrichment are layered on top below.
+    notes.push(...buildHandNotes(cards));
 
     // ── Sim note helper — placed FIRST so it's the most prominent signal ──────
     function addSimNote(notesArr) {
@@ -26833,6 +27011,7 @@ function YevaAdvisor() {
   const [hand, setHand] = useState([]);
   const [battlefield, setBattlefield] = useState([]);
   const [graveyard, setGraveyard] = useState([]);
+  const [exile, setExile] = useState([]);
   // attachments: Map<auraIndex, targetLandIndex> — tracks which land each enchant-land aura enchants
   const [attachments, setAttachments] = useState(new Map());
   // pendingAura: { name, lands } — set when an enchant-land card is added and we need to pick its target
@@ -26934,6 +27113,7 @@ function YevaAdvisor() {
       if (state.hand)        setHand(state.hand);
       if (state.battlefield) setBattlefield(state.battlefield);
       if (state.graveyard)   setGraveyard(state.graveyard);
+      if (state.exile)       setExile(state.exile);
       if (state.greenMana != null) setGreenMana(String(state.greenMana));
       if (state.colorlessMana != null) setColorlessMana(String(state.colorlessMana));
       // Legacy: saved states with a flat `mana` field — treat as all-green
@@ -26996,8 +27176,9 @@ function YevaAdvisor() {
       if (zone !== "hand")        setHand(prev => { const i = prev.indexOf(card); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
       if (zone !== "battlefield") setBattlefield(prev => { const i = prev.indexOf(card); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
       if (zone !== "graveyard")   setGraveyard(prev => { const i = prev.indexOf(card); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
+      if (zone !== "exile")       setExile(prev => { const i = prev.indexOf(card); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
     }
-    const setter = zone === "hand" ? setHand : zone === "battlefield" ? setBattlefield : setGraveyard;
+    const setter = zone === "hand" ? setHand : zone === "battlefield" ? setBattlefield : zone === "exile" ? setExile : setGraveyard;
     setter(prev => (!isBasic && prev.includes(card)) ? prev : [...prev, card]);
   };
 
@@ -27031,7 +27212,7 @@ function YevaAdvisor() {
   };
 
   const reset = () => {
-    setHand([]); setBattlefield([]); setGraveyard([]); setAttachments(new Map());
+    setHand([]); setBattlefield([]); setGraveyard([]); setExile([]); setAttachments(new Map());
     setGreenMana("3"); setColorlessMana("0"); setIsMyTurn(false); setAdvice([]);
     setNextTurnAdvice([]); setShowNextTurn(false);
     setYisanCounters(0); setInfiniteMana(false); setActiveComboName(null);
@@ -27238,7 +27419,7 @@ function YevaAdvisor() {
             >⬡ SYNERGY</button>
             <button onClick={(e) => {
               if (e.shiftKey) {
-                setGoldfishSeedState({ hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, attachments });
+                setGoldfishSeedState({ hand, battlefield, graveyard, exile, greenMana, colorlessMana, isMyTurn, attachments });
               } else {
                 setGoldfishSeedState(null);
               }
@@ -27316,6 +27497,7 @@ function YevaAdvisor() {
                 if (s.hand)        setHand(s.hand);
                 if (s.battlefield) setBattlefield(s.battlefield);
                 if (s.graveyard)   setGraveyard(s.graveyard);
+                if (s.exile)       setExile(s.exile);
                 if (s.greenMana != null) setGreenMana(String(s.greenMana));
                 if (s.colorlessMana != null) setColorlessMana(String(s.colorlessMana));
                 if (s.mana != null && s.greenMana == null) setGreenMana(String(s.mana)); // legacy compat
@@ -27345,11 +27527,12 @@ function YevaAdvisor() {
           {showSavedStates && (
             <SavedStatesPanel
               activeDeck={activeDeck}
-              currentState={{ hand, battlefield, graveyard, greenMana: parseInt(greenMana) || 0, colorlessMana: parseInt(colorlessMana) || 0, isMyTurn, yisanCounters, attachments: [...attachments] }}
+              currentState={{ hand, battlefield, graveyard, exile, greenMana: parseInt(greenMana) || 0, colorlessMana: parseInt(colorlessMana) || 0, isMyTurn, yisanCounters, attachments: [...attachments] }}
               onLoad={(s) => {
                 if (s.hand)        setHand(s.hand);
                 if (s.battlefield) setBattlefield(s.battlefield);
                 if (s.graveyard)   setGraveyard(s.graveyard);
+                if (s.exile)       setExile(s.exile);
                 if (s.greenMana != null) setGreenMana(String(s.greenMana));
                 if (s.colorlessMana != null) setColorlessMana(String(s.colorlessMana));
                 if (s.mana != null && s.greenMana == null) setGreenMana(String(s.mana)); // legacy compat
@@ -27669,14 +27852,25 @@ function YevaAdvisor() {
               deckCards={activeDeck?.cards}
               onDropCard={(name, _from, to) => addTo(to)(name)} />
 
+            {/* Exile */}
+            <CardInput label="Exile" zone="exile" cards={exile}
+              onRef={el => { zoneInputRefs.current["exile"] = el; }}
+              onAdd={addTo("exile")} onRemove={removeFrom(setExile)}
+              placeholder="Exiled cards…"
+              deckCards={activeDeck?.cards}
+              onDropCard={(name, _from, to) => addTo(to)(name)} />
+
             {/* Playfield visualiser */}
             <Playfield
               hand={hand}
               battlefield={battlefield}
+              exile={exile}
               onRemoveFromHand={removeFrom(setHand)}
               onRemoveFromBattlefield={removeFrom(setBattlefield)}
+              onRemoveFromExile={removeFrom(setExile)}
               onMoveToBattlefield={addTo("battlefield")}
               onMoveToHand={addTo("hand")}
+              onMoveToExile={addTo("exile")}
             />
 
           </div>
@@ -27690,7 +27884,7 @@ function YevaAdvisor() {
             style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}
           >
             {advice.length === 0 ? (
-              hand.length === 0 && battlefield.length === 0 && graveyard.length === 0 ? (
+              hand.length === 0 && battlefield.length === 0 && graveyard.length === 0 && exile.length === 0 ? (
               /* ── MULLIGAN ADVICE ── shown when no cards have been entered yet */
               <div style={{ color: COLORS.textMid, lineHeight: 1.7 }}>
                 <div style={{
@@ -27855,8 +28049,9 @@ function YevaAdvisor() {
 
                 {/* ── MULLIGAN GRADE BANNER ── */}
                 {/* Show when hand is set but nothing has been played yet — pure opening-hand eval */}
-                {hand.length > 0 && battlefield.length === 0 && graveyard.length === 0 && (() => {
+                {hand.length > 0 && battlefield.length === 0 && graveyard.length === 0 && exile.length === 0 && (() => {
                   const { label, passCount, criteria } = gradeOpeningHand(hand, hand.length);
+                  const notes = buildHandNotes(hand);
                   const cfg = label === "KEEP"
                     ? { bg: "#0a1f0a", border: "#2d6b2d", accent: "#4ecb4e", icon: "✅", word: "KEEP" }
                     : label === "BORDERLINE"
@@ -27880,23 +28075,37 @@ function YevaAdvisor() {
                   return (
                     <div style={{
                       background: cfg.bg, border: `1px solid ${cfg.border}`,
+                      borderLeft: `3px solid ${cfg.accent}`,
                       borderRadius: "8px", padding: "10px 14px",
-                      marginBottom: "16px", display: "flex",
-                      alignItems: "center", gap: "12px", flexWrap: "wrap",
+                      marginBottom: "16px",
                     }}>
-                      <span style={{ fontSize: "14px" }}>{cfg.icon}</span>
-                      <span style={{
-                        fontFamily: "'Cinzel', serif", fontSize: "12px",
-                        letterSpacing: "2px", color: cfg.accent,
-                      }}>{cfg.word}</span>
-                      <span style={{ fontSize: "11px", color: "#6a8a6a" }}>
-                        {passCount}/{Object.keys(CRITERIA_LABELS).length} criteria
-                      </span>
-                      <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
-                        {Object.entries(CRITERIA_LABELS).map(([k, lbl]) => (
-                          <span key={k} style={pillStyle(criteria[k])}>{lbl}</span>
-                        ))}
+                      {/* Header row: icon + grade word + count + pills */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: notes.length ? "10px" : 0 }}>
+                        <span style={{ fontSize: "14px" }}>{cfg.icon}</span>
+                        <span style={{
+                          fontFamily: "'Cinzel', serif", fontSize: "12px",
+                          letterSpacing: "2px", color: cfg.accent,
+                        }}>{cfg.word}</span>
+                        <span style={{ fontSize: "11px", color: "#6a8a6a" }}>
+                          {passCount}/{Object.keys(CRITERIA_LABELS).length} criteria
+                        </span>
+                        <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                          {Object.entries(CRITERIA_LABELS).map(([k, lbl]) => (
+                            <span key={k} style={pillStyle(criteria[k])}>{lbl}</span>
+                          ))}
+                        </div>
                       </div>
+                      {/* Notes — one per line, matching goldfish mulligan style */}
+                      {notes.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                          {notes.map((n, i) => (
+                            <div key={i} style={{
+                              fontSize: "11px", color: COLORS.textMid,
+                              fontFamily: "'Crimson Text', serif", lineHeight: 1.4,
+                            }}>{n}</div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
