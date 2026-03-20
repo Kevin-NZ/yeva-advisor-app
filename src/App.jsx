@@ -2555,8 +2555,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const yevaAvailable = yevaFlash || infiniteManaActive || mana >= 4;
   const activeComboName    = _infName;
 
-  // Can we cast permanents into play this turn? (our turn, Yeva flash, or infinite mana)
+  // Can we cast permanents into play this turn? (our turn, Yeva already in play, or infinite mana)
   const canCastNow = isMyTurn || yevaFlash || infiniteManaActive;
+  // Can we cast green creatures via Yeva from the command zone this turn?
+  // True when it's the opponent's turn AND we have ≥4 mana to cast Yeva first.
+  // Used only in the combo missing-piece check so that creatures in hand are not
+  // flagged as "missing" when Yeva can be cast to give them flash.
+  // Deliberately separate from canCastNow to avoid widening other checks.
+  const canCastViaCmdYeva = !isMyTurn && yevaAvailable && !yevaFlash;
   // Haste enabler: Ashaya (board or castable) + Destiny Spinner/Badgermole makes all creature-Forests tap immediately.
   // The land-animate piece must already be on the battlefield — if it is also only in hand we
   // would need to cast two cards sequentially before the mustPreExist tapper could fire, which
@@ -2949,19 +2955,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // OR ≥4 mana available (cast Yeva from command zone for {2}{G}{G}).
   if (!isMyTurn && yevaAvailable) {
     const yevaNote = yevaFlash ? "via Yeva (on board)" : "via Yeva (cast from command zone)";
-    // Check for flash-in combos
-    if (inHand.has("Ashaya, Soul of the Wild") && (inHand.has("Quirion Ranger") || board.has("Quirion Ranger"))
-        && (board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter"))) {
+    // Check for flash-in combos: Ashaya + Quirion Ranger → infinite mana + win outlet
+    const hasRangerForFlash = inHand.has("Quirion Ranger") || board.has("Quirion Ranger")
+      || inHand.has("Scryb Ranger") || board.has("Scryb Ranger");
+    const hasDuskwatchForFlash = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter");
+    // Finale of Devastation (X≥10): puts a creature from library/grave onto battlefield and
+    // gives all your creatures +X/+X + haste → attack for lethal immediately.
+    const hasFinaleForFlash = inHand.has("Finale of Devastation");
+    // Formidable Speaker: ETB → discard → find Duskwatch → activate with infinite mana.
+    const hasSpeakerForFlash = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+    // Instant-speed tutors that put the target ONTO THE BATTLEFIELD or directly into hand
+    // and can therefore find Duskwatch same-turn with infinite mana.
+    // Summoner's Pact / GSZ (X≥2) put Duskwatch directly onto battlefield.
+    // Chord of Calling (instant, convoke) puts a creature directly onto battlefield.
+    const hasInstantTutorForFlash = inHand.has("Summoner's Pact")
+      || inHand.has("Chord of Calling")
+      || (inHand.has("Green Sun's Zenith") && mana >= 2); // X≥2 to find Duskwatch (CMC 2)
+    // NOTE: Temur Sabertooth, Worldly Tutor (puts on top of library), Elvish Harbinger etc.
+    // do NOT close the game this turn — they need another draw step. Excluded intentionally.
+    const hasWinOutletForFlash = hasDuskwatchForFlash || hasFinaleForFlash
+      || hasSpeakerForFlash || hasInstantTutorForFlash;
+    if (inHand.has("Ashaya, Soul of the Wild") && hasRangerForFlash && hasWinOutletForFlash) {
+      const outletDesc = hasDuskwatchForFlash
+        ? "activate Duskwatch Recruiter to pull every creature → attack for lethal"
+        : hasFinaleForFlash
+        ? "cast Finale of Devastation (X≥10) → put creature onto battlefield + give all creatures haste → lethal attack"
+        : hasSpeakerForFlash
+        ? "Formidable Speaker ETB finds Duskwatch Recruiter → activate with infinite mana → win"
+        : "cast instant tutor (Summoner's Pact / Chord) to find Duskwatch Recruiter → activate with infinite mana → win";
+      const rangerName = (inHand.has("Quirion Ranger") || board.has("Quirion Ranger")) ? "Quirion Ranger" : "Scryb Ranger";
       results.push({
         priority: 15,
         category: "⚡ INSTANT SPEED WIN",
-        headline: `FLASH IN: Ashaya + Quirion Ranger NOW (${yevaNote})`,
-        detail: `On opponent's end step, flash in Ashaya ${yevaNote}. Quirion Ranger (in hand or board) creates an infinite mana loop immediately. Opponents are tapped out and cannot respond.`,
+        headline: `FLASH IN: Ashaya + ${rangerName} NOW (${yevaNote})`,
+        detail: `On opponent's end step, flash in Ashaya ${yevaNote}. ${rangerName} (in hand or board) creates an infinite mana loop immediately. Opponents are tapped out and cannot respond.`,
         steps: [
           "Wait for last opponent's end step (or when they commit to the stack).",
           yevaFlash ? "Flash Ashaya via Yeva." : "Cast Yeva from command zone, then flash in Ashaya.",
-          "Quirion Ranger now loops infinitely with any dork on board → infinite mana.",
-          "With infinite mana: activate Duskwatch Recruiter to pull every creature → attack for lethal."
+          `${rangerName} now loops infinitely with any dork on board → infinite mana.`,
+          `With infinite mana: ${outletDesc}.`
         ],
         color: "#ff6b35",
       });
@@ -7839,7 +7871,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const cat     = l.winNow
         ? (isFirst ? "🔥 WIN NOW" : "🔥 WIN NOW — ALT LINE")
         : l.sameTurn
-        ? (isFirst ? "⚡ FIND INFINITE MANA" : "⚡ ALT MANA LINE")
+        ? (() => {
+            // No tutor steps = all pieces in hand, just cast them → CAST TO ENABLE
+            // Has tutor steps = need to find a piece first → FIND INFINITE MANA
+            if (l.tutorSteps.length === 0) return isFirst ? "⚡ CAST TO ENABLE MANA LOOP" : "⚡ ALT MANA LINE";
+            return isFirst ? "⚡ FIND INFINITE MANA" : "⚡ ALT MANA LINE";
+          })()
         : (l.nextTurnOnly && l.canAfford)
         ? (() => {
             // "WIN NEXT TURN" when pieces are on board but have summoning sickness (just untap).
@@ -7979,7 +8016,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (board.has(r)) return false;
       if (!inHand.has(r)) return true;                            // not accessible at all
       if (getCard(r)?.type === "land") return !isMyTurn;           // lands: only on our turn
-      return !canCastNow;                                         // spells/creatures: canCastNow
+      // Spell/creature in hand: not missing if we can cast it this turn.
+      // Also not missing if Yeva is available from the command zone — we can cast Yeva first
+      // to give it flash, provided we can still afford the piece after paying 4 for Yeva.
+      if (canCastNow) return false;
+      if (canCastViaCmdYeva) {
+        const pieceCmc = getCard(r)?.cmc ?? 0;
+        return mana < 4 + pieceCmc; // can't afford Yeva (4) + this piece
+      }
+      return true;
     });
     // Tier 3: requires-only (spells cast during combo) — anywhere in hand or board
     const requiresOnly      = canBeAnywhere.filter(r => !onBattlefield.includes(r));
@@ -8067,18 +8112,29 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         }
       } else {
         const totalCost = needToCast.reduce((acc, c) => acc + (getCard(c)?.cmc || 0), 0);
-        if ((mana >= totalCost || infiniteManaActive) || !isMyTurn) {
+        // On opponent's turn via command-zone Yeva: add 4 mana for Yeva's cost.
+        const effectiveCost = (!isMyTurn && canCastViaCmdYeva && !yevaFlash) ? totalCost + 4 : totalCost;
+        if (mana >= effectiveCost || infiniteManaActive) {
           // Bootstrap scenario: elevate CAST TO ENABLE to priority 13 so it surfaces above
           // ONE PIECE AWAY results when infinite mana is only reachable (not yet running).
           const isBootstrapPath = infiniteManaActive && !trueInfiniteManaActive
             && combo.type === "infinite-mana";
           const castPriority = isBootstrapPath ? 13 : combo.priority + typeMeta.boost;
+          const viaYeva = !isMyTurn && canCastViaCmdYeva && !yevaFlash;
+          const castHeadline = viaYeva
+            ? `Cast Yeva → flash in ${needToCast.join(" + ")} → ${combo.name}`
+            : `Cast ${needToCast.join(" + ")} → ${combo.name}`;
+          const castDetail = viaYeva
+            ? `Cast Yeva, Nature's Herald ({2}{G}{G}) from the command zone — she gives all green creatures flash. Immediately flash in ${needToCast.join(", ")} to complete ${combo.name}.`
+            : `You have all named pieces! Cast ${needToCast.join(", ")} to complete ${combo.name}.`;
           results.push({
             priority: castPriority,
             category: typeMeta.cast,
-            headline: `Cast ${needToCast.join(" + ")} → ${combo.name}`,
-            detail: `You have all named pieces! Cast ${needToCast.join(", ")} to complete ${combo.name}.`,
-            steps: combo.lines,
+            headline: castHeadline,
+            detail: castDetail,
+            steps: viaYeva
+              ? ["Cast Yeva, Nature's Herald from the command zone ({2}{G}{G}).", ...combo.lines]
+              : combo.lines,
             combo: combo.id,
             color: typeMeta.color,
           });
@@ -24705,8 +24761,22 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
             {phase === "playing" && !isMobile && (
               <>
-                <div style={{ padding: "4px 12px", background: "#1a2e1a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>
-                  Turn {turnNumber} · {isMyTurn ? "Your Turn" : "Opp Turn"}
+                <div
+                  onClick={toggleTurn}
+                  title="Click to switch between your turn and opponent's turn"
+                  style={{
+                    padding: "4px 12px", background: isMyTurn ? "#1a2e1a" : "#1a1a2e",
+                    border: `1px solid ${isMyTurn ? COLORS.border : COLORS.blue + "88"}`,
+                    borderRadius: "6px", fontSize: "11px",
+                    color: isMyTurn ? COLORS.textMid : COLORS.blue,
+                    fontFamily: "'Cinzel', serif", letterSpacing: "1px",
+                    cursor: "pointer", userSelect: "none",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = isMyTurn ? COLORS.green2 : COLORS.blue; e.currentTarget.style.opacity = "0.85"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = isMyTurn ? COLORS.border : COLORS.blue + "88"; e.currentTarget.style.opacity = "1"; }}
+                >
+                  Turn {turnNumber} · {isMyTurn ? "Your Turn" : "Opp Turn"} ⇄
                 </div>
                 {/* Mana pool tracker */}
                 <div style={{ display: "flex", alignItems: "center", gap: "0px", background: "#071407", border: `1px solid ${manaPool > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "visible", transition: "border-color 0.2s", position: "relative" }}>
@@ -24728,8 +24798,18 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             )}
             {phase === "playing" && isMobile && (
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                <div style={{ padding: "3px 8px", background: "#1a2e1a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", fontSize: "10px", color: COLORS.textMid, fontFamily: "'Cinzel', serif" }}>
-                  T{turnNumber}
+                <div
+                  onClick={toggleTurn}
+                  title="Tap to switch turns"
+                  style={{
+                    padding: "3px 8px", background: isMyTurn ? "#1a2e1a" : "#1a1a2e",
+                    border: `1px solid ${isMyTurn ? COLORS.border : COLORS.blue + "88"}`,
+                    borderRadius: "6px", fontSize: "10px",
+                    color: isMyTurn ? COLORS.textMid : COLORS.blue,
+                    fontFamily: "'Cinzel', serif", cursor: "pointer", userSelect: "none",
+                  }}
+                >
+                  T{turnNumber}{isMyTurn ? "" : "⊘"}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", background: "#071407", border: `1px solid ${manaPool > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "hidden" }}>
                   <button onClick={() => { setManaPool(p => Math.max(0, p - 1)); }} style={{ background: "none", border: "none", borderRight: `1px solid ${COLORS.border}`, padding: "3px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>−</button>
