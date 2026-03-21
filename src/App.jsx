@@ -10491,13 +10491,28 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // #4: Reuse cached result from path planner if available
       if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive);
       const lines = _cachedFRL;
-      if (lines.length > 0) {
+
+      // Check bespoke advice results first — they catch win paths the path planner may miss
+      // (e.g. Arbor Elf post-Ashaya mana bridge, Speaker finds Quirion from library, etc.)
+      // Results aren't sorted yet at this point, so find the highest-priority unsuppressed result.
+      const topResult = results.filter(r => !r.isSuppressed)
+        .reduce((best, r) => (r.priority > (best?.priority ?? -Infinity) ? r : best), null);
+      const topCat = topResult?.category ?? "";
+      const bespokeWinNow = topCat.includes("WIN NOW") || topCat.includes("CAST TO WIN")
+        || topCat.includes("INSTANT SPEED WIN");
+      const bespokeSameTurn = topCat.includes("CAST TO ENABLE") || topCat.includes("ASSEMBLE");
+
+      if (bespokeWinNow) {
+        turnClock = { turns: 0, plan: topResult.headline?.slice(0, 80) ?? "Win this turn" };
+      } else if (bespokeSameTurn) {
+        turnClock = { turns: 0, plan: topResult.headline?.slice(0, 80) ?? "Infinite mana this turn" };
+      } else if (lines.length > 0) {
         const best = lines[0];
-        if (best.winNow)       turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
-        else if (best.sameTurn) turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
+        if (best.winNow)            turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
+        else if (best.sameTurn)     turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
         else if (best.nextTurnOnly) turnClock = { turns: 1, plan: `Win next turn: ${best.combo.name}` };
         else if (best.canAfford)    turnClock = { turns: 2, plan: `~2 turns: ${best.combo.name} (need setup)` };
-        else turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
+        else                        turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
       } else {
         turnClock = { turns: 5, plan: "5+ turns — no combo path found" };
       }
