@@ -18235,9 +18235,28 @@ function gradeOpeningHand(cards, handSize = 7) {
                       chromeMoxUsable ||
                       hasGSZT1;
   const allRampIsSlow = rampCount >= 1 && !hasT1Play;
+
+  // Sim finding: fast-mana cards (Chrome Mox, Mox Diamond, Lotus Petal, Spirit Guide)
+  // are negatively correlated with early wins — they're kept in hands that lack development.
+  // Only Sol Ring performs above average. Flag hands where ALL ramp is fast-mana-only.
+  const WEAK_FAST_MANA = new Set(["Chrome Mox","Mox Diamond","Lotus Petal","Elvish Spirit Guide"]);
+  const allRampIsWeakFast = rocks > 0 && dorks === 0 && enchantLandRamp === 0
+    && effectiveRockCards.every(c => WEAK_FAST_MANA.has(c));
+
+  // Sim finding: 3+ real lands in hand is a flood signal (win rate 9% at 3, 4% at 4+).
+  // Even with tutors, land-heavy hands are slow.
+  const isLandHeavy = realLands >= 3;
+  const isLandFlood  = realLands >= 4 && tutors === 0 && rampCount <= 1;
+
   const COMBO_TAGS  = new Set(["ashaya","duskwatch","quirion","earthcraft","wirewood",
     "ranger","symbiote","sabertooth","scout","bounce","infinite-dork","key","untap","untap-lands"]);
   const combo       = cards.filter(c => getCard(c)?.tags?.some(t => COMBO_TAGS.has(t))).length;
+
+  // Sim finding: these specific cards have the highest lift in T3-5 hands.
+  // Shared Summons (+10pp), Archdruid's Charm (+10pp), Duskwatch (+9pp) are premium keeps.
+  const hasPremiumTutor = cards.some(c =>
+    c === "Shared Summons" || c === "Archdruid's Charm" || c === "Summoner's Pact");
+  const hasDuskwatchInHand = cards.includes("Duskwatch Recruiter");
 
   // ── Hard gates ──────────────────────────────────────────────────────────────
   // Gate 1: no green source
@@ -18262,14 +18281,27 @@ function gradeOpeningHand(cards, handSize = 7) {
   }
   if (isManaFlood) return { label: "MULLIGAN", passCount: 0, criteria: {} };
 
-  // ── Six-pillar rubric (matches gradeHand criteria A–F) ──────────────────────
+  // ── Six-pillar rubric ───────────────────────────────────────────────────────
+  // A: T1 play (strongest individual predictor of early win — 63% of T3-5 hands)
+  // B: 2+ ramp OR ramp+tutor (enables T2/T3 explosion; tutor compensates for single dork)
+  // C: Tutor present (+18pp in T3-5 vs T9+ — single strongest feature gap)
+  // D: Land count in sweet spot 1-2 (peak win rate; 3+ lands is a flood signal)
+  // E: Combo piece or win outlet (Duskwatch in hand removes a tutor step — high value)
+  // F: Premium package — T1dork+tutor (19% win rate) or T1dork+combo (21%) or premium tutor
   const criteria = {
     A: hasT1Play,
     B: rampCount >= 2 || (rampCount >= 1 && tutors >= 1) || bigDorks >= 1,
     C: tutors >= 1 || hasYisan,
-    D: realLands >= 2 && realLands <= 4,
-    E: combo >= 1 || bigDorks >= 1,
-    F: false, // synergy detection not needed here — rubric works without it
+    // Sim: sweet spot is 1-2 real lands. 3+ lands reduces win rate significantly.
+    D: realLands >= 1 && realLands <= 2,
+    E: combo >= 1 || bigDorks >= 1 || hasDuskwatchInHand || hasPremiumTutor,
+    // F: premium package — best combos confirmed by sim with 19-21% T<=5 win rate.
+    // The 2ramp branch requires dorks >= 1 to exclude fast-mana-only hands (Chrome/Mox/Petal
+    // without a dork score 4-5% T<=5 win rate — worse than average, not premium).
+    F: (dorks1 >= 1 && tutors >= 1) ||           // T1dork + tutor (19%)
+       (dorks1 >= 1 && combo >= 1) ||             // T1dork + combo piece (21%)
+       (rampCount >= 2 && dorks >= 1 && tutors >= 1 && hasT1Play) || // 2ramp(w/dork)+tutor+T1
+       hasPremiumTutor,                           // Shared Summons/Archdruid's Charm/Summoner's Pact
   };
   const passCount = Object.values(criteria).filter(Boolean).length;
 
@@ -18285,11 +18317,30 @@ function gradeOpeningHand(cards, handSize = 7) {
     label = "MULLIGAN";
   }
 
-  // Sharpen BORDERLINE → KEEP if core plan is fully operational
-  if (label === "BORDERLINE" && rampCount >= 1 && tutors >= 1 && criteria.A && !allRampIsSlow)
+  // Sharpen BORDERLINE → KEEP: core plan is fully operational.
+  // Requires a real dork (not just fast mana) to avoid promoting Chrome/Diamond-only hands.
+  // Exception: if T1 play + tutor + combo piece are all present, the plan is operational
+  // even without a traditional dork (e.g. Lotus Petal + Ashaya + Quirion + Worldly Tutor).
+  if (label === "BORDERLINE" && dorks >= 1 && tutors >= 1 && criteria.A && !allRampIsSlow)
+    label = "KEEP";
+  if (label === "BORDERLINE" && criteria.A && tutors >= 1 && combo >= 1 && (!allRampIsWeakFast || combo >= 2 || hasPremiumTutor || dorks >= 1))
     label = "KEEP";
   if (handSize <= 5 && label === "BORDERLINE" && criteria.A && rampCount >= 1)
     label = "KEEP";
+  // Sharpen BORDERLINE → KEEP: premium tutor with any ramp is always keepable
+  if (label === "BORDERLINE" && hasPremiumTutor && rampCount >= 1 && greenLands >= 1)
+    label = "KEEP";
+
+  // Sharpen KEEP/BORDERLINE → MULLIGAN: 5+ real lands with only 1 tutor/dork is a flood
+  // (isManaFlood gate requires rampCount===0; this catches the ramp=1 flood edge case)
+  if (realLands >= 5 && rampCount <= 1 && tutors <= 1 && !hasPremiumTutor)
+    label = "MULLIGAN";
+  // Sharpen KEEP → BORDERLINE: land-heavy hands with no T1 play are weaker than they look
+  if (label === "KEEP" && isLandFlood && !hasT1Play && !hasPremiumTutor)
+    label = "BORDERLINE";
+  // Fast-mana-only ramp (Chrome/Diamond/Petal) without a dork or combo is a weak structure
+  if (label === "KEEP" && allRampIsWeakFast && !hasT1Play && combo === 0)
+    label = "BORDERLINE";
 
   return { label, passCount, criteria };
 }
@@ -18486,6 +18537,36 @@ function buildHandNotes(cards) {
   if (hasNykthos && dorks >= 2) {
     const devotion = dorkCards.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
     notes.push(`Nykthos — ${devotion} devotion from dorks in hand`);
+  }
+
+  // Sim finding: Shared Summons (+10pp lift), Archdruid's Charm (+10pp), Summoner's Pact (+8pp)
+  // are the highest-lift individual cards in T3-5 opening hands.
+  const hasPremiumTutorNote = cards.some(c =>
+    c === "Shared Summons" || c === "Archdruid's Charm" || c === "Summoner's Pact");
+  const premiumTutorNames = cards.filter(c =>
+    c === "Shared Summons" || c === "Archdruid's Charm" || c === "Summoner's Pact");
+  if (hasPremiumTutorNote) {
+    notes.push(`⚡ Premium tutor: ${premiumTutorNames.join(", ")} — highest T3-5 win rate in sim`);
+  }
+  if (cards.includes("Duskwatch Recruiter")) {
+    notes.push("⚡ Duskwatch Recruiter in hand — win outlet already present, removes a tutor step");
+  }
+
+  // Sim finding: 3+ real lands is a flood signal (win rate 9% at 3 lands, 4% at 4+)
+  const WEAK_FAST_MANA = new Set(["Chrome Mox","Mox Diamond","Lotus Petal","Elvish Spirit Guide"]);
+  const allRampIsWeakFastNote = rocks > 0 && dorks === 0 && enchantLandRamp === 0
+    && effectiveRockCards.every(c => WEAK_FAST_MANA.has(c));
+  if (realLands >= 4 && rampCount <= 1 && tutors === 0) {
+    notes.push(`⚠️ ${realLands} lands is a flood — sim shows 4+ land hands win T≤5 at only 4%`);
+  } else if (realLands >= 3 && !hasT1Play) {
+    notes.push(`⚠️ ${realLands} lands without T1 play — sim sweet spot is 1–2 lands`);
+  }
+
+  // Sim finding: Chrome Mox (4%), Mox Diamond (5%), Lotus Petal (8%) are anti-correlated
+  // with early wins unless paired with combo payoff. Sol Ring (22%) is the exception.
+  if (allRampIsWeakFastNote && combo === 0 && !hasT1Play) {
+    const weakNames = effectiveRockCards.filter(c => WEAK_FAST_MANA.has(c)).join(", ");
+    notes.push(`⚠️ All ramp is card-disadvantage fast mana (${weakNames}) with no T1 dork or combo — sim shows these hands win slowly`);
   }
 
   // Card-disadvantage warnings
@@ -21512,20 +21593,30 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
     // ════════════════════════════════════════════════════════════
     // RUBRIC — six named pillars, each independently evaluated
+    // Calibrated from 10,000-game sim analysis on the Competitive deck.
     // ════════════════════════════════════════════════════════════
-    // A: T1 play available
-    // B: T2 follow-up exists
-    // C: Has a tutor (or Yisan)
-    // D: Healthy land count (2–4 real lands)
-    // E: At least one combo piece or big dork
-    // F: Two-card synergy present
+    // A: T1 play — 63% of T3-5 wins vs 47% of T9+ wins (+16pp, strongest predictor)
+    // B: 2+ ramp / ramp+tutor — enables T2/T3 explosive development
+    // C: Tutor present — +18pp lift in T3-5 wins, single largest feature gap
+    // D: Land count 1–2 (sim peak: 2 lands = 13%, 1 land = 11%, 3 lands = 9%, 4+ = 4%)
+    // E: Combo piece, big dork, win outlet (Duskwatch in hand = high lift +9pp)
+    // F: Premium package: T1dork+tutor (19%), T1dork+combo (21%), or premium tutor card
+    const hasPremiumTutor = cards.some(c =>
+      c === "Shared Summons" || c === "Archdruid's Charm" || c === "Summoner's Pact");
+    const hasDuskwatchInHand = cards.includes("Duskwatch Recruiter");
+    const WEAK_FAST_MANA = new Set(["Chrome Mox","Mox Diamond","Lotus Petal","Elvish Spirit Guide"]);
+    const allRampIsWeakFast = rocks > 0 && dorks === 0 && enchantLandRamp === 0
+      && effectiveRockCards.every(c => WEAK_FAST_MANA.has(c));
     const criteria = {
       A: hasT1Play,
       B: rampCount >= 2 || (rampCount >= 1 && tutors >= 1) || bigDorks >= 1,
       C: tutors >= 1 || hasYisan,
-      D: realLands >= 2 && realLands <= 4,
-      E: combo >= 1 || bigDorks >= 1,
-      F: synergies.length >= 1,
+      D: realLands >= 1 && realLands <= 2,
+      E: combo >= 1 || bigDorks >= 1 || hasDuskwatchInHand || hasPremiumTutor,
+      F: (dorks1 >= 1 && tutors >= 1) ||
+         (dorks1 >= 1 && combo >= 1) ||
+         (rampCount >= 2 && dorks >= 1 && tutors >= 1 && hasT1Play) ||
+         hasPremiumTutor,
     };
     const passCount = Object.values(criteria).filter(Boolean).length;
 
@@ -21572,9 +21663,14 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         gradeLabel = "MULLIGAN";
     }
 
-    // Flood penalty: ≥4 lands with no T1 dork and no combo pieces → KEEP → BORDERLINE
-    // The rubric passes ABCD but the hand is land-heavy and won't assemble quickly.
-    if (gradeLabel === "KEEP" && realLands >= 4 && !criteria.A && combo === 0)
+    // Sim-backed flood penalty: 3+ lands with no T1 dork and no premium tutor → downgrade.
+    // Sim shows 3-land hands win T<=5 at 9% (same as 0-land hands), 4+ lands = 4%.
+    if (gradeLabel === "KEEP" && realLands >= 3 && !criteria.A && !hasPremiumTutor && combo === 0)
+      gradeLabel = "BORDERLINE";
+    if (gradeLabel === "KEEP" && realLands >= 4 && !criteria.A && !hasPremiumTutor)
+      gradeLabel = "BORDERLINE";
+    // Fast-mana-only ramp without real development is misleading — demote if rubric passed narrowly.
+    if (gradeLabel === "KEEP" && allRampIsWeakFast && !hasT1Play && combo === 0)
       gradeLabel = "BORDERLINE";
 
     addSimNote(notes);
@@ -28288,8 +28384,9 @@ function YevaAdvisor() {
                     A: "T1 play",
                     B: "2+ ramp",
                     C: "tutor",
-                    D: "2–4 lands",
-                    E: "combo piece",
+                    D: "1–2 lands",
+                    E: "combo/outlet",
+                    F: "premium",
                   };
                   // Build sim note string matching GoldfishModal's addSimNote format
                   let simNote = null;
