@@ -8892,8 +8892,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // This is NOT just ONE PIECE AWAY — it is a CAST TO WIN NOW play.
   {
     const speakerInHandNow = accessible("Formidable Speaker") && !board.has("Formidable Speaker");
-    const quirionInLoop    = board.has("Quirion Ranger") || board.has("Scryb Ranger");
-    const quirionLoopName  = board.has("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
+    const quirionInLoop    = board.has("Quirion Ranger") || board.has("Scryb Ranger")
+      // Speaker can find a ranger from the library — treat it as available for the win check
+      || (inDeck("Quirion Ranger") || inDeck("Scryb Ranger"));
+    const quirionLoopName  = board.has("Quirion Ranger") ? "Quirion Ranger"
+      : board.has("Scryb Ranger") ? "Scryb Ranger"
+      : inDeck("Quirion Ranger") ? "Quirion Ranger" : "Scryb Ranger";
     const ashayaNotOnBoard = !board.has("Ashaya, Soul of the Wild");
     const ashayaOnBoard = board.has("Ashaya, Soul of the Wild");
     // When Ashaya is NOT on board, Speaker's ETB puts her in hand — we still have to cast her (CMC 5).
@@ -8901,7 +8905,50 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // When Ashaya IS already on board, we only need Speaker(3).
     const minManaForWin = ashayaOnBoard ? 3 : 8;
     // canAfford check: Speaker={2}{G} (1 pip). Without Ashaya also need {3}{G}{G} (2 pips) = 3 green total.
-    const canAffordWin = ashayaOnBoard ? canAfford(3, 1) : canAfford(8, 3);
+    const canAffordWinDirect = ashayaOnBoard ? canAfford(3, 1) : canAfford(8, 3);
+    // Arbor Elf mana bonus: when Ashaya is in hand (not on board yet), casting Ashaya makes all
+    // creatures into Forests — Arbor Elf can then immediately untap any of them (e.g. Elvish Archdruid).
+    // Additionally, ALL untapped creatures become Forest mana sources after Ashaya resolves.
+    // Arbor Elf is NOT subject to sickness here — it's already on board, just gains new targets.
+    // Post-Ashaya available mana = (untapped creatures excluding ArbElf) × 1G each
+    //   + best dork's extra output when re-tapped via ArbElf untap.
+    // We model it as: ArbElf untaps the best dork, so we get bestDorkOutput + (other creatures × 1).
+    const arborElfBonus = !ashayaOnBoard && board.has("Arbor Elf") && !sickCreatures?.has("Arbor Elf")
+      ? (() => {
+          // After Ashaya enters, count how many untapped creatures (excluding ArbElf itself) can tap for G
+          const untappedCreatures = battlefield.filter(c => {
+            if (c === "Arbor Elf") return false; // ArbElf uses tap for untap ability
+            const cd = getCard(c);
+            if (!cd || cd.type !== "creature") return false;
+            if (sickCreatures?.has(c)) return false;
+            return true; // all untapped creatures become Forest mana sources via Ashaya
+          });
+          // Best dork to untap with ArbElf (gets double mana: once normally + once after untap)
+          const bestDorkOutput = untappedCreatures.reduce((best, c) => {
+            const t = getCard(c)?.tapsFor;
+            let output = 0;
+            if (typeof t === "number") output = t;
+            else if (t === "elves")    output = elvesOnBoard;
+            else if (t === "creatures") output = creaturesOnBoard;
+            else if (t === "devotion") output = devotionOnBoard;
+            else if (t === "marwyn")   output = Math.max(1, elvesOnBoard - 1);
+            else output = 1; // as a Forest via Ashaya
+            return Math.max(best, output);
+          }, 0);
+          // Each creature taps for 1G as a Forest via Ashaya.
+          // ArbElf untaps the best dork → it taps again for bestDorkOutput (not just 1G).
+          // Net: (untappedCreatures.length × 1G) + (bestDorkOutput - 1) extra from the untap.
+          const creatureMana = untappedCreatures.length; // each taps for 1G as Forest
+          const untapBonus   = Math.max(0, bestDorkOutput - 1); // extra from re-tapping best dork
+          return creatureMana + untapBonus;
+        })()
+      : 0;
+    // With post-Ashaya mana: phase 1 = cast Ashaya (5G), phase 2 = arborElfBonus G generated.
+    // Need 4G in phase 2: Speaker(3) + Quirion(1).
+    const canAffordWinWithArborElf = !canAffordWinDirect && !ashayaOnBoard && arborElfBonus > 0
+      && mana >= 5                          // can afford Ashaya
+      && arborElfBonus >= 4;                // phase-2 mana covers Speaker(3) + Quirion(1)
+    const canAffordWin = canAffordWinDirect || canAffordWinWithArborElf;
     const canCastSpeakerNow = speakerInHandNow && (isMyTurn || yevaFlash) && canAffordWin;
     const winLineAvailable  = speakerInHandNow && canAffordWin;
     // Speaker ETB requires discarding another card — if Speaker is the only card in hand, ETB fizzles.
@@ -8949,23 +8996,42 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const netMana = dorkOutput - 3; // Speaker costs {2}{G} = 3
         const loopDesc = netMana > 0 ? `net +${netMana}G per loop` : "mana-neutral (infinite)";
         const discardTarget = hand.filter(c => c !== "Formidable Speaker").find(c => getCard(c)?.type !== "creature") || "a land/spell";
+        // After Ashaya: all creatures are Forests. Arbor Elf untaps the best dork; every other
+        // untapped creature taps for {G}. Describe this as a group.
+        const arborElfStep = canAffordWinWithArborElf
+          ? `All creatures are now Forests (Ashaya). Arbor Elf untaps ${dorkName} — tap it for ${(() => { const t = getCard(dorkName)?.tapsFor; if (typeof t === "number") return t; if (t === "elves") return elvesOnBoard; if (t === "devotion") return devotionOnBoard; return 2; })()}G. Tap all other untapped creatures for {G} each as Forests. Total: ${arborElfBonus}G generated.`
+          : null;
+        // When Ashaya is in hand, cast her first — Speaker ETB then finds Quirion Ranger.
+        // When Ashaya is on board, Speaker ETB finds Quirion if not on board, or anything else.
+        const speakerFinds = ashayaOnBoard
+          ? (board.has("Quirion Ranger") || board.has("Scryb Ranger") ? "any creature" : quirionLoopName)
+          : quirionLoopName;
         const sharedSteps = [
-          `Cast Formidable Speaker ({2}{G}). ETB: discard ${discardTarget !== "a land/spell" ? discardTarget : "a non-creature card"} → search library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
-          `Cast Ashaya, Soul of the Wild. All your nontoken creatures are now Forest lands.`,
+          ...(ashayaOnBoard ? [] : [
+            `Cast Ashaya, Soul of the Wild ({3}{G}{G}). All your nontoken creatures are now Forest lands.`,
+          ]),
+          ...(arborElfStep ? [arborElfStep] : []),
+          `Cast Formidable Speaker ({2}{G}). ETB: discard ${discardTarget !== "a land/spell" ? discardTarget : "a non-creature card"} → search library for ${speakerFinds}. Put it into your hand, then shuffle.`,
+          ...(ashayaOnBoard ? [] : [
+            `Cast ${quirionLoopName} ({G}). With Ashaya on board, it is a Forest — and a creature.`,
+          ]),
           `Activate ${quirionLoopName}: return Formidable Speaker (now a Forest via Ashaya) to hand — this untaps ${dorkName}.`,
           `Tap ${dorkName} for ${dorkOutput} mana. Recast Formidable Speaker ({2}{G}): ETB — discard any card → search entire library for any creature. ${loopDesc}.`,
           `First priority: find Duskwatch Recruiter. Cast it. Activate ({2}{G}) repeatedly — looks at top 3 cards to assemble the win pile.`,
           `Win pile: Endurance + Geier Reach Sanitarium + untap method → mill all opponents.`,
         ];
 
-        if (canCastSpeakerNow) {
-          // Flash available (Yeva on board, or our turn)
+        if (canCastSpeakerNow || canAffordWinWithArborElf) {
+          // Our turn — direct mana or Arbor Elf post-Ashaya mana bridge
+          const headlinePrefix = arborElfStep ? "Cast Ashaya → Arbor Elf untaps dork → " : "";
           results.push({
             priority: 15,
             category: "⚡ CAST TO WIN",
-            headline: `Cast Formidable Speaker NOW → find Ashaya → ${quirionLoopName} loop → infinite tutor → find Duskwatch → WIN`,
+            headline: `${headlinePrefix}Cast Formidable Speaker → find ${speakerFinds} → ${quirionLoopName} loop → find Duskwatch → WIN`,
             combo: "speaker_hand_cast_to_win",
-            detail: `Casting Speaker starts an immediate winning sequence. ETB: discard a card → search library for Ashaya. Once Ashaya is in play, Speaker becomes a Forest. ${quirionLoopName} bounces Speaker to untap ${dorkName} (${dorkOutput} mana post-cast, ${loopDesc}). Each loop fetches any creature — find Duskwatch, then activate for the win pile.`,
+            detail: arborElfStep
+              ? `Cast Ashaya (${mana - 5 < 0 ? "use all mana" : mana - 5 + "G left"}) → Arbor Elf untaps ${dorkName} (now a Forest) for ${arborElfBonus} extra mana → cast Speaker → ETB finds ${speakerFinds}. ${quirionLoopName} bounces Speaker to untap ${dorkName} (${dorkOutput} mana, ${loopDesc}). Find Duskwatch → win.`
+              : `Casting Speaker starts an immediate winning sequence. ETB: discard a card → search library for Ashaya. Once Ashaya is in play, Speaker becomes a Forest. ${quirionLoopName} bounces Speaker to untap ${dorkName} (${dorkOutput} mana post-cast, ${loopDesc}). Each loop fetches any creature — find Duskwatch, then activate for the win pile.`,
             steps: sharedSteps,
             color: "#ff4500",
           });
@@ -11568,6 +11634,12 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         return cd?.type === "land" && (cd?.tags?.includes("basic") || c === "Forest");
       });
       if (!hasBasic) return null;
+    }
+
+    // needsCardInGraveyard: a specific card must be in the graveyard (e.g. Argothian Elder
+    // for Shifting Woodland to copy). If it's not there, this path is impossible — return null.
+    if (combo.needsCardInGraveyard) {
+      if (!graveyard.includes(combo.needsCardInGraveyard)) return null;
     }
 
     return { extraSteps, extraMana };
@@ -27110,6 +27182,9 @@ function YevaAdvisor() {
   const [turnClock, setTurnClock] = useState(null);
   const [winConversion, setWinConversion] = useState(null);
   const [collapseKey, setCollapseKey] = useState(0);
+  // Sim result for the mulligan grade banner — computed asynchronously when
+  // the hand is set and no permanents are in play (pure opening-hand state).
+  const [mulliganSimResult, setMulliganSimResult] = useState(null);
   const advicePanelRef = useRef(null);
   const zoneInputRefs = useRef({}); // populated by CardInput via onRef prop
   const isIdleAuto = false; // auto-timer disabled — use Shift+L to activate
@@ -27338,6 +27413,26 @@ function YevaAdvisor() {
       }
     }
   }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, yisanCounters, threatLevel, opponentOpenMana]);
+
+  // Mulligan sim — runs 10 games with the current hand when in pure opening-hand state.
+  // Deferred 50ms so the UI renders immediately before the blocking sim runs.
+  useEffect(() => {
+    const deckCards = activeDeck?.cards ?? [];
+    const isOpeningHand = hand.length > 0 && battlefield.length === 0
+      && graveyard.length === 0 && exile.length === 0;
+    if (!isOpeningHand || deckCards.length < 20) {
+      setMulliganSimResult(null);
+      return;
+    }
+    setMulliganSimResult(null); // clear stale result immediately
+    const timer = setTimeout(() => {
+      try {
+        const result = simGradeHand(hand, deckCards, 10, 20);
+        setMulliganSimResult(result);
+      } catch { setMulliganSimResult(null); }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [hand, battlefield, graveyard, exile, activeDeck]);
 
   const elvesOnBoard     = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
@@ -28132,6 +28227,7 @@ function YevaAdvisor() {
                 {hand.length > 0 && battlefield.length === 0 && graveyard.length === 0 && exile.length === 0 && (() => {
                   const { label, passCount, criteria } = gradeOpeningHand(hand, hand.length);
                   const notes = buildHandNotes(hand);
+                  const sim = mulliganSimResult;
                   const cfg = label === "KEEP"
                     ? { bg: "#0a1f0a", border: "#2d6b2d", accent: "#4ecb4e", icon: "✅", word: "KEEP" }
                     : label === "BORDERLINE"
@@ -28152,6 +28248,30 @@ function YevaAdvisor() {
                     D: "2–4 lands",
                     E: "combo piece",
                   };
+                  // Build sim note string matching GoldfishModal's addSimNote format
+                  let simNote = null;
+                  let simColor = COLORS.textDim;
+                  if (sim) {
+                    const { simLabel, winsBy8, winsTotal, total, avgWinTurn, t1Mana, t2Mana, t1DorkRate } = sim;
+                    const winsStr = `${winsBy8}/${total} wins ≤T8`;
+                    const avgStr  = avgWinTurn != null ? `, avg T${avgWinTurn.toFixed(1)}` : winsTotal === 0 ? ", no wins" : "";
+                    const manaStr = `T1: ${t1Mana.toFixed(1)}G, T2: ${t2Mana.toFixed(1)}G`;
+                    const dorkStr = t1DorkRate >= 0.8 ? " · T1 dork reliable"
+                                  : t1DorkRate >= 0.5 ? " · T1 dork sometimes" : "";
+                    if (simLabel === "SIM_STRONG") {
+                      simNote = `🎲 Sim (${winsStr}${avgStr}, ${manaStr}${dorkStr}) — develops and wins consistently`;
+                      simColor = "#4ecb4e";
+                    } else if (simLabel === "SIM_OK") {
+                      simNote = `🎲 Sim (${winsStr}${avgStr}, ${manaStr}${dorkStr})`;
+                      simColor = COLORS.textMid;
+                    } else if (simLabel === "SIM_WEAK") {
+                      simNote = `🎲 Sim (${winsStr}${avgStr}, ${manaStr}) — slower than it looks`;
+                      simColor = COLORS.gold;
+                    } else {
+                      simNote = `🎲 Sim (${winsStr}${avgStr}, ${manaStr}) — no T2 mana from this hand`;
+                      simColor = "#cb4e4e";
+                    }
+                  }
                   return (
                     <div style={{
                       background: cfg.bg, border: `1px solid ${cfg.border}`,
@@ -28160,7 +28280,7 @@ function YevaAdvisor() {
                       marginBottom: "16px",
                     }}>
                       {/* Header row: icon + grade word + count + pills */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: notes.length ? "10px" : 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: (notes.length || sim) ? "10px" : 0 }}>
                         <span style={{ fontSize: "14px" }}>{cfg.icon}</span>
                         <span style={{
                           fontFamily: "'Cinzel', serif", fontSize: "12px",
@@ -28175,6 +28295,23 @@ function YevaAdvisor() {
                           ))}
                         </div>
                       </div>
+                      {/* Sim result — shown first, above structural notes */}
+                      {simNote && (
+                        <div style={{
+                          fontSize: "11px", color: simColor,
+                          fontFamily: "'Crimson Text', serif", lineHeight: 1.4,
+                          marginBottom: notes.length ? "4px" : 0,
+                          fontStyle: "italic",
+                        }}>{simNote}</div>
+                      )}
+                      {!sim && activeDeck && (
+                        <div style={{
+                          fontSize: "11px", color: COLORS.textDim,
+                          fontFamily: "'Crimson Text', serif", lineHeight: 1.4,
+                          marginBottom: notes.length ? "4px" : 0,
+                          fontStyle: "italic",
+                        }}>🎲 Simulating…</div>
+                      )}
                       {/* Notes — one per line, matching goldfish mulligan style */}
                       {notes.length > 0 && (
                         <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
