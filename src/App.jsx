@@ -10508,11 +10508,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         turnClock = { turns: 0, plan: topResult.headline?.slice(0, 80) ?? "Infinite mana this turn" };
       } else if (lines.length > 0) {
         const best = lines[0];
-        if (best.winNow)            turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
-        else if (best.sameTurn)     turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
-        else if (best.nextTurnOnly) turnClock = { turns: 1, plan: `Win next turn: ${best.combo.name}` };
-        else if (best.canAfford)    turnClock = { turns: 2, plan: `~2 turns: ${best.combo.name} (need setup)` };
-        else                        turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
+        if (best.winNow)                        turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
+        else if (best.sameTurn)                 turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
+        else if (best.nextTurnOnly && best.canAfford) turnClock = { turns: 1, plan: `Win next turn: ${best.combo.name}` };
+        else if (best.canAfford)                turnClock = { turns: 2, plan: `~2 turns: ${best.combo.name} (need setup)` };
+        else                                    turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
       } else {
         turnClock = { turns: 5, plan: "5+ turns — no combo path found" };
       }
@@ -20116,11 +20116,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           .filter(({ c }) => {
             const cd = getCard(c);
             if (cd?.type !== "creature") return false;
-            if (isNO && (cd.greenPips ?? 0) === 0 && (cd.greenPips ?? 0) === 0) return false;
+            // Natural Order requires a green creature — has at least one green pip, or is Dryad Arbor
+            if (isNO && (cd.greenPips ?? 0) === 0 && c !== "Dryad Arbor") return false;
             return true;
           });
         if (sacrificeTargets.length === 0) {
-          addLog(`${card} fizzled — no valid creature to sacrifice.`, COLORS.red);
+          addLog(`${card} fizzled — need a green creature on the battlefield to sacrifice. (Tip: cast a dork first, then use ${card}.)`, COLORS.red);
           setHand(prev => [...prev, card]);
           setManaPool(p => p + (getCard(card)?.cmc ?? 0));
           return;
@@ -20904,19 +20905,26 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       setTimeout(() => selectCb(card), 0);
       return;
     }
-    const idx = library.indexOf(card);
-    if (idx === -1) { addLog(`${card} not found in library.`, COLORS.red); return; }
-    setLibrary(prev => {
-      const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-      for (let i = without.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [without[i], without[j]] = [without[j], without[i]];
-      }
-      return without;
-    });
-    setHand(prev => [...prev, card]);
+    const inLib = library.includes(card);
+    const inHnd = hand.includes(card);
+    if (!inLib && !inHnd) { addLog(`${card} not found in library or hand.`, COLORS.red); return; }
+    if (inLib) {
+      const idx = library.indexOf(card);
+      setLibrary(prev => {
+        const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+        for (let i = without.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [without[i], without[j]] = [without[j], without[i]];
+        }
+        return without;
+      });
+      addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
+    } else {
+      // Card was in hand (not library) — just acknowledge it's already accessible
+      addLog(`Tutored: ${card} (already in hand — no library change).`, COLORS.purple);
+    }
+    setHand(prev => prev.includes(card) ? prev : [...prev, card]);
     setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
-    addLog(`Tutored: ${card} → hand. Library shuffled.`, COLORS.purple);
   }
 
   // ── SCRY ────────────────────────────────────────────────────
@@ -24338,8 +24346,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Eladamri, Korvecdal",
       "Nissa, Resurgent Animist","Saryth, the Viper's Fang","Kogla, the Titan Ape"]);
 
-    // Finale searches graveyard; everything else searches library
-    const pool = isFinale ? graveyard : library;
+    // Finale searches graveyard; everything else searches library + hand (hand cards shown with label)
+    const pool = isFinale ? graveyard : [...new Set([...library, ...hand])];
 
     const passesMode = (c) => {
       const d = getCard(c);
@@ -24468,12 +24476,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             {getCard(card) && (
               <span style={{ fontSize: "10px", color: COLORS.textDim, marginLeft: "8px" }}>
                 {isGSZ ? `CMC ${getCard(card).cmc ?? "?"}` : getCard(card).type}
-                {!isGSZ && getCard(card).tags?.includes("dork")     ? " \u00b7 dork"     : ""}
-                {!isGSZ && getCard(card).tags?.includes("tutor")    ? " \u00b7 tutor"    : ""}
-                {!isGSZ && getCard(card).tags?.includes("combo")    ? " \u00b7 combo"    : ""}
-                {!isGSZ && getCard(card).tags?.includes("treefolk") ? " \u00b7 treefolk" : ""}
-                {isGSZ  && getCard(card).tags?.includes("dork")     ? " \u00b7 dork"     : ""}
-                {isGSZ  && getCard(card).role ? ` \u00b7 ${getCard(card).role}` : ""}
+                {!isGSZ && getCard(card).tags?.includes("dork")     ? " · dork"     : ""}
+                {!isGSZ && getCard(card).tags?.includes("tutor")    ? " · tutor"    : ""}
+                {!isGSZ && getCard(card).tags?.includes("combo")    ? " · combo"    : ""}
+                {!isGSZ && getCard(card).tags?.includes("treefolk") ? " · treefolk" : ""}
+                {isGSZ  && getCard(card).tags?.includes("dork")     ? " · dork"     : ""}
+                {isGSZ  && getCard(card).role ? ` · ${getCard(card).role}` : ""}
+                {hand.includes(card) && !library.includes(card)
+                  ? <span style={{ color: COLORS.gold, marginLeft: "6px" }}>★ in hand</span>
+                  : null}
               </span>
             )}
           </div>
@@ -24505,7 +24516,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         .filter(({ c }) => {
           const cd = getCard(c);
           if (cd?.type !== "creature") return false;
-          if (isNO && (cd.greenPips ?? 0) === 0 && (cd.greenPips ?? 0) === 0) return false;
+          if (isNO && (cd.greenPips ?? 0) === 0 && c !== "Dryad Arbor") return false;
           return true;
         });
       const confirmSacrifice = (sacCard, sacIdx) => {
@@ -24520,19 +24531,25 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         setTutorCreaturesOnly(true);
         if (!isNO) setTutorMaxCmc(sacCmc + 2);
         setTutorOnSelect(() => (chosen) => {
-          setLibrary(prev => {
-            const idx = prev.indexOf(chosen);
-            if (idx === -1) return prev;
-            const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
-            for (let i = without.length - 1; i > 0; i--) {
-              const j = Math.floor(Math.random() * (i + 1));
-              [without[i], without[j]] = [without[j], without[i]];
-            }
-            return without;
-          });
+          const inLib = library.includes(chosen);
+          if (inLib) {
+            setLibrary(prev => {
+              const idx = prev.indexOf(chosen);
+              if (idx === -1) return prev;
+              const without = [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+              for (let i = without.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [without[i], without[j]] = [without[j], without[i]];
+              }
+              return without;
+            });
+          } else {
+            // Card was in hand — remove it from hand instead
+            setHand(prev => { const i = prev.indexOf(chosen); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
+          }
           goldfishAddToBattlefield(chosen);
           fireETB(chosen);
-          addLog(`${noCard} → sacrificed ${sacCard} → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+          addLog(`${noCard} → sacrificed ${sacCard} → ${chosen} onto battlefield.${inLib ? " Library shuffled." : " (was in hand)"}`, COLORS.green2);
         });
         setShowTutor(true); setTutorQuery("");
         setTimeout(() => tutorInputRef.current?.focus(), 50);
