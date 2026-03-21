@@ -2859,9 +2859,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // needsBattlefieldForest: requires at least one Forest land on the battlefield
     // (for Quirion Ranger to return to hand to untap a creature — no Ashaya needed)
     if (combo.needsBattlefieldForest) {
+      const ashayaOnBF = board.has("Ashaya, Soul of the Wild");
       const hasForestOnBoard = battlefield.some(c => {
         const data = getCard(c);
-        if (!data || data.type !== "land") return false;
+        if (!data) return false;
+        // With Ashaya: all nontoken creatures are Forests — valid bounce targets for Quirion/Scryb
+        if (ashayaOnBF && data.type === "creature") return true;
+        if (data.type !== "land") return false;
         if (data.tags?.includes("fetch")) return false; // fetch lands sacrifice themselves — not a returnable Forest
         return c === "Forest" || data.tags?.includes("forest") || data.tags?.includes("basic")
           || c === "Yavimaya, Cradle of Growth"; // Yavimaya makes all lands Forests
@@ -22063,8 +22067,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Quirion Ranger / Scryb Ranger: bounce a Forest to hand → untap a creature ── */}
         {isBF && (card === "Quirion Ranger" || card === "Scryb Ranger") && (() => {
           const yavimayaActive = battlefield.includes("Yavimaya, Cradle of Growth");
+          const ashayaActive   = battlefield.includes("Ashaya, Soul of the Wild");
           const forests = battlefield.map((c,i) => ({c,i})).filter(({c}) => {
             const cd = getCard(c);
+            // Ashaya: all nontoken creatures are Forests — valid bounce targets
+            if (ashayaActive && cd?.type === "creature") return true;
             if (cd?.type !== "land") return false;
             // Yavimaya makes ALL lands into Forests — any land is a valid bounce target
             if (yavimayaActive) return true;
@@ -23320,10 +23327,14 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Arbor Elf: tap — untap target Forest (or Forest-enchanted land) ── */}
         {isBF && card === "Arbor Elf" && (() => {
-          const forests = battlefield.map((c, i) => ({ c, i })).filter(({ c }) =>
-            getCard(c)?.tags?.includes("forest") || getCard(c)?.tags?.includes("fetch-forest") ||
-            c === "Yavimaya, Cradle of Growth" || c === "Dryad Arbor"
-          );
+          const ashayaActive = battlefield.includes("Ashaya, Soul of the Wild");
+          const forests = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => {
+            const cd = getCard(c);
+            // With Ashaya: all nontoken creatures are Forests — valid untap targets
+            if (ashayaActive && cd?.type === "creature") return true;
+            return cd?.tags?.includes("forest") || cd?.tags?.includes("fetch-forest") ||
+              c === "Yavimaya, Cradle of Growth" || c === "Dryad Arbor";
+          });
           if (isCardTapped || sickCreatures.has(key) || forests.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Untap Forest — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : "no Forests"}
