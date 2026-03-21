@@ -16612,7 +16612,8 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         hand.push(spTarget); // Summoner's Pact puts the card into hand immediately
       }
     } else if (card === "Crop Rotation" || card === "Sylvan Scrying") {
-      // Sacrifice a land (Crop Rotation) or just search (Sylvan Scrying), then put a land onto battlefield/hand.
+      // Crop Rotation: sacrifice a land → search library for a land → put onto battlefield (tapped).
+      // Sylvan Scrying: search library for a land → put into HAND (not battlefield).
       graveyard.push(card);
       const LAND_PRIORITY = [
         "Gaea's Cradle", "Nykthos, Shrine to Nyx", "Yavimaya, Cradle of Growth",
@@ -16634,7 +16635,14 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       if (!landTarget) landTarget = library.find(c => getCard(c)?.type === "land" && !boardLands.has(c)) ?? null;
       if (landTarget) {
         library.splice(library.indexOf(landTarget), 1);
-        battlefield.push(landTarget);
+        if (card === "Crop Rotation") {
+          // Crop Rotation puts the land onto the battlefield (tapped — but the sim
+          // doesn't track tapped-entering lands, so it enters ready next turn).
+          battlefield.push(landTarget);
+        } else {
+          // Sylvan Scrying puts the land into hand — it does NOT enter the battlefield.
+          hand.push(landTarget);
+        }
         for (let i = library.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [library[i], library[j]] = [library[j], library[i]];
