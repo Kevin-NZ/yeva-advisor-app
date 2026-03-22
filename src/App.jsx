@@ -2603,7 +2603,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     let sum = 0;
     for (let i = 0; i < Math.min(n, outputs.length); i++) sum += outputs[i];
     return sum;
-  } — pure per threshold within a single analyzeGameState call.
+  }
+
+  // Memoization cache for findBigDork — pure per threshold within a single analyzeGameState call.
   const _findBigDorkCache = new Map();
   function findBigDork(threshold) {
     if (_findBigDorkCache.has(threshold)) return _findBigDorkCache.get(threshold);
