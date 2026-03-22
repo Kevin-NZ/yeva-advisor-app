@@ -841,7 +841,7 @@ const COMBOS = [
     requires: ["Infectious Bite", "Eternal Witness"],
     needsAlsoBouncer: true,
     needsInfiniteMana: true,
-    priority: 9,
+    priority: 10,
     type: "win-poison",
     lines: [
       "Establish infinite mana. Have Infectious Bite in hand or graveyard.",
@@ -9993,6 +9993,31 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- FINALE OF DEVASTATION WIN CON ----
+  // With infinite mana: cast Finale of Devastation for X≥10 to give all creatures +X/+X and haste.
+  // Attack for lethal. This fires when Finale is in hand and infinite mana is already online.
+  if (infiniteManaActive && inHand.has("Finale of Devastation") && (isMyTurn || yevaAvailable)) {
+    const alreadyFired = results.some(r => r.combo === "finale_win_now");
+    if (!alreadyFired) {
+      const creatureCount = creaturesOnBoard;
+      results.push({
+        priority: 15,
+        category: "⚡ CAST TO WIN",
+        headline: "Cast Finale of Devastation (X≥10) → all creatures get +X/+X and haste → attack for lethal",
+        combo: "finale_win_now",
+        detail: `Infinite mana is active. Cast Finale of Devastation for X=10 or more ({X}{G}{G}, total ≥12): it finds any creature from your library or graveyard with CMC ≤ X and puts it onto the battlefield. If X ≥ 10, all creatures you control get +X/+X and gain haste until end of turn. With ${creatureCount} creature${creatureCount !== 1 ? "s" : ""} on the battlefield, attack for lethal.`,
+        steps: [
+          "Infinite mana is established.",
+          "Cast Finale of Devastation ({X}{G}{G}) with X=10 or more — search your library or graveyard for a creature with CMC ≤ X and put it onto the battlefield.",
+          "Since X ≥ 10: all creatures you control get +X/+X and gain haste until end of turn.",
+          "Attack with all creatures for lethal.",
+          "TIP: Use the tutor clause to fetch Craterhoof Behemoth (CMC 8) for maximum trample damage.",
+        ],
+        color: "#ff4500",
+      });
+    }
+  }
+
   // ---- BADGERMOLE CUB + ASHAYA WIN CON ----
   // With infinite mana + Ashaya, Badgermole's mana-doubler (tap creature for mana → add {G}) accelerates. No infinite counters from earthbend (one-time ETB only).
   // on your creatures — all of which are Forests (valid land targets).
@@ -10428,21 +10453,42 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // Sol Ring — CMC 1, taps for {C}{C}. Play ASAP if you have 1 mana spare.
+    // Skip if Null Rod / Collector Ouphe is on the battlefield — artifact activated abilities are locked.
+    const _oupheLockActive = board.has("Collector Ouphe") || board.has("Null Rod");
     if (inHand.has("Sol Ring") && !board.has("Sol Ring") && !infiniteManaActive && mana >= 1) {
-      fastManaInHand.push({
-        name: "Sol Ring",
-        headline: "Cast Sol Ring ({1}) → taps for {C}{C} each turn",
-        detail: "Sol Ring is one of the most efficient mana rocks in the format — pays for itself in two taps. Cast it as early as possible to accelerate your mana.",
-        steps: [
-          "Cast Sol Ring ({1}).",
-          "Tap Sol Ring for {C}{C} — net +1 mana immediately, +2 every subsequent turn.",
-        ],
-        priority: 5,
-      });
+      if (_oupheLockActive) {
+        fastManaInHand.push({
+          name: "Sol Ring",
+          headline: "⚠️ Sol Ring in hand — but artifact lock (Null Rod / Ouphe) prevents activation",
+          detail: "Sol Ring cannot activate its {T} ability while Null Rod or Collector Ouphe is on the battlefield. Casting it now wastes 1 mana for no benefit. Remove the lock first, or hold Sol Ring until the lock is gone.",
+          steps: ["Sol Ring's activated ability is locked — do not cast until Null Rod / Ouphe is removed."],
+          priority: 3,
+        });
+      } else {
+        fastManaInHand.push({
+          name: "Sol Ring",
+          headline: "Cast Sol Ring ({1}) → taps for {C}{C} each turn",
+          detail: "Sol Ring is one of the most efficient mana rocks in the format — pays for itself in two taps. Cast it as early as possible to accelerate your mana.",
+          steps: [
+            "Cast Sol Ring ({1}).",
+            "Tap Sol Ring for {C}{C} — net +1 mana immediately, +2 every subsequent turn.",
+          ],
+          priority: 5,
+        });
+      }
     }
 
     // Chrome Mox — free, imprint a non-land non-mox card for {G} per turn.
     if (inHand.has("Chrome Mox") && !board.has("Chrome Mox") && !infiniteManaActive) {
+      if (_oupheLockActive) {
+        fastManaInHand.push({
+          name: "Chrome Mox",
+          headline: "⚠️ Chrome Mox in hand — but artifact lock prevents activation",
+          detail: "Chrome Mox cannot tap for mana while Null Rod or Collector Ouphe is on the battlefield. Do not cast it — you would exile a card for no mana. Remove the lock first.",
+          steps: ["Chrome Mox's activated ability is locked — do not cast until Null Rod / Ouphe is removed."],
+          priority: 3,
+        });
+      } else {
       // Never suggest imprinting key combo pieces — they're worth more than a free {G}.
       const IMPRINT_BLOCKLIST_TAGS = new Set(["combo","big-dork","infinite-dork","tutor","ashaya","earthcraft","quirion","ranger","untap"]);
       const IMPRINT_BLOCKLIST_NAMES = new Set(["Temur Sabertooth","Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger","Yeva, Nature's Herald","Natural Order","Survival of the Fittest","Selvala, Heart of the Wilds","Duskwatch Recruiter","Eternal Witness","Fauna Shaman"]);
@@ -10469,7 +10515,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           priority: 4,
         });
       }
-    }
+      } // end else (no ouphe lock)
+    } // end Chrome Mox
 
     // Mox Diamond — free, discard a land to tap for {G} each turn.
     if (inHand.has("Mox Diamond") && !board.has("Mox Diamond") && !infiniteManaActive) {
@@ -10927,19 +10974,21 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           : "instant-speed untap: pre-existing non-sick Elder, Magus, Arbor+Yavimaya, Hope Tender, or Speaker ({T} abilities); Ashaya+Scryb (flash) — all others need Destiny Spinner";
         winPaths.push({ path: "mill-blocked", priority: 99, desc: "Mill: missing land untap method", missing: [untapHint] });
       }
-      // Poison path
-      const hasBite = poolHave.has("Infectious Bite") || inGrave.has("Infectious Bite");
-      if (hasBite && hasEWit && hasBouncer) {
-        winPaths.push({ path: "poison", priority: 2, desc: "Poison: Infectious Bite loop via EWit + bouncer", missing: [] });
-      }
       // Finale path
       if (poolHave.has("Finale of Devastation")) {
         winPaths.push({ path: "finale", priority: 3, desc: "Finale of Devastation X≥10: all creatures get +X/+X haste", missing: [] });
       }
-      // Combat fallback
-      if (poolHave.has("Beast Within")) {
-        winPaths.push({ path: "combat", priority: 5, desc: "Beast Within all opposing permanents → mass attack", missing: [] });
+    }
+    // Poison path is independent of Duskwatch — Infectious Bite + EWit + bouncer works standalone
+    {
+      const hasBite = poolHave.has("Infectious Bite") || inGrave.has("Infectious Bite");
+      if (hasBite && hasEWit && hasBouncer) {
+        winPaths.push({ path: "poison", priority: 2, desc: "Poison: Infectious Bite loop via EWit + bouncer", missing: [] });
       }
+    }
+    // Combat fallback is independent of Duskwatch — Beast Within removes all blockers then swing
+    if (poolHave.has("Beast Within")) {
+      winPaths.push({ path: "combat", priority: 5, desc: "Beast Within all opposing permanents → mass attack", missing: [] });
     }
     winPaths.sort((a, b) => a.priority - b.priority);
     winConversion = winPaths.length > 0 ? winPaths : null;
