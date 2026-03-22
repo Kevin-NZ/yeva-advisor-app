@@ -10517,8 +10517,6 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         turnClock = { turns: 5, plan: "5+ turns — no combo path found" };
       }
     } catch (e) { turnClock = null; }
-  } else if (infiniteManaActive) {
-    turnClock = { turns: 0, plan: "Infinite mana active — win this turn" };
   }
 
   // ── GROUP 2: Compute win conversion paths when infinite mana is active ──
@@ -10562,6 +10560,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
     winPaths.sort((a, b) => a.priority - b.priority);
     winConversion = winPaths.length > 0 ? winPaths : null;
+
+    // Now set turnClock for infinite mana — only claim "win this turn" when a complete
+    // win conversion path exists (Duskwatch, Finale, poison, combat fallback, etc.)
+    if (turnClock === null) {
+      const hasCompleteWin = winConversion && winConversion.some(p => p.missing.length === 0);
+      if (hasCompleteWin) {
+        const best = winConversion.find(p => p.missing.length === 0);
+        turnClock = { turns: 0, plan: `Infinite mana + win outlet: ${best.desc}` };
+      } else {
+        // Infinite mana but no win outlet in hand/board — need one more piece
+        const blocked = winConversion?.[0];
+        turnClock = { turns: 1, plan: blocked
+          ? `Infinite mana active — need: ${blocked.missing.join(", ")}`
+          : "Infinite mana active — find a win outlet (Duskwatch, Finale, etc.)" };
+      }
+    }
   }
 
   results.sort((a, b) =>
@@ -10571,7 +10585,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   );
   const normal = results.filter(r => !r.isSuppressed).slice(0, 7);
   const suppressed = results.filter(r => r.isSuppressed);
-  return { results: [...normal, ...suppressed], infiniteManaActive, activeComboName, turnClock, winConversion };
+  return { results: [...normal, ...suppressed], infiniteManaActive, trueInfiniteManaActive, activeComboName, turnClock, winConversion };
 }
 
 // ============================================================
@@ -19330,7 +19344,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       if (phase === "playing") {
         const hasDork = battlefield.some(c => getCard(c)?.tags?.includes("dork"));
         if (hasDork) recordMilestone("firstDork");
-        if (result?.infiniteManaActive) recordMilestone("infiniteMana");
+        if (result?.trueInfiniteManaActive) recordMilestone("infiniteMana");
         const topCat = result?.results?.[0]?.category || "";
         if (topCat.includes("WIN NOW") || topCat.includes("WIN NEXT")) {
           recordMilestone("winCondition");
@@ -25692,8 +25706,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     }}>{label}</button>
                   ))}
                 </div>
-                {analysis?.infiniteManaActive && (
+                {analysis?.trueInfiniteManaActive && (
                   <span style={{ color: "#c084fc", letterSpacing: "1px", fontSize: "9px", flexShrink: 0 }}>⚡ ∞</span>
+                )}
+                {analysis?.infiniteManaActive && !analysis?.trueInfiniteManaActive && (
+                  <span title="Cast pieces in hand to get infinite mana this turn" style={{ color: "#e09050", letterSpacing: "1px", fontSize: "9px", flexShrink: 0 }}>⚡ ∞ NOW</span>
                 )}
               </div>
               <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
@@ -27539,9 +27556,9 @@ function YevaAdvisor() {
     if (hand.length + battlefield.length > 0) {
       try {
         const manaAvailable = { green: parseInt(greenMana) || 0, colorless: parseInt(colorlessMana) || 0 };
-        const { results, infiniteManaActive, activeComboName: comboName, turnClock, winConversion } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana });
+        const { results, infiniteManaActive, trueInfiniteManaActive, activeComboName: comboName, turnClock, winConversion } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana });
         setAdvice(results);
-        setInfiniteMana(infiniteManaActive);
+        setInfiniteMana(trueInfiniteManaActive ?? infiniteManaActive);
         setActiveComboName(comboName);
         setTurnClock(turnClock);
         setWinConversion(winConversion);
