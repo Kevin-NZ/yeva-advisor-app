@@ -126,6 +126,7 @@ const CARDS = {
   "Ley Weaver":            { type:"creature", cmc:4, tags:["combo","human","untap-lands"], role:"untap-combo", greenPips:1},
   "Cloudstone Curio":      { type:"artifact", cmc:3, tags:["combo","bounce","sabertooth"], role:"bounce-combo", greenPips:0},
   "Thousand-Year Elixir":  { type:"artifact", cmc:3, tags:["combo","haste","untap"], role:"haste-combo", greenPips:0},
+  "Lightning Greaves":     { type:"artifact", cmc:2, tags:["combo","haste","protection"], role:"haste-enabler", greenPips:0},
   "Concordant Crossroads": { type:"enchantment", cmc:1, tags:["combo","haste","enchantment"], role:"haste-enabler", greenPips:1},
   "Surrak and Goreclaw":   { type:"creature", cmc:6, tags:["combo","haste","pump"], role:"haste-enabler", greenPips:2},
   "Touch of Vitae":        { type:"instant", cmc:3, tags:["combo","haste","untap","instant"], role:"haste-combo", greenPips:1},
@@ -342,6 +343,8 @@ const COMBOS = [
   // Earthcraft requires "basic land" — only actual basic lands (Forest, Dryad Arbor) work.
   // This combo works because the basic Forest untapped by Earthcraft is a real land,
   // and Ashaya creature-Forests are used as the Ranger's untap targets (not Earthcraft targets).
+
+  // ── 6a. Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest ──
   {
     id: "earthcraft_ashaya_ranger",
     name: "Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest",
@@ -966,6 +969,115 @@ const COMBOS = [
       "Tap big land for {N} mana (≥4).",
       "Pay {1}{G}: Kogla's activated ability returns Hope Tender (a Human) to hand — exert restriction fully reset.",
       "Recast Hope Tender for {1}{G}. Total loop cost: {1} exert + {1}{G} Kogla + {1}{G} recast = {3}{G}. Net: (land output − 4). Need land ≥ 5.",
+    ]
+  },
+
+  // ── Kogla + Ley Weaver + 2 lands (≥6 total) + haste enabler ────────────────
+  // Loop: haste enabler lets Ley Weaver tap immediately on ETB.
+  // Ley Weaver {T}: untap two target lands → tap both for mana.
+  // Kogla {1}{G}: bounce Ley Weaver (Human). Recast for {2}{G}.
+  // Total loop cost: {1}{G} + {2}{G} = {3}{G} = 5 mana. Need ≥6 from 2 lands → net ≥+1.
+  {
+    id: "kogla_ley_weaver_haste",
+    name: "Kogla + Ley Weaver + 2 Lands (≥6 total) + Haste Enabler",
+    onBattlefield: ["Kogla, the Titan Ape"],
+    mustPreExist: ["Kogla, the Titan Ape"],
+    description: "Infinite mana. Ley Weaver ETB (with haste): {T} untaps two target lands. Tap both for mana. Kogla bounces Ley Weaver ({1}{G}). Recast for {2}{G}. Loop cost: {3}{G} (5 mana). Net positive when two lands together produce ≥6 mana. Works with Gaea's Cradle (≥4 extra creatures), Nykthos (devotion ≥4 on each), two enchanted Forests, or any combination of big mana lands totalling ≥6.",
+    requires: ["Kogla, the Titan Ape", "Ley Weaver"],
+    needsHasteEnabler: true,
+    needsTwoLandTotal: 6,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Haste enabler (Concordant Crossroads, Thousand-Year Elixir, or Lightning Greaves) + Kogla on battlefield. Ley Weaver in hand.",
+      "Cast Ley Weaver ({2}{G}). ETB: gains haste immediately.",
+      "Tap Ley Weaver ({T}): untap two target lands (your two big lands).",
+      "Tap both lands for ≥6 mana total.",
+      "Pay {1}{G}: Kogla bounces Ley Weaver (Human) to hand. Recast for {2}{G}.",
+      "Total cost per loop: {1}{G} bounce + {2}{G} recast = {3}{G} (5 mana). Net: ≥+1 mana per loop.",
+      "Repeat for infinite mana.",
+    ]
+  },
+
+  // ── Kogla + Ley Weaver + cost reducer + 2 lands (≥5 total) + haste enabler ─
+  // With Nylea, Keen-Eyed reducing creature spells by {1}:
+  // Ley Weaver recast: {2}{G} → {1}{G}. Total loop cost: {1}{G} + {1}{G} = {2}{G} = 4 mana.
+  // Need ≥5 from 2 lands → net ≥+1.
+  {
+    id: "kogla_ley_weaver_nylea_haste",
+    name: "Kogla + Ley Weaver + Nylea + 2 Lands (≥5 total) + Haste Enabler",
+    onBattlefield: ["Kogla, the Titan Ape"],
+    mustPreExist: ["Kogla, the Titan Ape"],
+    description: "Infinite mana. Nylea, Keen-Eyed reduces creature spells by {1}, making Ley Weaver cost {1}{G}. Loop cost drops to {2}{G} (4 mana). Need only ≥5 total from two lands.",
+    requires: ["Kogla, the Titan Ape", "Ley Weaver"],
+    needsHasteEnabler: true,
+    needsCostReducer: true,
+    needsTwoLandTotal: 5,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Nylea, Keen-Eyed + haste enabler + Kogla on battlefield. Ley Weaver in hand.",
+      "Cast Ley Weaver ({1}{G} with Nylea cost reduction). ETB: gains haste.",
+      "Tap Ley Weaver ({T}): untap two target lands.",
+      "Tap both lands for ≥5 mana total.",
+      "Pay {1}{G}: Kogla bounces Ley Weaver to hand. Recast for {1}{G} (Nylea).",
+      "Total cost: {2}{G} (4 mana). Net: ≥+1 per loop. Repeat for infinite mana.",
+    ]
+  },
+
+  // ── Kogla + Hope Tender + 2 lands (≥6 total) + haste enabler ────────────────
+  // Extends the existing mustPreExist Hope Tender combo: this variant requires
+  // haste so Hope Tender can be cast fresh each loop.
+  // Hope Tender exert: untaps 2 lands. Kogla bounces ({1}{G}). Recast ({1}{G}).
+  // Total cost: {1} exert + {1}{G} Kogla + {1}{G} recast = {3}{G} (5 mana... wait:
+  // actually exert has no additional mana cost — {1},{T},Exert: untap 2 lands.
+  // So: {1} (exert tap cost) + {1}{G} (Kogla bounce) + {1}{G} (recast) = {1}+{2}{G} = {3}{G} = 4+1 = 5 mana... 
+  // Actually {1},{T},Exert means pay {1} as part of the activation → costs {1} + tap.
+  // Then Kogla {1}{G} and recast {1}{G}. Total: {1} exert + {1}{G} + {1}{G} = {3}{G} but wait
+  // that's {1}+{G}+{G} = 3 mana + 1 colorless. With purely green it's: 1+1+1 generic + 2G = 5 mana.
+  // Per the existing combo description: "total loop cost {3}{G}" = 4 mana. Need land ≥5.
+  // With haste, Hope Tender enters sick but haste bypasses it. Same math.
+  {
+    id: "kogla_hope_tender_haste",
+    name: "Kogla + Hope Tender + 2 Lands (≥6 total) + Haste Enabler (Fresh Cast)",
+    onBattlefield: ["Kogla, the Titan Ape"],
+    mustPreExist: ["Kogla, the Titan Ape"],
+    description: "Infinite mana. Like the pre-existing Hope Tender + Kogla loop, but Hope Tender is cast fresh each iteration (needs haste to tap immediately). Exert Hope Tender to untap two lands. Kogla bounces her ({1}{G}). Recast ({1}{G}). Loop cost: {3}{G} (5 mana). Need ≥6 total from two lands. The pre-existing (no-haste) variant uses {mustPreExist} and only needs a single land ≥5.",
+    requires: ["Kogla, the Titan Ape", "Hope Tender"],
+    needsHasteEnabler: true,
+    needsTwoLandTotal: 6,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Haste enabler + Kogla on battlefield. Hope Tender in hand (or just cast this turn).",
+      "Cast Hope Tender ({1}{G}). Haste lets her activate immediately.",
+      "Pay {1}, tap and Exert Hope Tender: untap two target lands.",
+      "Tap both lands for ≥6 mana total.",
+      "Pay {1}{G}: Kogla bounces Hope Tender (Human) to hand. Recast for {1}{G}.",
+      "Total loop cost: {3}{G} (5 mana). Net: (land total − 5) per loop. Repeat for infinite mana.",
+    ]
+  },
+
+  // ── Kogla + Hope Tender + cost reducer + 2 lands (≥5 total) + haste enabler ─
+  {
+    id: "kogla_hope_tender_nylea_haste",
+    name: "Kogla + Hope Tender + Nylea + 2 Lands (≥5 total) + Haste Enabler",
+    onBattlefield: ["Kogla, the Titan Ape"],
+    mustPreExist: ["Kogla, the Titan Ape"],
+    description: "Infinite mana. Nylea reduces Hope Tender recast to {G}. Loop cost drops to {2}{G} (4 mana). Need ≥5 from two lands.",
+    requires: ["Kogla, the Titan Ape", "Hope Tender"],
+    needsHasteEnabler: true,
+    needsCostReducer: true,
+    needsTwoLandTotal: 5,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Nylea, Keen-Eyed + haste enabler + Kogla on battlefield. Hope Tender in hand.",
+      "Cast Hope Tender ({G} with Nylea). Haste lets her activate immediately.",
+      "Pay {1}, tap and Exert Hope Tender: untap two target lands.",
+      "Tap both lands for ≥5 mana total.",
+      "Pay {1}{G}: Kogla bounces Hope Tender to hand. Recast for {G}.",
+      "Total cost: {1} exert + {1}{G} Kogla + {G} recast = {2}{G} + {1} (4 mana). Net: ≥+1. Repeat.",
     ]
   },
 
@@ -2462,7 +2574,36 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     return 0;
   }
 
-  // Memoization cache for findBigDork — pure per threshold within a single analyzeGameState call.
+  // Estimate how much mana a land produces given the current board state.
+  // Used for the Kogla 2-land infinite-mana check.
+  function estimateLandOutput(landName) {
+    if (landName === "Gaea's Cradle" || landName === "Itlimoc, Cradle of the Sun")
+      return creaturesOnBoard;
+    if (landName === "Nykthos, Shrine to Nyx")
+      return Math.max(0, devotionOnBoard - 2); // nets devotion - 2 activation cost
+    if (landName === "Forest" || landName === "Dryad Arbor")
+      return 1;
+    const cd = getCard(landName);
+    if (!cd) return 0;
+    if (cd.type === "land") return 1; // generic land = 1G assumed
+    return 0;
+  }
+
+  // Sum of the top-N land outputs on the battlefield (for multi-land combo thresholds).
+  function topNLandOutput(n) {
+    const outputs = battlefield
+      .filter(c => getCard(c)?.type === "land")
+      .map(c => {
+        // Check for aura bonus (Utopia Sprawl / Wild Growth add 1G each)
+        const base = estimateLandOutput(c);
+        const auraBonus = boardCtx?.landAuraBonuses?.get(battlefield.indexOf(c))?.bonus ?? 0;
+        return base + auraBonus;
+      })
+      .sort((a, b) => b - a);
+    let sum = 0;
+    for (let i = 0; i < Math.min(n, outputs.length); i++) sum += outputs[i];
+    return sum;
+  } — pure per threshold within a single analyzeGameState call.
   const _findBigDorkCache = new Map();
   function findBigDork(threshold) {
     if (_findBigDorkCache.has(threshold)) return _findBigDorkCache.get(threshold);
@@ -2682,7 +2823,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         || combo.id === "disciple_loop"
         || combo.id === "regal_force_draw"
         || combo.id === "sabertooth_woodcaller"
-        || combo.id === "woodcaller_ashaya_loop";
+        || combo.id === "woodcaller_ashaya_loop"
+        || combo.id === "badgermole_ashaya_counters"  // Badgermole Cub = non-Human (Badger)
+        || combo.id === "magus_symbiote";              // Wirewood Symbiote = non-Human (Elf)
       // GROUP 7: Also check graveyard recovery via accessible()
       const hasBouncer = nonHumanBounce
         ? (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth") || accessible("Temur Sabertooth"))
@@ -2718,6 +2861,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       };
     }
 
+    // needsTwoLandTotal: need two lands whose combined output meets the threshold.
+    // Used for Kogla bounce loops where Ley Weaver / Hope Tender untaps 2 lands per cast.
+    if (combo.needsTwoLandTotal) {
+      const top2 = topNLandOutput(2);
+      if (top2 < combo.needsTwoLandTotal) {
+        return { ok: false, missing: `two lands producing ≥${combo.needsTwoLandTotal} mana combined (best two lands currently produce ${top2})` };
+      }
+    }
+
+    // needsCostReducer: need Nylea, Keen-Eyed (or another cost reducer) on board/hand
+    if (combo.needsCostReducer) {
+      const hasCostReducer = board.has("Nylea, Keen-Eyed") || inHand.has("Nylea, Keen-Eyed")
+        || board.has("Emerald Medallion") || inHand.has("Emerald Medallion");
+      if (!hasCostReducer) return { ok: false, missing: "a cost reducer (Nylea, Keen-Eyed or Emerald Medallion)" };
+    }
+
     // needsHumanDork: (checked inside needsBigDorkHasteCMC above; also standalone guard)
     // No standalone check needed — always paired with needsBigDorkHasteCMC.
 
@@ -2751,6 +2910,35 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ok: false,
         missing: "a haste enabler (Concordant Crossroads, Surrak and Goreclaw, Ulvenwald Oddity, or Thousand-Year Elixir)",
       };
+    }
+
+    // needsTwoLandTotal: need two lands whose combined mana output meets the threshold.
+    // Used by Kogla+Ley Weaver and Kogla+Hope Tender loops that untap two lands per iteration.
+    if (combo.needsTwoLandTotal) {
+      const min = combo.needsTwoLandTotal;
+      const ctx = buildBoardContext(battlefield, sickCreatures, null);
+      // Collect output of each land on the battlefield
+      const landOutputs = battlefield
+        .filter(c => getCard(c)?.type === "land")
+        .map(c => {
+          const cd = getCard(c);
+          const { green, colorless } = cardManaContribution(c, cd, ctx, sickCreatures);
+          return green + colorless;
+        })
+        .sort((a, b) => b - a); // descending
+      // Also consider enchanted forests (aura lands) as bonus output
+      const auraBonus = (() => {
+        const aurasOnBoard = (board.has("Utopia Sprawl") ? 1 : 0) + (board.has("Wild Growth") ? 1 : 0);
+        const forestOnBoard = board.has("Forest") || board.has("Dryad Arbor");
+        return (aurasOnBoard >= 1 && forestOnBoard) ? 1 : 0; // each aura adds +1 to a Forest
+      })();
+      // Top-2 land outputs (with aura bonus added to the best land)
+      const top1 = (landOutputs[0] ?? 0) + auraBonus;
+      const top2 = landOutputs[1] ?? 0;
+      const totalTop2 = top1 + top2;
+      if (totalTop2 < min) {
+        return { ok: false, missing: `two lands totalling ≥${min} mana (best two currently total ${totalTop2}) — try Gaea's Cradle with ≥${Math.ceil(min/2)} creatures, Nykthos with high devotion, or enchanted Forests` };
+      }
     }
 
     // needsDrawEngine: need Beast Whisperer or Glademuse
@@ -2921,8 +3109,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const hasScryb       = board.has("Scryb Ranger")    || inHand.has("Scryb Ranger");
       const hasSpinner     = board.has("Destiny Spinner");
       const hasBouncer     = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
-      // Badgermole Cub animates a land (like Destiny Spinner) when a bouncer is available to re-use its ETB
-      const hasBadgermole  = board.has("Badgermole Cub") && hasBouncer;
+      const hasTemurBouncer = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"); // Temur only — bounces any creature
+      // Badgermole Cub is non-Human (Badger) — Kogla can't bounce it. Needs Temur Sabertooth.
+      const hasBadgermole  = board.has("Badgermole Cub") && hasTemurBouncer;
       const hasLandAnimate = hasSpinner || hasBadgermole; // either animates lands
       const hasMagus       = board.has("Magus of the Candelabra") || (inHand.has("Magus of the Candelabra") && hasLandAnimate);
       const hasElder       = board.has("Argothian Elder") || (inHand.has("Argothian Elder") && hasLandAnimate);
@@ -2940,13 +3129,19 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       //   • Ashaya + Magus (non-sick on board)  — Magus {X},{T}: pure activated ability
       //   • Ashaya + Elder (non-sick on board)   — Elder {T}: pure activated ability
       //   • Ashaya + Scryb Ranger               — Scryb has NATIVE FLASH; recasting is fine at instant speed
-      // Methods that require our turn or a flash enabler (must cast/recast creature):
-      //   • Ashaya + Quirion Ranger             — Quirion must be recast each loop; sorcery-speed without flash
-      //   • Elder/Magus in hand (just cast)     — would have summoning sickness; needs haste enabler
+      // Methods that require Destiny Spinner (grants flash AND haste to green permanents):
+      //   • Ashaya + Quirion Ranger             — Quirion must be recast each loop; needs flash
+      //   • Elder/Magus in hand (just cast)     — summoning sickness; needs haste
+      //   • Yavimaya + Arbor Elf                — Arbor Elf {T} untaps any Forest (Sanitarium = Forest via Yavimaya);
+      //                                           needs haste if freshly cast, or pre-existing non-sick
+      //   • Hope Tender                         — Hope Tender {1},{T} untaps a land; needs haste if freshly cast
+      //   • Formidable Speaker                  — ETB (flash+haste via Spinner/Badgermole) untaps any permanent
       //   • Woodcaller Automaton                — cast for ETB; needs flash
       //   • Destiny Spinner/Badgermole + Hyrax  — Hyrax cast for ETB; needs flash
-      //   • Wirewood Symbiote + Spinner         — Symbiote recast; needs flash
-      const hasFlashOrHaste = hasSpinner; // Destiny Spinner grants flash to green spells/permanents
+      //   • Wirewood Symbiote + Spinner/Badgermole — Symbiote recast; needs flash+haste
+      // Badgermole Cub + bouncer grants haste via ETB — but requires Ashaya on board so that
+      // creatures are Forests and Badgermole can target them with its earthbend ability.
+      const hasFlashOrHaste = hasSpinner || (hasBadgermole && hasAshaya); // Spinner=flash+haste; Badgermole+bouncer+Ashaya=haste
       const opponentTurn = !isMyTurn;
 
       // Elder/Magus: only instant-speed-capable when already on board and not sick
@@ -2955,25 +3150,42 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const magusReadyOnBoard = board.has("Magus of the Candelabra") &&
         !(sickCreatures && sickCreatures.has("Magus of the Candelabra"));
 
+      // Arbor Elf pre-existing (non-sick) with Yavimaya works at instant speed on any turn
+      const arborReadyOnBoard = board.has("Arbor Elf") &&
+        !(sickCreatures && sickCreatures.has("Arbor Elf"));
+      const hopeTenderReadyOnBoard = board.has("Hope Tender") &&
+        !(sickCreatures && sickCreatures.has("Hope Tender"));
+      const speakerReadyOnBoard = board.has("Formidable Speaker") &&
+        !(sickCreatures && sickCreatures.has("Formidable Speaker"));
+      const hasYavimaya   = board.has("Yavimaya, Cradle of Growth") || inHand.has("Yavimaya, Cradle of Growth");
+      const hasArbor      = board.has("Arbor Elf") || inHand.has("Arbor Elf");
+      const hasSpeaker    = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
+
       const hasUntapMethod =
-        (hasAshaya && magusReadyOnBoard) ||                                     // pre-existing non-sick ✓
-        (hasAshaya && elderReadyOnBoard) ||                                     // pre-existing non-sick ✓
-        (hasAshaya && hasScryb) ||                                              // native flash ✓
-        (!opponentTurn || hasFlashOrHaste) && (hasAshaya && hasQuirion) ||      // recast needed → flash
-        (!opponentTurn || hasFlashOrHaste) && (hasAshaya && hasMagus && !magusReadyOnBoard) || // Magus in hand/sick
-        (!opponentTurn || hasFlashOrHaste) && (hasAshaya && hasElder && !elderReadyOnBoard) || // Elder in hand/sick
-        (!opponentTurn || hasFlashOrHaste) && (hasWoodcaller) ||                // cast for ETB → flash
-        (!opponentTurn || hasFlashOrHaste) && (hasLandAnimate && hasHyrax) ||   // cast for ETB → flash
-        (!opponentTurn || hasFlashOrHaste) && (hasSymbiote && hasLandAnimate);  // recast → flash
+        (hasAshaya && magusReadyOnBoard) ||                                             // pre-existing non-sick ✓
+        (hasAshaya && elderReadyOnBoard) ||                                             // pre-existing non-sick ✓
+        (hasAshaya && hasScryb) ||                                                      // native flash ✓
+        (hasYavimaya && arborReadyOnBoard) ||                                           // Arbor pre-existing ✓
+        hopeTenderReadyOnBoard ||                                                        // Hope Tender {1},{T} pre-existing ✓
+        speakerReadyOnBoard ||                                                          // Speaker {1},{T} untaps any permanent ✓
+        (!opponentTurn || hasFlashOrHaste) && (hasAshaya && hasQuirion) ||              // recast → needs flash
+        (!opponentTurn || hasFlashOrHaste) && (hasAshaya && hasMagus && !magusReadyOnBoard) || // Magus hand/sick
+        (!opponentTurn || hasFlashOrHaste) && (hasAshaya && hasElder && !elderReadyOnBoard) ||  // Elder hand/sick
+        (!opponentTurn || hasFlashOrHaste) && (hasYavimaya && hasArbor && !arborReadyOnBoard) || // Arbor hand/sick
+        (!opponentTurn || hasFlashOrHaste) && (hasHopeTender && !hopeTenderReadyOnBoard) || // Hope Tender hand/sick
+        (!opponentTurn || hasFlashOrHaste) && (hasSpeaker && !speakerReadyOnBoard) ||   // Speaker hand/sick
+        (!opponentTurn || hasFlashOrHaste) && (hasWoodcaller) ||                        // cast for ETB → flash
+        (!opponentTurn || hasFlashOrHaste) && (hasLandAnimate && hasHyrax) ||           // cast for ETB → flash
+        (!opponentTurn || hasFlashOrHaste) && (hasSymbiote && hasLandAnimate);          // recast → flash
         // Note: Hope Tender + Wirewood Lodge is INVALID — Lodge only untaps Elves, Hope Tender is Human
 
       if (!hasUntapMethod) {
         const opponentExtra = opponentTurn
-          ? " (on opponent's turn: Ashaya + pre-existing non-sick Elder/Magus, or Ashaya+Scryb, work freely; Quirion/Elder-just-cast/Woodcaller/Hyrax need Destiny Spinner for flash)"
+          ? " (on opponent's turn: pre-existing non-sick Elder/Magus/Arbor Elf+Yavimaya/Hope Tender/Speaker work freely via {T}; all others need Destiny Spinner for flash+haste)"
           : "";
         return {
           ok: false,
-          missing: "a land untap method: Ashaya + non-sick Elder/Magus (pre-existing); Ashaya + Scryb Ranger (native flash); or with our turn/Destiny Spinner: Ashaya + Quirion, Woodcaller, Hyrax, Symbiote" + opponentExtra,
+          missing: "a land untap method: pre-existing Elder, Magus, Arbor Elf+Yavimaya, Hope Tender, or Speaker ({T} abilities); Ashaya+Scryb (flash); or with Destiny Spinner: Quirion, Woodcaller, Hyrax, Symbiote" + opponentExtra,
         };
       }
     }
@@ -3780,7 +3992,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if ((isMyTurn || yevaAvailable) && !infiniteManaActive
       && inHand.has("Badgermole Cub") && !board.has("Badgermole Cub")
       && canAfford(2, 1)) {
-    const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    // Badgermole Cub is non-Human — Kogla can only bounce Humans, so Badgermole needs Temur Sabertooth.
+    const hasBouncer = board.has("Temur Sabertooth");
     const hasLandToAnimate = battlefield.some(c => getCard(c)?.type === "land");
     if (!hasBouncer && hasLandToAnimate) {
       // Estimate how much Cradle would produce after Badgermole adds a creature body
@@ -5521,8 +5734,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   {
     const regalOnBoard  = board.has("Regal Force");
     const regalInHand   = inHand.has("Regal Force");
-    const hasBouncer    = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || inHand.has("Temur Sabertooth") || inHand.has("Kogla, the Titan Ape");
-    const bouncer       = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+    // Regal Force is an Elemental (non-Human) — Kogla can only bounce Humans, so needs Temur Sabertooth.
+    const hasBouncer    = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth");
+    const bouncer       = "Temur Sabertooth";
     const regalCastable = regalInHand && (mana >= 7 || infiniteManaActive) && (isMyTurn || yevaAvailable);
     const regalActive   = (regalOnBoard || regalCastable) && hasBouncer && infiniteManaActive;
 
@@ -9217,6 +9431,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     }
 
+    // ── Infinite mana active + Speaker on board + bouncer in hand/board → instant win ──
+    // Speaker is already in play; cast or use the bouncer to loop Speaker's ETB and find Duskwatch.
+    // Temur bounces Speaker ({1}{G}), Speaker recasts for {2}{G}. Each ETB finds any creature.
+    if (infiniteManaActive && speakerOnBoard && !hasDuskwatch) {
+      const bouncer = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth") ? "Temur Sabertooth"
+        : board.has("Kogla, the Titan Ape") || inHand.has("Kogla, the Titan Ape") ? "Kogla, the Titan Ape"
+        : null;
+      const bouncerInHand = bouncer && inHand.has(bouncer);
+      const bouncerOnBoard = bouncer && board.has(bouncer);
+      const hasDiscardForSpeaker2 = hand.filter(c => c !== bouncer).length > 0
+        || battlefield.some(c => c === "Quirion Ranger" || c === "Scryb Ranger");
+      if (bouncer && (bouncerInHand || bouncerOnBoard) && hasDiscardForSpeaker2 && (isMyTurn || yevaAvailable)) {
+        const alreadyShown = results.some(r => r.combo === "speaker_board_bouncer_duskwatch");
+        if (!alreadyShown) {
+          const castStep = bouncerInHand
+            ? `Cast ${bouncer} (${bouncer === "Temur Sabertooth" ? "{3}{G}" : "{4}{G}{G}"}). `
+            : "";
+          const discardSrc = hand.filter(c => c !== bouncer)[0] ?? "a card from hand";
+          results.push({
+            priority: 15,
+            category: "⚡ CAST TO WIN",
+            headline: `${bouncerInHand ? `Cast ${bouncer} → ` : ""}Bounce Formidable Speaker → ETB finds Duskwatch Recruiter → WIN`,
+            combo: "speaker_board_bouncer_duskwatch",
+            detail: `Infinite mana active. ${castStep}Bounce Formidable Speaker with ${bouncer} → recast Speaker ({2}{G}) → ETB: discard a card, search library for Duskwatch Recruiter. Activate Duskwatch repeatedly with infinite mana to assemble the win pile.`,
+            steps: [
+              "Infinite mana is active. Formidable Speaker is on the battlefield.",
+              ...(bouncerInHand ? [`Cast ${bouncer}.`] : []),
+              `Pay {1}{G}: ${bouncer} bounces Formidable Speaker to hand.`,
+              `Recast Formidable Speaker ({2}{G}): ETB — discard ${discardSrc} → search library for Duskwatch Recruiter. Put it into hand.`,
+              "Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana.",
+              "Find Endurance, Eternal Witness, and Geier Reach Sanitarium from library.",
+              "Execute Sanitarium mill loop — all opponents draw to death.",
+            ],
+            color: "#ff4500",
+          });
+        }
+      }
+    }
+
     // ── WIN NOW: Speaker + Quirion + Elder on board, fetch Ashaya → infinite → WIN ──
     // Ashaya is not yet in play but can be fetched for free via Summoner's Pact (free instant-speed tutor).
     // Once Ashaya resolves: Elder is already untapped, Ashaya makes Elder a Forest → Elder can untap itself
@@ -9742,8 +9995,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // With infinite mana + Ashaya, Badgermole's mana-doubler (tap creature for mana → add {G}) accelerates. No infinite counters from earthbend (one-time ETB only).
   // on your creatures — all of which are Forests (valid land targets).
   // Only fire this if the COMBOS loop hasn't already generated a win-combat card for this.
+  // Badgermole Cub is non-Human (Badger) — Kogla can only bounce Humans; needs Temur Sabertooth.
   const badgermoleAlreadyFired = results.some(r => r.combo === "badgermole_ashaya_counters");
-  if (infiniteManaActive && board.has("Badgermole Cub") && hasBouncer && !badgermoleAlreadyFired) {
+  const hasTemurForBadgermole = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth");
+  if (infiniteManaActive && board.has("Badgermole Cub") && hasTemurForBadgermole && !badgermoleAlreadyFired) {
     results.push({
       priority: 11,
       category: "🔥 WIN NOW — COMBAT",
@@ -10586,41 +10841,88 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (infiniteManaActive) {
     const poolHave = new Set([...battlefield, ...hand]);
     const winPaths = [];
-    const hasDuskwatch = poolHave.has("Duskwatch Recruiter") || battlefield.some(c => c === "Duskwatch Recruiter");
+    // With infinite mana, Formidable Speaker + a bouncer (Temur in hand/board) can loop ETB
+    // to find any creature from the library — including Duskwatch Recruiter.
+    // Temur bounces Speaker (Human); Kogla also bounces Speaker (Human).
+    const speakerOnBoard = board.has("Formidable Speaker");
+    const speakerInHand  = inHand.has("Formidable Speaker");
+    const temurAccessible = poolHave.has("Temur Sabertooth");
+    const koglaAccessible = poolHave.has("Kogla, the Titan Ape");
+    const speakerBouncerOk = speakerOnBoard && (temurAccessible || koglaAccessible);
+    const speakerInHandBouncerOk = speakerInHand && (temurAccessible || koglaAccessible);
+    // Finale of Devastation with X≥10 also finds any creature
+    const finaleAccessible = poolHave.has("Finale of Devastation");
+    // hasDuskwatch: on board/hand, OR reachable via Speaker loop, OR via Finale
+    const hasDuskwatch = poolHave.has("Duskwatch Recruiter")
+      || battlefield.some(c => c === "Duskwatch Recruiter")
+      || speakerBouncerOk || speakerInHandBouncerOk || finaleAccessible;
     const hasEndurance = poolHave.has("Endurance");
     const hasSanitarium = poolHave.has("Geier Reach Sanitarium");
     const hasAshaya = poolHave.has("Ashaya, Soul of the Wild");
-    const hasQuirionOrScryb = poolHave.has("Quirion Ranger") || poolHave.has("Scryb Ranger");
+    const hasQuirion = poolHave.has("Quirion Ranger");
+    const hasScryb = poolHave.has("Scryb Ranger");
     const hasBouncer = poolHave.has("Temur Sabertooth") || poolHave.has("Kogla, the Titan Ape");
+    const hasTemurBouncer = poolHave.has("Temur Sabertooth"); // Temur only — bounces any creature
+    // Eternal Witness is Human → both Temur and Kogla work for poison loop
+    const hasHumanBouncer = hasBouncer; // either works for Human targets
     const hasEWit = poolHave.has("Eternal Witness");
     const hasSpinner = poolHave.has("Destiny Spinner");
+    // Badgermole Cub + bouncer grants haste via ETB — but only when Ashaya is on board,
+    // because Badgermole animates a LAND (not a creature), so it needs Ashaya to make
+    // creatures into Forests before Badgermole can target them with its earthbend.
+    const hasBadgermoleWC = poolHave.has("Badgermole Cub") && hasTemurBouncer && poolHave.has("Ashaya, Soul of the Wild");
+    const hasFlashOrHasteWC = hasSpinner || hasBadgermoleWC;
     const hasHyrax = poolHave.has("Hyrax Tower Scout");
     const hasElder = poolHave.has("Argothian Elder");
     const hasMagus = poolHave.has("Magus of the Candelabra");
     const hasWoodcaller = poolHave.has("Woodcaller Automaton");
     const hasSymbiote = poolHave.has("Wirewood Symbiote");
-    // Elder/Magus only work as instant-speed untappers when pre-existing and not summoning-sick.
-    // If just cast this turn, they have sickness and can't activate their {T} abilities.
-    const elderReadyWC = board.has("Argothian Elder") &&
-      !(sickCreatures && sickCreatures.has("Argothian Elder"));
-    const magusReadyWC = board.has("Magus of the Candelabra") &&
-      !(sickCreatures && sickCreatures.has("Magus of the Candelabra"));
-    const instantSpeedUntap = (hasAshaya && elderReadyWC) || (hasAshaya && magusReadyWC) ||
-      (hasAshaya && hasScryb); // Scryb has native flash — recasting at instant speed is fine
-    const hasteGatedUntap = (hasAshaya && hasQuirion) || // Quirion must be recast → needs flash
-      (hasAshaya && hasElder && !elderReadyWC) ||         // Elder in hand or sick → needs flash
-      (hasAshaya && hasMagus && !magusReadyWC) ||         // Magus in hand or sick → needs flash
-      (hasSpinner && hasHyrax) || hasWoodcaller || (hasSymbiote && hasSpinner);
-    const hasUntapLand = instantSpeedUntap || (isMyTurn ? hasteGatedUntap : (hasSpinner && hasteGatedUntap));
+    const hasYavimaya = poolHave.has("Yavimaya, Cradle of Growth");
+    const hasArbor = poolHave.has("Arbor Elf");
+    const hasHopeTender = poolHave.has("Hope Tender");
+    const hasSpeaker = poolHave.has("Formidable Speaker");
+    // Elder/Magus/Arbor Elf only work as instant-speed untappers when pre-existing and not sick.
+    const elderReadyWC = board.has("Argothian Elder") && !(sickCreatures && sickCreatures.has("Argothian Elder"));
+    const magusReadyWC = board.has("Magus of the Candelabra") && !(sickCreatures && sickCreatures.has("Magus of the Candelabra"));
+    const arborReadyWC = board.has("Arbor Elf") && !(sickCreatures && sickCreatures.has("Arbor Elf"));
+    const hopeTenderReadyWC = board.has("Hope Tender") && !(sickCreatures && sickCreatures.has("Hope Tender"));
+    const speakerReadyWC = board.has("Formidable Speaker") && !(sickCreatures && sickCreatures.has("Formidable Speaker"));
+    const instantSpeedUntap =
+      (hasAshaya && elderReadyWC) ||     // Elder {T}: pre-existing non-sick
+      (hasAshaya && magusReadyWC) ||     // Magus {X},{T}: pre-existing non-sick
+      (hasAshaya && hasScryb) ||         // Scryb: native flash
+      (hasYavimaya && arborReadyWC) ||   // Arbor Elf: pre-existing non-sick + Yavimaya
+      hopeTenderReadyWC ||               // Hope Tender {1},{T}: pre-existing non-sick
+      speakerReadyWC;                    // Speaker {1},{T} untaps any permanent: pre-existing non-sick
+    const hasteGatedUntap =
+      (hasAshaya && hasQuirion) ||                     // Quirion recast → needs flash
+      (hasAshaya && hasElder && !elderReadyWC) ||      // Elder hand/sick → needs haste
+      (hasAshaya && hasMagus && !magusReadyWC) ||      // Magus hand/sick → needs haste
+      (hasYavimaya && hasArbor && !arborReadyWC) ||    // Arbor hand/sick → needs haste
+      (hasHopeTender && !hopeTenderReadyWC) ||         // Hope Tender hand/sick → needs haste
+      (hasSpeaker && !speakerReadyWC) ||               // Speaker hand/sick → needs haste
+      (hasSpinner && hasHyrax) || (hasBadgermoleWC && hasHyrax) || hasWoodcaller || (hasSymbiote && hasSpinner) || (hasSymbiote && hasBadgermoleWC);
+    const hasUntapLand = instantSpeedUntap || (isMyTurn ? hasteGatedUntap : (hasFlashOrHasteWC && hasteGatedUntap));
 
     if (hasDuskwatch || poolHave.has("Finale of Devastation")) {
+      // Duskwatch win path: Duskwatch on board/hand = activate infinitely → assemble win pile
+      if (poolHave.has("Duskwatch Recruiter")) {
+        winPaths.push({ path: "duskwatch", priority: 1, desc: "Duskwatch Recruiter: activate infinitely → assemble win pile → Sanitarium mill or Finale", missing: [] });
+      } else if (speakerBouncerOk) {
+        // Speaker on board + bouncer in hand/board: ETB loop finds Duskwatch from library
+        const bouncerName = temurAccessible ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+        winPaths.push({ path: "duskwatch-via-speaker", priority: 1, desc: `Cast ${bouncerName} → bounce Formidable Speaker → ETB loop finds Duskwatch Recruiter from library → activate for win`, missing: [] });
+      } else if (speakerInHandBouncerOk) {
+        const bouncerName = temurAccessible ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+        winPaths.push({ path: "duskwatch-via-speaker", priority: 1, desc: `Cast Formidable Speaker + ${bouncerName} → ETB loop finds Duskwatch Recruiter → activate for win`, missing: [] });
+      }
       // Mill path
       if (hasEndurance && hasSanitarium && hasUntapLand) {
         winPaths.push({ path: "mill", priority: 1, desc: "Sanitarium Mill: Endurance protects your library, loop Sanitarium to mill opponents", missing: [] });
       } else if (hasEndurance && hasSanitarium) {
         const untapHint = isMyTurn
-          ? "land untap (Ashaya+Elder, Ashaya+Magus, Ashaya+Scryb, Ashaya+Quirion, Woodcaller, Hyrax+Spinner)"
-          : "instant-speed land untap: Ashaya+Elder or Ashaya+Magus (pure activated ability) or Ashaya+Scryb (native flash) — Quirion/Woodcaller/Hyrax need Destiny Spinner for flash";
+          ? "land untap (pre-existing Elder, Magus, Arbor+Yavimaya, Hope Tender, Speaker; Ashaya+Scryb; or with Destiny Spinner: Quirion, Woodcaller, Hyrax, Symbiote)"
+          : "instant-speed untap: pre-existing non-sick Elder, Magus, Arbor+Yavimaya, Hope Tender, or Speaker ({T} abilities); Ashaya+Scryb (flash) — all others need Destiny Spinner";
         winPaths.push({ path: "mill-blocked", priority: 99, desc: "Mill: missing land untap method", missing: [untapHint] });
       }
       // Poison path
@@ -11070,7 +11372,8 @@ function buildMillSequence(board, hand, pileNeeded = []) {
   }
 
   // VARIANT G: LQR kill with Endurance + Temur (more complex — hold ETB on stack)
-  if (hasSanitarium && hasBouncer && hasEndurance && (hasLQR || hasBeastWithin)) {
+  // Endurance is a non-Human Spirit — Kogla can only bounce Humans, so this needs Temur Sabertooth.
+  if (hasSanitarium && hasTemur && hasEndurance && (hasLQR || hasBeastWithin)) {
     const killMethod = hasLQR ? "Legolas's Quick Reflexes" : "Beast Within";
     const loop = [
       `═══ EXECUTE MILL — ENDURANCE ETB SHIELD + ${killMethod.toUpperCase()} VARIANT ═══`,
@@ -11746,6 +12049,23 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         return cd?.type === "land" && (cd?.tags?.includes("basic") || c === "Forest");
       });
       if (!hasBasic) return null;
+    }
+
+    // needsTwoLandTotal: two lands must combine to meet the mana threshold
+    if (combo.needsTwoLandTotal) {
+      const min = combo.needsTwoLandTotal;
+      const auraBonus = (battlefield.some(c => c === "Utopia Sprawl" || c === "Wild Growth")
+        && battlefield.some(c => c === "Forest" || c === "Dryad Arbor")) ? 1 : 0;
+      const outputs = battlefield
+        .filter(c => getCard(c)?.type === "land")
+        .map(c => {
+          if (c === "Gaea's Cradle" || c === "Itlimoc, Cradle of the Sun") return creaturesNow;
+          if (c === "Nykthos, Shrine to Nyx") return Math.max(0, devotionNow - 2);
+          return 1;
+        })
+        .sort((a, b) => b - a);
+      const total = (outputs[0] ?? 0) + auraBonus + (outputs[1] ?? 0);
+      if (total < min) return null;
     }
 
     // needsCardInGraveyard: a specific card must be in the graveyard (e.g. Argothian Elder
