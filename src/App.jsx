@@ -2636,6 +2636,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const leylineBonus = board.has("Leyline of Abundance") ? 1 : 0;
     const candidates = all.filter(c => {
       if (!getCard(c)?.tags?.includes("dork") && !getCard(c)?.tags?.includes("big-dork")) return false;
+      // Summoning-sick dorks on the battlefield can't use their {T} mana ability this turn.
+      // Only skip on-board dorks — hand dorks are being cast this turn (sickness handled by mustPreExist).
+      if (board.has(c) && sickCreatures && sickCreatures.has(c)) return false;
       // If the dork itself is in hand and is an elf, don't double-count it in the bonus
       const effectiveBonus = Math.max(0, (inHand.has(c) && getCard(c)?.tags?.includes("elf")) ? elvesInHand - 1 : elvesInHand);
       const rawOutput = estimateDorkOutput(c, effectiveBonus) + leylineBonus;
@@ -3875,7 +3878,33 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ---- CAST BIG DORK FROM HAND ----
+  // ---- CAST SURVIVAL OF THE FITTEST FROM HAND ----
+  // Survival is the premier creature toolbox — {G}: discard a creature → find any creature.
+  // Costs {1}{G} to cast, then {G} per activation. Should be surfaced whenever affordable.
+  if ((isMyTurn || yevaAvailable) && !infiniteManaActive
+      && inHand.has("Survival of the Fittest") && !board.has("Survival of the Fittest")) {
+    if (canAfford(2, 1)) {
+      const hasCreatureToDiscard = hand.some(c => c !== "Survival of the Fittest" && getCard(c)?.type === "creature");
+      const survTargets = getSurvivalTargets(battlefield, hand);
+      const topTarget = survTargets[0] ?? "Ashaya, Soul of the Wild";
+      results.push({
+        priority: 9,
+        category: "🌱 TUTOR ENGINE",
+        combo: "cast_survival",
+        headline: `Cast Survival of the Fittest ({1}{G}) — find ${topTarget} this turn${hasCreatureToDiscard ? " (creature to discard ready)" : ""}`,
+        detail: `Survival of the Fittest is the best creature tutor in the format. {G}: discard a creature → search your library for any creature and put it into hand. Activates immediately this turn. Priority targets: ${survTargets.slice(0,4).join(", ")}.`,
+        steps: [
+          "Cast Survival of the Fittest ({1}{G}).",
+          hasCreatureToDiscard
+            ? `Activate immediately ({G}): discard a creature → search for ${topTarget}.`
+            : `Next turn: tap + discard a creature → search for ${topTarget}.`,
+          `Priority order: ${survTargets.slice(0,4).join(" → ")}.`,
+          "With infinite mana: activate every turn — functions as a repeatable free tutor.",
+        ],
+        color: "#52be80",
+      });
+    }
+  }
   // When a big mana dork is in hand, affordable this turn, and not yet on the board,
   // advise casting it. This is the primary ramp action in the mid-game.
   if (isMyTurn || yevaAvailable) {
@@ -4476,10 +4505,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       survTargets.push({ name: "Regal Force", reason: `draw ${creaturesOnBoard} cards on ETB — massive refill with ${creaturesOnBoard} creatures`, priority: 7 });
 
     // 5. Protection (if opponents have counterspells / removal)
-    if (!board.has("Allosaurus Shepherd") && !inHand.has("Allosaurus Shepherd") && threatLevel >= 2)
-      survTargets.push({ name: "Allosaurus Shepherd", reason: "makes your green spells uncounterable — cast before key combo turns", priority: 7 });
-    if (!board.has("Endurance") && !inHand.has("Endurance") && threatLevel >= 2)
-      survTargets.push({ name: "Endurance", reason: "flash 3/4 reach + graveyard hate — can cast for free (exile green card)", priority: 6 });
+    const _threatHigh = threatLevel === "high" || threatLevel === "critical";
+    const _threatMed  = threatLevel === "medium" || _threatHigh;
+    if (!board.has("Allosaurus Shepherd") && !inHand.has("Allosaurus Shepherd") && _threatMed) {
+      const shepPriority = threatLevel === "critical" ? 11 : threatLevel === "high" ? 9 : 7;
+      survTargets.push({ name: "Allosaurus Shepherd", reason: "makes your green spells uncounterable — cast before key combo turns", priority: shepPriority });
+    }
+    if (!board.has("Endurance") && !inHand.has("Endurance") && _threatMed)
+      survTargets.push({ name: "Endurance", reason: "flash 3/4 reach + graveyard hate — can cast for free (exile green card)", priority: _threatHigh ? 8 : 6 });
 
     // Sort by priority, deduplicate
     survTargets.sort((a, b) => b.priority - a.priority);
@@ -7246,6 +7279,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       color: "#27ae60",
     });
   }
+  // Sylvan Library in hand — suggest casting it early (CMC 2, powerful ongoing draw)
+  if (inHand.has("Sylvan Library") && !board.has("Sylvan Library") && isMyTurn && canAfford(2, 1)) {
+    results.push({
+      priority: 7,
+      category: "📖 CAST DRAW ENGINE",
+      headline: "Cast Sylvan Library ({1}{G}) — powerful early draw that compounds every turn",
+      detail: "Sylvan Library is one of the most efficient draw engines at CMC 2. Each turn you draw 3 cards and keep 1 for free; pay 4 life per additional card kept. The earlier you cast it, the more advantage you accumulate. In the late game with infinite mana, you keep all 3 for free.",
+      steps: [
+        "Cast Sylvan Library ({1}{G}).",
+        "Each draw step: draw 3 cards, keep 1 free. Pay 4 life per extra card kept.",
+        "Deploy early — each turn of Sylvan Library compounds your card advantage.",
+        "With infinite life or infinite mana later: keep all 3 cards every turn.",
+      ],
+      color: "#27ae60",
+    });
+  }
 
   // ---- GUARDIAN PROJECT ----
   if (board.has("Guardian Project") && (isMyTurn || yevaAvailable)) {
@@ -7268,35 +7317,140 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
     }
   }
+  // Guardian Project in hand — suggest casting when we have creatures to chain
+  if (inHand.has("Guardian Project") && !board.has("Guardian Project") && isMyTurn && canAfford(4, 1)) {
+    const creaturesInHand = hand.filter(c => getCard(c)?.type === "creature" && c !== "Guardian Project").length;
+    const boardCreatures = creaturesOnBoard;
+    if (creaturesInHand >= 1 || boardCreatures >= 2) {
+      results.push({
+        priority: 6,
+        category: "📖 CAST DRAW ENGINE",
+        headline: `Cast Guardian Project ({3}{G}) — draws a card for each uniquely-named creature ETB${creaturesInHand > 0 ? ` (${creaturesInHand} creature${creaturesInHand>1?'s':''} in hand to chain)` : ""}`,
+        detail: "Guardian Project draws a card whenever a nontoken creature enters under your control (if its name is unique on your board/graveyard). With creatures in hand to cast after it, each creature draw cascades into more gas. Especially powerful with Yeva flash — cast creatures at instant speed and draw each one.",
+        steps: [
+          "Cast Guardian Project ({3}{G}).",
+          ...(creaturesInHand > 0 ? [`Chain your hand creatures: each uniquely-named ETB draws a card.`] : []),
+          "With Yeva on board: flash in creatures at instant speed for card draw on opponents' turns.",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
 
-  // ---- REMOVAL SPELLS (contextual — when opponents have threats) ----
+  // ---- CRITICAL THREAT: SOMEONE IS ABOUT TO WIN ----
+  // At critical threat, the advisor should shift from "assemble your combo" to
+  // "stop the winning opponent NOW". Surface actionable disruption first.
+  if (threatLevel === "critical" || threatLevel === "high") {
+    const isCritical = threatLevel === "critical";
+    const hasProtection = inHand.has("Veil of Summer") || inHand.has("Autumn's Veil")
+      || board.has("Allosaurus Shepherd") || inHand.has("Allosaurus Shepherd");
+    const hasInstantRemoval = ["Beast Within","Force of Vigor","Boseiju, Who Endures",
+      "Nature's Claim","Reclamation Sage","Outland Liberator","Manglehorn",
+      "Ram Through","Tail Swipe","Warping Wail","Bouncer's Beatdown","Infectious Bite",
+      "Kenrith's Transformation","Lignify","Sowing Mycospawn"].some(c => inHand.has(c));
+    const hasEndurance = inHand.has("Endurance") || board.has("Endurance");
+
+    if (isCritical && !hasProtection && !infiniteManaActive) {
+      // No protection and not winning — surface a top-level warning
+      results.push({
+        priority: 16,
+        category: "🚨 CRITICAL — SOMEONE IS WINNING",
+        headline: "Pod threat is critical — identify the threat and interact immediately",
+        detail: "A player is about to win or has assembled a threatening board state. You are not yet in a position to win this turn. Your priorities: (1) identify who is closest to winning, (2) use any instant-speed interaction to disrupt them, (3) if you have no interaction, assess whether conceding or racing is correct.",
+        steps: [
+          "Identify which opponent is closest to winning and what their win condition is.",
+          hasInstantRemoval
+            ? "You have instant-speed interaction — hold it up and use it at the right moment."
+            : "You have no immediate interaction — consider whether any disruptive creature or spell can be deployed.",
+          isCritical
+            ? "If you cannot stop the winning player, consider whether you can race to win first this turn."
+            : "Deploy stax pieces or removal proactively to slow the leader.",
+          !infiniteManaActive
+            ? "Focus on setting up a win as fast as possible — you need to threaten a win before opponents assemble theirs."
+            : "You have infinite mana — execute your win line immediately before opponents can respond.",
+        ],
+        color: "#ff4500",
+      });
+    }
+
+    // At high/critical: if we have tutors, suggest fetching protection/interaction first
+    const hasTutor = inHand.has("Worldly Tutor") || inHand.has("Chord of Calling")
+      || inHand.has("Summoner's Pact") || inHand.has("Green Sun's Zenith")
+      || inHand.has("Elvish Harbinger") || inHand.has("Shared Summons");
+    const alreadyHasShepherd = board.has("Allosaurus Shepherd") || inHand.has("Allosaurus Shepherd");
+    if (hasTutor && !alreadyHasShepherd && opponentOpenMana && !infiniteManaActive) {
+      const tutorName = ["Worldly Tutor","Chord of Calling","Summoner's Pact",
+        "Green Sun's Zenith","Elvish Harbinger","Shared Summons"].find(c => inHand.has(c));
+      results.push({
+        priority: isCritical ? 15 : 12,
+        category: isCritical ? "🚨 TUTOR FOR PROTECTION" : "🛡️ TUTOR FOR PROTECTION",
+        headline: `${tutorName} → find Allosaurus Shepherd — makes your green spells uncounterable`,
+        detail: "With opponents holding open mana and a high threat level, finding Allosaurus Shepherd before attempting your combo is critical. Shepherd makes all your green spells uncounterable — deploy it before going off.",
+        steps: [
+          `Cast ${tutorName} to find Allosaurus Shepherd.`,
+          "Cast Allosaurus Shepherd ({G}) — your green spells become uncounterable.",
+          "Now execute your combo safely with protection in place.",
+        ],
+        color: isCritical ? "#ff4500" : "#e67e22",
+      });
+    }
+
+    // At critical: Endurance flash-in on opponent's turn is a priority
+    if (isCritical && hasEndurance && !board.has("Endurance") && !isMyTurn) {
+      results.push({
+        priority: 15,
+        category: "🚨 FLASH IN NOW",
+        headline: "Flash in Endurance — disrupt opponent's graveyard-based win RIGHT NOW",
+        detail: "Endurance has flash and can disrupt graveyard-based combo wins immediately. At critical threat, flashing it in on an opponent's turn may be your best interaction.",
+        steps: [
+          "Cast Endurance at instant speed (flash).",
+          "Choose an opponent — shuffle their entire graveyard into their library.",
+          "This disrupts reanimation, Eternal Witness loops, and graveyard recursion win lines.",
+        ],
+        color: "#ff4500",
+      });
+    }
+  }
   {
     const hasThreats = (opponentThreats && opponentThreats.length > 0) || threatLevel === "high" || threatLevel === "critical";
     const removalSpells = [
-      { name: "Nature's Claim", cmc: 1, desc: "Destroy target artifact or enchantment. They gain 4 life. Instant speed.", category: "🗑️ REMOVAL" },
-      { name: "Ram Through", cmc: 2, desc: "Target creature you control deals damage equal to its power to target creature. Trample means excess bleeds through.", category: "🗑️ REMOVAL" },
-      { name: "Tail Swipe", cmc: 1, desc: "{G} instant. Target creature you control fights another. If cast in main phase, your creature gets +1/+1 until EOT first.", category: "🗑️ REMOVAL" },
-      { name: "Bouncer's Beatdown", cmc: 3, desc: "Deals X damage to target creature or planeswalker (X = greatest power among your creatures). Costs {2} less if targeting a black permanent. Exiles instead of destroying if it would die.", category: "🗑️ REMOVAL" },
+      { name: "Force of Vigor",        cmc: 0, desc: "Free instant — exile 2 green cards from hand OR pay {4}{G}{G}: destroy up to 2 target artifacts and/or enchantments. Zero mana cost makes it immune to Sphere effects and usable without green mana.", category: "🗑️ FREE REMOVAL", isFree: true },
+      { name: "Boseiju, Who Endures",  cmc: 0, desc: "Channel {1}{G}: destroy target artifact, enchantment, or nonbasic land. Uncounterable. This land doubles as permanent removal — no mana needed if you can pay the channel cost.", category: "🗑️ REMOVAL", isFree: false },
+      { name: "Nature's Claim",        cmc: 1, desc: "Destroy target artifact or enchantment. They gain 4 life. Instant speed.", category: "🗑️ REMOVAL" },
+      { name: "Ram Through",           cmc: 2, desc: "Target creature you control deals damage equal to its power to target creature. Trample means excess bleeds through.", category: "🗑️ REMOVAL" },
+      { name: "Tail Swipe",            cmc: 1, desc: "{G} instant. Target creature you control fights another. If cast in main phase, your creature gets +1/+1 until EOT first.", category: "🗑️ REMOVAL" },
+      { name: "Bouncer's Beatdown",    cmc: 3, desc: "Deals X damage to target creature or planeswalker (X = greatest power among your creatures). Costs {2} less if targeting a black permanent. Exiles instead of destroying if it would die.", category: "🗑️ REMOVAL" },
       { name: "Kenrith's Transformation", cmc: 2, desc: "Enchant target creature — it becomes a 3/3 Elk and loses all abilities. Draw a card.", category: "🗑️ REMOVAL" },
-      { name: "Reclamation Sage", cmc: 3, desc: "ETB: destroy target artifact or enchantment. Flash via Yeva.", category: "🗑️ REMOVAL" },
-      { name: "Outland Liberator", cmc: 2, desc: "Transforms into Frenzied Trapbreaker — destroys artifact or enchantment when it attacks.", category: "🗑️ REMOVAL" },
-      { name: "Manglehorn", cmc: 3, desc: "ETB destroys target artifact. Artifacts opponents control enter tapped. Stax + removal hybrid.", category: "🗑️ REMOVAL" },
-      { name: "Warping Wail", cmc: 2, desc: "Counter target sorcery / exile creature with power ≤1 / create Eldrazi Scion. Versatile instant interaction.", category: "🗑️ INTERACTION" },
-      { name: "Insidious Fungus", cmc: 3, desc: "ETB destroys target land. Also a land tutor. Excellent against greedy mana bases.", category: "🗑️ REMOVAL" },
+      { name: "Reclamation Sage",      cmc: 3, desc: "ETB: destroy target artifact or enchantment. Flash via Yeva.", category: "🗑️ REMOVAL" },
+      { name: "Outland Liberator",     cmc: 2, desc: "Transforms into Frenzied Trapbreaker — destroys artifact or enchantment when it attacks.", category: "🗑️ REMOVAL" },
+      { name: "Manglehorn",            cmc: 3, desc: "ETB destroys target artifact. Artifacts opponents control enter tapped. Stax + removal hybrid.", category: "🗑️ REMOVAL" },
+      { name: "Warping Wail",          cmc: 2, desc: "Counter target sorcery / exile creature with power ≤1 / create Eldrazi Scion. Versatile instant interaction.", category: "🗑️ INTERACTION" },
+      { name: "Insidious Fungus",      cmc: 3, desc: "ETB destroys target land. Also a land tutor. Excellent against greedy mana bases.", category: "🗑️ REMOVAL" },
     ];
     for (const spell of removalSpells) {
-      if (inHand.has(spell.name)) {
-        const canCast = mana >= spell.cmc || infiniteManaActive;
-        const isInstant = getCard(spell.name)?.type === "instant";
+      if (inHand.has(spell.name) || (spell.name === "Boseiju, Who Endures" && board.has(spell.name))) {
+        // Force of Vigor: free if you can exile 2 green cards, otherwise costs {4}{G}{G}
+        // "Green card" = has at least 1 green pip in its mana cost (greenPips > 0)
+        const pitchTargets = spell.isFree
+          ? hand.filter(c => c !== spell.name && (getCard(c)?.greenPips ?? 0) > 0 && getCard(c)?.type !== "land").length
+          : 0;
+        const canCastFree = spell.isFree && pitchTargets >= 2;
+        const canCastPaid = spell.cmc <= mana || infiniteManaActive;
+        const canCast = canCastFree || (!spell.isFree && (spell.cmc === 0 || canCastPaid));
+        const isInstant = spell.isFree || getCard(spell.name)?.type === "instant"
+          || spell.name === "Boseiju, Who Endures";
         const castableNow = canCast && (isInstant ? true : isMyTurn || yevaAvailable);
-        if (castableNow && (hasThreats || isInstant)) {
+        if (castableNow && (hasThreats || (isInstant && threatLevel !== "low"))) {
+          const freeNote = canCastFree ? " (FREE — exile 2 green cards)" : "";
           results.push({
             priority: threatLevel === "critical" ? 11 : threatLevel === "high" ? 9 : hasThreats ? 7 : 4,
             category: spell.category,
-            headline: `${spell.name}${isInstant ? " (instant)" : ""}${!isMyTurn && isInstant ? " — can cast NOW on opponent's turn" : ""}`,
+            headline: `${spell.name}${freeNote}${isInstant && !spell.isFree ? " (instant)" : ""}${!isMyTurn && isInstant ? " — can cast NOW on opponent's turn" : ""}`,
             detail: spell.desc,
             steps: [
-              `Cast ${spell.name} (${spell.cmc > 0 ? `{${spell.cmc - 1}}{G}` : "{G}"}).`,
+              canCastFree
+                ? `Cast Force of Vigor for free — exile 2 green cards from hand as the alternative cost.`
+                : `Cast ${spell.name} (${spell.cmc > 0 ? `{${spell.cmc - 1}}{G}` : "{G}"}).`,
               spell.desc,
             ],
             color: "#e74c3c",
@@ -7308,26 +7462,74 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- PROTECTION SPELLS (Veil of Summer, Autumn's Veil) ----
   {
+    // At high/critical threat, protection becomes a top priority — often more important
+    // than advancing your own gameplan, since someone else may be about to win.
+    const isCriticalThreat = threatLevel === "critical";
+    const isHighThreat     = threatLevel === "high" || isCriticalThreat;
     const veils = [
-      { name: "Veil of Summer", cmc: 1, desc: "Counter target blue or black spell. You and your spells can't be targeted by blue/black this turn. Draw a card if opponent cast a blue/black spell. Incredible value at {G}.", priority: 9 },
-      { name: "Autumn's Veil", cmc: 1, desc: "Spells you control can't be countered by blue or black spells this turn. Creatures can't be targeted by blue/black instant/sorceries. Use when going off against blue counterspell decks.", priority: 8 },
+      { name: "Veil of Summer",  cmc: 1, basePriority: 9,  desc: "Counter target blue or black spell. You and your spells can't be targeted by blue/black this turn. Draw a card if opponent cast a blue/black spell. Incredible value at {G}." },
+      { name: "Autumn's Veil",   cmc: 1, basePriority: 8,  desc: "Spells you control can't be countered by blue or black spells this turn. Creatures can't be targeted by blue/black instant/sorceries. Use when going off against blue counterspell decks." },
     ];
     for (const veil of veils) {
       if (inHand.has(veil.name) && canAfford(veil.cmc, 1)) {
+        const priority = isCriticalThreat ? 14 : isHighThreat ? 12 : opponentOpenMana ? 13 : veil.basePriority;
+        const urgency  = isCriticalThreat ? " ⚠️ CRITICAL — hold up protection NOW before going off"
+          : isHighThreat ? " — deploy before casting key combo spells this turn"
+          : opponentOpenMana ? " — opponents have open mana, hold this up"
+          : " — hold up until opponent tries to interact";
         results.push({
-          priority: veil.priority,
-          category: "🛡️ PROTECTION",
-          headline: `${veil.name} — protect your spells from blue/black interaction`,
+          priority,
+          category: isCriticalThreat ? "🚨 CRITICAL PROTECT" : isHighThreat ? "🛡️ PROTECT NOW" : "🛡️ PROTECTION",
+          headline: `${veil.name}${urgency}`,
           detail: veil.desc,
           steps: [
-            `Hold ${veil.name} up (${veil.cmc} mana) until an opponent tries to counter or target your spells.`,
+            isCriticalThreat
+              ? `⚠️ Critical threat — hold ${veil.name} up right now. Someone may be about to win.`
+              : isHighThreat
+              ? `High threat — cast ${veil.name} before executing your combo this turn to protect it.`
+              : `Hold ${veil.name} up until an opponent tries to counter or target your spells.`,
             "Cast in response to counterspells or targeted removal.",
             veil.desc,
           ],
-          color: "#2980b9",
+          color: isCriticalThreat ? "#ff4500" : isHighThreat ? "#e67e22" : "#2980b9",
         });
       }
     }
+  }
+
+  // ---- YEVA IN HAND — CAST FOR FLASH ENGINE ----
+  // Yeva, Nature's Herald gives all green creatures flash — a transformative effect.
+  // When she's in hand and we can afford her, surface the cast advice.
+  if (inHand.has("Yeva, Nature's Herald") && !board.has("Yeva, Nature's Herald")
+      && isMyTurn && canAfford(4, 3) && !infiniteManaActive) {
+    const flashTargets = hand.filter(c => {
+      const cd = getCard(c);
+      return cd && cd.type === "creature" && c !== "Yeva, Nature's Herald";
+    });
+    const keyFlashTargets = flashTargets.filter(c => {
+      const cd = getCard(c);
+      return cd?.tags?.some(t => ["combo","big-dork","tutor","ashaya","quirion","ranger"].includes(t));
+    });
+    const flashNote = keyFlashTargets.length > 0
+      ? ` — can immediately flash in ${keyFlashTargets.slice(0,2).join(", ")} on opponent's turn`
+      : flashTargets.length > 0
+      ? ` — ${flashTargets.length} creature${flashTargets.length > 1 ? "s" : ""} in hand can be flashed in`
+      : " — all future green creatures can be cast at instant speed";
+    results.push({
+      priority: 9,
+      category: "⚡ FLASH ENGINE",
+      headline: `Cast Yeva, Nature's Herald ({2}{G}{G})${flashNote}`,
+      detail: "Yeva gives all green creatures you control flash — they can be cast as instants. This transforms your gameplan: hold up interaction mana, then cast your combo pieces at end of opponent's turn to deny them a chance to respond. Particularly powerful when opponents tap out.",
+      steps: [
+        "Cast Yeva, Nature's Herald ({2}{G}{G}).",
+        "All green creatures now have flash — cast them at instant speed.",
+        ...(keyFlashTargets.length > 0
+          ? [`Key flash targets in hand: ${keyFlashTargets.join(", ")} — hold for opponent's end step.`]
+          : []),
+        "Pass turn with mana up. On opponent's end step, flash in your combo pieces to minimize interaction windows.",
+      ],
+      color: "#1abc9c",
+    });
   }
 
   // ---- NOXIOUS REVIVAL ----
@@ -7430,7 +7632,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- RUNIC ARMASAUR ----
   if ((inHand.has("Runic Armasaur") || board.has("Runic Armasaur")) && (isMyTurn || yevaAvailable)) {
-    if (!board.has("Runic Armasaur") && (mana >= 3 || infiniteManaActive)) {
+    if (!board.has("Runic Armasaur") && (canAfford(3, 2) || infiniteManaActive)) {
       results.push({
         priority: 5,
         category: "📖 DRAW ENGINE",
@@ -7444,6 +7646,40 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         color: "#3498db",
       });
     }
+  }
+
+  // ---- WAR ROOM / MIKOKORO / GEIER REACH — LAND DRAW ENGINES ----
+  // These lands can draw cards when we're low on gas. Surface when on board and affordable.
+  if (board.has("War Room") && (maxColorless >= 3) && hand.length <= 3 && !infiniteManaActive) {
+    results.push({
+      priority: 4,
+      category: "📖 DRAW ENGINE",
+      headline: "Activate War Room ({3}, {T}) — draw a card (monocolored commander bonus)",
+      detail: "War Room costs {3} and taps to draw a card. As a mono-green commander deck, you only pay 1 life instead of the full activation (actually it's {3},{T} for mono-colored). Use when your hand is running low and you have spare mana.",
+      steps: [
+        "Pay {3}, tap War Room: draw a card.",
+        "Mono-colored decks pay 1 life instead of the full colorless cost.",
+        "Use in your main phase when you have spare mana and need gas.",
+      ],
+      color: "#27ae60",
+    });
+  }
+
+  // ---- COMPOST ----
+  // Compost draws whenever an opponent discards green cards — strong in green-heavy metas.
+  if (inHand.has("Compost") && !board.has("Compost") && isMyTurn && canAfford(2, 1)) {
+    results.push({
+      priority: 5,
+      category: "📖 CAST DRAW ENGINE",
+      headline: "Cast Compost ({1}{G}) — draws cards whenever opponents discard green cards",
+      detail: "Compost draws you a card whenever an opponent discards a green card (or puts one in their graveyard from anywhere). Powerful in green-heavy pods where opponents cycle dorks, discard to Survival/Fauna, or lose creatures to removal.",
+      steps: [
+        "Cast Compost ({1}{G}).",
+        "Whenever an opponent puts a green card into their graveyard from anywhere: draw a card.",
+        "Especially powerful against other green decks — each dork they cycle nets you a card.",
+      ],
+      color: "#27ae60",
+    });
   }
 
   // ---- STAX ADVICE ----
@@ -15251,187 +15487,52 @@ function HelpModal({ onClose, onStartTour }) {
     ),
     changelog: (() => {
       const versions = [
-        {
-          version: "1.10.1", date: "2026-03-13", title: "Next-Turn Lookahead False Win Fixes",
-          fixed: [
-            "Next-turn lookahead panel no longer shows 🔥 WIN NOW for board states where Ashaya is missing and would require a tutor to find — validated against actual hand/board/mana before labelling",
-            "Branch scoring updated to use validated win results — false-win branches no longer rank above genuine lines in BEST PATH selection",
-            "simPlayCard sacrifice sort for EE/Natural Order now protects rangers and the sole big-dork (Fanatic etc.) from sacrifice — prevents sim from finding Ashaya via NatOrder while breaking the loop",
-            "nextTurnLookahead cap: bonus capped at 2 (never 3/winNow); one tutor removed from projected hand to prevent over-optimistic same-turn lines",
-            "GSZ X-cost deduction on tutor resolution, Eldritch Evolution CMC cap in path planner, Natural Order WIN NOW false positive with sole-ranger-only board",
-          ],
-        },
-        {
-          version: "1.10.0", date: "2026-03-11", title: "Tutor Chains, Win Detection & Goldfish Polish",
-          added: [
-            "WIN NOW tutor chain detection — advisor detects multi-step sequences (Bellower → Speaker → Ashaya → Elder, Pact chains, etc.) and surfaces them as priority 15 🔥 WIN NOW cards",
-            "Bellower → Temur Sabertooth win line: Bellower ETB finds Speaker → Speaker finds Temur → Temur bounces Hope Tender (infinite mana) → bounces Speaker (repeating ETB) → Duskwatch → win",
-            "Survival of the Fittest discard picker — context menu opens a creature picker before the tutor modal; Fauna Shaman taps on activation, Survival does not",
-            "Survival of the Fittest rich advisor: context-aware prioritised target list (combo pieces → big dorks → draw → protection) with chaining advice",
-            "Duskwatch Mill Win pile: correct assembly shown when infinite mana active — Destiny Spinner + Ashaya + Elvish Reclaimer + Temur + Endurance + Geier Reach Sanitarium + best untapper",
-            "Saved states deck association — states tagged with deckId/deckName, orange ⚠ warning when loading cross-deck state",
-            "Hand graying with infinite mana — all cards in hand fully clickable when infinite mana active",
-            "Hard mulligan gate — gates with no green source or no ramp can never be upgraded past MULLIGAN by combo nearness",
-            "Matrix screensaver — idle card-name rain effect (Shift+L to activate)",
-            "Mulligan CMC curve chart, composition chips, depth indicator, hotkey underlines",
-            "fireETB refactor — ETB triggers now fire consistently from both castFromHand and all tutor-to-battlefield paths",
-            "Lotus Petal sacrifice flow: toggleTap intercepts to sacrifice for {G}; context menu confirms",
-            "Dryad Arbor summoning sickness applied correctly via GSZ (both X=0 auto and X>0 modal paths)",
-          ],
-          fixed: [
-            "Bellower → Speaker → Kogla win detection: Kogla cannot bounce Speaker (not a Human) — two separate blocks now handle Temur vs Kogla paths correctly",
-            "Formidable Speaker big-dork tag removed (no tapsFor — was causing false ramp advice)",
-            "Pact upkeep trigger suppressed when infinite mana is active",
-            "Tour ? button hidden during mulligan and stats phases",
-            "Argothian Elder cast-from-hand advice fires at correct priority with Deserted Temple / Wirewood Lodge context",
-            "Tutor onSelect race condition fixed: callback saved before state reset, then called in setTimeout",
-            "handRef stale closure fixed with useRef + useEffect sync",
-            "Chord of Calling convoke cost correctly calculated for Formidable Speaker",
-            "Eternal Witness deprioritised from tutor targets unless graveyard has high-value pieces",
-          ],
-        },
-        {
-          version: "1.9.0", date: "2026-03-07", title: "Card Image Playfield View",
+        { 
+          version: "1.0.0", date: "March 2026", title: "Initial Release",
           added: [
             "Card image playfield view in Goldfish — toggle with the 🃏 IMAGE button in the controls strip. Displays hand, battlefield, graveyard, and exile as real Scryfall card art. Click to cast/tap, right-click for context menu, hover for a full-size preview. Images load live from Scryfall and are cached for the session.",
             "Tapped cards rotate 90° with a smooth CSS transition. Counter badges stay upright. Battlefield is split into Creatures/Spells and Lands rows.",
-            "The toggle button always shows where it will take you — reads IMAGE when in list mode, LIST when in image mode.",
-          ],
-          fixed: [
-            "Yeva cast from command zone is now fully undoable with Ctrl+Z (pushUndo was missing from castYeva).",
-          ],
-        },
-        {
-          version: "1.8.0", date: "2026-03-06", title: "Advisor Intelligence & Card Coverage",
-          added: [
-            "Advice for 20+ previously unrecognised cards: Joraga Treespeaker (level-up advice + loop thresholds), Wirewood Channeler (elf-count output), Defiler of Vigor (storm-win outlet with infinite mana), Agatha's Soul Cauldron (graveyard dork recycling), Beastrider Vanguard (infinite mana outlet), Carpet of Flowers (meta ramp), Emerald Medallion (loop threshold impact), Runic Armasaur (flash-in vs activated-ability commanders)",
-            "Draw engine awareness: Sylvan Library (draw-3 with life trade-offs), Guardian Project (triggers when creatures in hand), Bonders' Enclave (activation advice when power-4 creature on board)",
-            "Removal suite advice: Nature's Claim, Ram Through, Tail Swipe, Bouncer's Beatdown, Kenrith's Transformation, Reclamation Sage, Outland Liberator, Manglehorn, Warping Wail, Insidious Fungus — all now surface contextually when threats are present or instant-speed matters",
-            "Protection spells: Veil of Summer and Autumn's Veil now appear as hold-up advice with mana thresholds",
-            "Graveyard recursion: Noxious Revival (free instant recovery or disruption), Skullwinder (ETB recursion when key piece in graveyard), Scavenging Ooze (activation + infinite mana → lethal path)",
-            "62 Commander Spellbook combos now have explicit named entries (previously only covered generically via flags)",
-            "Auto-simulate run button fixed — selectBottomsFromScored was defined inside GoldfishModal closure, making it inaccessible to the module-level runNGames function",
-          ],
-          fixed: [
-            "Fierce Empath, Regal Force, Heartwood Storyteller now fire on opponent's turn when Yeva is available (were incorrectly restricted to isMyTurn only)",
-            "Endurance castable check now includes Yeva from command zone (it has native flash — command zone Yeva is sufficient)",
-            "Full-hand win path (Yeva → Ashaya + Argothian Elder → infinite → Formidable Speaker → Duskwatch) now correctly detects on opponent's turn with 23+ mana",
-            "Formidable Speaker win suppression no longer fires when Ashaya + Argothian Elder are in hand with sufficient mana",
-            "Infinite mana already active + Formidable Speaker in hand now correctly fires ⚡ CAST TO WIN (no Ranger loop needed — single ETB fetches Duskwatch directly)",
-            "Full-hand win path mana threshold: 12 on opponent's turn without flash (was incorrectly using 8 in suppression check)",
-          ],
-        },
-        {
-          version: "1.7.0", date: "2026-03-06", title: "Help System & Polish",
-          added: [
-            "In-app manual (? button) with tabbed sections: Overview, Advisor, Goldfish, Shortcuts, Combos, Tour, What's New",
-            "Tooltips on all main header buttons and goldfish control buttons",
-          ],
-          fixed: [
-            "Escape in tutor overlay no longer closes entire Goldfish modal",
-            "Escape now consistently closes Synergy Map modal",
-            "Close (✕) buttons pinned absolutely to top-right of modal headers — no longer wrap on small screens",
-          ],
-        },
-        {
-          version: "1.6.0", date: "2026-03-06", title: "Goldfish Productivity",
-          added: [
             "Undo system — up to 20 levels; Ctrl+Z shortcut and ↩ UNDO button",
-            "Wirewood Lodge untap targeting modal — pick which elf to untap",
-            "Mana pool delta flash — +N / −N animates above pool badge on change",
-            "⚡ TAP ALL MANA — one click taps every mana source on the battlefield",
-            "Keyboard shortcuts: N next turn, U untap, T tutor, D draw, M tap all, Ctrl+Z undo, Esc close",
-            "Tutor search by type/tag — type 'dork', 'tutor', 'land' etc. to filter results",
-            "Gamestate breadcrumb — turn · mana · elves · dorks · tutors · combo pieces",
-          ],
-        },
-        {
-          version: "1.5.0", date: "2026-03-05", title: "Replay, Mana Pool & Card Images",
-          added: [
             "Game replay viewer — step through any completed game turn by turn with card images",
             "Win combo tracking — winning combo line recorded and shown in stats",
             "Mana pool tracker — auto-increments on tap, auto-decrements on cast; resets each turn",
             "Mana curve and win condition breakdown charts in stats panel",
-          ],
-          fixed: [
-            "Per-card mana calculation overhauled — Utopia Sprawl and Arbor Elf now calculated correctly",
-          ],
-        },
-        {
-          version: "1.4.0", date: "2026-03-05", title: "Mobile Layout & Drag-Drop",
-          added: [
-            "Mobile responsive layout for goldfish — tab bar replaces side panels below 700px",
-            "Drag-and-drop between any zones in goldfish mode",
-          ],
-          fixed: [
-            "Green Sun's Zenith mana check corrected; GSZ now shuffles back into library",
-            "Commander (Yeva) excluded from library in goldfish",
-            "SSR/hydration crash on initial render fixed",
-          ],
-        },
-        {
-          version: "1.3.0", date: "2026-03-05", title: "Auto-Simulation & Scryfall",
-          added: [
             "Run N Games — automated simulator plays N games and reports win rates, bottlenecks, turn distribution",
             "Scryfall auto-enrichment — unknown cards get type and CMC from Scryfall on import",
-          ],
-          fixed: [
-            "Rules of Hooks violation (useState inside IIFE) — hoisted to component top",
-            "Stats persistence fixed outside Claude artifact environment",
-          ],
-        },
-        {
-          version: "1.2.0", date: "2026-03-05", title: "Statistics & Hand Grader",
-          added: [
             "Persistent game statistics — win rate, average win turn, milestones per deck",
             "Hand grader — A–F grade with reasoning during mulligan, advisor-enriched",
             "Stats panel — game history table, win rates by turn, milestone breakdown",
-          ],
-        },
-        {
-          version: "1.1.0", date: "2026-03-04", title: "Goldfish Mode",
-          added: [
-            "Full solo play simulation (Goldfish mode) with London mulligan",
-            "Tap/untap, counters, scry, fetch cracking, context menus, cast from hand",
-            "Commander tax tracking for Yeva",
-            "77-test harness (node yeva-advisor.test.js)",
-          ],
-        },
-        {
-          version: "1.0.0", date: "2026-03-04", title: "Initial Release",
-          added: [
-            "Core advisor engine with 43 combo definitions",
+            "Core advisor engine with combo definitions",
             "Deck management with import, editor, comparison, and preset decks",
             "Synergy map, saved states, guided tutorial tour",
             "Scryfall card image tooltips on all card names",
           ],
         },
       ];
-
       return (
         <>
           {versions.map(v => (
-            <div key={v.version} style={{ marginBottom: "20px", paddingBottom: "16px", borderBottom: `1px solid ${COLORS.border}` }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "8px", marginTop: "16px" }}>
-                <span style={{ fontSize: "12px", fontFamily: "'Cinzel', serif", color: COLORS.green2, letterSpacing: "1px" }}>v{v.version}</span>
-                <span style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>{v.date}</span>
-                <span style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }}>— {v.title.toUpperCase()}</span>
+            <div key={v.version} style={{ marginBottom: "24px" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "6px" }}>
+                <span style={{ fontFamily: "'Cinzel', serif", fontSize: "12px", color: "#58d68d", letterSpacing: "1px" }}>v{v.version}</span>
+                <span style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: "#7f8c8d", letterSpacing: "1px" }}>{v.date}</span>
+                <span style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: "#aed6f1", letterSpacing: "0.5px" }}>{v.title}</span>
               </div>
               {v.added && v.added.map((item, i) => (
-                <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "5px", paddingLeft: "8px" }}>
-                  <span style={{ color: COLORS.green1, fontSize: "11px", flexShrink: 0, marginTop: "2px" }}>+</span>
-                  <span style={{ fontSize: "13px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>{item}</span>
+                <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "3px", fontSize: "11px", color: "#d5d8dc", fontFamily: "'Crimson Text', serif", lineHeight: "1.5" }}>
+                  <span style={{ color: "#58d68d", flexShrink: 0 }}>+</span>
+                  <span>{item}</span>
                 </div>
               ))}
               {v.fixed && v.fixed.map((item, i) => (
-                <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "5px", paddingLeft: "8px" }}>
-                  <span style={{ color: COLORS.blue, fontSize: "11px", flexShrink: 0, marginTop: "2px" }}>✦</span>
-                  <span style={{ fontSize: "13px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5 }}>{item}</span>
+                <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "3px", fontSize: "11px", color: "#d5d8dc", fontFamily: "'Crimson Text', serif", lineHeight: "1.5" }}>
+                  <span style={{ color: "#f39c12", flexShrink: 0 }}>✦</span>
+                  <span>{item}</span>
                 </div>
               ))}
             </div>
           ))}
-          <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontStyle: "italic", textAlign: "center", paddingTop: "8px" }}>
+          <div style={{ fontSize: "11px", color: "#7f8c8d", fontFamily: "'Crimson Text', serif", fontStyle: "italic", textAlign: "center", paddingTop: "8px" }}>
             + added &nbsp;·&nbsp; ✦ fixed/changed
           </div>
         </>
