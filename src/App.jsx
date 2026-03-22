@@ -8435,11 +8435,35 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       results.push({
         priority: pri,
         category: cat,
-        headline: l.tutorSteps.length === 0
-          ? `Cast pieces → ${l.combo.name}`
-          : l.tutorSteps.length === 1
-          ? `${l.tutorSteps[0].tutor} → ${l.tutorSteps[0].target} → ${l.combo.name}`
-          : `${l.tutorSteps.length} steps → ${l.combo.name}`,
+        headline: (() => {
+          // Build clean headline. For informational NEED-MANA paths, strip pieces
+          // already in hand/board from the combo name so they don't look like targets to find.
+          // For active paths (same-turn/win-now), keep the full combo name since it's descriptive.
+          const isInfoOnly = !l.sameTurn && !l.winNow && !l.nextTurnOnly;
+          if (!isInfoOnly) {
+            if (l.tutorSteps.length === 0) return `Cast pieces → ${l.combo.name}`;
+            if (l.tutorSteps.length === 1) return `${l.tutorSteps[0].tutor} → ${l.tutorSteps[0].target} → ${l.combo.name}`;
+            return `${l.tutorSteps.length} steps → ${l.combo.name}`;
+          }
+          // Info-only (NEED X MANA): strip tokens for pieces already in hand/board
+          const alreadyHaveSet = new Set([...battlefield, ...hand]);
+          const tutorTargets = new Set(l.tutorSteps.map(s => s.target));
+          const comboTokens = l.combo.name.split(/\s*\+\s*/);
+          const missingTokens = comboTokens.filter(token => {
+            // Keep token if it's a tutor target (still needs to be found)
+            if ([...tutorTargets].some(t => token.includes(t.split(",")[0]) || t.split(",")[0].startsWith(token.trim()))) return true;
+            // Drop token if already in hand/board
+            return ![...alreadyHaveSet].some(card =>
+              card.startsWith(token.trim()) || token.trim().startsWith(card.split(",")[0])
+            );
+          });
+          const comboNameDisplay = missingTokens.length > 0 && missingTokens.length < comboTokens.length
+            ? missingTokens.join(" + ")
+            : l.combo.name;
+          if (l.tutorSteps.length === 0) return `Cast pieces → ${comboNameDisplay}`;
+          if (l.tutorSteps.length === 1) return `${l.tutorSteps[0].tutor} → ${l.tutorSteps[0].target} → ${comboNameDisplay}`;
+          return `${l.tutorSteps.length} steps → ${comboNameDisplay}`;
+        })(),
         detail: `[${badgeStr}] ${l.combo.name}. Have: ${alreadyHave}. Need: ${l.needed.join(", ") || "nothing"}.` +
           (l.totalMana > 0 ? ` Estimated cost: ~${l.totalMana} mana (tutor activations + casting pieces).` : "") +
           (!l.canAfford ? ` ⚠ You have ${mana} mana — need ~${l.totalMana - mana} more to execute this turn.` : ""),
