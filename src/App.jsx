@@ -11801,6 +11801,26 @@ function buildMillSequence(board, hand, pileNeeded = []) {
 // which infinite-mana and win-now combos are reachable, then rank by:
 //   1. Same-turn feasibility  2. Step count  3. Mana cost  4. Combo priority
 // ─────────────────────────────────────────────────────────────────────────────
+// Standalone version of filterComboLines for use outside analyzeGameState (e.g. React render).
+// Strips "X + Y on battlefield." prerequisite lines for pieces already in hand or on battlefield.
+function filterComboLinesForDisplay(lines, hand, battlefield) {
+  const ownedSet = new Set([...battlefield, ...hand]);
+  return lines.map(line => {
+    if (!line.includes(" on battlefield")) return line;
+    const bare = line.replace(/ on battlefield\.?\s*$/, '');
+    const tokens = bare.split(/\s*\+\s*/);
+    const stillNeeded = tokens.filter(token => {
+      const t = token.trim().toLowerCase();
+      return ![...ownedSet].some(card =>
+        card.toLowerCase().startsWith(t) || t.startsWith(card.split(",")[0].toLowerCase())
+      );
+    });
+    if (stillNeeded.length === 0) return null;
+    if (stillNeeded.length === tokens.length) return line;
+    return stillNeeded.join(" + ") + " on battlefield.";
+  }).filter(Boolean);
+}
+
 function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null, infiniteManaActive = false) {
   const board    = new Set(battlefield);
   const inHand   = new Set(hand);
@@ -26400,8 +26420,12 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
                 {/* ── LINES TAB ── */}
                 {advisorTab === "lines" && (() => {
-                  const deckSet = deckList ? new Set(deckList) : null;
-                  const lines = findReachableLines(hand, battlefield, graveyard, mana, deckSet);
+                  const deckSet = deckCards.length > 0 ? new Set(deckCards) : null;
+                  const _lineMana = currentManaPool.green + currentManaPool.colorless;
+                  const _yisanIdx = battlefield.indexOf("Yisan, the Wanderer Bard");
+                  const _yisanKey = _yisanIdx >= 0 ? cardKey("Yisan, the Wanderer Bard", _yisanIdx) : null;
+                  const _lineYisanCounters = _yisanKey ? (counters[_yisanKey] ?? 0) : 0;
+                  const lines = findReachableLines(hand, battlefield, graveyard, _lineMana, deckSet, _lineYisanCounters, sickCreatureNames);
                   const typeOpts = [
                     ["all", "All"],
                     ["infinite-mana", "∞ Mana"],
@@ -26528,7 +26552,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                                 {/* Combo execution steps */}
                                 <div>
                                   <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "4px" }}>EXECUTION</div>
-                                  {l.combo.lines.map((s, j) => (
+                                  {filterComboLinesForDisplay(l.combo.lines, hand, battlefield).map((s, j) => (
                                     <div key={j} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", marginBottom: "3px", paddingLeft: "10px", borderLeft: `1px solid ${COLORS.border}`, lineHeight: 1.4 }}>
                                       {j + 1}. <HighlightWithPopups text={s} />
                                     </div>
