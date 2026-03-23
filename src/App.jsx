@@ -4959,35 +4959,35 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         },
         {
           name: "Ashaya, Soul of the Wild",
-          condition: !board.has("Ashaya, Soul of the Wild"),
+          condition: !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild"),
           why: "unlocks all infinite mana combos — all creatures become Forests",
           sacNote: "Sac a 3-drop (CMC 3 = optimal sacrifice for CMC 5 target)",
           follow: "With Ashaya in play, any dork + ranger creates infinite mana",
         },
         {
           name: "Temur Sabertooth",
-          condition: !board.has("Temur Sabertooth") && !board.has("Kogla, the Titan Ape") && board.has("Ashaya, Soul of the Wild"),
+          condition: !board.has("Temur Sabertooth") && !inHand.has("Temur Sabertooth") && !board.has("Kogla, the Titan Ape") && board.has("Ashaya, Soul of the Wild"),
           why: "bouncer for infinite ETB loops — needed to convert ∞ mana into a win",
           sacNote: "Sac any creature you can spare",
           follow: "Sabertooth + any ETB creature + infinite mana = loop to win",
         },
         {
           name: "Kogla, the Titan Ape",
-          condition: !board.has("Kogla, the Titan Ape") && !board.has("Temur Sabertooth") && board.has("Ashaya, Soul of the Wild"),
+          condition: !board.has("Kogla, the Titan Ape") && !inHand.has("Kogla, the Titan Ape") && !board.has("Temur Sabertooth") && !inHand.has("Temur Sabertooth") && board.has("Ashaya, Soul of the Wild"),
           why: "bouncer for humans + artifact/enchantment removal",
           sacNote: "Sac any creature you can spare",
           follow: "Kogla returns humans to hand on attack — pairs with Eternal Witness",
         },
         {
           name: "Duskwatch Recruiter",
-          condition: !board.has("Duskwatch Recruiter") && infiniteManaActive,
+          condition: !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter") && infiniteManaActive,
           why: "win condition — activate repeatedly to pull entire library",
           sacNote: "Sac anything",
           follow: "With infinite mana, Duskwatch finds Endurance + win pile",
         },
         {
           name: "Woodland Bellower",
-          condition: !board.has("Woodland Bellower"),
+          condition: !board.has("Woodland Bellower") && !inHand.has("Woodland Bellower"),
           why: "ETB finds any non-legendary CMC≤3 creature",
           sacNote: "Sac a 3-drop",
           follow: "Best targets: Duskwatch Recruiter, Eternal Witness, Destiny Spinner",
@@ -10874,6 +10874,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         "Keep all creatures in hand (Yeva gives them flash — they're safe there).",
         "Hold up mana for instant-speed responses.",
         "Look for an opportunity to flash in your combo on an opponent's end step."
+      ],
+      color: "#7f8c8d",
+    });
+  }
+  // Opponent's turn with no actionable plays — remind the player to hold
+  if (!isMyTurn && results.filter(r => r.priority >= 4 && !r.isSuppressed).length === 0) {
+    results.push({
+      priority: 3,
+      category: "⏳ HOLD — OPPONENT'S TURN",
+      headline: "Hold your hand — wait for the right moment to flash in",
+      detail: "Nothing is actionable right now on the opponent's turn. Hold your cards. With Yeva's flash, you can deploy your entire hand at instant speed on any opponent's end step.",
+      steps: [
+        "Hold all creatures in hand — they have flash via Yeva.",
+        "Watch for opponents tapping out or missing an interaction window.",
+        "On opponent's end step: if you have enough mana, flash in Ashaya + Quirion Ranger to go infinite.",
+        "Your turn begins next — draw a card and reassess.",
       ],
       color: "#7f8c8d",
     });
