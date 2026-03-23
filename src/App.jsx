@@ -26828,7 +26828,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       )}
                       {filtered.map((l, i) => {
                         const isOpen = linesExpanded.has(l.combo.id);
-                        const allSteps = [...l.tutorSteps, ...l.extraSteps];
+                        const allSteps = [...(l.tutorSteps ?? []), ...(l.outletSteps ?? [])];
                         const lineColor = l.sameTurn ? COLORS.green1 : l.nextTurnOnly ? "#c8a800" : COLORS.blue;
                         return (
                           <div key={l.combo.id} style={{
@@ -26850,7 +26850,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                                   {allSteps.length > 0 && (
                                     <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>
                                       {allSteps.length} tutor step{allSteps.length !== 1 ? "s" : ""}
-                                      {l.totalCost > 0 ? ` · ~${l.totalCost} mana` : ""}
+                                      {l.totalMana > 0 ? ` · ~${l.totalMana} mana` : ""}
                                     </span>
                                   )}
                                   {l.available.length > 0 && (
