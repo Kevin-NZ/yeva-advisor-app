@@ -2526,8 +2526,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Badgermole Cub: static "whenever you tap a creature for mana, add {G}" — adds +1 mana per creature tap
     const badgermoleBonus = board.has("Badgermole Cub") ? 1 : 0;
     if (typeof t === "number") return t + (t > 0 ? badgermoleBonus : 0);
-    if (t === "elves")    return elvesOnBoard + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler
-    if (t === "creatures") return creaturesOnBoard + extraElves + badgermoleBonus; // Circle of Dreams Druid
+    // For dynamic outputs, use active (non-sick) counts when sickCreatures is available.
+    // Sick elves/creatures can't tap — they shouldn't inflate the dork's output estimate.
+    const activeElves = sickCreatures
+      ? battlefield.filter(c => getCard(c)?.tags?.includes("elf") && !sickCreatures.has(c)).length
+      : elvesOnBoard;
+    const activeCreatures = sickCreatures
+      ? battlefield.filter(c => (getCard(c)?.type === "creature" || c === "Dryad Arbor") && !sickCreatures.has(c)).length
+      : creaturesOnBoard;
+    if (t === "elves")    return activeElves + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler
+    if (t === "creatures") return activeCreatures + extraElves + badgermoleBonus; // Circle of Dreams Druid
     if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
     // Marwyn taps for power = 1 + counters, where she gains a counter per elf cast after she entered.
     // Two estimates are combined: elf-count proxy (each elf on board likely cast while she was in play)
@@ -8415,10 +8423,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
       const isFirst = idx === 0;
-      const color   = l.winNow ? "#ff6b35" : l.sameTurn ? "#e67e22" : l.nextTurnOnly ? "#c8a800" : COLORS.blue;
-      const cat     = l.winNow
+      // For needsBigDork combos marked winNow/sameTurn, verify a non-sick big dork exists.
+      // Sick dorks can't tap for mana — the loop won't run this turn without an active one.
+      let effectiveWinNow = l.winNow;
+      let effectiveSameTurn = l.sameTurn;
+      if ((l.winNow || l.sameTurn) && l.combo.needsBigDork) {
+        const minMana = l.combo.needsBigDork;
+        const hasReadyDork = !!findBigDork(minMana); // findBigDork already skips sick dorks
+        if (!hasReadyDork) {
+          effectiveWinNow = false;
+          effectiveSameTurn = false;
+        }
+      }
+      const color   = effectiveWinNow ? "#ff6b35" : effectiveSameTurn ? "#e67e22" : l.nextTurnOnly ? "#c8a800" : COLORS.blue;
+      const cat     = effectiveWinNow
         ? (isFirst ? "🔥 WIN NOW" : "🔥 WIN NOW — ALT LINE")
-        : l.sameTurn
+        : effectiveSameTurn
         ? (() => {
             // No tutor steps = all pieces in hand, just cast them → CAST TO ENABLE
             // Has tutor steps = need to find a piece first → FIND INFINITE MANA
@@ -8427,24 +8447,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           })()
         : (l.nextTurnOnly && l.canAfford)
         ? (() => {
-            // "WIN NEXT TURN" when pieces are on board but have summoning sickness (just untap).
-            // "FIND INFINITE MANA — NEXT TURN" when tutor steps are still required next turn.
-            // A line is "fully assembled" when there are no tutor steps AND it's marked next-turn
-            // purely because a mustPreExist piece needs to untap (badges has "next-turn" but no tutor steps).
             const fullyAssembled = l.tutorSteps.length === 0 && l.needed.length === 0;
             return fullyAssembled
               ? (isFirst ? "⏭️ WIN NEXT TURN" : "⏭️ ALT WIN NEXT TURN")
               : (isFirst ? "⚡ FIND INFINITE MANA — NEXT TURN" : "⚡ ALT MANA LINE — NEXT TURN");
           })()
         : (isFirst ? `⚡ FIND INFINITE MANA — NEED ${l.totalMana} MANA` : `⚡ ALT MANA LINE — NEED ${l.totalMana} MANA`);
-      // Priority tiers for path planner lines:
-      // • WIN NOW (all pieces castable this turn)          → 15, 14, 13
-      // • FIND INFINITE MANA (affordable same turn)        → 13, 12, 11
-      // • NEXT TURN lines (affordable, just needs untap)   →  9,  8,  7  (below castable ramp ~9)
-      // • NEED X MANA lines (can't afford yet)             →  6,  5,  4  (informational only)
-      // NOTE: nextTurnOnly lines that can't afford are demoted to NEED MANA tier.
-      const pri = l.winNow    ? 15 - idx
-                : l.sameTurn  ? 13 - idx
+      const pri = effectiveWinNow ? 15 - idx
+                : effectiveSameTurn ? 13 - idx
                 : (l.nextTurnOnly && l.canAfford) ? 9 - idx
                 : 6 - idx;
 
@@ -8492,7 +8502,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           }
 
           // Only strip for info-only paths (NEED X MANA) — not WIN NOW / same-turn / next-turn
-          const isInfoOnly = !l.sameTurn && !l.winNow && !l.nextTurnOnly;
+          const isInfoOnly = !effectiveSameTurn && !effectiveWinNow && !l.nextTurnOnly;
           const comboNameDisplay = isInfoOnly ? stripOwnedFromName() : l.combo.name;
 
           if (l.tutorSteps.length === 0) return `Cast pieces → ${comboNameDisplay}`;
@@ -8547,7 +8557,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             "── EXECUTE COMBO ──",
             ...filterComboLines(l.combo.lines),
             ...(l.outletSteps?.length > 0 ? ["── WIN OUTLET ──", ...l.outletSteps] : []),
-            ...(l.winNow && l.outletNote ? [`Win: ${l.outletNote} → activate with infinite mana → draw entire library → win.`] : []),
+            ...(effectiveWinNow && l.outletNote ? [`Win: ${l.outletNote} → activate with infinite mana → draw entire library → win.`] : []),
           ];
         })(),
         color,
@@ -10445,6 +10455,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const activateVerb = survivalOnBoard ? `Activate Survival of the Fittest ({G})` : `Tap Fauna Shaman ({G})`;
         const priority = (isActingNow && best.winNow) ? 15
                        : isActingNow ? 13
+                       : (faunaNextTurn && best.winNow && infiniteManaActive) ? 13
                        : best.winNow ? 12
                        : 11;
         const category = (isActingNow && best.winNow) ? "⚡ CAST TO WIN"
@@ -11067,6 +11078,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ── Deduplicate results ──────────────────────────────────────────────────
   // a) Among infinite-mana LOOP READY / CAST TO ENABLE results keep only the best.
+  // a0) Suppress generic "CAST FOR WIN NEXT TURN" Fauna card when the richer
+  //     fauna_duskwatch_win card is present — they describe the same action.
+  {
+    const hasFaunaDuskwatch = results.some(r => r.combo === "fauna_duskwatch_win");
+    if (hasFaunaDuskwatch) {
+      for (const r of results) {
+        if (r.category === "🌿 CAST FOR WIN NEXT TURN" && r.headline?.includes("Fauna Shaman") && !r.combo) {
+          r.isSuppressed = true;
+        }
+      }
+    }
+  }
   {
     const infiniteCategories = new Set(["⚙️ INFINITE MANA ONLINE", "⚡ CAST TO ENABLE MANA LOOP"]);
     let bestInfinite = null;
@@ -11078,7 +11101,19 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         deduped.push(r);
       }
     }
-    if (bestInfinite) deduped.push(bestInfinite);
+    if (bestInfinite) {
+      // Demote INFINITE MANA ONLINE / CAST TO ENABLE below any concrete win plan (≥13).
+      // It's a status card — "loop is running" — actionable next-turn or win-now advice
+      // should always sit above it in the UI.
+      const hasWinPlan = deduped.some(r =>
+        r.priority >= 13 && (
+          r.category?.includes("WIN") || r.category?.includes("CAST TO WIN") ||
+          r.category?.includes("WIN NEXT TURN") || r.category?.includes("SETUP NEXT TURN")
+        )
+      );
+      if (hasWinPlan && bestInfinite.priority > 10) bestInfinite = { ...bestInfinite, priority: 9.5 };
+      deduped.push(bestInfinite);
+    }
     results.length = 0;
     results.push(...deduped);
   }
@@ -11369,11 +11404,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         turnClock = { turns: 0, plan: topResult.headline?.slice(0, 80) ?? "Infinite mana this turn" };
       } else if (lines.length > 0) {
         const best = lines[0];
-        if (best.winNow)                        turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
-        else if (best.sameTurn)                 turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
+        // For needsBigDork combos, verify a non-sick big dork is ready before claiming turns=0
+        const bestSickBlock = best.combo.needsBigDork && !findBigDork(best.combo.needsBigDork);
+        const bestWinNow   = best.winNow    && !bestSickBlock;
+        const bestSameTurn = best.sameTurn  && !bestSickBlock;
+        if (bestWinNow)                              turnClock = { turns: 0, plan: `Win this turn: ${best.combo.name}` };
+        else if (bestSameTurn)                       turnClock = { turns: 0, plan: `Infinite mana this turn: ${best.combo.name}` };
         else if (best.nextTurnOnly && best.canAfford) turnClock = { turns: 1, plan: `Win next turn: ${best.combo.name}` };
-        else if (best.canAfford)                turnClock = { turns: 2, plan: `~2 turns: ${best.combo.name} (need setup)` };
-        else                                    turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
+        else if (best.canAfford)                     turnClock = { turns: 2, plan: `~2 turns: ${best.combo.name} (need setup)` };
+        else                                         turnClock = { turns: 3, plan: `~3+ turns: ${best.combo.name} (need mana)` };
       } else {
         turnClock = { turns: 5, plan: "5+ turns — no combo path found" };
       }
@@ -16569,7 +16608,6 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
   // when openingHandGrade is recorded right after the kept hand is finalised.
   let infiniteManaT  = null;   // turn infinite mana was first established
   let openingHandGrade = null; // KEEP / BORDERLINE / MULL
-  let stallHand    = null;     // hand contents on final non-win turn (stall analysis)
 
   let mulligans = 0;
   if (opts.fixedHand) {
@@ -16899,6 +16937,28 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           // pieces already on the board or mana already spent this turn.
           winValid = false;
         } else {
+          // For combos that require a big dork producing ≥N mana (needsBigDork),
+          // verify at least one such dork is on board AND not summoning sick.
+          // (e.g. Ashaya+Scryb needs a ≥3-mana dork that can tap this turn)
+          if (activeCombo.needsBigDork) {
+            const minMana = activeCombo.needsBigDork;
+            const hasReadyBigDork = battlefield.some(c => {
+              if (sickSet.has(c)) return false;
+              const cd = getCard(c);
+              return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork")) &&
+                     typeof cd?.tapsFor === "number" && cd.tapsFor >= minMana;
+            });
+            // Also count Priest of Titania / Elvish Archdruid / Circle of Dreams Druid
+            // whose output is dynamic — check if elf count produces enough
+            if (!hasReadyBigDork) {
+              const elfCount = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.tags?.includes("elf")).length;
+              const hasReadyDynamicDork = battlefield.some(c => {
+                if (sickSet.has(c)) return false;
+                return (c === "Priest of Titania" || c === "Karametra's Acolyte") && elfCount >= minMana;
+              });
+              if (!hasReadyDynamicDork) winValid = false;
+            }
+          }
           // Simulate casting required pieces in order to verify:
           //   (a) each missing piece is actually in hand (not just theoretically reachable)
           //   (b) green mana is sufficient to cast all missing pieces sequentially
@@ -17096,13 +17156,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
     }
 
     if (winTurn !== null) break;
-    // Record hand snapshot each turn — last one before max turns = stall snapshot
-    stallHand = [...hand];
   }
 
   return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork,
            winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog) : null,
-           infiniteManaT, openingHandGrade, stallHand: winTurn === null ? stallHand : null };
+           infiniteManaT, openingHandGrade };
 }
 
 // ── SIM GROUP 3: Dynamic tutor target scoring ─────────────────────────────
@@ -18167,6 +18225,13 @@ function extractComboLabel(result) {
 function runNGames(deckCards, n = 50, maxTurns = 20) {
   const nonCommanderCards = deckCards.filter(c => !getCard(c)?.tags?.includes("commander"));
   const deckSet = new Set(nonCommanderCards);
+  // Key pieces to track for win-presence analysis — filtered to only those in this deck
+  const _deckKeyPieces = [
+    "Ashaya, Soul of the Wild","Argothian Elder","Quirion Ranger","Scryb Ranger",
+    "Priest of Titania","Elvish Archdruid","Circle of Dreams Druid","Temur Sabertooth",
+    "Duskwatch Recruiter","Endurance","Eternal Witness","Wirewood Symbiote",
+    "Gaea's Cradle","Earthcraft","Seedborn Muse","Selvala, Heart of the Wilds",
+  ].filter(c => deckSet.has(c));
   const results = [];
   for (let i = 0; i < n; i++) {
     const g = simulateOneGame(nonCommanderCards, deckSet, 3, maxTurns);
@@ -18201,24 +18266,32 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
     label, count, pct: Math.round(count / n * 100),
   }));
 
-  // Stall analysis: for non-winning games, what cards were most often stuck in hand?
-  const stallGames = results.filter(r => r.winTurn === null && r.stallHand?.length > 0);
-  const stallCounts = {};
-  for (const r of stallGames) {
-    const seen = new Set();
-    for (const c of (r.stallHand ?? [])) {
-      const cd = getCard(c);
-      if (!cd || cd.type === "land") continue; // skip lands — always contextual
-      if (!seen.has(c)) {
-        seen.add(c);
-        stallCounts[c] = (stallCounts[c] ?? 0) + 1;
-      }
+  // Key piece win-presence: for each key piece in this deck, how often was it on the
+  // battlefield in WINNING games? Sorted by win-presence descending.
+  // This answers: "which pieces most reliably appear when the deck wins?"
+  // High win-presence = consistently assembled in wins → important piece.
+  // Low win-presence = rarely on board even in wins → may be win-independent or too slow.
+  const winGames  = results.filter(r => r.winTurn !== null && r.winBattlefield != null);
+  const lossCount = results.filter(r => r.winTurn === null).length;
+  const piecePres = {};
+  const pieceWinCount = {};
+  for (const r of winGames) {
+    const bf = new Set(r.winBattlefield ?? []);
+    for (const c of _deckKeyPieces) {
+      if (bf.has(c)) pieceWinCount[c] = (pieceWinCount[c] ?? 0) + 1;
     }
   }
-  const stallCards = Object.entries(stallCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([card, count]) => ({ card, count, pct: Math.round(count / Math.max(stallGames.length, 1) * 100) }));
+  const stallCards = winGames.length >= 10
+    ? _deckKeyPieces
+        .map(card => {
+          const inWins = pieceWinCount[card] ?? 0;
+          const winPct = Math.round(inWins / Math.max(winGames.length, 1) * 100);
+          return { card, inWins, wins: winGames.length, winPct };
+        })
+        .filter(s => s.winPct > 0) // skip pieces never seen in wins at all
+        .sort((a, b) => b.winPct - a.winPct)
+        .slice(0, 8)
+    : [];
 
   // Bottleneck frequency
   const bottleneckCounts = {};
@@ -27473,22 +27546,24 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           )}
 
                           {/* Cut Suggestions */}
-                          {/* Stall analysis — cards stuck in hand in non-winning games */}
-                          {nr.stallCards?.length > 0 && nr.wins < nr.n && (
+                          {/* Key piece win-presence */}
+                          {nr.stallCards?.length > 0 && (
                             <div style={{ marginTop: "10px" }}>
-                              <Tip id="stall-header" text="Non-land cards most often stuck in hand at the end of non-winning games. High percentages mean the deck frequently draws these cards but can't cast or use them in time — they may be too slow, too expensive, or lack the right setup. Compare with bottlenecks to distinguish 'card you had but couldn't use' from 'card you needed but didn't have'.">
-                                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: "#e09050", letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>
-                                  ✋ STUCK IN HAND (NON-WINS) (?)
+                              <Tip id="stall-header" text={`How often each key combo piece was on the battlefield in winning games (out of ${nr.stallCards[0]?.wins ?? '?'} wins). High % = reliably assembled in wins. Low % = either tutored at the last moment, not in this deck variant, or not needed for the winning line. Duskwatch Recruiter and Ashaya typically dominate here.`}>
+                                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: "#9ab0f0", letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>
+                                  🧩 PIECE WIN-PRESENCE (?)
                                 </div>
                               </Tip>
                               {nr.stallCards.map((s, i) => (
                                 <div key={i} style={{ marginBottom: "5px" }}>
                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "2px" }}>
                                     <span style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", flex: 1 }}>{s.card}</span>
-                                    <span style={{ fontSize: "9px", color: "#e09050", fontFamily: "'Cinzel', serif", marginLeft: "6px", flexShrink: 0 }}>{s.pct}% of losses</span>
+                                    <span style={{ fontSize: "9px", color: "#9ab0f0", fontFamily: "'Cinzel', serif", marginLeft: "6px", flexShrink: 0 }}>
+                                      {s.inWins}/{s.wins} wins · {s.winPct}%
+                                    </span>
                                   </div>
                                   <div style={{ height: "3px", background: COLORS.border, borderRadius: "2px", overflow: "hidden" }}>
-                                    <div style={{ height: "100%", width: `${s.pct}%`, background: "#e09050", borderRadius: "2px", opacity: 0.6 }} />
+                                    <div style={{ height: "100%", width: `${s.winPct}%`, background: "#9ab0f0", borderRadius: "2px", opacity: 0.7 }} />
                                   </div>
                                 </div>
                               ))}
