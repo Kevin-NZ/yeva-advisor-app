@@ -2249,6 +2249,32 @@ function calculateCardManaForPool(card, battlefield) {
   return green + colorless;
 }
 
+// Priority-sorted discard target picker for Fauna Shaman / Survival / Speaker ETB.
+// Avoids win-pile pieces when better options exist.
+// exclude: Set or array of card names to skip (e.g. the tutor card itself).
+function bestDiscardFromHand(hand, exclude = []) {
+  const excludeSet = new Set(Array.isArray(exclude) ? exclude : [exclude]);
+  const WIN_PILE = new Set([
+    "Endurance","Eternal Witness","Duskwatch Recruiter",
+    "Temur Sabertooth","Kogla, the Titan Ape","Formidable Speaker",
+    "Quirion Ranger","Scryb Ranger","Argothian Elder","Ashaya, Soul of the Wild",
+    "Woodland Bellower","Finale of Devastation","Regal Force",
+  ]);
+  const EXPENDABLE = new Set([
+    "Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid",
+    "Birds of Paradise","Arbor Elf","Dryad Arbor","Joraga Treespeaker",
+    "Forest","Plains","Island","Swamp","Mountain",
+  ]);
+  const candidates = hand.filter(c => !excludeSet.has(c));
+  if (candidates.length === 0) return "a card";
+  const scored = candidates.map(c => ({
+    name: c,
+    score: EXPENDABLE.has(c) ? 0 : WIN_PILE.has(c) ? 2 : 1,
+  }));
+  scored.sort((a, b) => a.score - b.score);
+  return scored[0].name;
+}
+
 function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false, sickCreatures = null }) {
   // deckList: Set of card names in the player's deck. When set, ONE PIECE AWAY advice and
   // combo suggestions are filtered to only show cards that are actually in the deck.
@@ -4884,7 +4910,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     );
     const sacTarget = sacCandidates[0] || sacFallback[0] || null;
     // Discard source for Speaker ETB
-    const discardCard = hand.find(c => c !== "Eternal Witness") || null;
+    const discardCard = bestDiscardFromHand(hand, ["Eternal Witness"]) || null;
     const hasBattlefieldForest = battlefield.some(c => c === "Forest" || getCard(c)?.tags?.includes("basic"));
     const rangerCanBounce = hasBattlefieldForest && hasRanger;
     const hasDiscardForSpeaker = !!discardCard || rangerCanBounce;
@@ -6067,7 +6093,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const drawNote = !isMyTurn && tutorUsed === "Worldly Tutor"
         ? "Speaker goes on top of library — draw and cast it on your next turn."
         : `Cast Speaker immediately ({2}{G}) this turn.`;
-      const discardCard = hand.find(c => c !== tutorUsed && c !== "Formidable Speaker") ?? "any card";
+      const discardCard = bestDiscardFromHand(hand, [tutorUsed, "Formidable Speaker"]);
 
       results.push({
         priority: 10,
@@ -9691,7 +9717,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const yevaStep = !isMyTurn && !yevaFlash
           ? [`Cast Yeva, Nature's Herald (command zone, {2}{G}{G}) — all green creatures gain flash this turn.`]
           : [];
-        const discardCard = hand.filter(c => c !== "Formidable Speaker" && c !== "Ashaya, Soul of the Wild" && c !== "Argothian Elder")[0] ?? "a card";
+        const discardCard = bestDiscardFromHand(hand, ["Formidable Speaker","Ashaya, Soul of the Wild","Argothian Elder"]);
         results.push({
           priority: 15,
           category: "⚡ CAST TO WIN",
@@ -9729,7 +9755,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             detail: "Infinite mana is already active. Cast Formidable Speaker ({2}{G}): ETB — discard any card, search your entire library for Duskwatch Recruiter. Cast Duskwatch. Activate ({2}{G}) repeatedly to find Endurance, Eternal Witness, and Geier Reach Sanitarium. Mill all opponents to win.",
             steps: [
               "Infinite mana is active.",
-              `Cast Formidable Speaker ({2}{G}): ETB — discard ${hand.filter(c => c !== "Formidable Speaker")[0] ?? "a card"} → search your entire library for Duskwatch Recruiter. Shuffle.`,
+              `Cast Formidable Speaker ({2}{G}): ETB — discard ${bestDiscardFromHand(hand, ["Formidable Speaker"])} → search your entire library for Duskwatch Recruiter. Shuffle.`,
               "Cast Duskwatch Recruiter ({1}{G}). With infinite mana: activate ({2}{G}) repeatedly — look at top 3, put any creature found into hand.",
               "Find Endurance, Eternal Witness, and Geier Reach Sanitarium (or Talon Gates of Madara).",
               "Tap Geier Reach Sanitarium, Eternal Witness recurs it each loop — mill all opponents to win.",
@@ -9757,7 +9783,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           const castStep = bouncerInHand
             ? `Cast ${bouncer} (${bouncer === "Temur Sabertooth" ? "{3}{G}" : "{4}{G}{G}"}). `
             : "";
-          const discardSrc = hand.filter(c => c !== bouncer)[0] ?? "a card from hand";
+          const discardSrc = bestDiscardFromHand(hand, [bouncer]);
           results.push({
             priority: 15,
             category: "⚡ CAST TO WIN",
@@ -9811,7 +9837,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const fetchNote  = fetchSpell === "Summoner's Pact"
           ? "Summoner's Pact is free — pay {2}{G}{G} next upkeep."
           : "Shared Summons fetches two creatures — grab Ashaya + Duskwatch Recruiter if available.";
-        const discardCard = hand.filter(c => c !== fetchSpell)[0] ?? "a card";
+        const discardCard = bestDiscardFromHand(hand, [fetchSpell]);
         results.push({
           priority: 15,
           category: "🔥 WIN NOW",
@@ -9855,7 +9881,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (bellowerInHand && speakerNotBoard2 && quirionBoard3 && elderBoard3
           && ashayaNotBoard3 && ashayaNotHand3 && canAffordBellower
           && hasDiscardBellower && (isMyTurn || yevaAvailable) && !alreadyWin3) {
-        const discardCard3 = hand.filter(c => c !== "Woodland Bellower")[0] ?? "a card";
+        const discardCard3 = bestDiscardFromHand(hand, ["Woodland Bellower"]);
         results.push({
           priority: 15,
           category: "🔥 WIN NOW",
@@ -9923,7 +9949,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const fetchCost6 = pactSpell6 === "Shared Summons" ? 5 : 0; // Pact is free; Shared Summons costs {3}{G}{G}
 
         if ((effectiveMana6 >= totalNeeded6 + fetchCost6) && hasDiscard6) {
-          const discardCard6 = hand.filter(c => c !== "Woodland Bellower" && c !== "Summoner's Pact" && c !== "Shared Summons")[0] ?? "a card";
+          const discardCard6 = bestDiscardFromHand(hand, ["Woodland Bellower","Summoner's Pact","Shared Summons"]);
           const tapNote6 = tapBackMana6 > 0
             ? `After Ashaya resolves, tap ${untappedCreatures6 + speakerTap6 + quirionTap6} creature${untappedCreatures6 + speakerTap6 + quirionTap6 !== 1 ? "s" : ""} as Forests${yavLands6 > 0 ? ` + ${yavLands6} non-Forest land${yavLands6 !== 1 ? "s" : ""} via Yavimaya` : ""} for ${tapBackMana6} {G}.`
             : "";
@@ -9993,7 +10019,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const hasDiscardForSpeaker4 = hand.filter(c => c !== "Woodland Bellower").length > 0;
 
         if (totalEffectiveMana >= elderCmc && hasDiscardForSpeaker4) {
-          const discardCard4 = hand.filter(c => c !== "Woodland Bellower")[0] ?? "a card";
+          const discardCard4 = bestDiscardFromHand(hand, ["Woodland Bellower"]);
           const tapNote = postBellowerTapMana > 0
             ? `After Bellower resolves, tap ${untappedCreatureCount + speakerExtraMana} creature${untappedCreatureCount + speakerExtraMana !== 1 ? "s" : ""} as Forests (via Ashaya${yavimayaActive ? " + Yavimaya" : ""}) for ${postBellowerTapMana} {G} to fund Elder.`
             : "";
@@ -10039,7 +10065,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : null;
       // Mana: Bellower(6) + Temur(4) = 10
       const bsTManaOk   = mana >= 10 || infiniteManaActive;
-      const bsTDiscard  = hand.find(c => c !== "Woodland Bellower") ?? null;
+      const bsTDiscard  = bestDiscardFromHand(hand, ["Woodland Bellower"]) || null;
 
       if (bsTBellower && bsTSpeakerOut && bsTTemurOut && bsTHopeTender
           && bsTBigLand && bsTManaOk && bsTDiscard
@@ -10083,7 +10109,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : board.has("Nykthos, Shrine to Nyx") && devotionOnBoard >= 4 ? "Nykthos, Shrine to Nyx"
         : null;
       const bsKManaOk   = mana >= 12 || infiniteManaActive;
-      const bsKDiscard  = hand.find(c => c !== "Woodland Bellower") ?? null;
+      const bsKDiscard  = bestDiscardFromHand(hand, ["Woodland Bellower"]) || null;
 
       if (bsKBellower && bsKSpeakerOut && bsKKoglaOut && bsKTemurOut && bsKHopeTender
           && bsKBigLand && bsKManaOk && bsKDiscard
@@ -10138,7 +10164,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           && ashayaNotOnBoard2 && ashayaNotInHand2 && pactInHand2
           && canAffordLine2 && hasDiscardForSpeaker2
           && (isMyTurn || yevaAvailable) && !alreadyWinFired2) {
-        const discardCard2 = hand.filter(c => c !== "Summoner's Pact")[0] ?? "a card";
+        const discardCard2 = bestDiscardFromHand(hand, ["Summoner's Pact"]);
         results.push({
           priority: 15,
           category: "🔥 WIN NOW",
@@ -10301,6 +10327,129 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ],
         color: "#c0392b",
       });
+    }
+  }
+
+  // ---- FAUNA SHAMAN / SURVIVAL → CREATURE TUTOR WIN CON ----
+  // Fauna Shaman ({T},{G}: discard creature → find creature → hand) and
+  // Survival of the Fittest ({G}: discard creature → find creature → hand) can find any creature.
+  // Fauna has summoning sickness — needs haste enabler OR must wait a turn.
+  // Survival has no {T} cost — can be activated immediately even the turn it's cast.
+  {
+    const faunaOnBoard     = board.has("Fauna Shaman") && !sickCreatures?.has("Fauna Shaman");
+    const faunaInHandNow   = inHand.has("Fauna Shaman") && !board.has("Fauna Shaman");
+    const survivalOnBoard  = board.has("Survival of the Fittest");
+    const hasteForFauna    = board.has("Thousand-Year Elixir"); // Elixir lets tapped creatures activate immediately
+    const faunaCanActNow   = faunaOnBoard || survivalOnBoard || (faunaInHandNow && hasteForFauna);
+    const faunaNextTurn    = faunaInHandNow && !hasteForFauna && !survivalOnBoard && !faunaOnBoard;
+    const hasTutor         = faunaCanActNow || faunaNextTurn;
+    const source           = survivalOnBoard ? "Survival of the Fittest" : "Fauna Shaman";
+    const isActingNow      = faunaCanActNow;
+
+    // Pick the best creature to discard: avoid win-pile/key pieces when better options exist.
+    const creatureToDiscard = bestDiscardFromHand(
+      hand.filter(c => c !== "Fauna Shaman" && c !== "Survival of the Fittest" && getCard(c)?.type === "creature"),
+      [] // already filtered above
+    );
+
+    if (hasTutor && creatureToDiscard && !results.some(r => r.combo === "fauna_duskwatch_win")) {
+      // Build priority-ordered target list. Pick the best creature NOT already in hand or on board.
+      // Each entry: { name, reason, winNow, comboDesc }
+      const FAUNA_TARGETS = [
+        // ── Immediate win outlets when infinite is active ────────────────────
+        { name: "Duskwatch Recruiter",
+          cond: infiniteManaActive && !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter"),
+          reason: "activate with infinite mana → draw entire library → assemble win pile",
+          winNow: true, followup: "Cast Duskwatch ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana → draw library → win." },
+        { name: "Finale of Devastation",
+          cond: false }, // sorcery — Fauna can't find it
+        // ── Combo enablers that create infinite mana ─────────────────────────
+        { name: "Ashaya, Soul of the Wild",
+          cond: !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild") &&
+                (board.has("Quirion Ranger") || board.has("Scryb Ranger")) &&
+                battlefield.some(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork")),
+          reason: "all creatures become Forests → Ranger loop = infinite mana",
+          winNow: false, followup: "Cast Ashaya ({3}{G}{G}). With Ranger + big dork on board, loop to infinite mana." },
+        { name: "Ashaya, Soul of the Wild",
+          cond: !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild") &&
+                board.has("Argothian Elder"),
+          reason: "Elder becomes a Forest → Elder untaps itself = 2-card infinite mana",
+          winNow: false, followup: "Cast Ashaya ({3}{G}{G}). Argothian Elder is now a Forest — tap Elder, activate to untap itself → infinite mana." },
+        { name: "Quirion Ranger",
+          cond: !board.has("Quirion Ranger") && !board.has("Scryb Ranger") &&
+                !inHand.has("Quirion Ranger") && !inHand.has("Scryb Ranger") &&
+                board.has("Ashaya, Soul of the Wild") &&
+                battlefield.some(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork")),
+          reason: "completes Ashaya + Ranger + big dork = infinite mana",
+          winNow: false, followup: "Cast Quirion Ranger ({G}). Loop: Ranger returns itself (Forest via Ashaya) to untap dork repeatedly → infinite mana." },
+        { name: "Scryb Ranger",
+          cond: !board.has("Scryb Ranger") && !board.has("Quirion Ranger") &&
+                !inHand.has("Scryb Ranger") && !inHand.has("Quirion Ranger") &&
+                board.has("Ashaya, Soul of the Wild") &&
+                battlefield.some(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork")),
+          reason: "completes Ashaya + Scryb + big dork (≥3) = infinite mana (Scryb has flash)",
+          winNow: false, followup: "Flash in Scryb Ranger ({1}{G}). Loop: Scryb returns a Forest to untap dork → infinite mana." },
+        { name: "Argothian Elder",
+          cond: !board.has("Argothian Elder") && !inHand.has("Argothian Elder") &&
+                board.has("Ashaya, Soul of the Wild"),
+          reason: "2-card infinite with Ashaya — Elder becomes Forest, untaps itself",
+          winNow: false, followup: "Cast Argothian Elder ({3}{G}). With Ashaya, Elder is now a Forest — tap Elder, activate to untap itself → infinite mana." },
+        { name: "Priest of Titania",
+          cond: !board.has("Priest of Titania") && !inHand.has("Priest of Titania") &&
+                board.has("Ashaya, Soul of the Wild") &&
+                (board.has("Quirion Ranger") || board.has("Scryb Ranger")) &&
+                battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length >= 4,
+          reason: "big mana dork — completes Ranger + Ashaya infinite with 4+ elves",
+          winNow: false, followup: "Cast Priest of Titania ({1}{G}). With 4+ elves + Ashaya + Ranger, Priest taps for ≥4 mana → loop → infinite." },
+        { name: "Elvish Archdruid",
+          cond: !board.has("Elvish Archdruid") && !inHand.has("Elvish Archdruid") &&
+                board.has("Ashaya, Soul of the Wild") &&
+                (board.has("Quirion Ranger") || board.has("Scryb Ranger")) &&
+                battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length >= 3,
+          reason: "big elf mana dork — completes infinite loop",
+          winNow: false, followup: "Cast Elvish Archdruid ({1}{G}{G}). Taps for elf count. With Ashaya + Ranger, loop → infinite." },
+        // ── Win-pile assembly pieces ──────────────────────────────────────────
+        { name: "Temur Sabertooth",
+          cond: infiniteManaActive && !board.has("Temur Sabertooth") && !inHand.has("Temur Sabertooth"),
+          reason: "bounce engine — Sabertooth + any ETB creature loops to assemble win pile",
+          winNow: true, followup: "Cast Temur Sabertooth ({2}{G}{G}). Pay {1}{G}: bounce any creature to hand, recast for ETB → find win pile." },
+        { name: "Endurance",
+          cond: infiniteManaActive && !board.has("Endurance") && !inHand.has("Endurance") &&
+                (board.has("Geier Reach Sanitarium") || inHand.has("Geier Reach Sanitarium")),
+          reason: "completes Sanitarium mill — ETB shuffles graveyard back for infinite mill loop",
+          winNow: true, followup: "Flash in Endurance. ETB: shuffle graveyard into library. Loop Sanitarium → opponents mill out." },
+      ].filter(t => t.cond);
+
+      const best = FAUNA_TARGETS[0];
+      if (best) {
+        const castLine = faunaInHandNow && !faunaOnBoard && !survivalOnBoard
+          ? `Cast ${source} ({1}{G})${hasteForFauna ? " — Thousand-Year Elixir lets her activate immediately." : " — summoning sickness applies; activate next turn."}`
+          : null;
+        const activateVerb = survivalOnBoard ? `Activate Survival of the Fittest ({G})` : `Tap Fauna Shaman ({G})`;
+        const priority = (isActingNow && best.winNow) ? 15
+                       : isActingNow ? 13
+                       : best.winNow ? 12
+                       : 11;
+        const category = (isActingNow && best.winNow) ? "⚡ CAST TO WIN"
+                       : isActingNow ? "⚡ NEAR WIN — ASSEMBLE"
+                       : best.winNow ? "⏭️ WIN NEXT TURN"
+                       : "⏭️ SETUP NEXT TURN";
+        const actionPrefix = isActingNow ? source : `Cast ${source} now`;
+        results.push({
+          priority,
+          category,
+          combo: "fauna_duskwatch_win",
+          headline: `${actionPrefix} → discard ${creatureToDiscard} → find ${best.name}${best.winNow ? " → WIN" : " → infinite mana"}`,
+          detail: `${source} can find ${best.name}: ${best.reason}.${!isActingNow ? " Fauna Shaman has summoning sickness — cast now, activate next turn." : ""}`,
+          steps: [
+            ...(castLine ? [castLine] : []),
+            `${activateVerb}: discard ${creatureToDiscard} → search library for ${best.name} → hand.`,
+            `Cast ${best.name}.`,
+            best.followup,
+          ],
+          color: (isActingNow && best.winNow) ? "#ff4500" : isActingNow ? "#f39c12" : "#c8a800",
+        });
+      }
     }
   }
 
@@ -10662,7 +10811,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
               const canAffordFull = mana >= totalCost || infiniteManaActive;
 
               if (canAffordFull) {
-                const discardCard = hand.filter(c => c !== primaryTutorForSpeaker.name)[0] ?? "a card";
+                const discardCard = bestDiscardFromHand(hand, [primaryTutorForSpeaker.name]);
                 const tutorNote   = primaryTutorForSpeaker.note ? ` (${primaryTutorForSpeaker.note})` : "";
                 const speakerStep = isBellower
                   ? `Woodland Bellower ETB puts Formidable Speaker directly onto the battlefield.`
@@ -11230,10 +11379,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const speakerInHandBouncerOk = speakerInHand && (temurAccessible || koglaAccessible);
     // Finale of Devastation with X≥10 also finds any creature
     const finaleAccessible = poolHave.has("Finale of Devastation");
-    // hasDuskwatch: on board/hand, OR reachable via Speaker loop, OR via Finale
+    // Fauna Shaman in hand (castable this turn) + creature to discard → finds Duskwatch
+    // Survival of the Fittest on board + creature to discard → finds Duskwatch
+    // For winConversion (infinite already active): any usable Fauna/Survival counts
+    const faunaInHand = poolHave.has("Fauna Shaman") && !battlefield.some(c => c === "Fauna Shaman");
+    const faunaReadyOnBoard = battlefield.some(c => c === "Fauna Shaman") && !sickCreatures?.has("Fauna Shaman");
+    const survivalOnBoard = battlefield.some(c => c === "Survival of the Fittest");
+    const hasteForFaunaWC = battlefield.some(c => c === "Thousand-Year Elixir");
+    const hasCreatureToDiscard = hand.some(c => c !== "Fauna Shaman" && getCard(c)?.type === "creature");
+    const faunaAccessible = (faunaReadyOnBoard || survivalOnBoard || (faunaInHand && hasteForFaunaWC))
+      && hasCreatureToDiscard && (isMyTurn || yevaAvailable);
+    // hasDuskwatch: on board/hand, OR reachable via Speaker loop, OR via Finale, OR via Fauna/Survival
     const hasDuskwatch = poolHave.has("Duskwatch Recruiter")
       || battlefield.some(c => c === "Duskwatch Recruiter")
-      || speakerBouncerOk || speakerInHandBouncerOk || finaleAccessible;
+      || speakerBouncerOk || speakerInHandBouncerOk || finaleAccessible || faunaAccessible;
     const hasEndurance = poolHave.has("Endurance");
     const hasSanitarium = poolHave.has("Geier Reach Sanitarium");
     const hasAshaya = poolHave.has("Ashaya, Soul of the Wild");
@@ -11293,6 +11452,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       } else if (speakerInHandBouncerOk) {
         const bouncerName = temurAccessible ? "Temur Sabertooth" : "Kogla, the Titan Ape";
         winPaths.push({ path: "duskwatch-via-speaker", priority: 1, desc: `Cast Formidable Speaker + ${bouncerName} → ETB loop finds Duskwatch Recruiter → activate for win`, missing: [] });
+      } else if (faunaAccessible) {
+        const faunaSource = faunaReadyOnBoard ? "Activate Fauna Shaman" : survivalOnBoard ? "Activate Survival of the Fittest" : "Cast Fauna Shaman";
+        const _wcWinPile = new Set(["Endurance","Eternal Witness","Duskwatch Recruiter","Temur Sabertooth","Kogla, the Titan Ape","Formidable Speaker","Quirion Ranger","Scryb Ranger","Argothian Elder","Ashaya, Soul of the Wild"]);
+        const _wcExpendable = new Set(["Llanowar Elves","Elvish Mystic","Fyndhorn Elves","Boreal Druid","Birds of Paradise","Arbor Elf","Dryad Arbor","Joraga Treespeaker"]);
+        const _wcCandidates = hand.filter(c => c !== "Fauna Shaman" && c !== "Survival of the Fittest" && getCard(c)?.type === "creature");
+        _wcCandidates.sort((a, b) => {
+          const sa = _wcExpendable.has(a) ? 0 : _wcWinPile.has(a) ? 2 : 1;
+          const sb = _wcExpendable.has(b) ? 0 : _wcWinPile.has(b) ? 2 : 1;
+          return sa - sb;
+        });
+        const discardTarget = _wcCandidates[0] ?? "a creature";
+        winPaths.push({ path: "duskwatch-via-fauna", priority: 1, desc: `${faunaSource} → discard ${discardTarget} → find Duskwatch Recruiter → activate with infinite mana for win`, missing: [] });
       }
       // Mill path
       if (hasEndurance && hasSanitarium && hasUntapLand) {
@@ -11330,11 +11501,19 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const best = winConversion.find(p => p.missing.length === 0);
         turnClock = { turns: 0, plan: `Infinite mana + win outlet: ${best.desc}` };
       } else {
-        // Infinite mana but no win outlet in hand/board — need one more piece
-        const blocked = winConversion?.[0];
-        turnClock = { turns: 1, plan: blocked
-          ? `Infinite mana active — need: ${blocked.missing.join(", ")}`
-          : "Infinite mana active — find a win outlet (Duskwatch, Finale, etc.)" };
+        // Also check bespoke WIN NOW result cards — they may surface a win that winConversion missed
+        // (e.g. Chord of Calling → Duskwatch, Fauna Shaman → Duskwatch, etc.)
+        const bespokeWin = results.find(r => !r.isSuppressed && r.priority >= 15 &&
+          (r.category?.includes("WIN NOW") || r.category?.includes("CAST TO WIN") || r.category?.includes("CAST TO WIN")));
+        if (bespokeWin) {
+          turnClock = { turns: 0, plan: bespokeWin.headline?.slice(0, 80) ?? "Win this turn" };
+        } else {
+          // Infinite mana but no win outlet in hand/board — need one more piece
+          const blocked = winConversion?.[0];
+          turnClock = { turns: 1, plan: blocked
+            ? `Infinite mana active — need: ${blocked.missing.join(", ")}`
+            : "Infinite mana active — find a win outlet (Duskwatch, Finale, etc.)" };
+        }
       }
     }
   }
@@ -22936,7 +23115,17 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               pushUndo();
               // Step 1: pick a Forest to bounce
               setPendingPicker({ label: `${card.toUpperCase()} — BOUNCE A FOREST TO HAND`, color: COLORS.green3,
-                items: forests.map(({c,i}) => ({ label: c, sub: "land · bounce to hand", key: `${c}:${i}`, c, i })),
+                items: forests.map(({c,i}) => {
+                  const isTapped = tapped.has(cardKey(c, i));
+                  const cd = getCard(c);
+                  const isCreature = cd?.type === "creature";
+                  const typeLabel = isCreature ? "creature-Forest (Ashaya)" : "land";
+                  return {
+                    label: c,
+                    sub: `${typeLabel} · ${isTapped ? "● tapped" : "○ untapped"} · bounce to hand`,
+                    key: `${c}:${i}`, c, i,
+                  };
+                }),
                 onSelect: ({ c: forestCard, i: forestIdx }) => {
                   // Compute the updated battlefield after the forest is removed — used for step 2
                   // to avoid a stale-closure bug where the old `battlefield` array would be read.
