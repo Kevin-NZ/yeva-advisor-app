@@ -8124,9 +8124,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       { name: "Priest of Titania",      cmc: 2 },
     ];
     const reachablePieces = COMBO_PIECE_COSTS.filter(p =>
-      (inHand.has(p.name) || !board.has(p.name)) &&
-      manaAfterCradle >= p.cmc &&
-      !board.has(p.name)
+      !board.has(p.name) &&
+      !inHand.has(p.name) &&
+      manaAfterCradle >= p.cmc
     );
     const cradleWinNote = reachablePieces.length > 0
       ? ` Cradle taps for ${cradleManaAfterFetch} mana — enough to cast ${reachablePieces[0].name} (CMC ${reachablePieces[0].cmc}) this turn.`
@@ -8438,28 +8438,33 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         headline: (() => {
           // Build clean headline. For informational NEED-MANA paths, strip pieces
           // already in hand/board from the combo name so they don't look like targets to find.
-          // For active paths (same-turn/win-now), keep the full combo name since it's descriptive.
-          const isInfoOnly = !l.sameTurn && !l.winNow && !l.nextTurnOnly;
-          if (!isInfoOnly) {
-            if (l.tutorSteps.length === 0) return `Cast pieces → ${l.combo.name}`;
-            if (l.tutorSteps.length === 1) return `${l.tutorSteps[0].tutor} → ${l.tutorSteps[0].target} → ${l.combo.name}`;
-            return `${l.tutorSteps.length} steps → ${l.combo.name}`;
-          }
-          // Info-only (NEED X MANA): strip tokens for pieces already in hand/board
+          // For active WIN NOW / same-turn / next-turn paths, keep the full combo name —
+          // pieces on board ARE part of what makes the combo work and belong in the description.
           const alreadyHaveSet = new Set([...battlefield, ...hand]);
           const tutorTargets = new Set(l.tutorSteps.map(s => s.target));
           const comboTokens = l.combo.name.split(/\s*\+\s*/);
-          const missingTokens = comboTokens.filter(token => {
-            // Keep token if it's a tutor target (still needs to be found)
-            if ([...tutorTargets].some(t => token.includes(t.split(",")[0]) || t.split(",")[0].startsWith(token.trim()))) return true;
-            // Drop token if already in hand/board
-            return ![...alreadyHaveSet].some(card =>
-              card.startsWith(token.trim()) || token.trim().startsWith(card.split(",")[0])
-            );
-          });
-          const comboNameDisplay = missingTokens.length > 0 && missingTokens.length < comboTokens.length
-            ? missingTokens.join(" + ")
-            : l.combo.name;
+
+          function stripOwnedFromName() {
+            const missingTokens = comboTokens.filter(token => {
+              const t = token.trim().toLowerCase();
+              // Always keep tokens that are tutor targets (still need to be found)
+              if ([...tutorTargets].some(tgt =>
+                t.includes(tgt.split(",")[0].toLowerCase()) || tgt.split(",")[0].toLowerCase().startsWith(t)
+              )) return true;
+              // Drop tokens for pieces already in hand/board
+              return ![...alreadyHaveSet].some(card =>
+                card.toLowerCase().startsWith(t) || t.startsWith(card.split(",")[0].toLowerCase())
+              );
+            });
+            return missingTokens.length > 0 && missingTokens.length < comboTokens.length
+              ? missingTokens.join(" + ")
+              : l.combo.name;
+          }
+
+          // Only strip for info-only paths (NEED X MANA) — not WIN NOW / same-turn / next-turn
+          const isInfoOnly = !l.sameTurn && !l.winNow && !l.nextTurnOnly;
+          const comboNameDisplay = isInfoOnly ? stripOwnedFromName() : l.combo.name;
+
           if (l.tutorSteps.length === 0) return `Cast pieces → ${comboNameDisplay}`;
           if (l.tutorSteps.length === 1) return `${l.tutorSteps[0].tutor} → ${l.tutorSteps[0].target} → ${comboNameDisplay}`;
           return `${l.tutorSteps.length} steps → ${comboNameDisplay}`;
@@ -8510,7 +8515,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           return [
             ...assemblySteps,
             "── EXECUTE COMBO ──",
-            ...l.combo.lines,
+            ...filterComboLines(l.combo.lines),
             ...(l.outletSteps?.length > 0 ? ["── WIN OUTLET ──", ...l.outletSteps] : []),
             ...(l.winNow && l.outletNote ? [`Win: ${l.outletNote} → activate with infinite mana → draw entire library → win.`] : []),
           ];
@@ -8532,6 +8537,44 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
     return _tutorCache.get(target);
   };
+
+  // Helper: given a combo name like "Earthcraft + Ashaya + Quirion Ranger + Forest",
+  // strip tokens the player already owns so the headline focuses on what's missing.
+  // ownedPieces: array of card names already on board/hand.
+  function comboNameForDisplay(comboName, ownedPieces) {
+    if (!ownedPieces || ownedPieces.length === 0) return comboName;
+    const ownedSet = new Set(ownedPieces.map(c => c.split(",")[0].trim().toLowerCase()));
+    const tokens = comboName.split(/\s*\+\s*/);
+    const keep = tokens.filter(token => {
+      const t = token.trim().toLowerCase();
+      // Keep token if it does NOT match any owned piece
+      return ![...ownedSet].some(owned => t.startsWith(owned) || owned.startsWith(t));
+    });
+    // Only rewrite if we actually dropped something and something remains
+    if (keep.length > 0 && keep.length < tokens.length) return keep.join(" + ");
+    return comboName;
+  }
+
+  // Helper: filter combo.lines to strip "X + Y on battlefield." prerequisite lines
+  // that list pieces the player already owns (in hand or on board).
+  function filterComboLines(lines) {
+    const ownedSet = new Set([...battlefield, ...hand]);
+    return lines.map(line => {
+      if (!line.includes(" on battlefield")) return line;
+      const bare = line.replace(/ on battlefield\.?\s*$/, '');
+      const tokens = bare.split(/\s*\+\s*/);
+      const stillNeeded = tokens.filter(token => {
+        const t = token.trim().toLowerCase();
+        return ![...ownedSet].some(card =>
+          card.toLowerCase().startsWith(t) || t.startsWith(card.split(",")[0].toLowerCase())
+        );
+      });
+      if (stillNeeded.length === 0) return null;
+      if (stillNeeded.length === tokens.length) return line;
+      return stillNeeded.join(" + ") + " on battlefield.";
+    }).filter(Boolean);
+  }
+
   for (const combo of COMBOS) {
     // mustPreExist: cards with summoning sickness that must tap to function
     //   Argothian Elder, Magus of the Candelabra, Arbor Elf, Fanatic of Rhonas, Yisan
@@ -8675,7 +8718,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             headline: castHeadline,
             detail: castDetail,
             steps: viaYeva
-              ? ["Cast Yeva, Nature's Herald from the command zone ({2}{G}{G}).", ...combo.lines]
+              ? ["Cast Yeva, Nature's Herald from the command zone ({2}{G}{G}).", ...filterComboLines(combo.lines)]
               : combo.lines,
             combo: combo.id,
             color: typeMeta.color,
@@ -8728,17 +8771,20 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         results.push({
           priority: opaPriority,
           category: "🎯 ONE PIECE AWAY",
-          headline: speakerIsTutor
-            ? `Cast Formidable Speaker → ETB finds ${missingCard} → enables ${combo.name}`
-            : tutorOptions.length > 0
-              ? `Find ${missingCard} via ${tutorOptions[0].split(" (")[0]} to enable ${combo.name}`
-              : `Find ${missingCard} to enable ${combo.name}`,
+          headline: (() => {
+            // Strip already-owned pieces from the combo name so the headline focuses on what's missing.
+            const opaOwned = combo.requires.filter(r => r !== missingCard && (board.has(r) || inHand.has(r)));
+            const opaName = comboNameForDisplay(combo.name, opaOwned);
+            if (speakerIsTutor) return `Cast Formidable Speaker → ETB finds ${missingCard} → enables ${opaName}`;
+            if (tutorOptions.length > 0) return `Find ${missingCard} via ${tutorOptions[0].split(" (")[0]} to enable ${opaName}`;
+            return `Find ${missingCard} to enable ${opaName}`;
+          })(),
           detail: tutorOptions.length > 0
             ? `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`
             : `You need ${missingCard} to enable ${combo.name}. ${combo.description}`,
           steps: tutorOptions.length > 0
-            ? [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...combo.lines]
-            : [`Find ${missingCard} to complete this combo.`, ...combo.lines],
+            ? [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...filterComboLines(combo.lines)]
+            : [`Find ${missingCard} to complete this combo.`, ...filterComboLines(combo.lines)],
           combo: combo.id,
           color: speakerIsTutor ? "#e67e22" : "#58d68d",
         });
@@ -8756,14 +8802,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           && extras.missing.toLowerCase().includes("endurance");
         if (!suppressEndurance && inDeck(extras.missing)) {
           const tutorOptions = cachedTutorOptions(extras.missing);
+          const nearlyOwnedPieces = combo.requires.filter(r => r !== extras.missing && (board.has(r) || inHand.has(r)));
           results.push({
             priority: combo.priority,
             category: "🔧 NEARLY THERE",
-            headline: `${combo.name} — still need: ${extras.missing}`,
+            headline: `${comboNameForDisplay(combo.name, nearlyOwnedPieces)} — still need: ${extras.missing}`,
             detail: `You have the core pieces for ${combo.name} but still need ${extras.missing} to satisfy the mana threshold. ${combo.description}`,
             steps: tutorOptions.length > 0
-              ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...combo.lines]
-              : [`Find ${extras.missing} to complete this combo.`, ...combo.lines],
+              ? [`Use ${tutorOptions.join(" or ")} to find ${extras.missing}.`, ...filterComboLines(combo.lines)]
+              : [`Find ${extras.missing} to complete this combo.`, ...filterComboLines(combo.lines)],
             combo: combo.id,
             color: "#85c1e9",
           });
@@ -8787,11 +8834,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           results.push({
             priority: combo.priority - 3,
             category: "🔨 BUILDING TOWARDS",
-            headline: `${combo.name} — need: ${missingNames}${missing.length > 3 ? " …" : ""}`,
+            headline: `${comboNameForDisplay(combo.name, ownedPieces)} — need: ${missingNames}${missing.length > 3 ? " …" : ""}`,
             detail: `You have ${ownedPieces.join(", ")}. Still need: ${missing.join(", ")}. ${combo.description}`,
             steps: tutorOptions.length > 0
-              ? [`Priority: use ${tutorOptions[0]} to find ${tutorableMissing}.`, ...combo.lines]
-              : [`Find ${missing.join(", ")} to assemble this combo.`, ...combo.lines],
+              ? [`Priority: use ${tutorOptions[0]} to find ${tutorableMissing}.`, ...filterComboLines(combo.lines)]
+              : [`Find ${missing.join(", ")} to assemble this combo.`, ...filterComboLines(combo.lines)],
             combo: combo.id,
             color: "#5d8a5d",
           });
@@ -9252,7 +9299,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             steps: [
               `${accessNote}: retrieve ${piece} from graveyard.`,
               `Cast ${piece} to complete ${combo.name}.`,
-              ...combo.lines,
+              ...filterComboLines(combo.lines),
             ],
             color: "#58d68d",
           });
@@ -10656,14 +10703,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (tutors.length > 0) {
       const tutor = tutors[0];
       const targets = getPriorityTargets(battlefield, hand, graveyard);
-      results.push({
-        priority: 6,
-        category: "🎯 TUTOR",
-        headline: `Cast ${tutor} → find ${targets[0] || "a combo piece"}`,
-        detail: `Use ${tutor} to dig for your missing combo pieces. Priority: Ashaya > Priest of Titania > Temur Sabertooth > Quirion Ranger.`,
-        steps: [`Cast ${tutor}. Priority targets: ${targets.slice(0,3).join(", ")}.`],
-        color: "#5dade2",
-      });
+      if (targets.length > 0) {
+        results.push({
+          priority: 6,
+          category: "🎯 TUTOR",
+          headline: `Cast ${tutor} → find ${targets[0]}`,
+          detail: `Use ${tutor} to dig for your missing combo pieces. Priority: Ashaya > Priest of Titania > Temur Sabertooth > Quirion Ranger.`,
+          steps: [`Cast ${tutor}. Priority targets: ${targets.slice(0,3).join(", ")}.`],
+          color: "#5dade2",
+        });
+      }
     }
   }
 
@@ -12885,7 +12934,7 @@ function getPriorityTargets(battlefield, hand, graveyard = []) {
     "Karametra's Acolyte","Earthcraft","Wirewood Symbiote",
     ...(witnessWorthIt ? ["Eternal Witness"] : []),
   ];
-  return allNeeded.filter(c => !board.has(c));
+  return allNeeded.filter(c => !board.has(c) && !new Set(hand).has(c));
 }
 
 // ============================================================
