@@ -5405,7 +5405,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             "Harmonize Nature's Rhythm: cast from graveyard for X=2 (base cost {2}{G}{G}{G}{G}=6). Tap creatures to reduce generic portion — with infinite mana, cost is trivial.",
             "Duskwatch Recruiter enters the battlefield.",
             "Activate Duskwatch ({2}: look at top 3, put a creature into hand) with infinite mana — draw your entire library.",
-            "Find Finale of Devastation (X≥10) or your preferred win condition. Nature's Rhythm is now exiled.",
+            inHand.has("Finale of Devastation")
+              ? "Cast Finale of Devastation (X≥10) — all creatures +X/+X and haste → attack for lethal. Nature's Rhythm is now exiled."
+              : "Assemble the win pile from your library: Endurance + Geier Reach Sanitarium. Mill all opponents. Nature's Rhythm is now exiled.",
           ],
           color: "#ff6b35",
         });
@@ -5419,7 +5421,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             "Harmonize Nature's Rhythm: cast from graveyard for X=3 (base cost {3}{G}{G}{G}{G}=7). Cost is trivial with infinite mana.",
             "Formidable Speaker ETB: discard a card → search library for a creature → put into hand. Find Duskwatch Recruiter.",
             "Cast Duskwatch Recruiter. Activate with infinite mana to draw your entire library.",
-            "Find Finale of Devastation (X≥10) or your win condition. Nature's Rhythm is now exiled.",
+            inHand.has("Finale of Devastation")
+              ? "Cast Finale of Devastation (X≥10) — all creatures +X/+X and haste → attack for lethal. Nature's Rhythm is now exiled."
+              : "Assemble the win pile from your library: Endurance + Geier Reach Sanitarium. Mill all opponents. Nature's Rhythm is now exiled.",
           ],
           color: "#ff6b35",
         });
@@ -8211,7 +8215,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? "Formidable Speaker ETB finds Duskwatch Recruiter. Activate Duskwatch with infinite mana to draw your library."
         : hasHarmonizeOutlet
         ? "Nature's Rhythm goes to graveyard after resolving — immediately Harmonize it (X=2, cost trivial with infinite mana) to find Duskwatch Recruiter. Draw your entire library."
-        : "After going infinite, use a tutor to find Duskwatch Recruiter or Finale of Devastation.";
+        : "After going infinite, use a tutor to find Duskwatch Recruiter or another win outlet.";
       results.push({
         priority,
         category,
@@ -8853,6 +8857,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           if (combo.requires.some(c => !inDeck(c))) {
             // At least one required card isn't in this deck — don't suggest this combo
           } else {
+          // Without a deckList, suppress combos whose only missing pieces are big
+          // finisher spells (sorceries/instants) not seen anywhere and not tutorably
+          // findable. Enchantments and utility spells (Earthcraft etc.) are still shown.
+          // This prevents "BUILDING TOWARDS Finale" when Finale isn't in the deck.
+          const FINISHER_SPELLS = new Set(["Finale of Devastation","Craterhoof Behemoth"]);
+          const unseen = !deckList && combo.requires.some(c => {
+            if (board.has(c) || inHand.has(c) || inGrave.has(c)) return false;
+            if (!FINISHER_SPELLS.has(c)) return false; // only suppress known finishers
+            // Suppress if this finisher has no tutor path and hasn't been seen
+            return cachedTutorOptions(c).length === 0;
+          });
+          if (!unseen) {
           const missingNames = missing.slice(0, 3).join(", ");
           // Prefer to suggest tutoring whichever missing card is actually findable.
           const tutorableMissing = missing.find(m => cachedTutorOptions(m).length > 0) ?? missing[0];
@@ -8868,6 +8884,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             combo: combo.id,
             color: "#5d8a5d",
           });
+          } // end unseen check
           } // end inDeck check
         }
       }
@@ -11510,9 +11527,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         } else {
           // Infinite mana but no win outlet in hand/board — need one more piece
           const blocked = winConversion?.[0];
+          // Build a dynamic outlet hint based on what's actually missing vs what we know about
+          const outletHints = [];
+          if (!poolHave.has("Duskwatch Recruiter") && !battlefield.some(c => c === "Duskwatch Recruiter"))
+            outletHints.push("Duskwatch Recruiter");
+          if (!poolHave.has("Finale of Devastation") && (deckList ? deckList.has("Finale of Devastation") : true))
+            outletHints.push("Finale of Devastation");
+          const outletStr = outletHints.length > 0
+            ? outletHints.join(", ")
+            : "a win outlet (Duskwatch, tutor, or combat finisher)";
           turnClock = { turns: 1, plan: blocked
             ? `Infinite mana active — need: ${blocked.missing.join(", ")}`
-            : "Infinite mana active — find a win outlet (Duskwatch, Finale, etc.)" };
+            : `Infinite mana active — find ${outletStr}` };
         }
       }
     }
@@ -16539,6 +16565,12 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
 
   // Fixed-hand mode: skip mulligan, start with the provided hand and a library
   // built from the remaining deck cards (shuffled). Used for sim-based grading.
+  // New tracking variables — declared before mulligan loop so they're in scope
+  // when openingHandGrade is recorded right after the kept hand is finalised.
+  let infiniteManaT  = null;   // turn infinite mana was first established
+  let openingHandGrade = null; // KEEP / BORDERLINE / MULL
+  let stallHand    = null;     // hand contents on final non-win turn (stall analysis)
+
   let mulligans = 0;
   if (opts.fixedHand) {
     const fixedCards = opts.fixedHand;
@@ -16621,6 +16653,8 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
   } // end else (normal mulligan mode)
 
   const openingHand = [...hand];
+  // Record what grade this hand was kept at
+  { const { label } = gradeOpeningHand(openingHand, openingHand.length); openingHandGrade = label; }
   const t1DorkInHand = hand.some(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
 
   // ── Smarter sequencing helpers ────────────────────────────
@@ -16847,6 +16881,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
       const liveResults = (analysis.results ?? []).filter(r => !r.isSuppressed);
       const top = liveResults[0];
 
+      // Track first turn infinite mana was established
+      if (infiniteManaT === null && analysis.infiniteManaActive) infiniteManaT = turn;
+
       // Check for win — validate that the win is actually achievable with available mana
       if (top && isWinCategory(top.category)) {
         // Find which combo the advisor is relying on for infiniteMana
@@ -17059,9 +17096,13 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
     }
 
     if (winTurn !== null) break;
+    // Record hand snapshot each turn — last one before max turns = stall snapshot
+    stallHand = [...hand];
   }
 
-  return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork, winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog) : null };
+  return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork,
+           winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog) : null,
+           infiniteManaT, openingHandGrade, stallHand: winTurn === null ? stallHand : null };
 }
 
 // ── SIM GROUP 3: Dynamic tutor target scoring ─────────────────────────────
@@ -18144,6 +18185,41 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   // T1 dork rate
   const t1DorkRate = (results.filter(r => r.t1Dork).length / n * 100);
 
+  // Average infinite mana turn (only games where infinite was established)
+  const infGames   = results.filter(r => r.infiniteManaT !== null);
+  const avgInfTurn = infGames.length ? (infGames.reduce((a,r) => a + r.infiniteManaT, 0) / infGames.length) : null;
+  const infRate    = (infGames.length / n * 100);
+
+  // Opening hand grade distribution
+  const handGradeCounts = { KEEP: 0, BORDERLINE: 0, MULL: 0 };
+  for (const r of results) {
+    const g = r.openingHandGrade ?? "MULLIGAN";
+    const key = g === "KEEP" ? "KEEP" : g === "BORDERLINE" ? "BORDERLINE" : "MULL";
+    handGradeCounts[key] = (handGradeCounts[key] ?? 0) + 1;
+  }
+  const handGrades = Object.entries(handGradeCounts).map(([label, count]) => ({
+    label, count, pct: Math.round(count / n * 100),
+  }));
+
+  // Stall analysis: for non-winning games, what cards were most often stuck in hand?
+  const stallGames = results.filter(r => r.winTurn === null && r.stallHand?.length > 0);
+  const stallCounts = {};
+  for (const r of stallGames) {
+    const seen = new Set();
+    for (const c of (r.stallHand ?? [])) {
+      const cd = getCard(c);
+      if (!cd || cd.type === "land") continue; // skip lands — always contextual
+      if (!seen.has(c)) {
+        seen.add(c);
+        stallCounts[c] = (stallCounts[c] ?? 0) + 1;
+      }
+    }
+  }
+  const stallCards = Object.entries(stallCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([card, count]) => ({ card, count, pct: Math.round(count / Math.max(stallGames.length, 1) * 100) }));
+
   // Bottleneck frequency
   const bottleneckCounts = {};
   for (const r of results) {
@@ -18326,6 +18402,7 @@ function runNGames(deckCards, n = 50, maxTurns = 20) {
   return {
     n, wins: wins.length, winRate, avgWinTurn, avgMulligans,
     t3Rate, t4Rate, t5Rate, t1DorkRate,
+    avgInfTurn, infRate, handGrades, stallCards,
     topBottlenecks, distribution, winCombos, manaCurveAvg, results, maxTurns,
     cutCandidates, tutorSummary,
   };
@@ -27166,10 +27243,12 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                             const maxMC = Math.max(...nr.results.map(r => r.manaCurve?.length ?? 0), 0);
                             const mcHeaders = Array.from({length: maxMC}, (_, i) => `Mana T${i+1}`);
                             const rows = [
-                              ["Game","Win Turn","Mulligans","Combo","T1 Dork",...mcHeaders,"Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
+                              ["Game","Win Turn","∞ Mana T","Hand Grade","Mulligans","Combo","T1 Dork",...mcHeaders,"Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
                               ...nr.results.map((r, i) => [
                                 i + 1,
                                 r.winTurn ?? "",
+                                r.infiniteManaT ?? "",
+                                r.openingHandGrade ?? "",
                                 r.mulligans,
                                 `"${(r.winCombo||"").replace(/"/g,'""')}"`,
                                 r.t1Dork ? 1 : 0,
@@ -27280,7 +27359,40 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                               "Percentage of all games (including non-wins) where a win line was detected by end of turn 5. This is the key cEDH metric — your goal is to threaten a win before opponents can set up interaction.")}
                             {simStatBox("T1 DORK RATE", `${(nr.t1DorkRate ?? 0).toFixed(0)}%`, (nr.t1DorkRate ?? 0) >= 65 ? COLORS.green2 : (nr.t1DorkRate ?? 0) >= 40 ? COLORS.gold : COLORS.red, null,
                               "Percentage of games where a 1-CMC mana dork hit the battlefield on turn 1. This is the single most predictive metric for this deck — a T1 dork accelerates every subsequent turn and dramatically improves win probability.")}
+                            {nr.avgInfTurn != null && simStatBox("AVG ∞ MANA T", nr.avgInfTurn.toFixed(1), "#c084fc",
+                              `${(nr.infRate ?? 0).toFixed(0)}% games`,
+                              `Average turn infinite mana was first established. ${(nr.infRate ?? 0).toFixed(0)}% of games reached infinite mana within the turn limit. A lower number means faster combo assembly.`)}
                           </div>
+
+                          {/* Opening hand grade distribution */}
+                          {nr.handGrades?.some(g => g.count > 0) && (() => {
+                            const grades = nr.handGrades;
+                            const keepG = grades.find(g => g.label === "KEEP");
+                            const borderG = grades.find(g => g.label === "BORDERLINE");
+                            const mullG = grades.find(g => g.label === "MULL");
+                            return (
+                              <div style={{ marginBottom: "14px" }}>
+                                <Tip id="handgrade-header" text="Distribution of opening hand quality grades across all simulated games. KEEP = strong hand with dork + tutor + land. BORDERLINE = functional but not ideal. MULL = hand was mulliganed. Higher KEEP% means more consistent openers.">
+                                  <div style={{ fontSize: "9px", letterSpacing: "1.5px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "5px", cursor: "help", display: "inline-block" }}>OPENING HAND GRADES (?)</div>
+                                </Tip>
+                                <div style={{ display: "flex", height: "8px", borderRadius: "4px", overflow: "hidden", gap: "1px" }}>
+                                  {keepG?.count > 0 && <div style={{ flex: keepG.count, background: COLORS.green1, opacity: 0.85 }} title={`KEEP: ${keepG.pct}%`} />}
+                                  {borderG?.count > 0 && <div style={{ flex: borderG.count, background: COLORS.gold, opacity: 0.7 }} title={`BORDERLINE: ${borderG.pct}%`} />}
+                                  {mullG?.count > 0 && <div style={{ flex: mullG.count, background: COLORS.red, opacity: 0.5 }} title={`MULL: ${mullG.pct}%`} />}
+                                </div>
+                                <div style={{ display: "flex", gap: "10px", marginTop: "4px" }}>
+                                  {[
+                                    { g: keepG, color: COLORS.green2, label: "KEEP" },
+                                    { g: borderG, color: COLORS.gold, label: "BORDERLINE" },
+                                    { g: mullG, color: COLORS.red, label: "MULL" },
+                                  ].filter(x => x.g?.count > 0).map(({ g, color, label }) => (
+                                    <span key={label} style={{ fontSize: "9px", color, fontFamily: "'Cinzel', serif" }}>{label} {g.pct}%</span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
                           {/* T3/T4/T5 breakdown */}
                           <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
                             {[
@@ -27361,6 +27473,27 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           )}
 
                           {/* Cut Suggestions */}
+                          {/* Stall analysis — cards stuck in hand in non-winning games */}
+                          {nr.stallCards?.length > 0 && nr.wins < nr.n && (
+                            <div style={{ marginTop: "10px" }}>
+                              <Tip id="stall-header" text="Non-land cards most often stuck in hand at the end of non-winning games. High percentages mean the deck frequently draws these cards but can't cast or use them in time — they may be too slow, too expensive, or lack the right setup. Compare with bottlenecks to distinguish 'card you had but couldn't use' from 'card you needed but didn't have'.">
+                                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: "#e09050", letterSpacing: "1px", marginBottom: "6px", cursor: "help", display: "inline-block" }}>
+                                  ✋ STUCK IN HAND (NON-WINS) (?)
+                                </div>
+                              </Tip>
+                              {nr.stallCards.map((s, i) => (
+                                <div key={i} style={{ marginBottom: "5px" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "2px" }}>
+                                    <span style={{ fontSize: "10px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", flex: 1 }}>{s.card}</span>
+                                    <span style={{ fontSize: "9px", color: "#e09050", fontFamily: "'Cinzel', serif", marginLeft: "6px", flexShrink: 0 }}>{s.pct}% of losses</span>
+                                  </div>
+                                  <div style={{ height: "3px", background: COLORS.border, borderRadius: "2px", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", width: `${s.pct}%`, background: "#e09050", borderRadius: "2px", opacity: 0.6 }} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {nr.cutCandidates?.length > 0 && (
                             <div style={{ marginTop: "10px" }}>
                               <Tip id="cut-header" text="Cards that rarely appear on the battlefield in winning games. Low win-presence doesn't automatically mean cut — consider whether the card enables wins indirectly (e.g. tutors that find other pieces). But cards with 0% win presence and high loss presence are strong cut candidates.">
