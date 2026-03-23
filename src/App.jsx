@@ -9793,9 +9793,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const pactsInHand = inHand.has("Summoner's Pact");
       const sharedSummonsInHand = inHand.has("Shared Summons");
       const canFetchAshaya = pactsInHand || sharedSummonsInHand;
-      // Ashaya costs {3}{G}{G} = 5 mana to cast after fetching
+      // Ashaya costs {3}{G}{G} = 5 mana to cast after fetching.
+      // Summoner's Pact is free (pay {2}{G}{G} next upkeep) — only need 5 for Ashaya.
+      // Shared Summons costs {3}{G}{G} = 5 mana itself — need 5 (SS) + 5 (Ashaya) = 10 total.
       const ashayaCmc = 5;
-      const canAffordAshaya = mana >= ashayaCmc || infiniteManaActive;
+      const fetchCost = sharedSummonsInHand && !pactsInHand ? 5 : 0; // Pact is free; SS costs 5
+      const canAffordAshaya = (mana >= ashayaCmc + fetchCost) || infiniteManaActive;
       // After Ashaya: Elder (already on board, not sick) + Ashaya = infinite mana
       // Quirion Ranger bounces Speaker (Forest via Ashaya) to untap a big dork = free Speaker loop
       // Speaker ETB fetches Duskwatch → WIN
@@ -9917,8 +9920,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const effectiveMana6 = mana + tapBackMana6; // tap-back mana offsets the cost
         const hasDiscard6 = hand.filter(c => c !== "Woodland Bellower" && c !== "Summoner's Pact" && c !== "Shared Summons").length > 0;
         const pactSpell6 = inHand.has("Summoner's Pact") ? "Summoner's Pact" : "Shared Summons";
+        const fetchCost6 = pactSpell6 === "Shared Summons" ? 5 : 0; // Pact is free; Shared Summons costs {3}{G}{G}
 
-        if (effectiveMana6 >= totalNeeded6 && hasDiscard6) {
+        if ((effectiveMana6 >= totalNeeded6 + fetchCost6) && hasDiscard6) {
           const discardCard6 = hand.filter(c => c !== "Woodland Bellower" && c !== "Summoner's Pact" && c !== "Shared Summons")[0] ?? "a card";
           const tapNote6 = tapBackMana6 > 0
             ? `After Ashaya resolves, tap ${untappedCreatures6 + speakerTap6 + quirionTap6} creature${untappedCreatures6 + speakerTap6 + quirionTap6 !== 1 ? "s" : ""} as Forests${yavLands6 > 0 ? ` + ${yavLands6} non-Forest land${yavLands6 !== 1 ? "s" : ""} via Yavimaya` : ""} for ${tapBackMana6} {G}.`
