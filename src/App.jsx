@@ -16931,11 +16931,23 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
         let winValid = true;
 
         if (!activeCombo) {
-          // No identified combo — the advisor may be claiming WIN NOW from a path-planner
-          // line that the sim can't verify. Reject the win to prevent false positives.
-          // The path planner's winNow flag doesn't account for summoning sickness of
-          // pieces already on the board or mana already spent this turn.
-          winValid = false;
+          // No identified combo — check if this is a path-planner WIN NOW result that
+          // carries enough metadata to validate independently.
+          // A path-planner win is valid when:
+          //   1. The result has confidence "certain" (path planner computed it as fully affordable)
+          //   2. Turn >= 3 (T1/T2 impossible for multi-step tutor chains — the tutored piece
+          //      enters with summoning sickness and can't contribute until T3 at earliest)
+          //   3. The playable card is in hand and castable with current mana
+          const isPathPlannerCertain = top.confidence === "certain" && top._idx !== undefined;
+          if (isPathPlannerCertain && turn >= 3) {
+            const playableCard = extractPlayableCard(top, hand, battlefield);
+            const cardInHand = playableCard ? hand.includes(playableCard) : false;
+            const affordable = playableCard ? simCanCast(playableCard, manaPool, battlefield) : false;
+            winValid = cardInHand && affordable;
+          } else {
+            // Reject: no verified combo, or too early for a multi-step chain to resolve.
+            winValid = false;
+          }
         } else {
           // For combos that require a big dork producing ≥N mana (needsBigDork),
           // verify at least one such dork is on board AND not summoning sick.
