@@ -618,6 +618,30 @@ const COMBOS = [
     ]
   },
 
+  // ── 10d-iii. Ashaya + Wirewood Symbiote + any big dork + 1-drop elf ───────────────────
+  // Covers Priest of Titania, Elvish Archdruid, etc. — does NOT require Circle/Karametra.
+  // With Ashaya all creatures are Forests. Symbiote bounces a 1-drop elf to untap the big dork.
+  // Recast 1-drop for {G}. Net positive when big dork produces ≥2G (Symbiote doesn't need Temur).
+  {
+    id: "ashaya_symbiote_bigdork",
+    name: "Ashaya + Wirewood Symbiote + Big Dork (≥2 mana) + 1-drop Elf",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Wirewood Symbiote"],
+    description: "Infinite mana. Ashaya makes all creatures Forests. Wirewood Symbiote bounces a 1-drop elf (returning it to hand) to untap the big dork. Recast the 1-drop for {G}. Net positive when the dork taps for ≥2G. No Temur Sabertooth needed — Ashaya's Forest-making resets the bounce each loop since Symbiote can bounce any Forest-creature.",
+    requires: ["Ashaya, Soul of the Wild", "Wirewood Symbiote"],
+    needsBigDork: 2,
+    needsOneDrop: true,
+    mustPreExist: ["Wirewood Symbiote"],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Ashaya on battlefield — all nontoken creatures are now Forests.",
+      "Tap your big dork (producing ≥2 mana).",
+      "Activate Wirewood Symbiote: return a 1-drop elf to hand, untapping the big dork.",
+      "Recast the 1-drop elf for {G}. Net: at least {G} per loop.",
+      "Repeat for infinite green mana.",
+    ]
+  },
+
   // ── 10d-ii. Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid + 1-drop Elf (no Ashaya) ──
   // Covers Spellbook #4 (Llanowar Elves) and #5 (Elvish Mystic) — no Ashaya required.
   {
@@ -5249,6 +5273,71 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       return true;
     });
 
+    // Context-aware re-ordering: when Ashaya would immediately enable infinite mana
+    // (ranger + big dork already on board), promote her above Duskwatch.
+    const hasRangerSetup = board.has("Quirion Ranger") || board.has("Scryb Ranger") || board.has("Argothian Elder");
+    const hasBigDorkSetup = battlefield.some(c => {
+      const cd = getCard(c);
+      return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork")) && !sickCreatures?.has(c);
+    });
+    const hasAshayaSetup = board.has("Ashaya, Soul of the Wild") || inHand.has("Ashaya, Soul of the Wild");
+    const ashayaWouldWin = hasRangerSetup && hasBigDorkSetup && !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild");
+    if (ashayaWouldWin) {
+      const ashayaIdx = chordTargets.findIndex(t => t.name === "Ashaya, Soul of the Wild");
+      if (ashayaIdx > 0) {
+        const [ashaya] = chordTargets.splice(ashayaIdx, 1);
+        ashaya.reason = "ENABLES INFINITE MANA IMMEDIATELY — Ranger + big dork already on board!";
+        chordTargets.unshift(ashaya);
+      }
+    }
+    // Only ranger on board (no Ashaya, no big dork): find a big dork to assemble 2/3 pieces.
+    if (hasRangerSetup && !hasBigDorkSetup && !hasAshayaSetup) {
+      const BIG_DORK_NAMES = ["Elvish Archdruid","Priest of Titania","Circle of Dreams Druid",
+        "Karametra's Acolyte","Fanatic of Rhonas","Wirewood Channeler"];
+      const dorkIdx = chordTargets.findIndex(t => BIG_DORK_NAMES.includes(t.name));
+      if (dorkIdx > 0) {
+        const [dork] = chordTargets.splice(dorkIdx, 1);
+        dork.reason = "Ranger on board — big dork completes 2/3 of combo (need Ashaya next)";
+        chordTargets.unshift(dork);
+      }
+    }
+    // Only big dork on board (no Ashaya, no ranger): Ashaya is the most valuable find.
+    if (hasBigDorkSetup && !hasRangerSetup && !hasAshayaSetup) {
+      const ashayaIdx = chordTargets.findIndex(t => t.name === "Ashaya, Soul of the Wild");
+      if (ashayaIdx > 0) {
+        const [ashaya] = chordTargets.splice(ashayaIdx, 1);
+        ashaya.reason = "Big dork on board — Ashaya + dork is 2/3 of combo";
+        chordTargets.unshift(ashaya);
+      }
+    }
+    // Ashaya on board, no ranger, no big dork: find Quirion (X=1, cheapest) to assemble 2/3.
+    if (hasAshayaSetup && !hasRangerSetup && !hasBigDorkSetup) {
+      const rangerIdx = chordTargets.findIndex(t =>
+        t.name === "Quirion Ranger" || t.name === "Scryb Ranger");
+      if (rangerIdx > 0) {
+        const [ranger] = chordTargets.splice(rangerIdx, 1);
+        ranger.reason = "Ashaya on board — Quirion Ranger (X=1) assembles 2/3 of combo cheaply";
+        chordTargets.unshift(ranger);
+      }
+    }
+    // Earthcraft on board: Earthcraft + Ashaya + Quirion + Forest = infinite.
+    if (board.has("Earthcraft") && !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild")) {
+      const ashayaIdx = chordTargets.findIndex(t => t.name === "Ashaya, Soul of the Wild");
+      if (ashayaIdx > 0) {
+        const [ashaya] = chordTargets.splice(ashayaIdx, 1);
+        ashaya.reason = "Earthcraft + Ashaya + Quirion = infinite mana immediately";
+        chordTargets.unshift(ashaya);
+      }
+    }
+    if (board.has("Earthcraft") && board.has("Ashaya, Soul of the Wild") && !hasRangerSetup) {
+      const rangerIdx = chordTargets.findIndex(t => t.name === "Quirion Ranger" || t.name === "Scryb Ranger");
+      if (rangerIdx > 0) {
+        const [ranger] = chordTargets.splice(rangerIdx, 1);
+        ranger.reason = "Earthcraft + Ashaya + Ranger = infinite mana immediately";
+        chordTargets.unshift(ranger);
+      }
+    }
+
     if (chordTargets.length > 0) {
       const best = chordTargets[0];
       const totalChordCost = best.xCost + 3; // X + {G}{G}{G}
@@ -8466,6 +8555,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
              s.constraint === "sacrifice-land" ? " [sac land]" :
              s.constraint === "sacrifice" || s.constraint === "sacrifice-green" ? " [sac creature]" : "") +
             (s.isPreExist ? " ⚠ summ. sick → next turn" : "") +
+            (s.putsToTopOfLibrary ? " ⚠ top of library → draw next turn" : "") +
             (s.isExtra ? ` (${s.label})` : "")
           ).join("  •  ");
 
@@ -8537,6 +8627,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
                s.constraint === "sacrifice-land" ? " — sacrifice a land" :
                s.constraint === "sacrifice" || s.constraint === "sacrifice-green" ? " — sacrifice a creature" : "") +
               (s.isPreExist ? " ⚠ summoning sickness — usable next turn" : "") +
+              (s.putsToTopOfLibrary ? " ⚠ goes to top of library — draw it next turn" : "") +
               (s.isExtra ? ` [extra: ${s.label}]` : "");
             assemblySteps.push(stepStr);
             // If the NEXT step reuses the same tapping on-board tutor, inject an untap note
@@ -8932,10 +9023,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // Via tutor: a tutor that can find Duskwatch (a CMC-2 green creature) is castable now
   // Instant-speed tutors: castable any time (or with Yeva on board for flash window)
+  // Top-of-library tutors: Worldly Tutor puts the card on top of the library (drawn next turn).
+  // They are NOT instant-access — they must be handled separately as next-turn paths.
+  const TOP_OF_LIBRARY_TUTORS = new Set(["Worldly Tutor","Elvish Harbinger"]);
   const instantCreatureTutors = ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons",
     "Archdruid's Charm"]  // Archdruid's Charm mode 1: find any creature or land card (land ETB tapped, creature to hand)
     .filter(t => {
       if (!inHand.has(t)) return false;
+      if (TOP_OF_LIBRARY_TUTORS.has(t)) return false; // puts to top of library — not instant access
       if (t === "Archdruid's Charm") return (mana >= 3 || infiniteManaActive); // costs {G}{G}{G}
       if (t === "Chord of Calling") {
         // Convoke: tap creatures to pay. For a CMC-2 target: {2}{G}{G}{G} = 5 total cost.
@@ -9478,6 +9573,36 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       ],
       color: "#a8d8a8",
     });
+  }
+
+  // ---- WORLDLY TUTOR / ELVISH HARBINGER → DUSKWATCH NEXT TURN ----
+  // With infinite mana active but only top-of-library tutors available for Duskwatch:
+  // Cast Worldly Tutor this turn → Duskwatch on top → draw next turn → win.
+  // Show as WIN NEXT TURN (not WIN NOW — the card is drawn next draw step).
+  {
+    const topLibForDusk = ["Worldly Tutor","Elvish Harbinger"].filter(t =>
+      inHand.has(t) && (
+        t === "Worldly Tutor" ||
+        (t === "Elvish Harbinger" && getCard("Duskwatch Recruiter")?.tags?.includes("elf"))
+      )
+    );
+    if (topLibForDusk.length > 0 && infiniteManaActive && !duskwatchCastable
+        && !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")) {
+      const tutorName = topLibForDusk[0];
+      results.push({
+        priority: 13,
+        category: "⏭️ WIN NEXT TURN",
+        headline: `Cast ${tutorName} now → Duskwatch Recruiter on top → draw and win next turn`,
+        detail: `${tutorName} puts Duskwatch Recruiter on top of your library. With infinite mana already running, draw Duskwatch on your next draw step — then activate it to assemble the win pile.`,
+        steps: [
+          `Cast ${tutorName} ({${tutorName === "Worldly Tutor" ? "G" : "2}{G"}}): search for Duskwatch Recruiter, put it on top of your library.`,
+          "Draw Duskwatch Recruiter at the start of your next turn.",
+          "Cast Duskwatch Recruiter ({1}{G}{G}). With infinite mana, activate repeatedly to assemble the win pile.",
+          "Find Endurance, Temur Sabertooth, Destiny Spinner, Geier Reach Sanitarium → mill all opponents out.",
+        ],
+        color: "#c8a800",
+      });
+    }
   }
 
   // ---- FAUNA SHAMAN WIN CON (in hand) ----
@@ -12182,7 +12307,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     { name:"Fierce Empath",        finds:"creature-cmc6+", baseCost:3,  usable: inHand.has("Fierce Empath"),
       note:"{2}{G}: ETB find creature MV≥6 → hand",             putsToBattlefield:true, sorcerySpeed:true },
     { name:"Elvish Harbinger",     finds:"creature-elf",   baseCost:3,  usable: inHand.has("Elvish Harbinger"),
-      note:"{2}{G}: ETB find Elf → top of library",             putsToBattlefield:true, sorcerySpeed:true },
+      note:"{2}{G}: ETB find Elf → top of library",             putsToTopOfLibrary:true, sorcerySpeed:true },
     { name:"Invasion of Ikoria",   finds:"creature-non-human", baseCost:4, usable: inHand.has("Invasion of Ikoria"),
       note:"{3}{G}: find non-Human creature → hand",            sorcerySpeed:true },
     // Formidable Speaker: ETB only fires on entry. Already-on-board Speaker can only
@@ -12840,7 +12965,8 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     ]);
     const usedTutors = poolAfterInfinite.usedTutors ?? new Set();
     const winTutors = activeTutors.filter(t =>
-      ON_BOARD_REUSABLE_WIN.has(t.name) || !usedTutors.has(t.name));
+      (ON_BOARD_REUSABLE_WIN.has(t.name) || !usedTutors.has(t.name)) &&
+      !t.putsToTopOfLibrary); // top-of-library tutors can't deliver the outlet this turn
     // Tutor for Duskwatch
     const duskwatchTutor = winTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter", poolAfterInfinite.usedGraveyard));
     if (duskwatchTutor) return {
@@ -12853,6 +12979,16 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       outlet: "Duskwatch Recruiter via Formidable Speaker",
       steps: [`${speakerTutor.name} → Formidable Speaker → ETB: discard → find Duskwatch Recruiter.`],
       note: "Speaker chain → Duskwatch" };
+    // Top-of-library tutors (e.g. Worldly Tutor) can find the outlet next turn only.
+    // Return as a valid outlet but mark as next-turn so the path is classified correctly.
+    const topLibTutors = activeTutors.filter(t =>
+      t.putsToTopOfLibrary && (ON_BOARD_REUSABLE_WIN.has(t.name) || !(usedTutors.has(t.name))));
+    const duskwatchTopLib = topLibTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter", poolAfterInfinite.usedGraveyard));
+    if (duskwatchTopLib) return {
+      outlet: "Duskwatch Recruiter (next turn)",
+      steps: [`${duskwatchTopLib.name} → Duskwatch Recruiter (top of library — draw next turn).`],
+      note: `tutor via ${duskwatchTopLib.name} (next turn)`,
+      nextTurn: true };
     return null;
   }
 
@@ -13009,7 +13145,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       ? findWinOutlet(path.pool, nrInHand && !nrUsedForCombo ? false : nrUsedForCombo || nrInHand)
       : { outlet: "win condition", steps: [], note: "win-now combo" };
     const hasWinOutlet = outlet !== null;
-    const winNow = hasWinOutlet && !nextTurn && canAfford;
+    const winNow = hasWinOutlet && !nextTurn && canAfford && !outlet?.nextTurn;
 
     // Scoring: lower = better
     const sameTurnBonus = winNow ? -5 : (!nextTurn && canAfford) ? 0 : nextTurn ? 10 : 5;
@@ -16256,7 +16392,7 @@ function HoverCard({ card, children }) {
 
 const WIN_CATS = ["WIN NOW", "CAST TO WIN", "INSTANT SPEED WIN",
                   "WIN — PILE", "WIN — FETCH", "POISON WIN", "CAST FOR WIN",
-                  "TUTOR LOOP"];
+                  "TUTOR LOOP", "DRAW YOUR LIBRARY"];
 
 // Pre-computed set of all mustPreExist cards across all combos.
 // These are creatures whose combo value depends on a tap ability — they must
@@ -16319,11 +16455,28 @@ function extractPlayableCard(result, hand, battlefield) {
   for (const card of hand) {
     if (allText.includes(card)) return card;
   }
+  // 2b. Short-name match — cards like "Ashaya, Soul of the Wild" appear as "Ashaya" in headlines
+  for (const card of hand) {
+    const shortName = card.split(",")[0].split(" (")[0]; // "Ashaya, Soul of the Wild" → "Ashaya"
+    if (shortName.length >= 4 && allText.includes(shortName)) return card;
+  }
   // 3. Category / keyword heuristics — pick the best matching hand card by tag
   const cat = (result.category ?? "").toLowerCase();
   const hl  = (result.headline ?? "").toLowerCase();
   const combined = cat + " " + hl;
 
+  // "Cast to enable" / "Cast pieces" → prefer combo pieces in hand that aren't on board
+  if (combined.includes("cast") && (combined.includes("enable") || combined.includes("pieces"))) {
+    const boardSet = new Set(battlefield);
+    // Priority: Ashaya > rangers > big dorks > other combo
+    const priority = ["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger",
+      "Argothian Elder","Wirewood Symbiote","Formidable Speaker"];
+    for (const p of priority) {
+      if (hand.includes(p) && !boardSet.has(p)) return p;
+    }
+    const combo = hand.find(c => getCard(c)?.tags?.includes("combo") && !boardSet.has(c));
+    if (combo) return combo;
+  }
   // Tutor advice → prefer tutor cards in hand
   if (combined.includes("tutor") || combined.includes("search")) {
     const tutor = hand.find(c => getCard(c)?.tags?.includes("tutor"));
@@ -16965,7 +17118,22 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
             const playableCard = extractPlayableCard(top, hand, battlefield);
             const cardInHand = playableCard ? hand.includes(playableCard) : false;
             const affordable = playableCard ? simCanCast(playableCard, manaPool, battlefield) : false;
-            winValid = cardInHand && affordable;
+            if (cardInHand && affordable) {
+              winValid = true;
+            } else if (!playableCard) {
+              // No hand card to cast — win is via an on-board activated ability (Survival,
+              // Fauna Shaman, Duskwatch, etc.) or a bounce sequence. Trust the path planner.
+              winValid = true;
+            } else {
+              winValid = false;
+            }
+          } else if (analysis.infiniteManaActive && turn >= 3) {
+            // Bespoke WIN NOW results (WIN NOW — PILE, DRAW YOUR LIBRARY, WIN NOW — COMBAT, etc.)
+            // are issued by the advisor only when it has verified the win condition is met.
+            // Trust them when infinite mana is confirmed active — no additional combo validation needed.
+            // These results have no playable hand card (the win is via activated ability or bounce),
+            // so winValid = true lets the win be recorded without trying to cast anything.
+            winValid = true;
           } else {
             // Reject: no verified combo, or too early for a multi-step chain to resolve.
             winValid = false;
@@ -17063,7 +17231,57 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
         // Win not actually achievable this turn — fall through and keep playing
       }
 
-      // Collect bottleneck data from suppressed wins
+      // Secondary win check: infinite mana is running but the outlet (Duskwatch) requires
+      // one more turn (e.g. Fauna Shaman just entered sick, Worldly Tutor on top of library).
+      // If we have infinite + a "WIN NEXT TURN" bespoke result, count as won next turn.
+      if (winTurn === null && analysis.infiniteManaActive) {
+        const nextTurnWin = (analysis.results ?? []).find(r =>
+          !r.isSuppressed && r.category?.includes("NEXT TURN") &&
+          (r.category?.includes("WIN") || r.category?.includes("⏭️")));
+        if (nextTurnWin && turn > 1) {
+          winTurn = turn + 1;
+          winCombo = extractComboLabel(nextTurnWin) ?? "Next-turn win";
+          winBattlefield = [...battlefield];
+          winGraveyard   = [...graveyard];
+          break;
+        }
+      }
+
+      // Tertiary win path: infinite mana running but no WIN result and no tutor was recommended.
+      // The INFINITE MANA ONLINE card is informational — it doesn't play a card.
+      // When infinite is confirmed, directly seek a Duskwatch tutor from hand to close.
+      // This avoids the sim wasting turns casting useless utility cards when infinite is live.
+      if (winTurn === null && analysis.infiniteManaActive && !analysis.results.some(r =>
+          !r.isSuppressed && (r.category?.includes('WIN') || r.category?.includes('CAST TO WIN')))) {
+        // Priority tutor order for finding Duskwatch with infinite mana
+        const INF_WIN_TUTORS = [
+          "Summoner's Pact",      // free — finds green creature → hand immediately
+          "Chord of Calling",     // convoke — find any creature → battlefield
+          "Green Sun's Zenith",   // find green creature → battlefield
+          "Natural Order",        // sac a creature → find any green creature → battlefield
+          "Eldritch Evolution",   // sac a creature → find creature → battlefield
+          "Worldly Tutor",        // finds creature → top of library (drawn next turn)
+          "Archdruid's Charm",    // finds creature or land
+          "Shared Summons",       // finds 2 creatures → hand
+        ];
+        const DUSK_IN_LIBRARY = library.includes("Duskwatch Recruiter");
+        const tutorCard = INF_WIN_TUTORS.find(t => {
+          if (!hand.includes(t)) return false;
+          if (!simCanCast(t, manaPool, battlefield)) return false;
+          if ((t === "Natural Order" || t === "Eldritch Evolution") && !simHasValidSacTarget(battlefield, sickSet)) return false;
+          return true;
+        });
+        if (tutorCard) {
+          const tidx = hand.indexOf(tutorCard);
+          playCard(tutorCard, tidx, manaPool);
+          madePlay = true;
+          continue;
+        }
+        // No tutor in hand — if Fauna Shaman or Survival is on board (non-sick),
+        // they are handled by simActivateAbilities. If not, draw and wait.
+      }
+
+
       const suppressed = (analysis.results ?? []).filter(r => r.isSuppressed);
       for (const s of suppressed) {
         const reason = (s.headline ?? "").replace(/^[^:]+:\s*/, "");
@@ -17138,6 +17356,19 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           const SELF_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze",
             "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
           if (SELF_STAX.has(c)) return null;
+          // Ashaya in hand: if ranger + big dork are on board (even sick rangers),
+          // casting Ashaya wins immediately or next turn. Score her above everything else.
+          if (c === "Ashaya, Soul of the Wild") {
+            const bfSet = new Set(battlefield);
+            const _hasRangerNow = bfSet.has("Quirion Ranger") || bfSet.has("Scryb Ranger") ||
+              sickSet.has("Quirion Ranger") || sickSet.has("Scryb Ranger") ||
+              (bfSet.has("Argothian Elder") && !sickSet.has("Argothian Elder"));
+            const _hasBigDorkNow = battlefield.some(b =>
+              getCard(b)?.tags?.includes("big-dork") || getCard(b)?.tags?.includes("infinite-dork"));
+            if (_hasRangerNow && _hasBigDorkNow) score += 50; // WIN this turn or next
+            else if (_hasRangerNow || _hasBigDorkNow) score += 25; // 2/3 pieces assembled
+            else score += 10; // most important single piece
+          }
           if (tags.includes("fast-mana"))                score += 9; // play ASAP for acceleration
           else if (tags.includes("enchant-land"))        score += 7; // Utopia Sprawl / Wild Growth — permanent ramp
           else if (tags.includes("dork") && cmc === 1)   score += 8;
@@ -17181,6 +17412,14 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
         // Abilities cost mana: Survival/Fauna = 1G, Duskwatch/Yisan = 3, Poacher = 3
         manaSpent += 3; // conservative estimate; most abilities cost 1-3 mana
         madePlay = true;
+        // Badgermole Cub + bouncer + infinite = combat win (flagged by simActivateAbilities)
+        if (simState._badgermoleWin && turn > 1) {
+          winTurn = turn;
+          winCombo = "Badgermole Ashaya Counters";
+          winBattlefield = [...battlefield];
+          winGraveyard   = [...graveyard];
+          break;
+        }
         continue;
       }
 
@@ -17221,7 +17460,11 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
   const elvesOnBoard = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
   const creaturesOnBoard = battlefield.filter(c => getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
   const hasAshaya = board.has("Ashaya, Soul of the Wild");
-  const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+  // Quirion Ranger and Scryb Ranger don't tap to activate — their bounce ability works
+  // immediately even with summoning sickness. Argothian Elder DOES tap, so stays sick-gated.
+  const hasRanger = board.has("Quirion Ranger") || board.has("Scryb Ranger") ||
+    sickSet?.has?.("Quirion Ranger") || sickSet?.has?.("Scryb Ranger") ||  // sick = still usable
+    (board.has("Argothian Elder") && !sickSet?.has?.("Argothian Elder"));
   const hasSymbiote = board.has("Wirewood Symbiote");
   const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
   const hasBigDork = battlefield.some(c => getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"));
@@ -17229,6 +17472,10 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
   const hasElder = board.has("Argothian Elder");
   const hasCradle = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
   const hasNykthos = board.has("Nykthos, Shrine to Nyx");
+  // Sick-inclusive check for big dork only (rangers already included above).
+  const hasSickRanger = false; // folded into hasRanger above
+  const hasSickBigDork = !hasBigDork && battlefield.some(c =>
+    sickSet?.has?.(c) && (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork")));
   const LEGENDARY = new Set(["Ashaya, Soul of the Wild","Yeva, Nature's Herald","Yisan, the Wanderer Bard",
     "Eladamri, Korvecdal","Kogla, the Titan Ape","Nissa, Resurgent Animist","Selvala, Heart of the Wilds",
     "Marwyn, the Nurturer"]);
@@ -17254,22 +17501,38 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
 
     // Completes infinite mana combo THIS turn
     if (c === "Ashaya, Soul of the Wild" && (hasRanger || hasSymbiote) && hasBigDork) score += 100;
+    // Ashaya + sick ranger/dork = guaranteed infinite NEXT turn — score nearly as high
+    if (c === "Ashaya, Soul of the Wild" && (hasRanger || hasSickRanger || hasSymbiote) && (hasBigDork || hasSickBigDork)) score += 95;
     // Ashaya + Elder only scores high if there's also an untapper (Ranger or Symbiote with an elf to bounce)
     // — without an untapper, Elder+Ashaya is a next-turn combo only (Elder has sickness this turn)
     const hasElderUntapper = hasRanger ||
       (hasSymbiote && battlefield.some(c2 => c2 !== "Wirewood Symbiote" && c2 !== "Argothian Elder" && getCard(c2)?.tags?.includes("elf")));
     if (c === "Ashaya, Soul of the Wild" && hasElder && hasElderUntapper) score += 100;
+    // Ashaya + big dork (no ranger yet) = 2/3 of combo assembled — one more tutor closes it.
+    // Score higher than Kogla/Bellower so Natural Order / EE prioritise Ashaya.
+    if (c === "Ashaya, Soul of the Wild" && hasBigDork && !hasRanger && !hasAshaya) score += 85;
+    // Ashaya with no other pieces yet — still the most important enabler
+    if (c === "Ashaya, Soul of the Wild" && !hasAshaya) score += 70;
     if ((c === "Quirion Ranger" || c === "Scryb Ranger") && hasAshaya && hasBigDork) score += 95;
     if (c === "Argothian Elder" && hasAshaya && !sickSet?.has?.("Argothian Elder")) score += 95;
 
-    // Win outlet with infinite mana
-    // Duskwatch wins with Ashaya + any ranger OR Symbiote+bigDork loop
+    // Earthcraft combos: Earthcraft + Ashaya + Ranger + basic Forest = infinite.
+    // When Earthcraft is on board, Ashaya (if no ranger/Ashaya yet) scores very high.
+    // When Earthcraft+Ashaya on board but no ranger, ranger scores very high.
+    const hasEarthcraft = board.has("Earthcraft");
+    if (hasEarthcraft) {
+      if (c === "Ashaya, Soul of the Wild" && !hasAshaya && !hasRanger) score += 90;
+      if (c === "Ashaya, Soul of the Wild" && !hasAshaya && hasRanger) score += 100; // wins this turn
+      if ((c === "Quirion Ranger" || c === "Scryb Ranger") && !hasRanger && hasAshaya) score += 100; // wins this turn
+      if ((c === "Quirion Ranger" || c === "Scryb Ranger") && !hasRanger && !hasAshaya) score += 80; // sets up 2/3
+    }
     if (c === "Duskwatch Recruiter" && hasAshaya && (hasRanger || (hasSymbiote && hasBigDork))) score += 110;
     if (c === "Formidable Speaker" && hasAshaya && (hasRanger || hasSymbiote)) score += 85;
 
     // Big dorks that enable combos
     if (cd.tags?.includes("big-dork") || cd.tags?.includes("infinite-dork")) {
       if (hasAshaya && hasRanger) score += 80;
+      else if (hasAshaya && hasSickRanger) score += 75; // sick ranger = healthy next turn → ∞ next turn
       else if (hasRanger) score += 50;
       else score += 30;
     }
@@ -17285,12 +17548,13 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
 
     // Bouncers — score much higher when there's a big dork on board that needs bouncing
     // (Temur Sabertooth or Kogla enable the haste+bounce infinite mana loops)
+    // Cap at 65 so they don't outscore Ashaya (85) when we need Ashaya to complete the combo.
     if ((c === "Temur Sabertooth" || c === "Kogla, the Titan Ape") && !hasBouncer) {
       const bigDorkOnBoard = battlefield.some(bf => {
         const cd2 = getCard(bf);
         return cd2?.tags?.includes("big-dork") || cd2?.tags?.includes("infinite-dork");
       });
-      score += bigDorkOnBoard ? 75 : 45; // high priority when dork is already set up
+      score += bigDorkOnBoard ? 65 : 45; // was 75/45 — capped so Ashaya (85) takes priority
     }
 
     // Key enablers
@@ -17403,21 +17667,77 @@ function simActivateAbilities(simState, manaPool) {
     }
   }
 
-  // Duskwatch Recruiter: {2}{G} → look at top 3, put a creature into hand. Once per turn in sim.
-  if (board.has("Duskwatch Recruiter") && !sickSet.has("Duskwatch Recruiter") && !used.has("Duskwatch") && manaPool.green >= 1 && manaPool.total >= 3) {
-    const top3 = library.slice(0, Math.min(3, library.length));
-    const creature = top3.find(c => getCard(c)?.type === "creature");
-    if (creature) {
-      library.splice(library.indexOf(creature), 1);
-      hand.push(creature);
+  // Duskwatch Recruiter: {2}{G} → look at top 3, put a creature into hand.
+  // With infinite mana, loop until the win pile is assembled (Endurance, Temur Sabertooth,
+  // Destiny Spinner, Elvish Reclaimer → Geier Reach Sanitarium). Without infinite, once per turn.
+  if (board.has("Duskwatch Recruiter") && !sickSet.has("Duskwatch Recruiter") && manaPool.green >= 1 && manaPool.total >= 3) {
+    // Check if infinite mana is active (allows unlimited activations)
+    const infActive = (() => {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        const allOnBoard = (combo.requires ?? []).every(r => board.has(r));
+        if (!allOnBoard) continue;
+        const mustPre = combo.mustPreExist ?? [];
+        if (mustPre.some(r => sickSet.has(r))) continue;
+        // Quick extras check: needsBigDork
+        if (combo.needsBigDork) {
+          const hasDork = battlefield.some(c => {
+            if (sickSet.has(c)) return false;
+            const cd = getCard(c);
+            return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork"));
+          });
+          if (!hasDork) continue;
+        }
+        return true;
+      }
+      return false;
+    })();
+
+    const WIN_PILE = new Set(["Endurance","Temur Sabertooth","Destiny Spinner",
+      "Elvish Reclaimer","Geier Reach Sanitarium","Ashaya, Soul of the Wild",
+      "Quirion Ranger","Scryb Ranger"]);
+
+    if (infActive) {
+      // With infinite mana: activate until we find a win pile piece not yet on board/hand
+      let activated = false;
+      let safetyLimit = Math.min(library.length, 40); // prevent infinite loop
+      while (safetyLimit-- > 0) {
+        const top3 = library.slice(0, Math.min(3, library.length));
+        const creature = top3.find(c => getCard(c)?.type === "creature");
+        if (!creature) break;
+        // Put non-creatures on bottom
+        const nonCreatures = top3.filter(c => c !== creature && getCard(c)?.type !== "creature");
+        for (const nc of nonCreatures) {
+          const idx = library.indexOf(nc);
+          if (idx >= 0) { library.splice(idx, 1); library.push(nc); }
+        }
+        library.splice(library.indexOf(creature), 1);
+        hand.push(creature);
+        activated = true;
+        // Stop when we've found a win pile piece we needed
+        const needThis = WIN_PILE.has(creature) && !board.has(creature);
+        if (needThis) break;
+        // Also stop if hand is getting very large (avoid memory issues)
+        if (hand.length > 20) break;
+      }
+      used.add("Duskwatch");
+      return activated;
+    } else if (!used.has("Duskwatch")) {
+      // Without infinite: once per turn
+      const top3 = library.slice(0, Math.min(3, library.length));
+      const creature = top3.find(c => getCard(c)?.type === "creature");
+      if (creature) {
+        library.splice(library.indexOf(creature), 1);
+        hand.push(creature);
+      }
+      const nonCreatures = top3.filter(c => c !== creature && getCard(c)?.type !== "creature");
+      for (const nc of nonCreatures) {
+        const idx = library.indexOf(nc);
+        if (idx >= 0) { library.splice(idx, 1); library.push(nc); }
+      }
+      used.add("Duskwatch");
+      return creature !== undefined;
     }
-    const nonCreatures = top3.filter(c => c !== creature && getCard(c)?.type !== "creature");
-    for (const nc of nonCreatures) {
-      const idx = library.indexOf(nc);
-      if (idx >= 0) { library.splice(idx, 1); library.push(nc); }
-    }
-    used.add("Duskwatch");
-    return creature !== undefined;
   }
 
   // Yisan, the Wanderer Bard: {2}{G}, TAP, verse counter. Once per turn (taps).
@@ -17564,6 +17884,137 @@ function simActivateAbilities(simState, manaPool) {
     if ((hasCradle || hasNykthos) && creatures >= 3) {
       used.add("DesertedTemple");
       return true;
+    }
+  }
+
+  // Temur Sabertooth: {1}{G}: return another creature to its owner's hand.
+  // Use case 1 — bounce Wirewood Symbiote to reset its once-per-turn limit.
+  //   Only useful if Symbiote has already activated this turn AND a big dork is in play.
+  // Use case 2 — bounce a big dork with ETB ability (Priest, Archdruid, Circle) back to hand
+  //   so it can be recast with Thousand-Year Elixir or Destiny Spinner haste for extra mana.
+  //   Only worth it if we have spare mana (cmc+{1G} bounce cost < dork's re-tap output).
+  // CAUTION: don't bounce the pieces that ARE the current infinite combo.
+  if (board.has("Temur Sabertooth") && !sickSet.has("Temur Sabertooth") &&
+      !used.has("Sabertooth") && manaPool.green >= 1 && manaPool.total >= 2) {
+    // Case 1: reset Wirewood Symbiote if it's already been used and a big dork exists
+    const hasUsedSymbiote = used.has("Symbiote") && board.has("Wirewood Symbiote");
+    const hasBigElfDork = battlefield.some(c => {
+      if (sickSet.has(c)) return false;
+      const cd = getCard(c);
+      return cd?.tags?.includes("elf") && (cd.tags?.includes("big-dork") || cd.tags?.includes("infinite-dork"));
+    });
+    if (hasUsedSymbiote && hasBigElfDork) {
+      // Bounce Symbiote — it goes to hand and can be recast for {G}
+      const symIdx = battlefield.indexOf("Wirewood Symbiote");
+      if (symIdx >= 0) {
+        battlefield.splice(symIdx, 1);
+        hand.push("Wirewood Symbiote");
+        used.add("Sabertooth");
+        // Reset Symbiote's used flag so it can activate again this turn
+        used.delete("Symbiote");
+        return true;
+      }
+    }
+  }
+
+  // Hyrax Tower Scout: ETB — untap up to X creatures (where X = its power, typically 3).
+  // In the sim we track it as an activated ability triggered on cast: untap the biggest
+  // non-sick dork on the board. Only fire when a useful target exists.
+  if (board.has("Hyrax Tower Scout") && !sickSet.has("Hyrax Tower Scout") &&
+      !used.has("HyraxUntap")) {
+    const hasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+    // Hyrax ETB untaps up to 3 creatures — most useful when a big dork needs untapping
+    const bigDorkToUntap = battlefield.find(c =>
+      getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"));
+    if (bigDorkToUntap && hasBouncer) {
+      // Hyrax ETB: untap up to 3 creatures. With Sabertooth present the loop is:
+      // Sabertooth bounces Hyrax ({1G}) → recast Hyrax ({2G}) → ETB untaps dork again.
+      // Net positive when dork produces ≥ 4G. Simulate just the untap trigger.
+      used.add("HyraxUntap");
+      return true; // triggers mana recalculation
+    }
+  }
+
+  // Elvish Reclaimer: {T}: put a land from library onto battlefield tapped.
+  // With infinite mana, tap to fetch Geier Reach Sanitarium (the mill win land).
+  // Also fetches Gaea's Cradle or Nykthos when they're not yet on board.
+  if (board.has("Elvish Reclaimer") && !sickSet.has("Elvish Reclaimer") &&
+      !used.has("Reclaimer") && manaPool.total >= 0) {
+    const RECLAIMER_TARGETS = [
+      "Geier Reach Sanitarium",  // win condition with infinite mana
+      "Gaea's Cradle",           // massive mana
+      "Nykthos, Shrine to Nyx",  // devotion mana
+      "Deserted Temple",         // untap Cradle
+      "Yavimaya, Cradle of Growth", // makes everything a Forest
+    ];
+    // Only activate for Geier Reach when infinite is live (avoid wasting a tapped creature)
+    const infActive = (() => {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+        if (combo.needsBigDork) {
+          if (!battlefield.some(c => !sickSet.has(c) &&
+            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+            continue;
+        }
+        return true;
+      }
+      return false;
+    })();
+    const reclaimerTarget = RECLAIMER_TARGETS.find(t => {
+      if (board.has(t)) return false;
+      if (!library.includes(t)) return false;
+      // Only fetch Geier Reach when infinite is active
+      if (t === "Geier Reach Sanitarium" && !infActive) return false;
+      return true;
+    });
+    if (reclaimerTarget) {
+      const li = library.indexOf(reclaimerTarget);
+      library.splice(li, 1);
+      battlefield.push(reclaimerTarget);
+      // Fetched land enters tapped — mark it if there's a tapped-tracking mechanism
+      // (the mana pool calc skips tapped lands; Geier Reach costs {T} to activate anyway)
+      used.add("Reclaimer");
+      // Shuffle library
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
+      return true;
+    }
+  }
+
+  // Badgermole Cub + bouncer (Temur Sabertooth / Kogla) + infinite mana = combat win.
+  // Badgermole ETB: "Each creature you control gets +1/+1 until end of turn."
+  // With Temur Sabertooth bouncing Badgermole for {1G} and recasting for {2}, each loop
+  // pumps the whole team +1/+1. With infinite mana the team becomes arbitrarily large.
+  // Model: if infinite is active + Badgermole + bouncer all non-sick, record as win.
+  if (board.has("Badgermole Cub") && !sickSet.has("Badgermole Cub") &&
+      !used.has("BadgermoleWin")) {
+    const hasBouncer = (board.has("Temur Sabertooth") && !sickSet.has("Temur Sabertooth")) ||
+                       (board.has("Kogla, the Titan Ape") && !sickSet.has("Kogla, the Titan Ape"));
+    if (hasBouncer) {
+      const infActive = (() => {
+        for (const combo of COMBOS) {
+          if (combo.type !== "infinite-mana") continue;
+          if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+          if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+          if (combo.needsBigDork) {
+            if (!battlefield.some(c => !sickSet.has(c) &&
+              (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+              continue;
+          }
+          return true;
+        }
+        return false;
+      })();
+      if (infActive) {
+        used.add("BadgermoleWin");
+        // Signal to the sim loop that this is a win — set a flag the win-check will see
+        if (simState) simState._badgermoleWin = true;
+        return true;
+      }
     }
   }
 
@@ -18069,7 +18520,24 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         battlefield.push("Itlimoc, Cradle of the Sun");
       }
     } else if (card === "Woodland Bellower") {      // ETB: search for a nonlegendary green creature with CMC ≤ 3, put onto battlefield.
-      const WB_PRIORITY = [
+      const LEGENDARY = new Set(["Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
+        "Yeva, Nature's Herald", "Yisan, the Wanderer Bard", "Eladamri, Korvecdal",
+        "Nissa, Resurgent Animist", "Saryth, the Viper's Fang"]);
+      const boardSetWB = new Set(battlefield);
+      const hasAshayaWB = boardSetWB.has("Ashaya, Soul of the Wild");
+      const hasRangerWB = boardSetWB.has("Quirion Ranger") || boardSetWB.has("Scryb Ranger")
+                       || boardSetWB.has("Argothian Elder");
+      // Context-aware priority: when Ashaya+Ranger are set up, finding a big dork enables
+      // infinite mana immediately. Prioritize big dorks first in that case.
+      const WB_PRIORITY_COMBO_READY = [
+        "Elvish Archdruid", "Priest of Titania", "Circle of Dreams Druid",
+        "Wirewood Channeler", "Marwyn, the Nurturer",
+        "Duskwatch Recruiter", "Formidable Speaker", "Hyrax Tower Scout",
+        "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
+        "Eternal Witness", "Elvish Harbinger",
+        "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
+      ];
+      const WB_PRIORITY_DEFAULT = [
         "Quirion Ranger", "Scryb Ranger", "Wirewood Symbiote",
         "Duskwatch Recruiter", "Formidable Speaker", "Hyrax Tower Scout",
         "Elvish Archdruid", "Priest of Titania", "Circle of Dreams Druid",
@@ -18077,10 +18545,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         "Eternal Witness", "Elvish Harbinger", "Fierce Empath",
         "Llanowar Elves", "Elvish Mystic", "Fyndhorn Elves", "Arbor Elf",
       ];
-      const LEGENDARY = new Set(["Ashaya, Soul of the Wild", "Selvala, Heart of the Wilds",
-        "Yeva, Nature's Herald", "Yisan, the Wanderer Bard", "Eladamri, Korvecdal",
-        "Nissa, Resurgent Animist", "Saryth, the Viper's Fang"]);
-      const boardSetWB = new Set(battlefield);
+      const WB_PRIORITY = (hasAshayaWB && hasRangerWB) ? WB_PRIORITY_COMBO_READY : WB_PRIORITY_DEFAULT;
       let wbTarget = null;
       for (const t of WB_PRIORITY) {
         const cd = getCard(t);
@@ -18294,11 +18759,65 @@ function simPlayCard(card, idx, simState, manaPool = null) {
 
 function extractComboLabel(result) {
   if (!result) return "Unknown";
+
+  // Map raw combo IDs → human-readable win labels
+  // Covers both COMBOS array IDs and bespoke result combo fields
+  const COMBO_ID_LABELS = {
+    // Bespoke result IDs that appear in win stats
+    "fauna_duskwatch_win":        "Fauna Shaman Win",
+    "speaker_win_via_tutor":      "Speaker → Infinite",
+    "natural_order_ashaya_win":   "Natural Order → Ashaya",
+    "finale_win_now":             "Finale Win",
+    "speaker_ashaya_tutor":       "Speaker → Ashaya",
+    "speaker_ashaya_ranger":      "Speaker → Ashaya Loop",
+    "speaker_hand_cast_to_win":   "Speaker Win",
+    "speaker_inf_duskwatch_direct":"Speaker → Duskwatch",
+    "pact_speaker_ashaya_elder_win":"Pact → Speaker Win",
+    "full_hand_inf_speaker_win":  "Speaker Infinite Win",
+    // COMBOS array IDs
+    "ashaya_symbiote_bigdork":    "Ashaya+Symbiote Loop",
+    "ashaya_scryb":               "Scryb Loop",
+    "ashaya_scryb_named_dork":    "Scryb Loop",
+    "ashaya_argothian":           "Argothian Loop",
+    "argothian_lodge":            "Argothian + Lodge",
+    "argothian_deserted_lodge":   "Argothian Loop",
+    "earthcraft_ashaya_ranger":   "Earthcraft Loop",
+    "earthcraft_ashaya_quirion_forest": "Earthcraft Loop",
+    "earthcraft_ashaya_quirion_minimal":"Earthcraft Loop",
+    "sabertooth_symbiote":        "Sabertooth+Symbiote Loop",
+    "sabertooth_scout":           "Sabertooth+Scout Loop",
+    "haste_sabertooth_dork":      "Sabertooth Haste Loop",
+    "haste_sabertooth_named_dork":"Sabertooth Haste Loop",
+    "hyrax_sabertooth_named_dork":"Hyrax+Sabertooth Loop",
+    "arbor_ashaya_loop":          "Arbor+Ashaya Loop",
+    "circle_symbiote_loop":       "Circle+Symbiote Loop",
+    "fanatic_ashaya_ranger":      "Fanatic Loop",
+    "magus_ashaya":               "Magus+Ashaya Loop",
+    "magus_ashaya_named_dork":    "Magus+Ashaya Loop",
+    "draw_loop_neutral":          "Draw Loop",
+    "regal_force_draw":           "Regal Force Draw",
+    "geier_mill_temur":           "Sanitarium Mill",
+    "geier_mill_kogla":           "Sanitarium Mill",
+    "geier_mill_ashaya":          "Sanitarium Mill",
+    "poison_win":                 "Poison Win",
+    "yisan_engine":               "Yisan Chain",
+    "speaker_etb_tutor":          "Speaker ETB Chain",
+    "seedborn_engine":            "Seedborn Engine",
+    "vitalize_ewit_dork_loop":    "Vitalize Loop",
+    "hope_tender_ashaya_dork":    "Hope Tender Loop",
+    "ley_weaver_ashaya":          "Ley Weaver Loop",
+    "survival_witness":           "Survival+EWit Loop",
+    "woodcaller_ashaya_loop":     "Woodcaller Loop",
+  };
+  if (result.combo && COMBO_ID_LABELS[result.combo]) return COMBO_ID_LABELS[result.combo];
+
+  // Regex patterns on headline + category text
   const h = (result.headline ?? "") + " " + (result.category ?? "");
   const patterns = [
     [/ashaya.*loop|loop.*ashaya/i,           "Ashaya Loop"],
     [/earthcraft/i,                           "Earthcraft Loop"],
     [/formidable speaker/i,                   "Speaker Loop"],
+    [/fauna shaman/i,                         "Fauna Shaman Win"],
     [/quirion/i,                              "Quirion Loop"],
     [/scryb ranger/i,                         "Scryb Loop"],
     [/wirewood symbiote/i,                    "Wirewood Loop"],
@@ -18318,6 +18837,18 @@ function extractComboLabel(result) {
   ];
   for (const [re, label] of patterns) {
     if (re.test(h) && label) return label;
+  }
+
+  // Last resort: if combo field is a snake_case ID, convert to Title Case
+  if (result.combo && typeof result.combo === "string") {
+    const raw = result.combo;
+    if (/^[a-z][a-z0-9_]*$/.test(raw)) {
+      // Convert snake_case → Title Case words, truncate if too long
+      const titled = raw.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      return titled.length <= 36 ? titled : titled.slice(0, 33) + "…";
+    }
+    // If it's a readable combo name (from COMBOS.name), use it directly
+    if (raw.length <= 40 && !raw.includes("_")) return raw.slice(0, 36);
   }
   return h.slice(0, 36).trim() || "Win";
 }
