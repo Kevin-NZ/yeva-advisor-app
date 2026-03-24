@@ -20314,6 +20314,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const winComboRef = useRef(null);      // headline of winning combo for current game
   const [statsLoaded, setStatsLoaded] = useState(false);
   const [replayGame, setReplayGame] = useState(null);
+  const [expandedLogGame, setExpandedLogGame] = useState(null); // gameNum whose log is expanded
   const milestoneRef = useRef({ firstDork: null, infiniteMana: null, winCondition: null });
   const openingHandRef = useRef([]);
   const gameNumRef = useRef(0);
@@ -20604,6 +20605,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       turns: turnRef.current,
       replay: finalSnapshots,
       notes: gameNotes.trim() || null,
+      gameLog: [...log].reverse(), // log is prepended so reverse to get chronological order
     };
     setGameHistory(prev => {
       const next = [...prev, entry];
@@ -27208,11 +27210,14 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           No games yet. Play a game and tap ★ END GAME to record it.
                         </div>
                       )}
-                      {[...games].reverse().map((g, idx) => (
+                      {[...games].reverse().map((g, idx) => {
+                        const logOpen = expandedLogGame === g.gameNum;
+                        const hasLog = g.gameLog?.length > 0;
+                        return (
                         <div key={g.gameNum} style={{
                           marginBottom: "8px", padding: "8px 10px",
                           background: idx % 2 === 0 ? "transparent" : "#0a150a",
-                          border: `1px solid ${COLORS.border}`,
+                          border: `1px solid ${logOpen ? COLORS.green1 : COLORS.border}`,
                           borderLeft: `3px solid ${g.winCondition ? COLORS.red : COLORS.border}`,
                           borderRadius: "6px",
                         }}>
@@ -27227,18 +27232,33 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                               : <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginLeft: "auto" }}>no win</span>
                             }
                           </div>
-                          {/* Row 2: combo label + replay */}
-                          {(g.winCombo || g.notes || g.replay?.length > 0) && (
+                          {/* Row 2: combo label + replay + log toggle */}
+                          {(g.winCombo || g.notes || g.replay?.length > 0 || hasLog) && (
                             <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
                               {g.winCombo && <span style={{ fontSize: "9px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.winCombo}</span>}
                               {g.notes && <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif" }}>💬 {g.notes}</span>}
+                              {hasLog && (
+                                <button onClick={() => setExpandedLogGame(logOpen ? null : g.gameNum)} style={{ background: logOpen ? "#0d1f0d" : "none", border: `1px solid ${logOpen ? COLORS.green1 : COLORS.border}`, borderRadius: "3px", padding: "1px 5px", color: logOpen ? COLORS.green2 : COLORS.textDim, cursor: "pointer", fontSize: "9px", flexShrink: 0 }}>📋</button>
+                              )}
                               {g.replay?.length > 0 && (
                                 <button onClick={() => setReplayGame(g)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "1px 5px", color: COLORS.textDim, cursor: "pointer", fontSize: "9px", flexShrink: 0 }}>📼</button>
                               )}
                             </div>
                           )}
+                          {/* Expandable game log */}
+                          {logOpen && hasLog && (
+                            <div style={{ marginTop: "8px", borderLeft: `2px solid ${COLORS.green1}44`, paddingLeft: "8px", maxHeight: "180px", overflowY: "auto" }}>
+                              {g.gameLog.map((entry, li) => (
+                                <div key={li} style={{ fontSize: "10px", color: entry.color || COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5, padding: "1px 0" }}>
+                                  <span style={{ color: COLORS.textDim, fontSize: "8px", fontFamily: "'Cinzel', serif", marginRight: "5px" }}>T{entry.turn}</span>
+                                  {entry.msg}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
@@ -27250,31 +27270,54 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                         </tr>
                       </thead>
                       <tbody>
-                        {[...games].reverse().map((g, idx) => (
-                          <tr key={g.gameNum} style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
-                            <td style={{ padding: "5px 6px", color: COLORS.textDim }}>{g.gameNum}</td>
-                            <td style={{ padding: "5px 6px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "—" : `${g.mulligans}×`}</td>
-                            <OpeningHandCell hand={g.openingHand} />
-                            <td style={{ padding: "5px 6px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>{g.firstDork ? `T${g.firstDork}` : "—"}</td>
-                            <td style={{ padding: "5px 6px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>{g.infiniteMana ? `T${g.infiniteMana}` : "—"}</td>
-                            <td style={{ padding: "5px 6px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>{g.winCondition ? `T${g.winCondition}` : "—"}</td>
-                            <td style={{ padding: "5px 6px", color: COLORS.textMid, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.winCombo}>
-                              {g.winCombo || "—"}
-                            </td>
-                            <td style={{ padding: "5px 6px", maxWidth: "120px" }} title={g.notes || ""}>
-                              {g.notes ? (
-                                <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  💬 {g.notes}
-                                </span>
-                              ) : null}
-                            </td>
-                            <td style={{ padding: "5px 6px" }}>
-                              {g.replay?.length > 0 && (
-                                <button onClick={() => setReplayGame(g)} title="View replay" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "2px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px" }}>📼</button>
+                        {[...games].reverse().map((g, idx) => {
+                          const logOpen = expandedLogGame === g.gameNum;
+                          const hasLog = g.gameLog?.length > 0;
+                          return (
+                            <React.Fragment key={g.gameNum}>
+                              <tr style={{ borderBottom: logOpen ? "none" : `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
+                                <td style={{ padding: "5px 6px", color: COLORS.textDim }}>{g.gameNum}</td>
+                                <td style={{ padding: "5px 6px", color: g.mulligans > 0 ? COLORS.gold : COLORS.textMid }}>{g.mulligans === 0 ? "—" : `${g.mulligans}×`}</td>
+                                <OpeningHandCell hand={g.openingHand} />
+                                <td style={{ padding: "5px 6px", color: g.firstDork ? COLORS.green2 : COLORS.textDim }}>{g.firstDork ? `T${g.firstDork}` : "—"}</td>
+                                <td style={{ padding: "5px 6px", color: g.infiniteMana ? "#c084fc" : COLORS.textDim }}>{g.infiniteMana ? `T${g.infiniteMana}` : "—"}</td>
+                                <td style={{ padding: "5px 6px", color: g.winCondition ? COLORS.red : COLORS.textDim, fontWeight: g.winCondition ? "bold" : "normal" }}>{g.winCondition ? `T${g.winCondition}` : "—"}</td>
+                                <td style={{ padding: "5px 6px", color: COLORS.textMid, fontSize: "10px", fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.winCombo}>
+                                  {g.winCombo || "—"}
+                                </td>
+                                <td style={{ padding: "5px 6px", maxWidth: "120px" }} title={g.notes || ""}>
+                                  {g.notes ? (
+                                    <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      💬 {g.notes}
+                                    </span>
+                                  ) : null}
+                                </td>
+                                <td style={{ padding: "5px 6px", whiteSpace: "nowrap" }}>
+                                  {hasLog && (
+                                    <button onClick={() => setExpandedLogGame(logOpen ? null : g.gameNum)} title={logOpen ? "Hide game log" : "Show game log"} style={{ background: logOpen ? "#0d1f0d" : "none", border: `1px solid ${logOpen ? COLORS.green1 : COLORS.border}`, borderRadius: "3px", padding: "2px 5px", color: logOpen ? COLORS.green2 : COLORS.textDim, cursor: "pointer", fontSize: "10px", marginRight: "4px" }}>📋</button>
+                                  )}
+                                  {g.replay?.length > 0 && (
+                                    <button onClick={() => setReplayGame(g)} title="View replay" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "2px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px" }}>📼</button>
+                                  )}
+                                </td>
+                              </tr>
+                              {logOpen && hasLog && (
+                                <tr style={{ borderBottom: `1px solid ${COLORS.border}22`, background: idx % 2 === 0 ? "transparent" : "#0a150a" }}>
+                                  <td colSpan={9} style={{ padding: "0 8px 10px 28px" }}>
+                                    <div style={{ borderLeft: `2px solid ${COLORS.green1}44`, paddingLeft: "10px", maxHeight: "200px", overflowY: "auto" }}>
+                                      {g.gameLog.map((entry, li) => (
+                                        <div key={li} style={{ fontSize: "11px", color: entry.color || COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.5, padding: "1px 0" }}>
+                                          <span style={{ color: COLORS.textDim, fontSize: "9px", fontFamily: "'Cinzel', serif", marginRight: "6px", minWidth: "28px", display: "inline-block" }}>T{entry.turn}</span>
+                                          {entry.msg}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                          </tr>
-                        ))}
+                            </React.Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}
