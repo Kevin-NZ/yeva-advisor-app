@@ -12178,7 +12178,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     { name:"Finale of Devastation",finds:"creature",       baseCost:"cmc+2", usable: inHand.has("Finale of Devastation"),
       note:"{X}{G}{G}: find creature MV≤X from library/graveyard → battlefield", putsToBattlefield:true, sorcerySpeed:true },
     { name:"Worldly Tutor",        finds:"creature",       baseCost:1,  usable: inHand.has("Worldly Tutor"),
-      note:"{G}: find any creature → top of library" },
+      note:"{G}: find any creature → top of library", putsToTopOfLibrary:true },
     { name:"Fierce Empath",        finds:"creature-cmc6+", baseCost:3,  usable: inHand.has("Fierce Empath"),
       note:"{2}{G}: ETB find creature MV≥6 → hand",             putsToBattlefield:true, sorcerySpeed:true },
     { name:"Elvish Harbinger",     finds:"creature-elf",   baseCost:3,  usable: inHand.has("Elvish Harbinger"),
@@ -12407,6 +12407,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       mana: cost,
       note: tutor.note,
       putsToBattlefield: tutor.putsToBattlefield ?? false,
+      putsToTopOfLibrary: tutor.putsToTopOfLibrary ?? false,
       constraint: tutor.constraint,
     };
     // mustPreExist / summoning sickness: piece needs to be on board before it can tap
@@ -12467,6 +12468,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         extraSteps.push({
           tutor: tutor.name, target: found, mana: tutorCost(tutor, found),
           note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
+          putsToTopOfLibrary: tutor.putsToTopOfLibrary ?? false,
           isExtra: true,
           label: isLand ? "key land" : "big dork",
         });
@@ -12743,6 +12745,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         if (!tutor) return null; // can't get this piece at all
         preSteps.push({ tutor: tutor.name, target: r, mana: tutorCost(tutor, r),
           note: tutor.note, putsToBattlefield: tutor.putsToBattlefield ?? false,
+          putsToTopOfLibrary: tutor.putsToTopOfLibrary ?? false,
           isPreExist: true });
       }
     }
@@ -12991,7 +12994,10 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     const effectiveManaFRL = mana + (elderApplies ? elderBonusFRL : 0)
       + fastManaBonus;
     const canAfford = totalMana <= effectiveManaFRL;
-    const nextTurn  = preStatus.nextTurn;
+    // putsToTopOfLibrary tutors (e.g. Worldly Tutor) put the card on top of the library,
+    // not into hand — the found piece is only available NEXT draw step, not this turn.
+    const hasDeferredTutor = allSteps.some(s => s.putsToTopOfLibrary);
+    const nextTurn  = preStatus.nextTurn || hasDeferredTutor;
     const stepCount = allSteps.length;
 
 
@@ -16726,7 +16732,20 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
   let t1Dork      = false;
   let winBattlefield = null;
   let winGraveyard   = null;
-  const castLog      = new Set(); // every non-land card cast this game
+  // castLog tracks every non-land card cast. Wrapped to also populate castByTurn.
+  const castLog = {
+    _set: new Set(),
+    has(c)    { return this._set.has(c); },
+    add(c)    {
+      this._set.add(c);
+      const t = simState._currentTurn;
+      if (t != null && castByTurn[t - 1]) castByTurn[t - 1].push(c);
+      return this;
+    },
+    [Symbol.iterator]() { return this._set[Symbol.iterator](); },
+    get size() { return this._set.size; },
+  };
+  const castByTurn   = [];        // per-turn cast arrays (index = turn-1)
 
   // simState is a thin proxy so simPlayCard can mutate landPlayed via the object reference.
   // battlefield/graveyard/library/sickSet are arrays/sets mutated in place directly.
@@ -16736,6 +16755,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
   const playCard = (card, idx, mp = null) => simPlayCard(card, idx, simState, mp);
 
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
+    // Initialise this turn's cast list
+    castByTurn[turn - 1] = [];
+    simState._currentTurn = turn; // used by the castLog proxy below
     // Untap + draw (skip draw on turn 1 for first player — but for goldfish always draw)
     sickSet = new Set(); // all permanents untap and lose summoning sickness
     simState._usedAbilities = new Set(); // reset activated ability tracking for new turn
@@ -17062,7 +17084,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           battlefield.filter(c => getCard(c)?.type === "land").length < 2;
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
           !simHasValidSacTarget(battlefield, sickSet);
-        if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature) {
+        // Never proactively cast stax pieces — they shut off our own fast mana in goldfish.
+        const SIM_SELF_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze",
+          "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+        const isSelfStax = SIM_SELF_STAX.has(cardToPlay);
+        if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature && !isSelfStax) {
           // Hold tutors only when we genuinely can't act on what they find (mana-based check)
           const holdIt = isTutor && shouldHoldTutor(cardToPlay, mana);
           if (!holdIt) {
@@ -17106,6 +17132,12 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           if ((c === "Natural Order" || c === "Eldritch Evolution") &&
               !battlefield.some(bf => getCard(bf)?.type === "creature" && !sickSet.has(bf))) return null;
           let score = cmc;
+          // Stax/hate pieces disrupt our own fast mana in goldfish — never proactively cast them.
+          // They're valid sacrifice fodder for Natural Order/EE (handled separately) but
+          // casting them kills Sol Ring / Chrome Mox activations immediately.
+          const SELF_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze",
+            "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+          if (SELF_STAX.has(c)) return null;
           if (tags.includes("fast-mana"))                score += 9; // play ASAP for acceleration
           else if (tags.includes("enchant-land"))        score += 7; // Utopia Sprawl / Wild Growth — permanent ramp
           else if (tags.includes("dork") && cmc === 1)   score += 8;
@@ -17171,7 +17203,8 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
   }
 
   return { openingHand, mulligans, winTurn, winCombo, bottlenecks, manaCurve, t1Dork,
-           winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog) : null,
+           winBattlefield, winGraveyard, winCastLog: winTurn !== null ? new Set(castLog._set) : null,
+           castByTurn: castByTurn.slice(0, winTurn ?? castByTurn.length),
            infiniteManaT, openingHandGrade };
 }
 
@@ -17478,6 +17511,58 @@ function simActivateAbilities(simState, manaPool) {
       used.add("Symbiote");
       // Elder re-untap effect is captured on the next calculateSimManaPool call since
       // Elder is now untapped and can activate again.
+      return true;
+    }
+  }
+
+  // Joraga Treespeaker: {1}{G} to level up from level 0 → level 2 (taps for {G} per elf).
+  // At level 0 she taps for {G}; at level 2+ she taps for elf count. Levelling is crucial.
+  // Only level up if we have a surplus of mana (i.e. enough to level AND still cast a key spell).
+  if (board.has("Joraga Treespeaker") && !sickSet.has("Joraga Treespeaker") &&
+      !used.has("JoragaLevel") && manaPool.green >= 1 && manaPool.total >= 2) {
+    const elves = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+    // Only level up if she'd actually produce more mana than a plain {G} dork:
+    // at level 2, she taps for elf count. Worth levelling if elf count ≥ 2.
+    if (elves >= 2) {
+      used.add("JoragaLevel");
+      // simPlayCard doesn't model levelling — simulate the effect by tracking that
+      // Joraga now produces elf-count mana. We approximate by forcing a re-evaluate
+      // on next mana calc (the tapsFor:"joraga" formula in cardManaContribution
+      // already scales with elf count at level 2). Just mark as used.
+      return true;
+    }
+  }
+
+  // Wirewood Lodge: {G}: untap target Elf. Huge with big elf dorks — effectively doubles mana.
+  // Only fire if we have an untapped big-dork elf (Priest, Archdruid, Channeler) that has already
+  // tapped this turn, or if we need extra mana. Model: untap the biggest elf dork on board.
+  if (board.has("Wirewood Lodge") && !used.has("WirewoodLodge") && manaPool.green >= 1) {
+    const bigElfDork = battlefield.find(c => {
+      if (sickSet.has(c)) return false;
+      const cd = getCard(c);
+      return cd?.tags?.includes("elf") && (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork"));
+    });
+    if (bigElfDork) {
+      // Spending {G} to untap a dork that produces ≥2G is net positive.
+      used.add("WirewoodLodge");
+      // We don't literally re-tap the dork here — the mana pool already accounted for
+      // it tapping once. This activation gives +1 effective untap cycle; the mana boost
+      // is captured on the next calculateSimManaPool call since bonusMana tracking happens
+      // in the caller. Return true so the caller re-runs the ability/play loop.
+      return true;
+    }
+  }
+
+  // Deserted Temple: {1}, TAP: untap target land.
+  // Best target: Gaea's Cradle or Nykthos (produces creature/devotion count of mana).
+  // Only fire when Cradle/Nykthos is on board with ≥3 creatures (meaningful gain).
+  if (board.has("Deserted Temple") && !used.has("DesertedTemple") && manaPool.total >= 1) {
+    const hasCradle = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+    const hasNykthos = board.has("Nykthos, Shrine to Nyx");
+    const creatures = battlefield.filter(c =>
+      getCard(c)?.type === "creature" || c === "Dryad Arbor").length;
+    if ((hasCradle || hasNykthos) && creatures >= 3) {
+      used.add("DesertedTemple");
       return true;
     }
   }
@@ -18213,10 +18298,13 @@ function extractComboLabel(result) {
   const patterns = [
     [/ashaya.*loop|loop.*ashaya/i,           "Ashaya Loop"],
     [/earthcraft/i,                           "Earthcraft Loop"],
+    [/formidable speaker/i,                   "Speaker Loop"],
     [/quirion/i,                              "Quirion Loop"],
+    [/scryb ranger/i,                         "Scryb Loop"],
     [/wirewood symbiote/i,                    "Wirewood Loop"],
     [/duskwatch/i,                            "Duskwatch Sink"],
     [/natural order/i,                        "Natural Order"],
+    [/finale of devastation/i,                "Finale Win"],
     [/yisan/i,                                "Yisan Chain"],
     [/poison|infectious bite/i,               "Poison Win"],
     [/pile|oracle/i,                          "Oracle Pile"],
@@ -18225,6 +18313,7 @@ function extractComboLabel(result) {
     [/kogla/i,                                "Kogla Loop"],
     [/seedborn/i,                             "Seedborn Engine"],
     [/survival of the fittest/i,              "Survival Loop"],
+    [/summoner.*pact|pact.*ashaya/i,          "Summoner's Pact Line"],
     [/WIN NOW|CAST TO WIN/i,                  null], // fall through to headline
   ];
   for (const [re, label] of patterns) {
@@ -27327,8 +27416,13 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           onClick={() => {
                             const maxMC = Math.max(...nr.results.map(r => r.manaCurve?.length ?? 0), 0);
                             const mcHeaders = Array.from({length: maxMC}, (_, i) => `Mana T${i+1}`);
+                            const fmtCastLog = r => {
+                              const turns = r.castByTurn ?? [];
+                              const parts = turns.map((cards, t) => cards.length > 0 ? `T${t+1}: ${cards.join(", ")}` : null).filter(Boolean);
+                              return parts.length > 0 ? `"${parts.join(" → ").replace(/"/g,'""')}"` : "";
+                            };
                             const rows = [
-                              ["Game","Win Turn","∞ Mana T","Hand Grade","Mulligans","Combo","T1 Dork",...mcHeaders,"Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
+                              ["Game","Win Turn","∞ Mana T","Hand Grade","Mulligans","Combo","T1 Dork",...mcHeaders,"Cast Log","Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
                               ...nr.results.map((r, i) => [
                                 i + 1,
                                 r.winTurn ?? "",
@@ -27338,6 +27432,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                                 `"${(r.winCombo||"").replace(/"/g,'""')}"`,
                                 r.t1Dork ? 1 : 0,
                                 ...Array.from({length: maxMC}, (_, t) => r.manaCurve?.[t]?.toFixed(1) ?? ""),
+                                fmtCastLog(r),
                                 ...(r.openingHand||[]).map(c => `"${c.replace(/"/g,'""')}"`)
                               ].join(","))
                             ].join("\n");
@@ -27354,18 +27449,24 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                             color: COLORS.blue, cursor: "pointer",
                             fontFamily: "'Cinzel', serif", fontSize: "10px", letterSpacing: "1px",
                           }}
-                        >⬇ EXPORT ALL {nr.n} GAMES (with mana curve)</button>
+                        >⬇ EXPORT ALL {nr.n} GAMES (with mana curve + cast log)</button>
                         {/* Export wins only */}
                         <button
                           onClick={() => {
                             const wins = nr.results.filter(r => r.winTurn !== null);
+                            const fmtCastLog = r => {
+                              const turns = r.castByTurn ?? [];
+                              const parts = turns.map((cards, t) => cards.length > 0 ? `T${t+1}: ${cards.join(", ")}` : null).filter(Boolean);
+                              return parts.length > 0 ? `"${parts.join(" → ").replace(/"/g,'""')}"` : "";
+                            };
                             const rows = [
-                              ["Game","Win Turn","Mulligans","Combo","Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
+                              ["Game","Win Turn","Mulligans","Combo","Cast Log","Card 1","Card 2","Card 3","Card 4","Card 5","Card 6","Card 7"].join(","),
                               ...wins.map((r, i) => [
                                 i + 1,
                                 r.winTurn,
                                 r.mulligans,
                                 `"${(r.winCombo||"Unknown").replace(/"/g,'""')}"`,
+                                fmtCastLog(r),
                                 ...(r.openingHand||[]).map(c => `"${c.replace(/"/g,'""')}"`)
                               ].join(","))
                             ].join("\n");
