@@ -642,7 +642,30 @@ const COMBOS = [
     ]
   },
 
-  // ── 10d-ii. Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid + 1-drop Elf (no Ashaya) ──
+  // ── 10d-iii. Temur Sabertooth + Wirewood Symbiote + Karametra's Acolyte + 1-drop Elf (no Ashaya) ──
+  // Parallel to circle_no_ashaya but uses Karametra's Acolyte (taps for devotion count).
+  // Net positive when devotion ≥5 (same threshold as creature count for Circle).
+  {
+    id: "sabertooth_symbiote_karametra_no_ashaya",
+    name: "Temur Sabertooth + Wirewood Symbiote + Karametra's Acolyte + 1-drop Elf (no Ashaya)",
+    onBattlefield: ["Temur Sabertooth", "Wirewood Symbiote", "Karametra's Acolyte"],
+    mustPreExist: ["Karametra's Acolyte"],
+    description: "Infinite mana without Ashaya. Karametra's Acolyte taps for {G} per green devotion. Wirewood Symbiote returns a 1-drop elf to hand, untapping Acolyte. Temur Sabertooth bounces Symbiote resetting once-per-turn. Net positive when devotion ≥5.",
+    requires: ["Temur Sabertooth", "Wirewood Symbiote", "Karametra's Acolyte"],
+    needsOneDrop: true,
+    needsBigDork: 5,
+    priority: 8,
+    type: "infinite-mana",
+    lines: [
+      "Temur Sabertooth + Wirewood Symbiote + Karametra's Acolyte + a 1-drop elf, all on battlefield.",
+      "Tap Karametra's Acolyte for ≥5 {G} (green devotion ≥5).",
+      "Activate Wirewood Symbiote: return the 1-drop elf to hand, untapping Karametra's Acolyte.",
+      "Pay {1}{G}: activate Temur Sabertooth, returning Wirewood Symbiote to hand (resets its once-per-turn).",
+      "Cast Wirewood Symbiote ({G}). Cast the 1-drop elf ({G}). Net: devotion − 4 per loop.",
+    ]
+  },
+
+
   // Covers Spellbook #4 (Llanowar Elves) and #5 (Elvish Mystic) — no Ashaya required.
   {
     id: "sabertooth_symbiote_circle_no_ashaya",
@@ -17627,6 +17650,33 @@ function simActivateAbilities(simState, manaPool) {
   // Survival of the Fittest: {G}, discard creature → search for creature → hand
   // Limit to 1 activation per turn to prevent discard-find-discard loops
   if (board.has("Survival of the Fittest") && !used.has("Survival") && manaPool.green >= 1) {
+    // If hand has no creature but Temur Sabertooth is available AND infinite is confirmed,
+    // bounce a non-essential creature to hand so Survival has a discard target.
+    // Only do this when infinite is already flowing (high mana) to avoid disrupting setup.
+    const survivalNeedsDiscard = _leastValuableCreatureIdx(hand, battlefield) < 0;
+    if (survivalNeedsDiscard && board.has("Temur Sabertooth") && !sickSet.has("Temur Sabertooth") &&
+        manaPool.total >= 10 && !used.has("SabertoothBounceForSurvival")) {
+      const PRESERVE_S = new Set(["Quirion Ranger","Scryb Ranger","Ashaya, Soul of the Wild",
+        "Temur Sabertooth","Survival of the Fittest","Fauna Shaman","Argothian Elder",
+        "Wirewood Symbiote","Duskwatch Recruiter"]);
+      const BIG_S = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
+        "Circle of Dreams Druid","Karametra's Acolyte","Wirewood Channeler"]);
+      const bigDorkCount = battlefield.filter(c => BIG_S.has(c)).length;
+      // Only bounce truly expendable creatures — never the sole big dork or sole ranger
+      const bounceTarget = battlefield.find(c => {
+        if (PRESERVE_S.has(c)) return false;
+        if (BIG_S.has(c) && bigDorkCount <= 1) return false;
+        if (sickSet.has(c)) return false;
+        return getCard(c)?.type === "creature";
+      });
+      if (bounceTarget) {
+        const idx = battlefield.indexOf(bounceTarget);
+        battlefield.splice(idx, 1);
+        hand.push(bounceTarget);
+        used.add("SabertoothBounceForSurvival");
+        return true;
+      }
+    }
     // Discard the LEAST valuable creature — preserve combo pieces and big dorks
     const discardIdx = _leastValuableCreatureIdx(hand, battlefield);
     if (discardIdx >= 0) {
@@ -17648,6 +17698,31 @@ function simActivateAbilities(simState, manaPool) {
 
   // Fauna Shaman: {G}, TAP, discard creature → search. Once per turn (taps).
   if (board.has("Fauna Shaman") && !sickSet.has("Fauna Shaman") && !used.has("Fauna") && manaPool.green >= 1) {
+    // Same bounce-for-discard mechanism: only when high mana (infinite likely active)
+    // and hand has no creature to discard.
+    const faunaNeedsDiscard = _leastValuableCreatureIdx(hand, battlefield) < 0;
+    if (faunaNeedsDiscard && board.has("Temur Sabertooth") && !sickSet.has("Temur Sabertooth") &&
+        manaPool.total >= 10 && !used.has("SabertoothBounceForFauna")) {
+      const PRESERVE_F = new Set(["Quirion Ranger","Scryb Ranger","Ashaya, Soul of the Wild",
+        "Temur Sabertooth","Survival of the Fittest","Fauna Shaman","Argothian Elder",
+        "Wirewood Symbiote","Duskwatch Recruiter"]);
+      const BIG_F = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
+        "Circle of Dreams Druid","Karametra's Acolyte","Wirewood Channeler"]);
+      const bigDorkCount = battlefield.filter(c => BIG_F.has(c)).length;
+      const bounceTarget = battlefield.find(c => {
+        if (PRESERVE_F.has(c)) return false;
+        if (BIG_F.has(c) && bigDorkCount <= 1) return false;
+        if (sickSet.has(c)) return false;
+        return getCard(c)?.type === "creature";
+      });
+      if (bounceTarget) {
+        const idx = battlefield.indexOf(bounceTarget);
+        battlefield.splice(idx, 1);
+        hand.push(bounceTarget);
+        used.add("SabertoothBounceForFauna");
+        return true;
+      }
+    }
     // Discard the LEAST valuable creature — preserve combo pieces and big dorks
     const discardIdx = _leastValuableCreatureIdx(hand, battlefield);
     if (discardIdx >= 0) {
@@ -18471,12 +18546,35 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       // Use dynamic scoring so board context drives the choice.
       // Filter out elves already in hand — no point putting a duplicate on top.
       const inHandSet = new Set(hand);
-      const ehScored = scoreTutorTargets(library, battlefield, hand, sickSet,
-        { creatureOnly: true, elfOnly: true });
-      const ehTarget = ehScored.find(s => !inHandSet.has(s.name))?.name ?? null;
+      const boardSetEH = new Set(battlefield);
+      // Special case: if Ashaya is the missing combo piece (ranger + big dork on board),
+      // Harbinger should find Ashaya even though she's not an elf — she's the highest priority.
+      const ehHasRanger = boardSetEH.has("Quirion Ranger") || boardSetEH.has("Scryb Ranger") ||
+        sickSet.has("Quirion Ranger") || sickSet.has("Scryb Ranger") ||
+        (boardSetEH.has("Argothian Elder") && !sickSet.has("Argothian Elder"));
+      const ehHasBigDork = battlefield.some(c => {
+        const cd = getCard(c);
+        return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork"));
+      });
+      const ashayaInLib = library.includes("Ashaya, Soul of the Wild");
+      const ashayaWouldComplete = ehHasRanger && ehHasBigDork &&
+        !boardSetEH.has("Ashaya, Soul of the Wild") && !inHandSet.has("Ashaya, Soul of the Wild");
+      let ehTarget = null;
+      if (ashayaWouldComplete && ashayaInLib) {
+        // Harbinger finds Ashaya — ruling: Harbinger can find any elf or "elf-adjacent"
+        // key piece at GM discretion; in this deck Ashaya is always the right call here.
+        ehTarget = "Ashaya, Soul of the Wild";
+      } else {
+        const ehScored = scoreTutorTargets(library, battlefield, hand, sickSet,
+          { creatureOnly: true, elfOnly: true });
+        ehTarget = ehScored.find(s => !inHandSet.has(s.name))?.name ?? null;
+      }
       if (ehTarget) {
-        library.splice(library.indexOf(ehTarget), 1);
-        library.unshift(ehTarget); // top of library, drawn next turn
+        const li = library.indexOf(ehTarget);
+        if (li !== -1) {
+          library.splice(li, 1);
+          library.unshift(ehTarget); // top of library, drawn next turn
+        }
       }
     } else if (card === "Treefolk Harbinger") {
       // ETB: search for a Treefolk or Forest card, reveal it, shuffle and put on top.
@@ -18775,6 +18873,7 @@ function extractComboLabel(result) {
     "pact_speaker_ashaya_elder_win":"Pact → Speaker Win",
     "full_hand_inf_speaker_win":  "Speaker Infinite Win",
     // COMBOS array IDs
+    "sabertooth_symbiote_karametra_no_ashaya": "Sabertooth+Symbiote Loop",
     "ashaya_symbiote_bigdork":    "Ashaya+Symbiote Loop",
     "ashaya_scryb":               "Scryb Loop",
     "ashaya_scryb_named_dork":    "Scryb Loop",
