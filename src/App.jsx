@@ -1149,21 +1149,21 @@ const COMBOS = [
   // ── Elvish Guidance + Arbor Elf + Wirewood Lodge (≥2 elves) ───────────
   {
     id: "elvish_guidance_arbor_lodge",
-    name: "Elvish Guidance + Arbor Elf + Wirewood Lodge (≥2 elves)",
+    name: "Elvish Guidance + Arbor Elf + Wirewood Lodge (≥1 elf)",
     onBattlefield: ["Elvish Guidance", "Arbor Elf", "Wirewood Lodge"],
     mustPreExist: ["Arbor Elf", "Wirewood Lodge"],
-    description: "Infinite mana with 2+ elves. Elvish Guidance enchants a Forest making it tap for {G} per elf. Arbor Elf untaps that Forest (free). Wirewood Lodge ({G}) untaps Arbor Elf. Net: (elf count − 1) mana per loop. Infinite when you have ≥2 elves (most boards have far more).",
+    description: "Infinite mana with 1+ elf. Elvish Guidance: enchanted Forest still taps for its base {G}, PLUS an additional {G} per Elf on the battlefield. So with N elves the Forest taps for (1+N){G}. Arbor Elf untaps that Forest (free). Wirewood Lodge ({G}) untaps Arbor Elf. Net per loop: tap Forest twice = 2×(1+N) mana, minus 1G for Lodge = 2N+1 mana per loop. Infinite when you have ≥1 elf (Arbor itself counts).",
     requires: ["Elvish Guidance", "Arbor Elf", "Wirewood Lodge"],
-    needsMinElves: 2,
+    needsMinElves: 1,
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Elvish Guidance enchanting a Forest. Arbor Elf + Wirewood Lodge on battlefield. ≥2 elves in play.",
-      "Tap the Guidance-enchanted Forest for {G} × (elf count).",
+      "Elvish Guidance enchanting a Forest. Arbor Elf + Wirewood Lodge on battlefield. ≥1 elf in play.",
+      "Tap the Guidance-enchanted Forest for (1 + elf count) {G}. E.g. with 4 elves = 5{G}.",
       "Activate Arbor Elf: untap the enchanted Forest (free).",
-      "Tap enchanted Forest again for {G} × (elf count) — second activation.",
+      "Tap enchanted Forest again for another (1 + elf count) {G} — second activation.",
       "Spend {G}: activate Wirewood Lodge, untapping Arbor Elf.",
-      "Net: (elf count − 1) mana per full loop. With 3+ elves nets 2+. Repeat for infinite mana.",
+      "Net: elf count mana per full loop (pay {G} Lodge, gain 1 + elves twice). With 1 elf = 1 net. Repeat for infinite mana.",
     ]
   },
 
@@ -2194,8 +2194,10 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
       const bonus = ctx.landAuraBonuses.get(i);
       g   += bonus.green;
       col += bonus.colorless;
-      // Elvish Guidance: Forest taps for {G} x elves (already counted 1G above; add elves-1)
-      if (bonus.hasElvishGuidance) g += Math.max(0, ctx.elves - 1);
+      // Elvish Guidance: "whenever enchanted land is tapped for mana, add an additional {G}
+      // for each Elf on the battlefield." The land still produces its normal output (1G for
+      // a Forest), THEN adds G × elves on top. So total = base + elves (not base + elves - 1).
+      if (bonus.hasElvishGuidance) g += ctx.elves;
     }
 
     green     += g;
@@ -2205,7 +2207,9 @@ function sumManaPool(battlefield, sickSet = null, attachments = null) {
   // Flat heuristic fallback — used when no attachments provided (Goldfish, backward compat).
   if (!attachments) {
     green += battlefield.filter(c => c === "Utopia Sprawl" || c === "Wild Growth").length;
-    if (ctx.board.has("Elvish Guidance")) green += Math.max(0, ctx.elves - 1);
+    // Elvish Guidance: enchanted land still produces its base mana (counted above),
+    // THEN adds {G} per elf on battlefield. Bonus = elves (not elves - 1).
+    if (ctx.board.has("Elvish Guidance")) green += ctx.elves;
   }
 
   // Earthcraft: {T}: tap any creature you control → untap target basic land.
@@ -4216,24 +4220,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // Suppress if Arbor Elf block already covers this (it fires at priority 9)
         && !board.has("Arbor Elf")) {
       if (auraInHand === "Elvish Guidance") {
-        // Elvish Guidance: Forest taps for {G} per elf you control.
-        // Even at 0 elves now it's a 1-mana land; each elf cast later adds 1 more {G}.
+        // Elvish Guidance: base land output PLUS {G} per Elf on the battlefield.
+        // With 0 elves now the Forest still taps for 1G (base only); each elf adds 1G.
         const curElves = elvesOnBoard; // elves already on board
-        const guidanceNow = Math.max(1, curElves); // taps for at least 1 even with 0 elves
+        const guidanceNow = 1 + curElves; // base 1G + 1G per elf
         const hasArbor = inHand.has("Arbor Elf") || deckList?.has("Arbor Elf");
         results.push({
           priority: 7,
           category: "🌱 RAMP",
           combo: "cast_aura_elvish_guidance",
           headline: curElves > 0
-            ? `Cast Elvish Guidance ({2}{G}) — enchanted Forest taps for ${guidanceNow}{G} (${curElves} elves), scales with each new elf`
+            ? `Cast Elvish Guidance ({2}{G}) — enchanted Forest taps for ${guidanceNow}{G} (1 base + ${curElves} elf bonus), scales with elves`
             : `Cast Elvish Guidance ({2}{G}) — Forest taps for {G} now, +{G} for every elf you cast`,
-          detail: `Elvish Guidance enchants a Forest making it tap for {G} per elf you control. ${curElves > 0 ? `With ${curElves} elf${curElves > 1 ? "es" : ""} already on board the Forest taps for ${guidanceNow} immediately.` : "No elves yet — the Forest taps for {G} now and gains {G} per elf cast going forward."} Every mana dork or elf creature you play increases the output by {G}. With a full board of elves this becomes an enormous mana battery.`,
+          detail: `Elvish Guidance: whenever enchanted land is tapped for mana, add an additional {G} per Elf on the battlefield. ${curElves > 0 ? `Forest base (1G) + ${curElves} elf${curElves > 1 ? "s" : ""} = ${guidanceNow}G immediately.` : "No elves yet — Forest taps for 1G now and gains 1G per elf cast going forward."} With a full elf board this becomes an enormous mana battery.`,
           steps: [
             `Cast Elvish Guidance ({2}{G}), enchanting a Forest.`,
             curElves > 0
-              ? `Forest now taps for ${guidanceNow}{G} (one per elf). Each new elf adds {G} to its output.`
-              : `Forest taps for {G} now. Cast any elf next turn and it immediately taps for {G}{G}.`,
+              ? `Forest now taps for ${guidanceNow}{G} (1 base + ${curElves} elf bonus). Each new elf adds {G} to its output.`
+              : `Forest taps for {G} now. Cast any elf and it immediately taps for {G}{G}.`,
             ...(hasArbor && inHand.has("Arbor Elf")
               ? [`Cast Arbor Elf ({G}) — untap the enchanted Forest for a second activation: ${guidanceNow * 2} mana total.`]
               : hasArbor ? [`Find Arbor Elf to double the Forest's output — ${Math.max(2, guidanceNow * 2)} mana per tap cycle.`] : []),
@@ -4269,22 +4273,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (board.has("Arbor Elf") && (inHand.has("Utopia Sprawl") || inHand.has("Wild Growth") || inHand.has("Elvish Guidance")) && (mana >= 1 || infiniteManaActive)) {
     const aura = inHand.has("Elvish Guidance") ? "Elvish Guidance"
       : inHand.has("Utopia Sprawl") ? "Utopia Sprawl" : "Wild Growth";
-    const guidanceOutput = aura === "Elvish Guidance" ? elvesOnBoard + 1 : 2; // +1 for the elf we'll have
+    // Elvish Guidance: Forest taps for base 1G + 1G per elf. With Arbor Elf included: 1 + (elvesOnBoard + 1)
+    const guidanceOutput = aura === "Elvish Guidance" ? 1 + elvesOnBoard + 1 : 2; // 1 base + (elves including Arbor)
+    const totalElves = elvesOnBoard + 1; // +1 for Arbor Elf itself
     results.push({
       priority: 9,
       category: "🌱 RAMP",
       headline: aura === "Elvish Guidance"
-        ? `Elvish Guidance on Forest → Arbor Elf = ${guidanceOutput * 2} mana (${elvesOnBoard + 1} elves)`
+        ? `Elvish Guidance on Forest → Arbor Elf = ${guidanceOutput * 2} mana (1 base + ${totalElves} elves, ×2)`
         : `Enchant Forest with ${aura} → Arbor Elf = 3 mana`,
       detail: aura === "Elvish Guidance"
-        ? `Elvish Guidance makes a Forest tap for {G} per elf. With ${elvesOnBoard + 1} elves, the Forest taps for ${guidanceOutput}. Arbor Elf untaps it for a second activation — ${guidanceOutput * 2} mana total from one Forest.`
+        ? `Elvish Guidance: enchanted Forest still taps for base {G}, PLUS {G} per Elf. With ${totalElves} elves (including Arbor), Forest taps for ${guidanceOutput}. Arbor Elf untaps it — ${guidanceOutput * 2} mana total from one Forest.`
         : `${aura} on a Forest + Arbor Elf untapping it = 3 mana from a single Forest. This is the fastest ramp pattern in the deck.`,
       steps: [
         aura === "Elvish Guidance"
           ? `Cast Elvish Guidance on a Forest.`
           : `Cast ${aura} on a Forest (choose green).`,
         aura === "Elvish Guidance"
-          ? `Forest now taps for ${guidanceOutput} {G} (${elvesOnBoard + 1} elves).`
+          ? `Forest now taps for ${guidanceOutput} {G} (1 base + ${totalElves} elves).`
           : "Forest now taps for {G}{G}.",
         "Activate Arbor Elf: untap that Forest.",
         aura === "Elvish Guidance"
@@ -4299,8 +4305,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   if (inHand.has("Arbor Elf") && (board.has("Utopia Sprawl") || board.has("Wild Growth") || board.has("Elvish Guidance")) && (mana >= 1 || infiniteManaActive)) {
     const aura = board.has("Elvish Guidance") ? "Elvish Guidance"
       : board.has("Utopia Sprawl") ? "Utopia Sprawl" : "Wild Growth";
-    const guidanceOutput = aura === "Elvish Guidance" ? elvesOnBoard + 1 : 2; // +1 for Arbor Elf itself
+    // Arbor Elf not yet on board — count it in elves (+1) then add base 1G
+    const guidanceOutput = aura === "Elvish Guidance" ? 1 + elvesOnBoard + 1 : 2; // 1 base + (elves+1 for Arbor)
     const totalMana = aura === "Elvish Guidance" ? guidanceOutput * 2 : 3;
+    const totalElves2 = elvesOnBoard + 1;
     results.push({
       priority: 9,
       category: "🌱 RAMP",
@@ -4308,11 +4316,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ? `Cast Arbor Elf → unlocks ${totalMana} mana from Elvish Guidance Forest (${guidanceOutput} × 2)`
         : `Cast Arbor Elf → unlocks 3 mana from ${aura}-enchanted Forest`,
       detail: aura === "Elvish Guidance"
-        ? `${aura} is already enchanting a Forest. Cast Arbor Elf (CMC 1) and it can immediately untap that Forest for a second activation — ${guidanceOutput * 2} mana total.`
+        ? `${aura} enchants a Forest (base {G} + {G} per Elf). Cast Arbor Elf — Forest taps for ${guidanceOutput} (1 base + ${totalElves2} elves). Arbor Elf untaps for a second activation — ${totalMana} mana total.`
         : `${aura} is already on a Forest producing {G}{G}. Cast Arbor Elf (CMC 1) and untap that Forest for a second tap — 3 mana total from one Forest.`,
       steps: [
         `Cast Arbor Elf (${canAfford(1, 1) ? "you have the mana" : "need {G}"}).`,
-        `Tap the ${aura}-enchanted Forest for ${aura === "Elvish Guidance" ? `${guidanceOutput} {G} (${guidanceOutput} elves)` : "{G}{G}"}.`,
+        `Tap the ${aura}-enchanted Forest for ${aura === "Elvish Guidance" ? `${guidanceOutput} {G} (1 base + ${totalElves2} elves)` : "{G}{G}"}.`,
         "Activate Arbor Elf: untap that Forest.",
         `Tap the Forest again for another ${aura === "Elvish Guidance" ? `${guidanceOutput} {G}` : "{G}{G}"} — ${totalMana} mana total.`,
         ...(board.has("Wirewood Lodge") ? [`Wirewood Lodge can untap Arbor Elf (it's an elf) for {G} — repeat for ${totalMana - 1} net mana per loop.`] : []),
@@ -7084,7 +7092,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- ELVISH GUIDANCE ----
   if (board.has("Elvish Guidance")) {
-    const guidanceOutput = elvesOnBoard; // taps for {G} per elf
+    const guidanceOutput = 1 + elvesOnBoard; // base 1G (Forest) + 1G per elf on battlefield
     const hasArbor       = board.has("Arbor Elf");
     const hasLodge       = board.has("Wirewood Lodge");
     const hasYavimaya    = board.has("Yavimaya, Cradle of Growth");
@@ -7095,10 +7103,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         category: "🌿 ELVISH GUIDANCE",
         headline: hasArbor
           ? `Elvish Guidance + Arbor Elf: double-tap enchanted Forest for ${guidanceOutput * 2} mana`
-          : `Elvish Guidance: enchanted Forest taps for ${guidanceOutput} mana (${elvesOnBoard} elves)`,
-        detail: `Elvish Guidance enchants a Forest, making it tap for {G} per elf you control. With ${elvesOnBoard} elf${elvesOnBoard !== 1 ? "s" : ""} in play it produces ${guidanceOutput} mana${hasArbor ? ` — Arbor Elf can untap it for a second activation, totalling ${guidanceOutput * 2} mana from one land` : ""}.`,
+          : `Elvish Guidance: enchanted Forest taps for ${guidanceOutput} mana (1 base + ${elvesOnBoard} elves)`,
+        detail: `Elvish Guidance: whenever enchanted land is tapped for mana, its controller adds an additional {G} for each Elf on the battlefield. Forest base = 1G, bonus = ${elvesOnBoard}G (${elvesOnBoard} elf${elvesOnBoard !== 1 ? "s" : ""}) = ${guidanceOutput}G total${hasArbor ? `. Arbor Elf can untap it for a second activation — ${guidanceOutput * 2} mana total` : ""}.`,
         steps: [
-          `Tap Elvish Guidance-enchanted Forest for ${guidanceOutput} {G} (${elvesOnBoard} elves × {G}).`,
+          `Tap Elvish Guidance-enchanted Forest for ${guidanceOutput} {G} (1 base + ${elvesOnBoard} elf bonus).`,
           ...(hasArbor ? [
             `Activate Arbor Elf: untap the enchanted Forest.`,
             `Tap Forest again for another ${guidanceOutput} {G} — total ${guidanceOutput * 2} mana this turn.`,
@@ -15938,7 +15946,7 @@ function HelpModal({ onClose, onStartTour }) {
         <H>INFINITE MANA — CLASSIC LOOPS</H>
         <Tip label="Argothian Elder + Wirewood Lodge + Big Land (≥2 mana)">Tap big land (Cradle, Nykthos, enchanted Forest) for N mana. Elder untaps that land and Wirewood Lodge. Lodge untaps Elder. Net N−2 mana per loop. Elder must pre-exist.</Tip>
         <Tip label="Argothian Elder + Deserted Temple + Wirewood Lodge + Big Land">Extended Elder loop: Temple untaps Cradle, giving an extra Cradle activation. Elder + Lodge handle the untap chain. More robust with high creature counts.</Tip>
-        <Tip label="Elvish Guidance + Arbor Elf + Wirewood Lodge (≥2 elves)">Elvish Guidance enchants a Forest to tap for {"{G}"} per elf. With ≥2 elves, Forest taps for ≥2. Arbor Elf untaps it. Lodge untaps Arbor Elf. Net mana scales with elf count.</Tip>
+        <Tip label="Elvish Guidance + Arbor Elf + Wirewood Lodge (≥1 elf)">Elvish Guidance: enchanted land taps for its normal output PLUS {G} per Elf on the battlefield. A Forest with 3 elves taps for 4G (1 base + 3 elf bonus). Arbor Elf untaps it free. Lodge ({G}) untaps Arbor Elf. Net = elf count per loop. Infinite with ≥1 elf.</Tip>
         <Tip label="Circle of Dreams Druid / Karametra's Acolyte + Wirewood Symbiote or Hyrax Tower Scout">Big dork produces X mana where X = elf count or devotion. Symbiote (bounce an elf to untap) or Scout (ETB untap, bounced by Sabertooth/Kogla) resets it. Net X−1 mana per loop when X ≥ 2.</Tip>
         <Tip label="Temur Sabertooth + Wirewood Symbiote + 1-Drop Elf + Dork (≥5 mana)">Symbiote bounces 1-drop elf to untap big dork. Sabertooth bounces Symbiote (resetting its once-per-turn). Recast both. Net positive when dork produces ≥5 mana.</Tip>
         <Tip label="Temur Sabertooth / Kogla + Hyrax Tower Scout + Dork (≥6 mana)">Scout ETB untaps target creature (the big dork). Sabertooth or Kogla bounces Scout back to hand for {"{1}{G}"}. Net positive when dork produces ≥6 mana.</Tip>
@@ -21678,7 +21686,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     if (data.type === "land" && ctx.landAuraBonuses.has(idx)) {
       const bonus = ctx.landAuraBonuses.get(idx);
       total += bonus.green + bonus.colorless;
-      if (bonus.hasElvishGuidance) total += Math.max(0, ctx.elves - 1);
+      // Elvish Guidance: land still produces base mana (already in total),
+      // THEN adds {G} per elf on the battlefield. Bonus = elves (not elves - 1).
+      if (bonus.hasElvishGuidance) total += ctx.elves;
     }
     return total;
   }
@@ -24168,17 +24178,21 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     }
                     return next;
                   };
+                  // Compute the remapped tapped set synchronously so the step-2 picker
+                  // can read correct tapped status immediately (React setState is async —
+                  // the old `tapped` closure value would still have pre-splice indices).
+                  const remappedTapped = remapKeySet(tapped);
                   setSickCreatures(remapKeySet);
-                  setTapped(remapKeySet);
+                  setTapped(remappedTapped);
                   setHand(prev => [...prev, forestCard]);
                   addLog(`${card}: bounced ${forestCard} to hand. Now choose a creature to untap.`, COLORS.green3);
-                  // Step 2: pick a creature to untap — use newBF (post-splice) so indices are correct.
-                  // tapped has already been remapped above so newBF indices now match tapped keys.
+                  // Step 2: pick a creature to untap — use newBF (post-splice) and remappedTapped
+                  // (post-remap) so both indices and tapped status are correct.
                   setPendingPicker({ label: `${card.toUpperCase()} — UNTAP A CREATURE`, color: COLORS.green3,
                     items: newBF
                       .map((bc,bi) => ({c:bc,i:bi}))
                       .filter(({c:bc}) => getCard(bc)?.type === "creature" || bc === "Dryad Arbor")
-                      .map(({c:bc,i:bi}) => ({ label: bc, sub: tapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
+                      .map(({c:bc,i:bi}) => ({ label: bc, sub: remappedTapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
                     onSelect: ({ c: tc, i: ti }) => {
                       setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
                       addLog(`${card}: untapped ${tc}.`, COLORS.green3);
@@ -24235,14 +24249,17 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     return next;
                   };
                   setSickCreatures(remapKeySet);
-                  setTapped(remapKeySet);
+                  // Compute remapped tapped synchronously for the step-2 picker — same fix as
+                  // Quirion/Scryb Ranger: React setState is async so `tapped` closure is stale.
+                  const remappedTappedWS = remapKeySet(tapped);
+                  setTapped(remappedTappedWS);
                   setHand(prev => [...prev, elfCard]);
                   addLog(`Wirewood Symbiote: bounced ${elfCard} to hand. Now choose a creature to untap.`, COLORS.green3);
                   setPendingPicker({ label: "WIREWOOD SYMBIOTE — UNTAP A CREATURE", color: COLORS.green3,
                     items: newBF
                       .map((bc,bi) => ({c:bc,i:bi}))
                       .filter(({c:bc}) => getCard(bc)?.type === "creature" || bc === "Dryad Arbor")
-                      .map(({c:bc,i:bi}) => ({ label: bc, sub: tapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
+                      .map(({c:bc,i:bi}) => ({ label: bc, sub: remappedTappedWS.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
                     onSelect: ({ c: tc, i: ti }) => {
                       setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
                       addLog(`Wirewood Symbiote: untapped ${tc}.`, COLORS.green3);
