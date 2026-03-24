@@ -903,18 +903,18 @@ const COMBOS = [
   // ── WIN CON: Badgermole Cub + Ashaya + Infinite Mana (Infinite Counters) ─
   {
     id: "badgermole_ashaya_counters",
-    name: "Badgermole Cub + Bouncer + Infinite Mana (Infinite +1/+1 Counters)",
+    name: "Badgermole Cub + Temur Sabertooth + Infinite Mana (Infinite +1/+1 Counters)",
     onBattlefield: ["Badgermole Cub"],
-    description: "Win condition. Badgermole Cub ETB: earthbend 1 — target land becomes a 0/0 creature with haste, gets a +1/+1 counter. KEY RULE: you can target a land that is ALREADY animated — it just gets another +1/+1 counter each time. With a bouncer (Temur Sabertooth or Kogla) and infinite mana: bounce Badgermole Cub to hand, recast ({1}{G}), ETB targets the same already-animated land again. Repeat infinitely — the land-creature accumulates infinite counters. Attack for lethal. Bonus: Badgermole's static 'Whenever you tap a creature for mana, add {G}' sustains and amplifies mana loops throughout.",
+    description: "Win condition. Badgermole Cub ETB: earthbend 1 — target land becomes a 0/0 creature with haste, gets a +1/+1 counter. KEY RULE: you can target a land that is ALREADY animated — it just gets another +1/+1 counter each time. With Temur Sabertooth (NOT Kogla — Badgermole is a Badger not a Human) and infinite mana: bounce Badgermole Cub to hand for {1}{G}, recast, ETB targets the same already-animated land again. Repeat infinitely — the land-creature accumulates infinite counters. Attack for lethal.",
     requires: ["Badgermole Cub"],
     needsInfiniteMana: true,
     needsAlsoBouncer: true,
     priority: 11,
     type: "win-combat",
     lines: [
-      "Infinite mana established. Badgermole Cub on battlefield with Temur Sabertooth or Kogla (bouncer).",
+      "Infinite mana established. Badgermole Cub on battlefield with Temur Sabertooth (Badgermole is a Badger, not a Human — Kogla cannot bounce it).",
       "Badgermole ETB fires: earthbend 1 — target any land you control. It becomes a 0/0 creature with haste and gets a +1/+1 counter. It's now a 1/1 with haste.",
-      "Pay {1}{G}: bounce Badgermole Cub to hand (Temur Sabertooth) or return it (Kogla).",
+      "Pay {1}{G}: Temur Sabertooth bounces Badgermole Cub to hand.",
       "Recast Badgermole Cub ({1}{G}). ETB fires again — target the SAME already-animated land. Base power/toughness resets to 0/0 but it keeps existing counters and gains one more.",
       "Repeat. After N casts the land-creature is N/N with haste.",
       "Repeat infinitely with infinite mana — the land-creature grows arbitrarily large.",
@@ -2561,7 +2561,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // Badgermole Cub substitutes for Destiny Spinner (land animation) when a bouncer is available
   const hasBouncer       = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape") || accessible("Temur Sabertooth") || accessible("Kogla, the Titan Ape");
-  const speakerHasBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape");
+  const speakerHasBouncer = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth");  // Speaker = Elf, Kogla bounces Humans only
   // Badgermole Cub needs Temur Sabertooth specifically — Kogla only bounces Humans, not Badgers
   const badgermoleActive = (board.has("Badgermole Cub") || accessible("Badgermole Cub")) && (board.has("Temur Sabertooth") || accessible("Temur Sabertooth"));
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
@@ -6341,8 +6341,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     ];
     // Only show this if not already showing a win con via Speaker
     const alreadyWin = results.some(r => r.headline?.includes("Formidable Speaker") && r.priority >= 12);
-    if (!alreadyWin && untapTargets.length > 0) {
-      const bouncer = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+    // Formidable Speaker is an Elf, not a Human — Kogla cannot bounce it. Temur only.
+    const hasTemurForSpeaker = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth");
+    if (!alreadyWin && untapTargets.length > 0 && hasTemurForSpeaker) {
+      const bouncer = "Temur Sabertooth";
       results.push({
         priority: 7,
         category: "🔄 ENGINE",
@@ -10423,7 +10425,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const biteAvailNow = inHand.has("Infectious Bite") || inGrave.has("Infectious Bite");
     const poisonLine   = biteAvailNow && !board.has("Eternal Witness");
     const primaryTarget = poisonLine ? "Eternal Witness" : "Duskwatch Recruiter";
-    const speakerBouncer = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+    const speakerBouncer = "Temur Sabertooth"; // Formidable Speaker is an Elf — Kogla cannot bounce it
     results.push({
       priority: hasteNow ? 13 : 9,
       category: hasteNow ? "🔥 WIN NOW" : "🌿 CAST FOR WIN NEXT TURN",
@@ -10478,12 +10480,36 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- REGAL FORCE SINGLE DRAW (no Temur) ----
+  // With infinite mana and Regal Force on board (or in hand), cast it once to draw 7+ cards.
+  // This is NOT a guaranteed win — the draws might be all lands. Show it as an action card.
+  if ((board.has("Regal Force") || (inHand.has("Regal Force") && canCastNow))
+      && !board.has("Temur Sabertooth")
+      && infiniteManaActive
+      && !results.some(r => r.category?.includes("DRAW YOUR LIBRARY") || r.category?.includes("WIN NOW"))) {
+    const gCreatures = battlefield.filter(c => getCard(c)?.type === "creature" && (getCard(c)?.greenPips ?? 0) >= 1).length;
+    results.push({
+      priority: 11.5,
+      category: "⚡ CAST FOR WIN",
+      combo: "regal_force_single_draw",
+      headline: `Regal Force: draw ${gCreatures} cards with infinite mana → find win outlet`,
+      detail: `Cast Regal Force to draw ${gCreatures} cards. With infinite mana the drawn cards may include Duskwatch Recruiter, Summoner's Pact, or another win outlet. Add Temur Sabertooth for the full library-draw loop.`,
+      steps: [
+        ...(inHand.has("Regal Force") && !board.has("Regal Force") ? ["Cast Regal Force ({5}{G}{G})."] : []),
+        `Regal Force ETB: draw ${gCreatures} cards (one per green creature you control).`,
+        "With infinite mana, cast any win outlet drawn (Duskwatch, Summoner's Pact, Chord, GSZ).",
+        "If no outlet drawn yet, find Temur Sabertooth to bounce Regal Force and draw again.",
+      ],
+      color: "#5dade2",
+    });
+  }
+
 
   // ---- DISCIPLE OF FREYALISE LOOP ----
   if ((board.has("Disciple of Freyalise") || (inHand.has("Disciple of Freyalise") && canCastNow))
-      && (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape"))
+      && board.has("Temur Sabertooth")   // Disciple is an Elf — Kogla cannot bounce it
       && infiniteManaActive) {
-    const bouncer2 = board.has("Temur Sabertooth") ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+    const bouncer2 = "Temur Sabertooth"; // Disciple is an Elf — Kogla cannot bounce it
     const crCount = battlefield.filter(c => getCard(c)?.type === "creature").length;
     if (!results.some(r => r.combo === "disciple_loop")) {
       results.push({
@@ -17173,13 +17199,20 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
               return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork")) &&
                      typeof cd?.tapsFor === "number" && cd.tapsFor >= minMana;
             });
-            // Also count Priest of Titania / Elvish Archdruid / Circle of Dreams Druid
-            // whose output is dynamic — check if elf count produces enough
+            // Also count dynamic-output dorks whose output depends on board state:
+            // Priest of Titania & Elvish Archdruid → tapsFor = elf count
+            // Karametra's Acolyte → tapsFor = green devotion
+            // Circle of Dreams Druid → tapsFor = creature count
             if (!hasReadyBigDork) {
               const elfCount = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.tags?.includes("elf")).length;
+              const creatureCount = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.type === "creature").length;
+              const devotion = battlefield.reduce((sum, c) => sum + (getCard(c)?.greenPips ?? 0), 0);
               const hasReadyDynamicDork = battlefield.some(c => {
                 if (sickSet.has(c)) return false;
-                return (c === "Priest of Titania" || c === "Karametra's Acolyte") && elfCount >= minMana;
+                if (c === "Priest of Titania" || c === "Elvish Archdruid") return elfCount >= minMana;
+                if (c === "Karametra's Acolyte") return devotion >= minMana;
+                if (c === "Circle of Dreams Druid") return creatureCount >= minMana;
+                return false;
               });
               if (!hasReadyDynamicDork) winValid = false;
             }
@@ -17816,6 +17849,38 @@ function simActivateAbilities(simState, manaPool) {
   }
 
   // Yisan, the Wanderer Bard: {2}{G}, TAP, verse counter. Once per turn (taps).
+
+  // Regal Force: ETB draw (one per green creature you control).
+  // With infinite mana and Regal Force on board (not sick), fire the ETB draw to refill hand.
+  // This is NOT a guaranteed win — the drawn cards may be lands or stax pieces.
+  // The sim fires this once per game (used.add prevents loops), draws the cards into hand,
+  // then the main advisor loop re-evaluates the new hand for win conditions.
+  if (board.has("Regal Force") && !sickSet.has("Regal Force") && !used.has("RegalForceDraw") && manaPool.total >= 7) {
+    // Only trigger when infinite is likely active (high mana) to avoid premature firing
+    const rfInfActive = (() => {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+        if (combo.needsBigDork) {
+          const hasDork = battlefield.some(c => !sickSet.has(c) && (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork")));
+          if (!hasDork) continue;
+        }
+        return true;
+      }
+      return false;
+    })();
+    if (rfInfActive) {
+      // Draw one card per green creature controlled (Regal Force's ETB trigger)
+      const greenCreatureCount = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.type === "creature" && (getCard(c)?.greenPips ?? 0) >= 1).length;
+      const drawCount = Math.min(greenCreatureCount, library.length);
+      for (let i = 0; i < drawCount; i++) {
+        if (library.length > 0) hand.push(library.shift());
+      }
+      used.add("RegalForceDraw");
+      return drawCount > 0; // triggers re-evaluation of hand in the main loop
+    }
+  }
   if (board.has("Yisan, the Wanderer Bard") && !sickSet.has("Yisan, the Wanderer Bard") && !used.has("Yisan") && manaPool.green >= 1 && manaPool.total >= 3) {
     const verse = (simState.yisanCounters ?? 0) + 1;
     simState.yisanCounters = verse;
@@ -18093,10 +18158,80 @@ function simActivateAbilities(simState, manaPool) {
     }
   }
 
+  // Beast Whisperer + infinite mana: cast cheap creatures from hand to draw cards.
+  // Each creature cast triggers "draw a card". With infinite mana and a 1-drop elf in hand
+  // (or library after a cast), repeatedly cast → draw until hitting Duskwatch or a tutor.
+  // Only fire when infinite is confirmed and Beast Whisperer is on board (not sick).
+  if (board.has("Beast Whisperer") && !sickSet.has("Beast Whisperer") &&
+      !used.has("BeastWhispererDraw") && manaPool.total >= 8) {
+    // Check if infinite is active
+    const bwInfActive = (() => {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+        if (combo.needsBigDork) {
+          if (!battlefield.some(c => !sickSet.has(c) &&
+            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+            continue;
+        }
+        return true;
+      }
+      return false;
+    })();
+    if (bwInfActive) {
+      // Draw cards by casting cheap creatures. Simulate: pull up to 12 cards from library
+      // (Beast Whisperer triggers on each creature cast). Stop when we find a win outlet.
+      const WIN_OUTLETS_BW = new Set(["Duskwatch Recruiter","Summoner's Pact",
+        "Chord of Calling","Green Sun's Zenith","Worldly Tutor","Shared Summons",
+        "Finale of Devastation","Temur Sabertooth","Fauna Shaman","Survival of the Fittest"]);
+      let drew = 0;
+      while (drew < 12 && library.length > 0) {
+        const card = library.shift();
+        hand.push(card);
+        drew++;
+        if (WIN_OUTLETS_BW.has(card)) break;
+      }
+      used.add("BeastWhispererDraw");
+      return drew > 0;
+    }
+  }
+
+  // War Room: {3}, TAP, pay 1 life → draw a card.
+  // With infinite mana, tap War Room repeatedly to draw until finding an outlet.
+  if (board.has("War Room") && !used.has("WarRoomDraw") && manaPool.total >= 3) {
+    const wrInfActive = (() => {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+        if (combo.needsBigDork) {
+          if (!battlefield.some(c => !sickSet.has(c) &&
+            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+            continue;
+        }
+        return true;
+      }
+      return false;
+    })();
+    if (wrInfActive) {
+      const WIN_OUTLETS_WR = new Set(["Duskwatch Recruiter","Summoner's Pact",
+        "Chord of Calling","Green Sun's Zenith","Worldly Tutor","Shared Summons",
+        "Finale of Devastation","Temur Sabertooth","Fauna Shaman","Survival of the Fittest"]);
+      let drew = 0;
+      while (drew < 12 && library.length > 0) {
+        const card = library.shift();
+        hand.push(card);
+        drew++;
+        if (WIN_OUTLETS_WR.has(card)) break;
+      }
+      used.add("WarRoomDraw");
+      return drew > 0;
+    }
+  }
+
   return false;
 }
-
-// ── Simulator: play a card from hand into the game state.
 // Takes a mutable simState object so this can be unit-tested independently.
 // simState: { hand, battlefield, graveyard, library, sickSet, landPlayed, castLog }
 function simPlayCard(card, idx, simState, manaPool = null) {
