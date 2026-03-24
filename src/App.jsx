@@ -9079,13 +9079,26 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     .filter(t => inHand.has(t) || board.has(t));
   // Activated tutors already on board: Fauna Shaman, Survival of the Fittest
   // Note: Fierce Empath finds CMC 6+ only; Elvish Harbinger finds elves — Duskwatch is neither
-  // Fauna Shaman requires a creature to discard — check we have one available in hand or on board
-  // (with infinite mana we can always find something to discard)
-  const hasCreatureToDiscard = hand.some(c => getCard(c)?.type === "creature")
-    || battlefield.some(c => getCard(c)?.type === "creature" && c !== "Fauna Shaman");
+  // Fauna Shaman requires a creature to discard — check we have one available.
+  // Battlefield creatures only count as potential discard fodder if Temur Sabertooth is available
+  // and non-sick to bounce them to hand first. Without a bouncer, only hand creatures are valid.
+  // (With infinite mana we can always find something to discard via the draw loop.)
+  const hasTemurBouncerForFauna = board.has("Temur Sabertooth")
+    && !(sickCreatures?.has("Temur Sabertooth"));
+  const hasCreatureToDiscard =
+    hand.some(c => getCard(c)?.type === "creature")
+    || (hasTemurBouncerForFauna && battlefield.some(c =>
+        getCard(c)?.type === "creature"
+        && c !== "Fauna Shaman"
+        && c !== "Temur Sabertooth"
+        && !(sickCreatures?.has(c))));
+  // Fauna Shaman: {G}, TAP, discard creature → search library for creature
+  // Requires Fauna to be non-sick (summoning sickness prevents tap abilities).
   const faunaCanActivate = board.has("Fauna Shaman")
+    && !(sickCreatures?.has("Fauna Shaman"))
     && (hasCreatureToDiscard || infiniteManaActive);
-  // Survival of the Fittest also needs a creature to discard
+  // Survival of the Fittest: {G}, discard creature → search library for creature → hand
+  // Survival is an enchantment — it never has summoning sickness, no sick check needed.
   const survivalCanActivate = board.has("Survival of the Fittest")
     && (hasCreatureToDiscard || infiniteManaActive);
   // Formidable Speaker: ETB — discard a card → search library for any creature (guaranteed full tutor).
@@ -12307,9 +12320,22 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
   //               | "creature-non-human" | "creature×2" | "land" | "land-forest"
   const TUTOR_DEFS = [
     // ── On-board activated tutors (always available if on board) ────────────
-    { name:"Fauna Shaman",         finds:"creature",       baseCost:1,  usable: board.has("Fauna Shaman"),
+    { name:"Fauna Shaman",         finds:"creature",       baseCost:1,
+      usable: board.has("Fauna Shaman")
+        && !(sickCreatures?.has("Fauna Shaman"))   // summoning sickness blocks tap ability
+        && (hand.some(c => getCard(c)?.type === "creature")   // must have a creature to discard
+            || (board.has("Temur Sabertooth") && !sickCreatures?.has("Temur Sabertooth")
+                && battlefield.some(c => getCard(c)?.type === "creature"
+                   && c !== "Fauna Shaman" && c !== "Temur Sabertooth"))
+            || infiniteManaActive),                // infinite mana = always have discard fodder
       note:"{G}, tap, discard: find creature → hand",           constraint:"discard", sorcerySpeed:true },
-    { name:"Survival of the Fittest", finds:"creature",    baseCost:1,  usable: board.has("Survival of the Fittest"),
+    { name:"Survival of the Fittest", finds:"creature",    baseCost:1,
+      usable: board.has("Survival of the Fittest")
+        && (hand.some(c => getCard(c)?.type === "creature")   // must have a creature to discard
+            || (board.has("Temur Sabertooth") && !sickCreatures?.has("Temur Sabertooth")
+                && battlefield.some(c => getCard(c)?.type === "creature"
+                   && c !== "Temur Sabertooth"))
+            || infiniteManaActive),                // infinite mana = always have discard fodder
       note:"{G}, discard: find creature → hand",                constraint:"discard" },
     { name:"Skyshroud Poacher",    finds:"creature-elf",   baseCost:3,  usable: board.has("Skyshroud Poacher"),
       note:"{3}: find Forest Elf → battlefield",                putsToBattlefield:true, sorcerySpeed:true },
@@ -13276,6 +13302,7 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
   const witnessRetrievableLocal = (c) => inGrave.has(c) && inHand.has("Eternal Witness") && !board.has("Eternal Witness");
   // Fauna Shaman on board + Eternal Witness in graveyard → discard a creature → fetch Witness → Witness retrieves target
   const faunaFetchesWitnessLocal = board.has("Fauna Shaman")
+    && !(sickCreatures?.has("Fauna Shaman"))       // summoning sickness blocks tap ability
     && inGrave.has("Eternal Witness")
     && hand.some(c => getCard(c)?.type === "creature")
     && (mana >= 1 || infiniteMana);
@@ -15946,7 +15973,7 @@ function HelpModal({ onClose, onStartTour }) {
         <H>INFINITE MANA — CLASSIC LOOPS</H>
         <Tip label="Argothian Elder + Wirewood Lodge + Big Land (≥2 mana)">Tap big land (Cradle, Nykthos, enchanted Forest) for N mana. Elder untaps that land and Wirewood Lodge. Lodge untaps Elder. Net N−2 mana per loop. Elder must pre-exist.</Tip>
         <Tip label="Argothian Elder + Deserted Temple + Wirewood Lodge + Big Land">Extended Elder loop: Temple untaps Cradle, giving an extra Cradle activation. Elder + Lodge handle the untap chain. More robust with high creature counts.</Tip>
-        <Tip label="Elvish Guidance + Arbor Elf + Wirewood Lodge (≥1 elf)">Elvish Guidance: enchanted land taps for its normal output PLUS {G} per Elf on the battlefield. A Forest with 3 elves taps for 4G (1 base + 3 elf bonus). Arbor Elf untaps it free. Lodge ({G}) untaps Arbor Elf. Net = elf count per loop. Infinite with ≥1 elf.</Tip>
+        <Tip label="Elvish Guidance + Arbor Elf + Wirewood Lodge (≥1 elf)">Elvish Guidance: enchanted land taps for its normal output PLUS {"{G}"} per Elf on the battlefield. A Forest with 3 elves taps for 4G (1 base + 3 elf bonus). Arbor Elf untaps it free. Lodge ({"{G}"}) untaps Arbor Elf. Net = elf count per loop. Infinite with ≥1 elf.</Tip>
         <Tip label="Circle of Dreams Druid / Karametra's Acolyte + Wirewood Symbiote or Hyrax Tower Scout">Big dork produces X mana where X = elf count or devotion. Symbiote (bounce an elf to untap) or Scout (ETB untap, bounced by Sabertooth/Kogla) resets it. Net X−1 mana per loop when X ≥ 2.</Tip>
         <Tip label="Temur Sabertooth + Wirewood Symbiote + 1-Drop Elf + Dork (≥5 mana)">Symbiote bounces 1-drop elf to untap big dork. Sabertooth bounces Symbiote (resetting its once-per-turn). Recast both. Net positive when dork produces ≥5 mana.</Tip>
         <Tip label="Temur Sabertooth / Kogla + Hyrax Tower Scout + Dork (≥6 mana)">Scout ETB untaps target creature (the big dork). Sabertooth or Kogla bounces Scout back to hand for {"{1}{G}"}. Net positive when dork produces ≥6 mana.</Tip>
