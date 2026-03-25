@@ -6294,15 +6294,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Harbinger (Harbinger {2}{G}=3, draw next turn, Speaker {2}{G}=3, total ≥6),
     // there's at least one other card in hand to discard for Speaker's ETB,
     // and Speaker's ETB would find something useful (i.e. there are good non-elf creatures missing).
+    // Note: no bouncer required — Speaker's ETB is useful as a one-shot tutor even without Temur.
     const speakerAlreadyThere = board.has("Formidable Speaker") || inHand.has("Formidable Speaker");
     const canAffordHarbingerPlusSpeaker = mana >= 6 || infiniteManaActive;
     // Speaker's ETB can find any creature — it's an elf so Harbinger can fetch it
-    // Wirewood Symbiote on board also acts as a bouncer for Speaker's untap ability
-    const hasSpeakerBouncer = board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape")
-      || board.has("Wirewood Symbiote"); // Symbiote can bounce Speaker (an elf) to untap a creature
     const speakerEtbUseful = !board.has("Ashaya, Soul of the Wild") || !board.has("Quirion Ranger");
+    // Need at least one other card in hand besides Harbinger to discard to Speaker's ETB
+    const hasDiscardForSpeaker = hand.filter(c => c !== "Elvish Harbinger").length > 0;
     const harbingerCanFindSpeaker = !speakerAlreadyThere && canAffordHarbingerPlusSpeaker
-      && hasSpeakerBouncer && speakerEtbUseful;
+      && speakerEtbUseful && hasDiscardForSpeaker;
 
     // Best ETB targets Speaker could find — drives the "why" explanation
     const speakerEtbBestTarget = [
@@ -6371,29 +6371,56 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
 
   // ---- FORMIDABLE SPEAKER (general utility) ----
-  // Speaker's untap clause = second mode: untap Cradle, Nykthos, a dork, or War Room
-  if (board.has("Formidable Speaker") && speakerHasBouncer) {
+  // Speaker's {1},{T}: Untap another target permanent — second mode regardless of bouncer.
+  // Untaps Gaea's Cradle, Nykthos, a big dork, or War Room even without Temur.
+  // With Temur (loop): bounce→recast → repeated untap for explosive mana.
+  if (board.has("Formidable Speaker") && !sickCreatures?.has("Formidable Speaker")) {
     const untapTargets = [
       ...(board.has("Gaea's Cradle")          ? ["Gaea's Cradle (double tap for creature mana)"] : []),
       ...(board.has("Nykthos, Shrine to Nyx") ? [`Nykthos (double tap for ${devotionOnBoard}G devotion mana)`] : []),
       ...(board.has("War Room")               ? ["War Room (draw a card mid-combo)"] : []),
     ];
+    // Also consider untapping a big dork
+    const BIG_DORK_NAMES = ["Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+      "Karametra's Acolyte","Wirewood Channeler","Fanatic of Rhonas","Marwyn, the Nurturer"];
+    const bigDorkOnBoard = BIG_DORK_NAMES.find(c => board.has(c) && !sickCreatures?.has(c));
+    if (bigDorkOnBoard && !untapTargets.length) untapTargets.push(`${bigDorkOnBoard} (tap for mana twice)`);
     // Only show this if not already showing a win con via Speaker
     const alreadyWin = results.some(r => r.headline?.includes("Formidable Speaker") && r.priority >= 12);
     // Formidable Speaker is an Elf, not a Human — Kogla cannot bounce it. Temur only.
     const hasTemurForSpeaker = board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth");
-    if (!alreadyWin && untapTargets.length > 0 && hasTemurForSpeaker) {
-      const bouncer = "Temur Sabertooth";
+    if (!alreadyWin && untapTargets.length > 0 && (mana >= 1 || infiniteManaActive)) {
       results.push({
-        priority: 7,
+        priority: hasTemurForSpeaker ? 8 : 6,
         category: "🔄 ENGINE",
-        headline: `Formidable Speaker + ${bouncer}: untap ${untapTargets[0].split(" ")[0]}`,
-        detail: "Formidable Speaker has {1},{T}: Untap another target permanent. With a bouncer, bounce and recast Speaker to repeatedly untap Gaea's Cradle, Nykthos, or a big dork for explosive mana generation.",
-        steps: [
-          `Pay {1}{G}: ${bouncer} bounces Formidable Speaker to hand.`,
-          `Recast Speaker ({1}{G}): ETB untaps ${untapTargets[0]}.`,
+        headline: hasTemurForSpeaker
+          ? `Formidable Speaker + Temur Sabertooth: untap ${untapTargets[0].split(" ")[0]} repeatedly`
+          : `Formidable Speaker {1},{T}: untap ${untapTargets[0].split(" ")[0]} for extra mana`,
+        detail: hasTemurForSpeaker
+          ? `Formidable Speaker has {1},{T}: Untap another target permanent. With Temur Sabertooth, bounce and recast Speaker to repeatedly untap ${untapTargets[0].split(" (")[0]} for explosive mana generation.`
+          : `Formidable Speaker has {1},{T}: Untap another target permanent. Spend {1} and tap Speaker to untap ${untapTargets[0].split(" (")[0]} — effectively doubling its mana output this turn. No bouncer needed for a one-shot untap.`,
+        steps: hasTemurForSpeaker ? [
+          `Tap Formidable Speaker ({1},{T}): untap ${untapTargets[0]}.`,
+          `Pay {1}{G}: Temur Sabertooth bounces Formidable Speaker to hand.`,
+          `Recast Speaker ({2}{G}): ETB option to discard → find a creature. Untap target again.`,
+          ...(untapTargets.length > 1 ? [`Other untap targets: ${untapTargets.slice(1).join(", ")}.`] : []),
+          "Repeat for as much mana as needed.",
+        ] : [
+          `Pay {1} and tap Formidable Speaker: untap ${untapTargets[0]}.`,
+          `Tap ${untapTargets[0].split(" (")[0]} again for mana.`,
           ...(untapTargets.length > 1 ? [`Can also target: ${untapTargets.slice(1).join(", ")}.`] : []),
-          "Repeat to generate mana or draw cards.",
+        ],
+        color: "#8e44ad",
+      });
+    } else if (!alreadyWin && bigDorkOnBoard && (mana >= 1 || infiniteManaActive)) {
+      results.push({
+        priority: 6,
+        category: "🔄 ENGINE",
+        headline: `Formidable Speaker {1},{T}: untap ${bigDorkOnBoard} for extra mana`,
+        detail: `Formidable Speaker's {1},{T}: Untap another target permanent lets you untap ${bigDorkOnBoard} for a second mana tap this turn. Costs {1} — worthwhile if ${bigDorkOnBoard} produces 2+ mana.`,
+        steps: [
+          `Pay {1}, tap Formidable Speaker → untap ${bigDorkOnBoard}.`,
+          `Tap ${bigDorkOnBoard} again for mana.`,
         ],
         color: "#8e44ad",
       });
@@ -10644,6 +10671,70 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
+  // ---- DISCIPLE OF FREYALISE (single cast, no Temur) ----
+  // With infinite mana but no Temur, Disciple can still draw cards once on ETB.
+  if ((board.has("Disciple of Freyalise") || (inHand.has("Disciple of Freyalise") && canCastNow))
+      && !board.has("Temur Sabertooth")
+      && infiniteManaActive
+      && !results.some(r => r.category?.includes("WIN NOW") || r.category?.includes("DRAW LIBRARY"))) {
+    const sacrificeTargets = battlefield.filter(c => getCard(c)?.type === "creature"
+      && c !== "Disciple of Freyalise");
+    const bigTarget = sacrificeTargets.reduce((best, c) => {
+      const KNOWN_POWERS = { "Kogla, the Titan Ape":7,"Woodland Bellower":6,"Regal Force":5,
+        "Ashaya, Soul of the Wild":5,"Temur Sabertooth":4 };
+      const pow = KNOWN_POWERS[c] ?? (getCard(c)?.cmc ?? 1);
+      return pow > (KNOWN_POWERS[best] ?? 1) ? c : best;
+    }, sacrificeTargets[0]);
+    if (bigTarget) {
+      results.push({
+        priority: 10.5,
+        category: "⚡ CAST FOR WIN",
+        combo: "disciple_single_draw",
+        headline: `Disciple of Freyalise: sacrifice ${bigTarget} → draw cards → find win outlet`,
+        detail: `Disciple ETB: sacrifice ${bigTarget} → gain X life + draw X cards. With infinite mana, use drawn cards to find a win outlet. Add Temur Sabertooth to loop Disciple for full library draw.`,
+        steps: [
+          ...(inHand.has("Disciple of Freyalise") && !board.has("Disciple of Freyalise") ? ["Cast Disciple of Freyalise ({3}{G}{G}{G})."] : []),
+          `Disciple ETB: sacrifice ${bigTarget} → gain life and draw cards equal to its power.`,
+          "Cast any win outlet drawn (Duskwatch, GSZ, Summoner's Pact, Chord of Calling).",
+          "Find Temur Sabertooth to unlock the full draw-library loop.",
+        ],
+        color: "#c0392b",
+      });
+    }
+  }
+
+  // ---- WIREWOOD SYMBIOTE RITUAL ----
+  // card_roles.md: "You can use it as a ritual similarly to the rangers."
+  // Return an elf to untap a big dork → tap dork for mana → effectively +1 to +N mana net.
+  // Not infinite, but can unlock a spell that's just barely unaffordable.
+  // Also: untap a mana dork that was spent on turn 1, giving it another activation.
+  if (board.has("Wirewood Symbiote") && !sickCreatures?.has("Wirewood Symbiote") && !infiniteManaActive) {
+    const elfToReturn = battlefield.find(c =>
+      c !== "Wirewood Symbiote"
+      && getCard(c)?.tags?.includes("elf")
+      && !sickCreatures?.has(c)
+    );
+    const BIG_DORK_NAMES_RITUAL = ["Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+      "Karametra's Acolyte","Wirewood Channeler","Fanatic of Rhonas","Marwyn, the Nurturer",
+      "Joraga Treespeaker"];
+    const dorkToUntap = BIG_DORK_NAMES_RITUAL.find(c => board.has(c) && !sickCreatures?.has(c));
+    if (elfToReturn && dorkToUntap && mana >= 1) {
+      results.push({
+        priority: 5,
+        category: "⚡ MANA TRICK",
+        headline: `Wirewood Symbiote ritual: return ${elfToReturn} → untap ${dorkToUntap} for extra mana`,
+        detail: `Return ${elfToReturn} (an elf) to untap ${dorkToUntap}. ${dorkToUntap} taps for mana again — net gain is roughly (dork output - 0) since the elf return is free. Use when you need just a bit more mana to cast a key spell. Like Quirion Ranger used as a ritual.`,
+        steps: [
+          `Activate Wirewood Symbiote: return ${elfToReturn} to hand → untap ${dorkToUntap}.`,
+          `Tap ${dorkToUntap} again for mana.`,
+          `Recast ${elfToReturn} on a future turn to rebuild elf count.`,
+          "Note: Symbiote's ability is once per turn.",
+        ],
+        color: "#27ae60",
+      });
+    }
+  }
+
   // ---- FAUNA SHAMAN / SURVIVAL → CREATURE TUTOR WIN CON ----
   // Fauna Shaman ({T},{G}: discard creature → find creature → hand) and
   // Survival of the Fittest ({G}: discard creature → find creature → hand) can find any creature.
@@ -12622,11 +12713,16 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     if (pool.have.has(target)) return null; // already have it
 
     // One-shot tutors (hand spells) can only be used once per path.
-    // On-board activated tutors (Fauna Shaman, Survival, Yisan, Poacher, Reclaimer,
-    // Formidable Speaker with bouncer) can be reused (they tap but can be untapped).
+    // On-board activated tutors (Fauna Shaman, Survival, Yisan, Poacher, Reclaimer) can be
+    // reused (they tap but can be untapped).
+    // Formidable Speaker is special: reusable ONLY if it was already on the board with Temur
+    // (bounce+recast loop). If it came from hand (cast once → ETB fires once → done), it's one-shot.
+    const speakerOnBoardWithTemur = tutor.name === "Formidable Speaker"
+      && board.has("Formidable Speaker") && board.has("Temur Sabertooth");
     const ON_BOARD_REUSABLE = new Set([
       "Fauna Shaman", "Survival of the Fittest", "Yisan, the Wanderer Bard",
-      "Skyshroud Poacher", "Elvish Reclaimer", "Formidable Speaker",
+      "Skyshroud Poacher", "Elvish Reclaimer",
+      ...(speakerOnBoardWithTemur ? ["Formidable Speaker"] : []),
     ]);
     if (!ON_BOARD_REUSABLE.has(tutor.name) && pool.usedTutors.has(tutor.name)) {
       // Exception: if this tutor was retrieved back into the pool by Eternal Witness,
@@ -23737,7 +23833,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const hasDuskwatchInHand = cards.includes("Duskwatch Recruiter");
     const WEAK_FAST_MANA = new Set(["Chrome Mox","Mox Diamond","Lotus Petal","Elvish Spirit Guide"]);
     const allRampIsWeakFast = rocks > 0 && dorks === 0 && enchantLandRamp === 0
-      && effectiveRockCards.every(c => WEAK_FAST_MANA.has(c));
+      && rockCards.every(c => WEAK_FAST_MANA.has(c));
     const criteria = {
       A: hasT1Play,
       B: rampCount >= 2 || (rampCount >= 1 && tutors >= 1) || bigDorks >= 1,
