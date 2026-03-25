@@ -108,7 +108,7 @@ const CARDS = {
   "Tireless Provisioner":  { type:"creature", cmc:3, tags:["combo","landfall","treasure","human","fetch-synergy"] , role:"ramp-combo", greenPips:1},
   "Badgermole Cub":        { type:"creature", cmc:2, tags:["combo","mana-doubler","infinite-dork","haste","land-animator"] , role:"haste-combo", greenPips:1},
   "Woodcaller Automaton":  { type:"creature", cmc:4, tags:["combo","untap-land","haste","treefolk","land-animator"] , greenPips:2}, // prototype {2}{G}{G}=CMC4 (3/3); full cost {10}=CMC10 (8/8). Always cast at prototype.
-  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor","devotion","kicker"] , greenPips:2},
+  "Sowing Mycospawn":      { type:"creature", cmc:4, tags:["removal","land-tutor","kicker"] , greenPips:1, note:"Devoid — colorless permanent despite {3}{G} mana cost. Devotion counts mana SYMBOLS in the cost, not card color, so the {G} still contributes 1 to devotion. On-cast triggers fetch a land (always) and exile a land (if kicked with {1}{C})."},
   "Formidable Speaker":    { type:"creature", cmc:3, tags:["combo","tutor","untap","elf"] , greenPips:1},
   "Chomping Changeling":   { type:"creature", cmc:3, tags:["elf","changeling","treefolk","removal","combo"] , role:"kogla-loop", greenPips:1},
   "Delighted Halfling":    { type:"creature", cmc:1, tags:["dork","1drop","protection","legend-protection"] , role:"legend-protector", greenPips:1, note:"{T}: Add {C}. {T}: Add one mana of any color to cast a legendary spell — that spell can't be countered. Protects Yeva, Ashaya, Yisan against blue. CMC 1 — true 1-drop that both ramps and shields legends."},
@@ -2393,14 +2393,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (inHand.has("Skullwinder") && canAfford(3, 1)) return true;
     return false;
   };
-  // Noxious Revival puts a card on top — only accessible if we have draw in hand or infinite mana
-  const noxiousRetrievable = (cardName) => {
-    if (!inGrave.has(cardName)) return false;
-    if (!inHand.has("Noxious Revival")) return false;
-    // Can only "access" it this turn if we can immediately draw (e.g. Survival, Regal, draw spell)
-    // or if library is empty (would draw it next)
-    return false; // conservative — treat as "recoverable next turn" not "accessible now"
-  };
+  // accessible(cardName) — card is in hand or retrievable from graveyard this turn via Witness path.
+  // Noxious Revival is intentionally excluded: it only puts a card on top of the library,
+  // so it's "recoverable next turn" at best — handled separately by graveRecoverable().
   const accessible = (cardName) => inHand.has(cardName) || witnessRetrievable(cardName);
 
   // graveRecoverable(cardName) — card is in graveyard with a recovery path available
@@ -5747,7 +5742,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (castable) {
       const mycospawnLands = [
         { land: "Gaea's Cradle",           reason: "taps for {G} per creature — and Mycospawn adds to the count" },
-        { land: "Nykthos, Shrine to Nyx",  reason: `adds 1 green devotion and a 3/3 body — taps for ${devotionOnBoard+1}G with Mycospawn` },
+        { land: "Nykthos, Shrine to Nyx",  reason: `adds 1 green devotion (one {G} in mana cost) and a 3/3 body — taps for ${devotionOnBoard+1}G with Mycospawn` },
         { land: "Geier Reach Sanitarium",  reason: "mill win con" },
         { land: "Wirewood Lodge",          reason: "untaps an elf — enables Argothian Elder loop" },
       ].filter(l => !board.has(l.land) && !inHand.has(l.land));
@@ -5757,11 +5752,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           priority: 7,
           category: "🏔️ LAND TUTOR",
           headline: `Sowing Mycospawn → ${best.land}`,
-          detail: `Sowing Mycospawn ({3}{G}): on-cast trigger fetches any land onto the battlefield. Also leaves a 3/3 body with 1 green devotion — fueling Nykthos and Gaea's Cradle simultaneously.`,
+          detail: `Sowing Mycospawn ({3}{G}): on-cast trigger fetches any land onto the battlefield. Despite having Devoid (colorless permanent), the {G} in its mana cost still contributes 1 to devotion — fueling Nykthos and Gaea's Cradle simultaneously.`,
           steps: [
             `Cast Sowing Mycospawn ({3}{G}): on-cast, search for ${best.land}.`,
             best.reason.charAt(0).toUpperCase() + best.reason.slice(1) + ".",
-            "3/3 body stays on battlefield, adding devotion and creature count.",
+            "3/3 body stays on battlefield, adding 1 devotion (one {G} pip) and creature count.",
             ...(mycospawnLands.length > 1 ? [`Other targets: ${mycospawnLands.slice(1,2).map(l => l.land).join(", ")}.`] : []),
           ],
           color: "#5dade2",
@@ -21377,6 +21372,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [runNMaxTurns, setRunNMaxTurns] = useState(8);
   const [runNResults, setRunNResults] = useState(null);
   const [runNRunning, setRunNRunning] = useState(false);
+  const [runNError, setRunNError] = useState(null); // error message if runNGames throws
   const [simTooltip, setSimTooltip] = useState(null); // {id, text, x, y} | null
 
   const deckCards = activeDeck?.cards ?? [];
@@ -23490,6 +23486,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     runNActualCount.current = count;
     setRunNRunning(true);
     setRunNResults(null);
+    setRunNError(null);
     // Defer to next tick so the UI can show the spinner before blocking
     setTimeout(() => {
       try {
@@ -23497,6 +23494,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         setRunNResults(results);
       } catch (e) {
         console.error("runNGames error:", e);
+        setRunNError(e?.message || "Simulation error — check the deck list for unrecognised cards.");
       }
       setRunNRunning(false);
     }, 20);
@@ -23542,25 +23540,27 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       ? simGradeHand(cards, deckCards, 10, 20)
       : null;
 
-    // ── Sim note builder — used by hard gates AND the normal path ──
-    // Hard gates return early, so we build the sim note once here and inject it
-    // into notes before any return. Grade adjustments only apply on the normal path.
+    // ── Sim note builder — single definition used by gates AND the normal path ──
+    // Uses unshift so the sim note appears first (highest prominence) in the notes array.
+    // Hard gates return early after calling this; the normal path calls it near the end.
     function addSimNote(notesArr) {
       if (!simResult) return;
       const { simLabel, winsBy8, winsTotal, total, avgWinTurn, t1Mana, t2Mana, t1DorkRate } = simResult;
       const winsStr  = `${winsBy8}/${total} wins ≤T8`;
-      const avgStr   = avgWinTurn != null ? `, avg T${avgWinTurn.toFixed(1)}` : "";
+      const avgStr   = avgWinTurn != null
+        ? `, avg T${avgWinTurn.toFixed(1)}`
+        : winsTotal === 0 ? ", no wins in simulation" : "";
       const manaStr  = `T1: ${t1Mana.toFixed(1)}G, T2: ${t2Mana.toFixed(1)}G`;
       const dorkStr  = t1DorkRate >= 0.8 ? " · T1 dork reliable"
                      : t1DorkRate >= 0.5 ? " · T1 dork sometimes" : "";
       if (simLabel === "SIM_STRONG")
-        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}${dorkStr}) — develops and wins`);
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — hand develops and wins consistently (${manaStr}${dorkStr})`);
       else if (simLabel === "SIM_OK")
-        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}${dorkStr})`);
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} (${manaStr}${dorkStr})`);
       else if (simLabel === "SIM_WEAK")
-        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}) — slower than it looks`);
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — slower than it looks (${manaStr})`);
       else
-        notesArr.push(`🎲 Sim (${winsStr}${avgStr}, ${manaStr}) — hand produces no T2 mana`);
+        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — no T2 mana from hand (${manaStr})`);
     }
 
     // ── RAW COUNTS (needed for notes) ────────────────────────────
@@ -23849,30 +23849,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
     // ── Build human-readable notes via shared module-level function ──────────
     // buildHandNotes() covers all structural observations (lands, T1 play,
-    // dorks, tutors, synergies, flags).  Sim results and advisor-analysis
+    // dorks, tutors, synergies, flags). Sim results and advisor-analysis
     // enrichment are layered on top below.
     notes.push(...buildHandNotes(cards));
-
-    // ── Sim note helper — placed FIRST so it's the most prominent signal ──────
-    function addSimNote(notesArr) {
-      if (!simResult) return;
-      const { simLabel, winsBy8, winsTotal, total, avgWinTurn, t1Mana, t2Mana, t1DorkRate } = simResult;
-      const winsStr  = `${winsBy8}/${total} wins ≤T8`;
-      const avgStr   = avgWinTurn != null
-        ? `, avg T${avgWinTurn.toFixed(1)}`
-        : winsTotal === 0 ? ", no wins in simulation" : "";
-      const manaStr  = `T1: ${t1Mana.toFixed(1)}G, T2: ${t2Mana.toFixed(1)}G`;
-      const dorkStr  = t1DorkRate >= 0.8 ? " · T1 dork reliable"
-                     : t1DorkRate >= 0.5 ? " · T1 dork sometimes" : "";
-      if (simLabel === "SIM_STRONG")
-        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — hand develops and wins consistently (${manaStr}${dorkStr})`);
-      else if (simLabel === "SIM_OK")
-        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} (${manaStr}${dorkStr})`);
-      else if (simLabel === "SIM_WEAK")
-        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — slower than it looks (${manaStr})`);
-      else
-        notesArr.unshift(`🎲 Sim: ${winsStr}${avgStr} — no T2 mana from hand (${manaStr})`);
-    }
 
     // ── Final grade — delegate to gradeOpeningHand, map label to grade object ──
     // Apply sim-based grade adjustments (only on the normal path — hard gates already returned).
@@ -28587,6 +28566,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       <div style={{ textAlign: "center", padding: "30px 0", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", fontSize: "12px" }}>
                         <div style={{ width: 28, height: 28, border: `2px solid ${COLORS.border}`, borderTopColor: COLORS.blue, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
                         Simulating {runNActualCount.current ?? runNCount} games…
+                      </div>
+                    )}
+                    {runNError && !runNRunning && (
+                      <div style={{ margin: "16px 0", padding: "12px 14px", background: "#2a0a0a", border: `1px solid ${COLORS.red}`, borderRadius: "8px", color: COLORS.red, fontFamily: "'Crimson Text', serif", fontSize: "13px" }}>
+                        <span style={{ fontWeight: "bold" }}>⚠ Simulation error: </span>{runNError}
                       </div>
                     )}
                     {nr && !runNRunning && (() => {
