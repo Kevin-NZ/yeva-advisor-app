@@ -150,7 +150,7 @@ const CARDS = {
   "Castle Garenbrig":      { type:"land", cmc:0, tags:["land","ramp","combo","green-mana"]},
   "Bonders' Enclave":      { type:"land", cmc:0, tags:["land","draw","utility"]},
   "Bridgeworks Battle":    { type:"sorcery", cmc:3, tags:["removal","sorcery","fight"], role:"removal", greenPips:2},
-  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], note:"{T}: Add {1}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
+  "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], note:"{T}: Add {C}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
   "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"]},
   "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"]},
   "Turntimber Symbiosis":  { type:"land", cmc:0, tags:["land","utility","forest"], greenPips:3, note:"Land side: enters tapped as Forest. Spell side {4}{G}{G}{G} (CMC 7): look at top 7, put a creature with CMC ≤ 3 onto battlefield with 3 extra +1/+1 counters. greenPips:3 reflects spell side for Defiler cost reduction."},
@@ -691,21 +691,27 @@ const COMBOS = [
   // ── 10e. Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout loops ────
   {
     id: "woodcaller_ashaya_loop",
-    name: "Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout",
+    name: "Woodcaller Automaton + Ashaya + Temur Sabertooth",
     onBattlefield: ["Woodcaller Automaton", "Ashaya, Soul of the Wild"],
-    description: "Infinite mana. Cast Woodcaller Automaton at prototype ({2}{G}{G}, 3/3). ETB untaps one target land and animates it into a 3/3 Treefolk with haste (still a land). With Ashaya, Automaton itself becomes a Forest too. The animated haste land-creature can tap for mana immediately. Bounce Automaton with Temur Sabertooth and recast targeting Cradle/Nykthos. Also goes infinite via Ashaya Ranger loops — with the animated creature being a Forest via Ashaya, Ranger can bounce it.",
+    // Woodcaller must pre-exist (non-sick) so its ETB already fired and the loop
+    // can begin immediately — Temur bounces it to re-trigger the ETB each iteration.
+    // NOTE: Woodcaller has an ETB, NOT a tap ability. Rangers (Quirion/Scryb) only
+    // untap permanents — they cannot bounce Woodcaller back to hand to re-trigger
+    // the ETB. Only Temur Sabertooth (bounce + recast) can loop this combo.
+    mustPreExist: ["Woodcaller Automaton"],
+    description: "Infinite mana. Woodcaller Automaton's ETB untaps one target land and animates it into a 3/3 Treefolk with haste (still a land). Bounce Automaton with Temur Sabertooth ({1}{G}) and recast ({2}{G}{G}): ETB re-fires, untapping and re-animating the land. Loop cost: 6 mana total. Net positive when the animated land (Cradle or Nykthos) taps for ≥7. Note: Woodcaller has no tap ability — only its ETB untaps a land. Quirion/Scryb Rangers cannot loop this combo since they only untap; they cannot bounce Automaton to re-trigger the ETB.",
     requires: ["Woodcaller Automaton", "Ashaya, Soul of the Wild"],
     needsAlsoBouncer: true,
     priority: 8,
     type: "infinite-mana",
     lines: [
       "Woodcaller Automaton + Ashaya, Soul of the Wild + Temur Sabertooth on battlefield.",
-      "Cast Automaton at prototype ({2}{G}{G}): ETB untaps one target land (e.g. Cradle or Nykthos). That land becomes a 3/3 Treefolk creature with haste. It is still a land.",
-      "With Ashaya, the animated land-creature is also a Forest — enabling Ranger loops on it directly.",
+      "Woodcaller's ETB already fired on entry: one land was untapped and animated into a 3/3 Treefolk with haste.",
       "The animated land has haste — tap it for mana immediately (Cradle counts all your creatures including the haste land).",
-      "Quirion/Scryb Ranger loop: Ranger bounces itself (a Forest via Ashaya) to untap Automaton. Net positive when total mana exceeds loop cost.",
-      "Sabertooth loop: bounce Automaton ({1}{G}), recast ({2}{G}{G}), re-untap and re-animate the land. Total loop cost: 6 mana. Net positive when land taps for ≥7.",
-      "Wirewood Symbiote loop: Symbiote untaps Automaton, Sabertooth bounces Symbiote. Net positive when animated land produces ≥5.",
+      "Pay {1}{G}: Temur Sabertooth bounces Woodcaller Automaton to hand.",
+      "Recast Woodcaller Automaton at prototype ({2}{G}{G}): ETB fires again — re-untaps and re-animates the same land.",
+      "Loop cost: 6 mana per iteration ({1}{G} bounce + {2}{G}{G} recast). Net positive when the land taps for ≥7.",
+      "⚠ Rangers (Quirion/Scryb) cannot loop this — they untap but cannot bounce Woodcaller to re-trigger its ETB.",
     ]
   },
 
@@ -2088,7 +2094,7 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
       return { green: 0, colorless: data.tapsForColorless }; // e.g. Sol Ring taps for {C}{C}
     }
     // Lands verified to tap for {C} (colorless 1), not {G}.
-    // Every entry confirmed against Scryfall oracle text.
+    // Every entry confirmed against oracle text in card_data.md.
     const COLORLESS_1_LANDS = new Set([
       "War Room",                    // {T}: Add {C} (then {3},{T}: draw a card)
       "Deserted Temple",             // {T}: Add {C} (then {1},{T}: untap target land)
@@ -2098,13 +2104,11 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
       "Geier Reach Sanitarium",      // {T}: Add {C} (then {2},{T}: each player draws/discards)
       "Mikokoro, Center of the Sea", // {T}: Add {C} (then {2},{T}: each player draws)
       "Mariposa Military Base",      // {T}: Add {C} (then {5},{T}: draw a card; Fallout)
+      "Urza's Cave",                 // {T}: Add {C} (then {3},{T},sac: search for land)
+      "Bonders' Enclave",            // {T}: Add {C} (then {3},{T}: draw if power 4+)
+      "Ominous Cemetery",            // {T}: Add {C} (then {5},{T},exile: shuffle creature)
     ]);
     if (COLORLESS_1_LANDS.has(card)) return { green: 0, colorless: 1 };
-    // Lands with NO bare {T} mana ability — their only activated ability costs mana.
-    const ZERO_MANA_LANDS = new Set([
-      "Urza's Cave", // {3},{T},sacrifice: search for any land — no {T} mana ability
-    ]);
-    if (ZERO_MANA_LANDS.has(card)) return { green: 0, colorless: 0 };
     // Castle Garenbrig: {T}: Add {G} — falls through to the green catchall below (correct).
     return { green: 1, colorless: 0 }; // all other lands tap for {G}
 
@@ -2170,7 +2174,8 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
     } else {
       amt = 1 + badgermoleBonus;
     }
-    if (card === "Boreal Druid") return { green: 0, colorless: amt }; // {T}: Add {C}
+    if (card === "Boreal Druid")       return { green: 0, colorless: amt }; // {T}: Add {C}
+    if (card === "Delighted Halfling") return { green: 0, colorless: amt }; // {T}: Add {C} (second ability restricted to legendary spells)
     return { green: amt, colorless: 0 }; // all other dorks produce {G}
 
   } else if (data.tags?.includes("rock")) {
@@ -8522,10 +8527,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Returns a priority bonus: +3 WIN NOW next turn, +2 same-turn line, +1 any reachable
   // line, 0 nothing changes. Used to rank ONE PIECE AWAY advice cards.
   const _nextTurnLookaheadCache = new Map();
-  function nextTurnLookahead(addCard) {
-    if (_nextTurnLookaheadCache.has(addCard)) return _nextTurnLookaheadCache.get(addCard);
-    // Projected board next turn: current battlefield + the found card
-    const nextBf = [...battlefield, addCard];
+  function nextTurnLookahead(addCard, extraCards = []) {
+    const cacheKey = addCard + (extraCards.length ? "|" + extraCards.join("|") : "");
+    if (_nextTurnLookaheadCache.has(cacheKey)) return _nextTurnLookaheadCache.get(cacheKey);
+    // Projected board next turn: current battlefield + the found card + any extras
+    // (e.g. Formidable Speaker stays on board when used as the tutor this turn)
+    const nextBf = [...battlefield, addCard, ...extraCards];
     // Project mana: current sumManaPool on the new board (untap step resets all sources)
     const nextPool = sumManaPool(nextBf);
     const nextMana = nextPool.green + nextPool.colorless;
@@ -8552,7 +8559,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       else if (best.canAfford)          bonus = 1;  // Reachable line
       else                              bonus = 0;  // Still missing pieces
     }
-    _nextTurnLookaheadCache.set(addCard, bonus);
+    _nextTurnLookaheadCache.set(cacheKey, bonus);
     return bonus;
   }
 
@@ -8948,7 +8955,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           // Missing card or another required card not in deck — skip
         } else {
         const tutorOptions = tutorOptionsEarly;
-        const speakerIsTutor = tutorOptions.length > 0 && tutorOptions[0].startsWith("Formidable Speaker");
+        const speakerIsTutor = tutorOptions.length > 0 && (
+          tutorOptions[0].startsWith("Formidable Speaker") ||
+          tutorOptions.some(t => t.includes("Formidable Speaker"))
+        );
+        // Prefer the GSZ→Speaker chain option in the headline when it's available
+        const speakerTutorOption = tutorOptions.find(t => t.includes("Formidable Speaker")) ?? tutorOptions[0];
         // Next-turn lookahead: score how good the board becomes if we find this piece.
         // Only run when not already in infinite mana (lookahead is noise when infinite is active —
         // every line looks like WIN NOW). Cap at 12 so OPA never beats:
@@ -8956,25 +8968,79 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         //   - Path-planner WIN NOW (priority 15)
         //   - NATURAL ORDER bespoke (priority 11-12) when it's a direct play
         // Lookahead is a tiebreaker within the ONE PIECE AWAY tier only.
-        const lookaheadBonus = (isMyTurn && !infiniteManaActive) ? nextTurnLookahead(missingCard) : 0;
-        const opaPriority = Math.min(12, combo.priority + 1 + lookaheadBonus);
+        // When Formidable Speaker is the tutor, include it in the projected board too —
+        // Speaker stays on battlefield after ETB fires, so next turn we have both
+        // the found piece AND Speaker (with its {1},{T}: Untap + Temur-bounce ETB chain).
+        const lookaheadExtra = speakerIsTutor && !board.has("Formidable Speaker")
+          ? ["Formidable Speaker"] : [];
+        const lookaheadBonus = (isMyTurn && !infiniteManaActive)
+          ? nextTurnLookahead(missingCard, lookaheadExtra) : 0;
+        // Determine category:
+        //   WIN NEXT TURN    — missing piece enters sick this turn, lookahead confirms actual win
+        //                      next turn via Speaker+Temur→Duskwatch chain
+        //   INFINITE MANA NEXT TURN — missing piece enters sick, gives infinite mana next turn
+        //                      but no confirmed win route yet
+        //   ONE PIECE AWAY   — standard case: piece can act same turn once cast
+        const mustPreForWin = (combo.mustPreExist ?? []).includes(missingCard);
+        const isWinNextTurn = mustPreForWin && speakerIsTutor && lookaheadBonus === 2
+          && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
+        const isInfiniteNextTurn = mustPreForWin && !isWinNextTurn
+          && combo.type === "infinite-mana";
+        const opaCategory = isWinNextTurn      ? "⏭️ WIN NEXT TURN"
+                          : isInfiniteNextTurn ? "⏭️ INFINITE MANA — NEXT TURN"
+                          :                     "🎯 ONE PIECE AWAY";
+        const opaPriority = isWinNextTurn      ? Math.min(14, combo.priority + 2 + lookaheadBonus)
+                          : isInfiniteNextTurn ? Math.min(13, combo.priority + 2 + lookaheadBonus)
+                          :                     Math.min(12, combo.priority + 1 + lookaheadBonus);
         results.push({
           priority: opaPriority,
-          category: "🎯 ONE PIECE AWAY",
+          category: opaCategory,
           headline: (() => {
             // Strip already-owned pieces from the combo name so the headline focuses on what's missing.
             const opaOwned = combo.requires.filter(r => r !== missingCard && (board.has(r) || inHand.has(r)));
             const opaName = comboNameForDisplay(combo.name, opaOwned);
-            if (speakerIsTutor) return `Cast Formidable Speaker → ETB finds ${missingCard} → enables ${opaName}`;
-            if (tutorOptions.length > 0) return `Find ${missingCard} via ${tutorOptions[0].split(" (")[0]} to enable ${opaName}`;
-            return `Find ${missingCard} to enable ${opaName}`;
+            const mustPre = combo.mustPreExist ?? [];
+            const needsNextTurn = mustPre.includes(missingCard);
+            const isWinCombo = combo.type === "win-mill" || combo.type === "win-poison"
+              || combo.type === "win-combat" || combo.type === "win-draw";
+            const nextTurnSuffix = needsNextTurn && !isWinNextTurn && !isInfiniteNextTurn
+              ? (isWinCombo ? " (wins next turn)" : " (infinite mana next turn)")
+              : "";
+            if (speakerIsTutor) {
+              const isGszSpeaker = speakerTutorOption?.startsWith("Green Sun's Zenith");
+              const prefix = isGszSpeaker
+                ? `GSZ → Formidable Speaker → ETB finds ${missingCard}`
+                : `Cast Formidable Speaker → ETB finds ${missingCard}`;
+              return `${prefix} → enables ${opaName}${nextTurnSuffix}`;
+            }
+            if (tutorOptions.length > 0) return `Find ${missingCard} via ${tutorOptions[0].split(" (")[0]} to enable ${opaName}${nextTurnSuffix}`;
+            return `Find ${missingCard} to enable ${opaName}${nextTurnSuffix}`;
           })(),
-          detail: tutorOptions.length > 0
-            ? `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`
-            : `You need ${missingCard} to enable ${combo.name}. ${combo.description}`,
-          steps: tutorOptions.length > 0
-            ? [`Use ${tutorOptions.join(" or ")} to find ${missingCard}.`, ...filterComboLines(combo.lines)]
-            : [`Find ${missingCard} to complete this combo.`, ...filterComboLines(combo.lines)],
+          detail: speakerIsTutor
+            ? `${speakerTutorOption?.startsWith("Green Sun's") ? "Green Sun's Zenith (X=3) → Formidable Speaker enters → ETB: discard a card → find ${missingCard}. " : `Cast Formidable Speaker → ETB: discard a card → find ${missingCard}. `}${combo.description}`
+            : tutorOptions.length > 0
+              ? `Use ${tutorOptions[0]} to find ${missingCard}. ${combo.description}`
+              : `You need ${missingCard} to enable ${combo.name}. ${combo.description}`,
+          steps: (() => {
+            const mustPre = combo.mustPreExist ?? [];
+            const needsNextTurn = mustPre.includes(missingCard);
+            const isWinCombo = combo.type === "win-mill" || combo.type === "win-poison"
+              || combo.type === "win-combat" || combo.type === "win-draw";
+            const isGszSpeaker = speakerIsTutor && speakerTutorOption?.startsWith("Green Sun's Zenith");
+            const fetchStep = isGszSpeaker
+              ? `Cast Green Sun's Zenith (X=3, cost 4G) → Formidable Speaker enters → ETB: discard a card → find ${missingCard} → put into hand → cast ${missingCard}.`
+              : speakerIsTutor
+                ? `Cast Formidable Speaker (CMC 3) → ETB: discard a card → find ${missingCard} → put into hand → cast ${missingCard}.`
+                : tutorOptions.length > 0
+                  ? `Use ${tutorOptions.join(" or ")} to find ${missingCard}.`
+                  : `Find ${missingCard} to complete this combo.`;
+            const sickNote = needsNextTurn
+              ? speakerIsTutor
+                ? `⚠ ${missingCard} enters with summoning sickness — ${isWinCombo ? "the win" : "infinite mana"} is NEXT TURN. With Formidable Speaker + Temur Sabertooth on board, next turn: infinite mana → Temur bounces Speaker → recast Speaker → ETB finds Duskwatch → WIN.`
+                : `⚠ ${missingCard} enters with summoning sickness — ${isWinCombo ? "the win" : "infinite mana"} is available NEXT TURN after it untaps. Cast it now to set up.`
+              : null;
+            return [fetchStep, ...(sickNote ? [sickNote] : []), ...filterComboLines(combo.lines)];
+          })(),
           combo: combo.id,
           color: speakerIsTutor ? "#e67e22" : "#58d68d",
         });
@@ -13371,6 +13437,20 @@ function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, 
       const targetCmc = getCard(target)?.cmc ?? getCard(target)?.cmc ?? 0;
       const gszCost = _staxCmc(targetCmc + 1, "sorcery"); // X=CMC plus {G}, taxed as sorcery
       if (mana >= gszCost || infiniteMana) options.push("Green Sun's Zenith");
+      // GSZ→Formidable Speaker (X=3) → Speaker ETB discards a card → finds target creature.
+      // This 2-hop chain costs 4G (GSZ X=3) + leaves Speaker on board for next-turn win.
+      // Only suggest when target is a creature, Speaker isn't already on board,
+      // and there's a card in hand to discard to Speaker's ETB AFTER GSZ is spent.
+      // GSZ is consumed fetching Speaker, so exclude it from the discard count.
+      const speakerChainCost = _staxCmc(4, "sorcery"); // GSZ at X=3 = {3}{G} = 4 total
+      const cardAfterGszSpent = hand.filter(c => c !== "Green Sun's Zenith" && c !== "Formidable Speaker").length > 0;
+      if (getCard(target)?.type === "creature"
+          && !board.has("Formidable Speaker")
+          && !inHand.has("Formidable Speaker")
+          && cardAfterGszSpent
+          && (mana >= speakerChainCost || infiniteMana)) {
+        options.push("Green Sun's Zenith → Formidable Speaker (ETB discards a card → finds any creature)");
+      }
     }
     if (accessible("Green Sun's Zenith") && inGrave.has("Green Sun's Zenith")) {
       // Needs Eternal Witness to retrieve first — don't suggest as immediate tutor
@@ -16004,7 +16084,7 @@ function HelpModal({ onClose, onStartTour }) {
         <Tip label="Temur Sabertooth + Wirewood Symbiote + 1-Drop Elf + Dork (≥5 mana)">Symbiote bounces 1-drop elf to untap big dork. Sabertooth bounces Symbiote (resetting its once-per-turn). Recast both. Net positive when dork produces ≥5 mana.</Tip>
         <Tip label="Temur Sabertooth / Kogla + Hyrax Tower Scout + Dork (≥6 mana)">Scout ETB untaps target creature (the big dork). Sabertooth or Kogla bounces Scout back to hand for {"{1}{G}"}. Net positive when dork produces ≥6 mana.</Tip>
         <Tip label="Hope Tender + Kogla + Big Land (≥4 mana)">Kogla bounces Hope Tender (a Human) to hand each time a creature enters. Hope Tender ETB: untap target land. With land producing ≥4 (Cradle with many creatures), net positive per loop.</Tip>
-        <Tip label="Woodcaller Automaton + Ashaya + Ranger/Symbiote/Scout">Automaton gives all creatures {"{T}"}: tap/untap a Forest. With Ashaya, creatures are Forests, creating recursive tap chains. Combine with Quirion/Symbiote/Scout for net mana.</Tip>
+        <Tip label="Woodcaller Automaton + Ashaya + Temur Sabertooth">Woodcaller's ETB untaps a land and animates it into a 3/3 Treefolk with haste. Temur Sabertooth bounces Woodcaller ({"{1}{G}"}), recast ({"{2}{G}{G}"}) re-triggers ETB. Loop costs 6 mana — net positive when animated land (Cradle/Nykthos) taps for ≥7. Note: Woodcaller has NO tap ability — Rangers cannot loop it.</Tip>
         <Tip label="Magus of the Candelabra + Wirewood Symbiote + Sabertooth + Big Land (≥5 mana)">Classic non-Ashaya Magus loop. Symbiote bounces an elf to untap Magus. Sabertooth bounces Symbiote. Magus untaps big land. Net positive at ≥5 mana from land.</Tip>
 
         <H>DRAW / TUTOR ENGINES</H>
@@ -18291,6 +18371,53 @@ function simActivateAbilities(simState, manaPool) {
     }
   }
 
+  // Wirewood Lodge: {G},{T} → untap target Elf.
+  // Useful when a big elf dork (Priest, Archdruid, etc.) is tapped and we need more mana.
+  // Model as: pay {G} from pool, untap the highest-output non-sick tapped elf dork.
+  // This effectively converts 1G → N-1G net (where N is the dork's output).
+  // Only activate when it produces a meaningful net gain (dork output > 1).
+  if (board.has("Wirewood Lodge") && !used.has("WirewoodLodge") && manaPool.green >= 1) {
+    const BIG_ELVES = new Set(["Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+      "Karametra's Acolyte","Wirewood Channeler","Joraga Treespeaker"]);
+    // Find a tapped big elf dork that's not sick (sick ones can't have been tapped this turn)
+    // In the sim, dorks that generated mana are modelled as having contributed to turnManaCapacity.
+    // We simulate untapping the best one by boosting manaPool green.
+    const bestDork = battlefield.find(c => BIG_ELVES.has(c) && !sickSet.has(c));
+    if (bestDork) {
+      const ctx = buildBoardContext(battlefield, sickSet, null);
+      const { green: dorkG } = cardManaContribution(bestDork, getCard(bestDork), ctx, sickSet);
+      if (dorkG >= 2) {
+        // Net gain: tap Lodge for {C} (already in pool), pay {G} to untap dork,
+        // then dork can tap again for dorkG. Net = dorkG - 1 extra green.
+        // In sim terms: increase effective manaPool by (dorkG - 1).
+        manaPool.green += dorkG - 1;
+        manaPool.total += dorkG - 1;
+        used.add("WirewoodLodge");
+        return true;
+      }
+    }
+  }
+
+  // Deserted Temple: {1},{T} → untap target land.
+  // Useful for untapping Gaea's Cradle or Nykthos for a second activation.
+  // Cost: 1 (colorless or any) + tap Temple. Net gain = retapped land output - 1.
+  if (board.has("Deserted Temple") && !used.has("DesertedTemple") && manaPool.total >= 1) {
+    const BIG_LANDS = ["Gaea's Cradle","Nykthos, Shrine to Nyx","Itlimoc, Cradle of the Sun"];
+    const bigLand = BIG_LANDS.find(l => board.has(l));
+    if (bigLand) {
+      const ctx = buildBoardContext(battlefield, sickSet, null);
+      const { green: landG } = cardManaContribution(bigLand, getCard(bigLand), ctx, sickSet);
+      if (landG >= 3) {
+        // Pay {1}, tap Temple → untap bigLand → tap bigLand again for landG.
+        // Net: landG - 1 extra green (spent 1 for Temple activation).
+        manaPool.green += landG - 1;
+        manaPool.total += landG - 1;
+        used.add("DesertedTemple");
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 // Takes a mutable simState object so this can be unit-tested independently.
@@ -19102,7 +19229,7 @@ function extractComboLabel(result) {
     "hope_tender_ashaya_dork":    "Hope Tender Loop",
     "ley_weaver_ashaya":          "Ley Weaver Loop",
     "survival_witness":           "Survival+EWit Loop",
-    "woodcaller_ashaya_loop":     "Woodcaller Loop",
+    "woodcaller_ashaya_loop":     "Woodcaller + Temur Loop",
   };
   if (result.combo && COMBO_ID_LABELS[result.combo]) return COMBO_ID_LABELS[result.combo];
 
@@ -25050,38 +25177,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           );
         })()}
 
-        {/* ── Woodcaller Automaton: tap — untap target land ── */}
-        {isBF && card === "Woodcaller Automaton" && (() => {
-          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
-          if (isCardTapped || sickCreatures.has(key) || lands.length === 0) return (
-            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : "no lands"}
-            </div>
-          );
-          return (
-            <div onClick={() => {
-              pushUndo();
-              toggleTap(card, index);
-              setPendingPicker({
-                label: "WOODCALLER AUTOMATON — UNTAP A LAND", color: COLORS.green2,
-                items: lands.map(({ c, i }) => ({
-                  label: c, sub: tapped.has(cardKey(c, i)) ? "● tapped" : "○ untapped",
-                  key: `${c}:${i}`, c, i,
-                })),
-                onSelect: ({ c: lc, i: li }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(lc, li)); return next; });
-                  addLog(`Woodcaller Automaton: tapped, untapped ${lc}.`, COLORS.green2);
-                },
-              });
-              setPickerSelected([]);
-              closeContextMenu();
-            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
-              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ Tap — untap a land
-            </div>
-          );
-        })()}
+        {/* ── Woodcaller Automaton: ETB-only note — no repeatable tap ability ── */}
+        {/* Oracle: "When this creature enters, untap target land. It becomes a 3/3 Treefolk  */}
+        {/* creature with haste that's still a land." — ETB only, fires once on cast/bounce.  */}
+        {/* There is NO {T} tap ability. The ETB is handled in castFromHand / handleETB.      */}
+        {isBF && card === "Woodcaller Automaton" && (
+          <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+            📋 ETB-only — untaps a land when cast/bounced. No tap ability.
+          </div>
+        )}
 
         {/* ── Thousand-Year Elixir: {1} tap — untap target creature ── */}
         {isBF && card === "Thousand-Year Elixir" && (() => {
