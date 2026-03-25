@@ -2064,8 +2064,15 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
       return { green: ctx.creatureCount, colorless: 0 };
     }
     if (card === "Nykthos, Shrine to Nyx") {
-      const g = ctx.devotion === 0 ? 0 : Math.max(1, ctx.devotion - 2);
-      return { green: g, colorless: 0 };
+      // Nykthos has two abilities:
+      //   {T}: Add {1}  (always available — basic colorless tap)
+      //   {2},{T}: Add mana of chosen type equal to your devotion
+      // For the devotion ability, the {2} cost is paid from the existing mana pool separately.
+      // cardManaContribution returns what TAPPING adds to the pool (gross, before the {2} deduction).
+      // When devotion is 0-2, the devotion ability isn't profitable — use the basic {T}: Add {1}.
+      // When devotion >= 3, the devotion ability adds devotion green (gross); net is devotion-2 after cost.
+      if (ctx.devotion >= 3) return { green: ctx.devotion, colorless: 0 };
+      return { green: 0, colorless: 1 }; // basic {T}: Add {1}
     }
     if (card === "Ancient Tomb") {
       return { green: 0, colorless: 2 }; // {C}{C} — cannot satisfy green pip requirements
@@ -2078,8 +2085,27 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
         : { green: 0, colorless: 0 };
     }
     if (data.tapsForColorless) {
-      return { green: 0, colorless: data.tapsForColorless }; // e.g. Wirewood Lodge taps for {C}
+      return { green: 0, colorless: data.tapsForColorless }; // e.g. Sol Ring taps for {C}{C}
     }
+    // Lands verified to tap for {C} (colorless 1), not {G}.
+    // Every entry confirmed against Scryfall oracle text.
+    const COLORLESS_1_LANDS = new Set([
+      "War Room",                    // {T}: Add {C} (then {3},{T}: draw a card)
+      "Deserted Temple",             // {T}: Add {C} (then {1},{T}: untap target land)
+      "Wirewood Lodge",              // {T}: Add {C} (then {G},{T}: untap an elf)
+      "Talon Gates of Madara",       // {T}: Add {C} (then {1},{T}: add any color)
+      "Emergence Zone",              // {T}: Add {C} (then {1},{T},sac: grant flash)
+      "Geier Reach Sanitarium",      // {T}: Add {C} (then {2},{T}: each player draws/discards)
+      "Mikokoro, Center of the Sea", // {T}: Add {C} (then {2},{T}: each player draws)
+      "Mariposa Military Base",      // {T}: Add {C} (then {5},{T}: draw a card; Fallout)
+    ]);
+    if (COLORLESS_1_LANDS.has(card)) return { green: 0, colorless: 1 };
+    // Lands with NO bare {T} mana ability — their only activated ability costs mana.
+    const ZERO_MANA_LANDS = new Set([
+      "Urza's Cave", // {3},{T},sacrifice: search for any land — no {T} mana ability
+    ]);
+    if (ZERO_MANA_LANDS.has(card)) return { green: 0, colorless: 0 };
+    // Castle Garenbrig: {T}: Add {G} — falls through to the green catchall below (correct).
     return { green: 1, colorless: 0 }; // all other lands tap for {G}
 
   } else if (data.tags?.includes("dork") || data.tags?.includes("big-dork")) {
@@ -21915,14 +21941,30 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         } else {
           addLog(`Auto-tapped ${autoTapped.length} sources for ${autoMana} mana.`, COLORS.green1);
         }
-        // Sacrifice one-shot mana sources (Lotus Petal) that were auto-tapped
+        // Sacrifice one-shot mana sources (Lotus Petal) that were auto-tapped.
+        // IMPORTANT: Removing Lotus Petal from the battlefield shifts the indices of all
+        // subsequent cards. We must remap the tapped_ keys accordingly so that the tapped
+        // state stays consistent with the new battlefield layout.
         const petalsToSac = autoTapped.filter(s => s.c === "Lotus Petal");
         if (petalsToSac.length > 0) {
+          const petalIndices = new Set(petalsToSac.map(s => s.i));
+          // Remap tapped_ keys: any key at index > a removed petal shifts down by 1 per petal below it
+          const remappedTapped = new Set();
+          for (const key of tapped_) {
+            const lastColon = key.lastIndexOf(":");
+            const keyIdx = parseInt(key.slice(lastColon + 1), 10);
+            if (petalIndices.has(keyIdx)) continue; // petal itself — drop
+            // Count how many removed petals are at indices < this key's index
+            const shift = [...petalIndices].filter(pi => pi < keyIdx).length;
+            remappedTapped.add(key.slice(0, lastColon + 1) + (keyIdx - shift));
+          }
+          effectiveTapped = remappedTapped;
+          setTapped(remappedTapped);
           setBattlefield(prev => {
             const next = [...prev];
-            // Remove petals in reverse index order to avoid index shifting
-            const indices = petalsToSac.map(s => s.i).sort((a, b) => b - a);
-            for (const pi of indices) {
+            // Remove petals in reverse index order to avoid index shifting during splice
+            const sortedIndices = [...petalIndices].sort((a, b) => b - a);
+            for (const pi of sortedIndices) {
               if (next[pi] === "Lotus Petal") next.splice(pi, 1);
             }
             return next;
@@ -21930,7 +21972,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           setGraveyard(prev => [...prev, ...petalsToSac.map(() => "Lotus Petal")]);
           for (const p of petalsToSac) {
             addLog(`Lotus Petal: sacrificed for {G}.`, COLORS.gold);
-            // Lotus Petal produces {G}
           }
         }
       }
