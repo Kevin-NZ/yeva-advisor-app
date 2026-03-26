@@ -2457,20 +2457,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // as the land drop, netting +1{G} per ranger. This only works if:
   //   - A non-sick Quirion/Scryb Ranger is on the battlefield
   //   - There's at least one tappable Forest (including Ashaya creature-Forests)
-  //   - The land drop hasn't been used yet (isMyTurn implied by wanting to play the land)
-  // Each ranger can do this once per turn. Scryb can also bounce from an opponent's turn.
-  // Also: Wirewood Symbiote can bounce an elf (not a land), but paired with a ranger
-  // it enables extra untap cycles.
+  //   - The land drop hasn't been used yet (landPlayed must be false)
+  //   - It's the player's own turn (can't replay a land on opponent's turn)
+  // Each ranger can do this once per turn. Scryb can bounce on opponent's turn too,
+  // but that bounce doesn't net mana (no land drop to replay) — it's only for untapping.
   let rangerManaBonus = 0;
   const hasQuirion = board.has("Quirion Ranger");
   const hasScryb = board.has("Scryb Ranger");
   const forestsOnBoard = battlefield.filter(c => c === "Forest" || getCard(c)?.tags?.includes("basic")).length;
-  // Quirion: return a Forest you control to hand → untap target creature.
   // The mana trick: tap Forest → bounce it → replay as land drop → tap again = +1G net.
-  if (hasQuirion && forestsOnBoard >= 1 && isMyTurn) rangerManaBonus += 1;
-  // Scryb: same trick but with a Forest (once per turn, requires discarding a card — no,
-  // Scryb returns a Forest to hand, no discard). Also works on opponent's turn.
-  if (hasScryb && forestsOnBoard >= 1) rangerManaBonus += 1;
+  // Requires: your turn AND land drop not yet used.
+  if (hasQuirion && forestsOnBoard >= 1 && isMyTurn && !landPlayed) rangerManaBonus += 1;
+  if (hasScryb  && forestsOnBoard >= 1 && isMyTurn && !landPlayed) rangerManaBonus += 1;
   // #1: Wirewood Symbiote ritual — bounce an elf you control, untap a dork tapping for ≥2.
   // Net: +1{G} (dork taps again for ≥2, minus the elf that was bounced to hand).
   // Requires: Symbiote on board (non-sick), an elf on board to bounce, a dork tapping ≥2.
@@ -3761,7 +3759,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // When Quirion/Scryb Ranger is on board and the land drop is unused,
   // the player can: tap Forest → return it with ranger → replay it → tap again = +1{G}.
   // Surface this when it unlocks a cast the player couldn't otherwise afford.
-  if (isMyTurn && rangerManaBonus > 0 && !infiniteManaActive) {
+  if (isMyTurn && !landPlayed && rangerManaBonus > 0 && !infiniteManaActive) {
     // Find cards in hand that are affordable WITH the trick but NOT without
     const unlocked = hand.filter(c => {
       const cd = getCard(c);
@@ -3802,7 +3800,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // This fires even when no specific cast is "unlocked" — the mana gain itself
   // is the value. With land drop available, replay the Forest for net = dorkOutput + 1G - 0 cost.
   // Without land drop, net = dorkOutput - 1G (lost the Forest's mana).
-  if (isMyTurn && !infiniteManaActive && (hasQuirion || hasScryb)) {
+  if (isMyTurn && !landPlayed && !infiniteManaActive && (hasQuirion || hasScryb)) {
     const whichRanger = hasQuirion ? "Quirion Ranger" : "Scryb Ranger";
     // Find the best big dork to untap (highest output, must already be tapped or will be after tapping)
     const bigDorkForRanger = battlefield.reduce((best, c) => {
@@ -12046,8 +12044,24 @@ function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], at
     if (cardToPlay) {
       const idx = h.indexOf(cardToPlay);
       if (idx >= 0 && simCanCast(cardToPlay, manaPool, bf)) {
+        // Check if infinite mana is active on the starting board (used to relax sac protection)
+        const _ntInfActive = (() => {
+          const brd = new Set(bf);
+          for (const combo of COMBOS) {
+            if (combo.type !== "infinite-mana") continue;
+            if (!(combo.requires ?? []).every(r => brd.has(r))) continue;
+            if ((combo.mustPreExist ?? []).some(r => sick.has(r))) continue;
+            if (combo.needsBigDork) {
+              if (!bf.some(c => !sick.has(c) &&
+                (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+                continue;
+            }
+            return true;
+          }
+          return false;
+        })();
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
-          !simHasValidSacTarget(bf, sick);
+          !simHasValidSacTarget(bf, sick, _ntInfActive);
         if (!sacNeedsCreature) {
           playCard(cardToPlay, idx, manaPool);
           actionedSomething = true;
@@ -12110,7 +12124,7 @@ function simulateNextTurn({ hand, battlefield, graveyard, currentAdvice = [], at
       if (!simCanCast(nextCard, manaPool, bf)) break;
 
       const sacCheck = (nextCard === "Natural Order" || nextCard === "Eldritch Evolution") &&
-        !simHasValidSacTarget(bf, sick);
+        !simHasValidSacTarget(bf, sick, _ntInfActive || (nextAnalysis?.infiniteManaActive ?? false));
       if (sacCheck) break;
 
       playCard(nextCard, nextIdx, manaPool);
@@ -16839,7 +16853,7 @@ function scoreMulliganHandCards(cards) {
     const type = getCard(c)?.type ?? "";
     const cmc  = getCard(c)?.cmc ?? 0;
     let score = 0;
-    if (tags.includes("dork") && cmc === 1)  score += 5; // 1-drop dork — highest priority
+    if (tags.includes("dork") && cmc === 1)  score += 7; // 1-drop dork — highest priority (was 5; raised so never bottomed over fast-mana)
     if (tags.includes("fast-mana"))           score += 5; // Sol Ring / Chrome Mox — T1 acceleration
     if (tags.includes("tutor"))               score += 4;
     if (tags.includes("dork") && cmc > 1)    score += 3;
@@ -16901,7 +16915,7 @@ function simElderManaBonus(battlefield, sickSet = new Set()) {
 
 // Returns true if there is at least one creature that can legally be sacrificed to EE/NatOrder
 // without destroying the infinite mana loop. Protects rangers and the sole big-dork.
-function simHasValidSacTarget(battlefield, sickSet = new Set()) {
+function simHasValidSacTarget(battlefield, sickSet = new Set(), infiniteActive = false) {
   const LOOP_RANGERS = new Set(["Quirion Ranger","Scryb Ranger"]);
   const BIG_DORKS   = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
     "Circle of Dreams Druid","Karametra's Acolyte","Selvala, Heart of the Wilds",
@@ -16911,8 +16925,12 @@ function simHasValidSacTarget(battlefield, sickSet = new Set()) {
   return battlefield.some(c => {
     if (sickSet.has(c)) return false;
     if (getCard(c)?.type !== "creature") return false;
-    if (LOOP_RANGERS.has(c) && hasRanger) return false;
-    if (BIG_DORKS.has(c) && bigDorkCount === 1) return false;
+    // When infinite mana is already established, rangers and big dorks are freely expendable
+    // as sacrifice fodder — the loop doesn't need them any more.
+    if (!infiniteActive) {
+      if (LOOP_RANGERS.has(c) && hasRanger) return false;
+      if (BIG_DORKS.has(c) && bigDorkCount === 1) return false;
+    }
     return true;
   });
 }
@@ -17076,7 +17094,15 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
     const tutors      = hand.filter(c => getCard(c)?.tags?.includes("tutor")).length;
     // Use the shared gradeOpeningHand rubric — same logic as GoldfishModal gradeHand()
     const { label: handGrade } = gradeOpeningHand(hand, 7);
-    const keep = handGrade === "KEEP" || (handGrade === "BORDERLINE" && m === mullLimit);
+    // Keep policy:
+    //   KEEP     → always keep (bottom m cards as appropriate)
+    //   BORDERLINE at m=0 → free look, take 7-card BORDERLINE
+    //   BORDERLINE at m=1 → keep the 6-card hand (bottom 1); going to 5 is nearly always worse
+    //   BORDERLINE at m=2 → forced keep at the limit anyway
+    //   MULLIGAN  → only take if at the limit (forced)
+    const keep = handGrade === "KEEP" ||
+                 handGrade === "BORDERLINE" ||   // keep any BORDERLINE at any depth
+                 m === mullLimit;                // forced keep at limit regardless
     if (keep || m === mullLimit) {
       // London mulligan bottoming: first mulligan is free (keep 7), second keeps 6, third keeps 5.
       // At the mth mulligan we bottom m-1 cards (not m).
@@ -17541,22 +17567,38 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
       // This avoids the sim wasting turns casting useless utility cards when infinite is live.
       if (winTurn === null && analysis.infiniteManaActive && !analysis.results.some(r =>
           !r.isSuppressed && (r.category?.includes('WIN') || r.category?.includes('CAST TO WIN')))) {
-        // Priority tutor order for finding Duskwatch with infinite mana
+
+        // Direct win: Finale of Devastation at X≥10 with infinite mana — wins immediately.
+        // Cast it now rather than waiting for the tutor → target → win chain.
+        if (hand.includes("Finale of Devastation") && manaPool.total >= 12) {
+          const fidx = hand.indexOf("Finale of Devastation");
+          playCard("Finale of Devastation", fidx, manaPool);
+          winTurn = turn;
+          winCombo = "Finale of Devastation (infinite mana)";
+          winBattlefield = [...battlefield];
+          winGraveyard   = [...graveyard];
+          break;
+        }
+
+        // Priority tutor order for finding Duskwatch/Finale with infinite mana
+        const WIN_TARGETS_IN_LIB = new Set([
+          "Duskwatch Recruiter", "Finale of Devastation", "Regal Force",
+          "Woodland Bellower", "Temur Sabertooth",
+        ]);
         const INF_WIN_TUTORS = [
           "Summoner's Pact",      // free — finds green creature → hand immediately
-          "Chord of Calling",     // convoke — find any creature → battlefield
+          "Chord of Calling",     // convoke — find any creature → battlefield (incl. Finale via Bellower)
           "Green Sun's Zenith",   // find green creature → battlefield
           "Natural Order",        // sac a creature → find any green creature → battlefield
           "Eldritch Evolution",   // sac a creature → find creature → battlefield
-          "Worldly Tutor",        // finds creature → top of library (drawn next turn)
           "Archdruid's Charm",    // finds creature or land
           "Shared Summons",       // finds 2 creatures → hand
+          "Worldly Tutor",        // finds creature → top of library (drawn next turn)
         ];
-        const DUSK_IN_LIBRARY = library.includes("Duskwatch Recruiter");
         const tutorCard = INF_WIN_TUTORS.find(t => {
           if (!hand.includes(t)) return false;
           if (!simCanCast(t, manaPool, battlefield)) return false;
-          if ((t === "Natural Order" || t === "Eldritch Evolution") && !simHasValidSacTarget(battlefield, sickSet)) return false;
+          if ((t === "Natural Order" || t === "Eldritch Evolution") && !simHasValidSacTarget(battlefield, sickSet, true)) return false;
           return true;
         });
         if (tutorCard) {
@@ -17564,6 +17606,19 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           playCard(tutorCard, tidx, manaPool);
           madePlay = true;
           continue;
+        }
+        // No tutor in hand — try Chord of Calling via pure convoke if enough creatures on board.
+        // With infinite mana all creatures are untapped and available to convoke.
+        // Chord costs {X}{G}{G}{G}: minimum X=2 to find Duskwatch (CMC 2).
+        // With 5+ non-sick creatures we can convoke the full cost of X=2 (total 5).
+        if (hand.includes("Chord of Calling")) {
+          const convokers = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.type === "creature").length;
+          if (convokers >= 5) { // can cover {G}{G}{G} + X=2 purely via convoke
+            const cidx = hand.indexOf("Chord of Calling");
+            playCard("Chord of Calling", cidx, manaPool);
+            madePlay = true;
+            continue;
+          }
         }
         // No tutor in hand — if Fauna Shaman or Survival is on board (non-sick),
         // they are handled by simActivateAbilities. If not, draw and wait.
@@ -17589,7 +17644,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           !hand.some((c, j) => j !== idx && getCard(c)?.type === "land") &&
           battlefield.filter(c => getCard(c)?.type === "land").length < 2;
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
-          !simHasValidSacTarget(battlefield, sickSet);
+          !simHasValidSacTarget(battlefield, sickSet, analysis.infiniteManaActive ?? false);
         // Never proactively cast stax pieces — they shut off our own fast mana in goldfish.
         const SIM_SELF_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze",
           "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
@@ -17613,6 +17668,14 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
             }
             played = true;
             madePlay = true;
+            // Finale of Devastation at X≥10 with infinite mana = direct combat win
+            if (simState._finaleWin && turn > 1) {
+              winTurn = turn;
+              winCombo = "Finale of Devastation";
+              winBattlefield = [...battlefield];
+              winGraveyard   = [...graveyard];
+              break;
+            }
             continue;
           }
         }
@@ -17636,7 +17699,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           if (c === "Mox Diamond" && !hasLandInHand && !hasSpareBfLand) return null;
           // Natural Order / Eldritch Evolution need a non-sick creature to sacrifice
           if ((c === "Natural Order" || c === "Eldritch Evolution") &&
-              !battlefield.some(bf => getCard(bf)?.type === "creature" && !sickSet.has(bf))) return null;
+              !simHasValidSacTarget(battlefield, sickSet, analysis.infiniteManaActive ?? false)) return null;
           let score = cmc;
           // Stax/hate pieces disrupt our own fast mana in goldfish — never proactively cast them.
           // They're valid sacrifice fodder for Natural Order/EE (handled separately) but
@@ -17680,6 +17743,14 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
             simState._petalManaThisTurn = 0;
           }
           madePlay = true;
+          // Finale of Devastation at X≥10 with infinite mana = direct combat win
+          if (simState._finaleWin && turn > 1) {
+            winTurn = turn;
+            winCombo = "Finale of Devastation";
+            winBattlefield = [...battlefield];
+            winGraveyard   = [...graveyard];
+            break;
+          }
           continue;
         }
       }
@@ -17742,7 +17813,8 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
   const board = new Set(battlefield);
   const inHand = new Set(hand);
   const boardSet = new Set(battlefield);
-  const { creatureOnly = false, elfOnly = false, greenOnly = false, maxCmc = 99, minCmc = 0, nonHuman = false, nonLegendary = false } = opts;
+  const { creatureOnly = false, elfOnly = false, greenOnly = false, maxCmc = 99, minCmc = 0,
+          nonHuman = false, nonLegendary = false, infiniteActive = false } = opts;
 
   // Derived board state
   const elvesOnBoard = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
@@ -17786,6 +17858,25 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
   return candidates.map(c => {
     const cd = getCard(c);
     let score = 0;
+
+    // When infinite mana is already established, the only thing that matters is closing
+    // the game. Win outlets score astronomically high; everything else is irrelevant.
+    if (infiniteActive) {
+      const INF_WIN_OUTLETS = new Set([
+        "Duskwatch Recruiter",   // loops to draw library → find Sanitarium/Endurance win pile
+        "Finale of Devastation", // X≥10 → direct combat win with haste
+        "Temur Sabertooth",      // enables bounce loops (Badgermole, Hyrax, etc.)
+        "Regal Force",           // draw engine → find win pile pieces
+        "Woodland Bellower",     // ETB finds Duskwatch or other CMC≤3 creatures
+        "Skyshroud Poacher",     // repeatable elf tutor → can find Duskwatch indirectly
+        "Eladamri, Korvecdal",   // cast from library top with 2-creature tap ability
+      ]);
+      if (INF_WIN_OUTLETS.has(c)) score += 500;
+      // Still prefer win outlets over utility — everything else gets a small score
+      // based on CMC so cheaper pieces come first if no outlets remain
+      score += Math.max(0, 10 - (cd.cmc ?? 0));
+      return { name: c, score };
+    }
 
     // Completes infinite mana combo THIS turn
     if (c === "Ashaya, Soul of the Wild" && (hasRanger || hasSymbiote) && hasBigDork) score += 100;
@@ -17912,6 +18003,22 @@ function simActivateAbilities(simState, manaPool) {
   if (!simState._usedAbilities) simState._usedAbilities = new Set();
   const used = simState._usedAbilities;
 
+  // Detect infinite mana once — used by tutor handlers to prioritise win outlets.
+  const _actInfActive = (() => {
+    for (const combo of COMBOS) {
+      if (combo.type !== "infinite-mana") continue;
+      if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+      if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+      if (combo.needsBigDork) {
+        if (!battlefield.some(c => !sickSet.has(c) &&
+          (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+          continue;
+      }
+      return true;
+    }
+    return false;
+  })();
+
   // Survival of the Fittest: {G}, discard creature → search for creature → hand
   // Limit to 1 activation per turn to prevent discard-find-discard loops
   if (board.has("Survival of the Fittest") && !used.has("Survival") && manaPool.green >= 1) {
@@ -17947,7 +18054,8 @@ function simActivateAbilities(simState, manaPool) {
     if (discardIdx >= 0) {
       const discarded = hand.splice(discardIdx, 1)[0];
       graveyard.push(discarded);
-      const target = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
+      const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, infiniteActive: _actInfActive });
       if (target) {
         library.splice(library.indexOf(target), 1);
         hand.push(target);
@@ -17989,11 +18097,12 @@ function simActivateAbilities(simState, manaPool) {
       }
     }
     // Discard the LEAST valuable creature — preserve combo pieces and big dorks
-    const discardIdx = _leastValuableCreatureIdx(hand, battlefield);
-    if (discardIdx >= 0) {
-      const discarded = hand.splice(discardIdx, 1)[0];
+    const discardIdx2 = _leastValuableCreatureIdx(hand, battlefield);
+    if (discardIdx2 >= 0) {
+      const discarded = hand.splice(discardIdx2, 1)[0];
       graveyard.push(discarded);
-      const target = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
+      const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, infiniteActive: _actInfActive });
       if (target) {
         library.splice(library.indexOf(target), 1);
         hand.push(target);
@@ -18136,7 +18245,7 @@ function simActivateAbilities(simState, manaPool) {
   // Skyshroud Poacher: {3}, TAP → search for Elf → battlefield. Once per turn.
   if (board.has("Skyshroud Poacher") && !sickSet.has("Skyshroud Poacher") && !used.has("Poacher") && manaPool.total >= 3) {
     const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
-      { creatureOnly: true, elfOnly: true });
+      { creatureOnly: true, elfOnly: true, infiniteActive: _actInfActive });
     if (target) {
       library.splice(library.indexOf(target), 1);
       battlefield.push(target);
@@ -18152,8 +18261,57 @@ function simActivateAbilities(simState, manaPool) {
 
   // Eladamri, Korvecdal: play creatures from library top. With a draw engine
   // (Beast Whisperer, Guardian Project, Glademuse), chain: cast → draw → cast again.
-  if (board.has("Eladamri, Korvecdal") && !used.has("Eladamri")) {
+  // With infinite mana: also use activated ability {G},{T}, tap 2 creatures → put top card onto
+  // battlefield. Loop until a win piece is found.
+  if (board.has("Eladamri, Korvecdal") && !sickSet.has("Eladamri, Korvecdal") && !used.has("Eladamri")) {
     const hasDrawEngine = board.has("Beast Whisperer") || board.has("Guardian Project") || board.has("Glademuse");
+
+    // Infinite mana path: use Eladamri's activated ability to dig library for win pieces.
+    // Activated ability: {G},{T}, tap two untapped creatures → reveal top of library; if a creature,
+    // put it onto the battlefield. Requires Eladamri + 2 other untapped creatures + {G}.
+    const infActive = (() => {
+      for (const combo of COMBOS) {
+        if (combo.type !== "infinite-mana") continue;
+        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
+        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+        if (combo.needsBigDork) {
+          if (!battlefield.some(c => !sickSet.has(c) &&
+            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+            continue;
+        }
+        return true;
+      }
+      return false;
+    })();
+
+    if (infActive && manaPool.green >= 1) {
+      const untappedCreatures = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.type === "creature" && c !== "Eladamri, Korvecdal").length;
+      if (untappedCreatures >= 2) {
+        // Dig library until we find a win piece or exhaust it
+        const WIN_PIECES = new Set(["Duskwatch Recruiter","Finale of Devastation","Temur Sabertooth",
+          "Regal Force","Woodland Bellower","Destiny Spinner","Elvish Reclaimer"]);
+        let activated = false;
+        let safetyLimit = Math.min(library.length, 30);
+        while (safetyLimit-- > 0 && library.length > 0) {
+          const topCard = library[0];
+          const topData = getCard(topCard);
+          if (topData?.type === "creature") {
+            library.shift();
+            battlefield.push(topCard);
+            sickSet.add(topCard);
+            if (castLog) castLog.add(topCard);
+            activated = true;
+            if (WIN_PIECES.has(topCard)) break; // found a win piece
+          } else {
+            // Non-creature on top: move to bottom and keep digging
+            library.push(library.shift());
+          }
+        }
+        if (activated) { used.add("Eladamri"); return true; }
+      }
+    }
+
+    // Normal path: cast creature from top of library if affordable
     if (library.length > 0) {
       const topCard = library[0];
       const topData = getCard(topCard);
@@ -18520,6 +18678,24 @@ function simPlayCard(card, idx, simState, manaPool = null) {
   const cardData = getCard(card);
   // Record cast (lands are played, not cast)
   if (cardType !== "land" && castLog) castLog.add(card);
+
+  // Detect infinite mana once — used by all tutor handlers to prioritise win outlets.
+  const _simInfActive = (() => {
+    const brd = new Set(battlefield);
+    for (const combo of COMBOS) {
+      if (combo.type !== "infinite-mana") continue;
+      if (!(combo.requires ?? []).every(r => brd.has(r))) continue;
+      if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+      if (combo.needsBigDork) {
+        if (!battlefield.some(c => !sickSet.has(c) &&
+          (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+          continue;
+      }
+      return true;
+    }
+    return false;
+  })();
+
   if (cardType === "instant" || cardType === "sorcery") {
     if (card === "Green Sun's Zenith") {
       // X = total mana available minus the {G} pip cost.
@@ -18533,7 +18709,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         [library[i], library[j]] = [library[j], library[i]];
       }
       const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
-        { creatureOnly: true, greenOnly: true, maxCmc: xBudget });
+        { creatureOnly: true, greenOnly: true, maxCmc: xBudget, infiniteActive: _simInfActive });
       if (target) {
         library.splice(library.indexOf(target), 1);
         battlefield.push(target);
@@ -18555,7 +18731,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       const xBudget = convokeTappers + leftoverMana;
       // SIM GROUP 7: Dynamic target selection replaces static CHORD_PRIORITY
       const target = pickBestTutorTarget(library, battlefield, hand, sickSet,
-        { creatureOnly: true, maxCmc: xBudget });
+        { creatureOnly: true, maxCmc: xBudget, infiniteActive: _simInfActive });
       if (target) {
         const libIdx = library.indexOf(target);
         library.splice(libIdx, 1);
@@ -18578,19 +18754,36 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       });
       if (sacrificable.length === 0) return; // can't cast without a sacrifice target
 
-      // Hard guard: if no valid (non-protected) sac target exists, abort.
-      // This prevents the sim from sacrificing rangers or the sole big-dork and then
-      // finding Ashaya/Archdruid — producing a fake WIN NOW on the next turn.
-      if (!simHasValidSacTarget(battlefield, sickSet)) return;
+      // Detect if infinite mana is currently active — when it is, rangers and big-dorks
+      // are freely expendable as sacrifice fodder (the loop no longer depends on them).
+      const _infActiveNow = (() => {
+        const brd = new Set(battlefield);
+        for (const combo of COMBOS) {
+          if (combo.type !== "infinite-mana") continue;
+          if (!(combo.requires ?? []).every(r => brd.has(r))) continue;
+          if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
+          if (combo.needsBigDork) {
+            if (!battlefield.some(c => !sickSet.has(c) &&
+              (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
+              continue;
+          }
+          return true;
+        }
+        return false;
+      })();
+
+      // Hard guard: if no valid sac target exists (respecting loop protection unless infinite active), abort.
+      if (!simHasValidSacTarget(battlefield, sickSet, _infActiveNow)) return;
 
       // Pick least-valuable creature to sacrifice (lowest CMC non-combo creature)
       // Protect rangers and the sole big-dork from sacrifice — they're needed for the combo loop.
+      // Exception: when infinite is already active, rangers/big-dorks are expendable.
       const LOOP_RANGERS_SIM = new Set(["Quirion Ranger","Scryb Ranger"]);
       const BIG_DORKS_SIM = new Set(["Fanatic of Rhonas","Priest of Titania","Elvish Archdruid",
         "Circle of Dreams Druid","Karametra's Acolyte","Selvala, Heart of the Wilds",
         "Wirewood Channeler","Marwyn, the Nurturer"]);
-      const hasRangerInPlay = battlefield.some(c => LOOP_RANGERS_SIM.has(c));
-      const bigDorkCount = battlefield.filter(c => BIG_DORKS_SIM.has(c)).length;
+      const hasRangerInPlay = !_infActiveNow && battlefield.some(c => LOOP_RANGERS_SIM.has(c));
+      const bigDorkCount = _infActiveNow ? 99 : battlefield.filter(c => BIG_DORKS_SIM.has(c)).length;
       sacrificable.sort((a, b) => {
         // Never sacrifice a ranger if one is present (it's the loop engine)
         const aRanger = LOOP_RANGERS_SIM.has(a) && hasRangerInPlay ? 1 : 0;
@@ -18614,7 +18807,8 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       const ceilCmc = card === "Natural Order" ? 99 : sacrificedCmc + 2;
       // SIM GROUP 7: Dynamic target selection replaces static NO_EE_PRIORITY
       const noTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
-        { creatureOnly: true, maxCmc: ceilCmc, greenOnly: card === "Natural Order" });
+        { creatureOnly: true, maxCmc: ceilCmc, greenOnly: card === "Natural Order",
+          infiniteActive: _simInfActive });
       if (noTarget) {
         library.splice(library.indexOf(noTarget), 1);
         battlefield.push(noTarget);
@@ -18628,7 +18822,8 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       graveyard.push(card);
       // Put a creature on top of library (no shuffle — it goes on top).
       // SIM GROUP 7: Dynamic target selection
-      const wtTarget = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
+      const wtTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, infiniteActive: _simInfActive });
       if (wtTarget) {
         // Remove from library, put on top
         library.splice(library.indexOf(wtTarget), 1);
@@ -18643,7 +18838,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       graveyard.push(card);
       // SIM GROUP 7: Dynamic target selection — find best green creature
       const spTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
-        { creatureOnly: true, greenOnly: true });
+        { creatureOnly: true, greenOnly: true, infiniteActive: _simInfActive });
       if (spTarget) {
         library.splice(library.indexOf(spTarget), 1);
         hand.push(spTarget); // Summoner's Pact puts the card into hand immediately
@@ -18686,12 +18881,17 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         }
       }
     } else if (card === "Finale of Devastation") {
-      // {X}{G}{G}: search for creature with CMC ≤ X, put onto battlefield. Uses same X budget as GSZ.
+      // {X}{G}{G}: search for creature with CMC ≤ X, put onto battlefield.
+      // If X≥10: also gives all creatures you control +X/+X and haste until end of turn → combat win.
       graveyard.push(card);
       const xBudget = manaPool ? Math.max(0, manaPool.total - 2) : 99; // {G}{G} base cost
-      // SIM GROUP 7: Dynamic target selection
+      // X≥10 with infinite mana → direct combat win (creatures get +X/+X and haste)
+      if (xBudget >= 10) {
+        if (simState) simState._finaleWin = true; // signal checked by turn loop
+      }
+      // Also tutor the best creature regardless (it enters with haste from the X≥10 buff)
       const finTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
-        { creatureOnly: true, maxCmc: xBudget });
+        { creatureOnly: true, maxCmc: xBudget, infiniteActive: _simInfActive });
       if (finTarget) {
         library.splice(library.indexOf(finTarget), 1);
         battlefield.push(finTarget);
@@ -18704,7 +18904,8 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     } else if (card === "Shared Summons") {
       // {3}{G}{G}: search for up to 2 creatures. SIM GROUP 7: Dynamic scoring.
       graveyard.push(card);
-      const scored = scoreTutorTargets(library, battlefield, hand, sickSet, { creatureOnly: true });
+      const scored = scoreTutorTargets(library, battlefield, hand, sickSet,
+        { creatureOnly: true, infiniteActive: _simInfActive });
       const found = [];
       for (const s of scored) {
         if (found.length >= 2) break;
@@ -18728,7 +18929,8 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       // {G}{G}{G}: choose one — search for a creature; search for a basic land onto battlefield;
       // or destroy a nonland permanent. SIM GROUP 7: Dynamic target selection.
       graveyard.push(card);
-      const acTarget = pickBestTutorTarget(library, battlefield, hand, sickSet, { creatureOnly: true });
+      const acTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
+        { creatureOnly: true, infiniteActive: _simInfActive });
       if (acTarget) {
         library.splice(library.indexOf(acTarget), 1);
         hand.push(acTarget);
@@ -18743,7 +18945,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
       graveyard.push(card);
       const xBudget = manaPool ? Math.max(0, manaPool.total - 2) : 99;
       const nrTarget = pickBestTutorTarget(library, battlefield, hand, sickSet,
-        { creatureOnly: true, maxCmc: xBudget });
+        { creatureOnly: true, maxCmc: xBudget, infiniteActive: _simInfActive });
       if (nrTarget) {
         library.splice(library.indexOf(nrTarget), 1);
         battlefield.push(nrTarget);
@@ -18980,7 +19182,7 @@ function simPlayCard(card, idx, simState, manaPool = null) {
         ehTarget = "Ashaya, Soul of the Wild";
       } else {
         const ehScored = scoreTutorTargets(library, battlefield, hand, sickSet,
-          { creatureOnly: true, elfOnly: true });
+          { creatureOnly: true, elfOnly: true, infiniteActive: _simInfActive });
         ehTarget = ehScored.find(s => !inHandSet.has(s.name))?.name ?? null;
       }
       if (ehTarget) {
@@ -22604,6 +22806,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
               const chosenCmc = getCard(chosen)?.cmc ?? 99;
               const counterNote = chosenCmc <= 3 ? ` ${chosen} has CMC ≤ 3 — enters with 3 additional +1/+1 counters!` : "";
               addLog(`Turntimber Symbiosis → ${chosen} onto battlefield. Other ${rest.length} cards on bottom.${counterNote}`, COLORS.green2);
+              fireETB(chosen); // creature enters the battlefield — fire its ETB triggers
             },
             onSkip: () => { setLibrary(prev => [...prev, ...top7]); addLog(`Turntimber Symbiosis: no creature chosen — all 7 on bottom.`, COLORS.textDim); },
           });
@@ -22823,6 +23026,7 @@ if (card === "Woodland Bellower") {
     setBattlefield(prev => [...prev, chosen]);
     setSickCreatures(s => new Set([...s, `${chosen}:${bellowerIdx}`]));
     addLog(`Woodland Bellower ETB → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
+    fireETB(chosen); // tutored creature enters the battlefield — fire its ETB triggers
   });
   setShowTutor(true); setTutorQuery("");
   setTimeout(() => tutorInputRef.current?.focus(), 50);
@@ -24983,6 +25187,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     setLibrary(prev => prev.slice(1));
                     goldfishAddToBattlefield(topCard);
                     addLog(`Eladamri: tapped ${arr.map(x=>x.c).join(" & ")} + paid {G} — ${topCard} from top of library onto battlefield.`, COLORS.gold);
+                    fireETB(topCard); // creature enters the battlefield — fire its ETB triggers
                   } else {
                     addLog(`Eladamri: tapped ${arr.map(x=>x.c).join(" & ")} + paid {G} — top card is ${topCard ?? "nothing"} (not a creature), nothing entered.`, COLORS.textDim);
                   }
@@ -25974,6 +26179,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 setSickCreatures(s => new Set([...s, `${topCard}:${battlefield.length}`]));
                 setManaPool(p => Math.max(0, p - topCmc)); flashMana(-topCmc);
                 addLog(`Eladamri: cast ${topCard} (CMC ${topCmc}) from library top.`, COLORS.green2);
+                fireETB(topCard); // creature enters the battlefield — fire its ETB triggers
                 // Trigger draw engines
                 const hasWhisperer = battlefield.includes("Beast Whisperer");
                 const hasGP = battlefield.includes("Guardian Project");
@@ -26925,6 +27131,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       setGraveyard(prev => { const idx = prev.indexOf(c); return idx === -1 ? prev : [...prev.slice(0, idx), ...prev.slice(idx + 1)]; });
                       goldfishAddToBattlefield(c);
                       addLog(`${pgCard} ETB → ${c} from graveyard to battlefield.`, COLORS.green2);
+                      fireETB(c); // creature enters the battlefield — fire its ETB triggers
                     }
                     setPendingGraveyardPick(null);
                   }} style={{ background: "#0a1a0a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: COLORS.green2, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left", letterSpacing: "0.5px" }}
@@ -27032,6 +27239,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     });
                     goldfishAddToBattlefield(c);
                     addLog(`Genesis Hydra (X=${x}) → ${c} onto battlefield. Remaining ${revealed.length - 1} revealed cards go to bottom.`, COLORS.green2);
+                    if (getCard(c)?.type === "creature") fireETB(c); // creature enters — fire ETB triggers
                     setPendingGenesisHydra(null);
                   }} style={{ background: "#0a1a0a", border: `1px solid ${COLORS.border}`, borderRadius: "6px", padding: "7px 12px", cursor: "pointer", color: COLORS.green2, fontSize: "12px", fontFamily: "'Cinzel', serif", textAlign: "left" }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green3; e.currentTarget.style.background = "#162616"; }}
