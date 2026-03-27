@@ -2909,12 +2909,14 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
 
     // needsExtraLand: loops by self-untapping but needs a mana-producing second source.
-    // Ashaya herself is the enabler, so she's excluded.
+    // Ashaya is the enabler (makes Elder a Forest) but she ALSO taps for {G} as a
+    // creature-Forest — she IS a valid second mana source for the Elder loop.
+    // Loop: Elder taps for untap ability → untaps Elder + Ashaya → Ashaya taps {G} → repeat.
     if (combo.needsExtraLand) {
-      const untappers = new Set([...(combo.mustPreExist ?? []), "Ashaya, Soul of the Wild"]);
+      const mustPreExistSet = new Set(combo.mustPreExist ?? []);
       const ctx = buildBoardContext(battlefield, sickCreatures, null);
       const hasManaSource = battlefield.some(c => {
-        if (untappers.has(c)) return false;
+        if (mustPreExistSet.has(c)) return false; // Elder uses its tap for the untap ability
         const cd = getCard(c);
         if (!cd) return false;
         const isLand = cd.type === "land";
@@ -13369,11 +13371,12 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     }
 
     // needsExtraLand: loop self-untaps but needs a separate mana-producing source.
-    // Ashaya herself is the enabler — exclude her from mana-source count.
+    // Ashaya is the enabler but also taps for {G} as a creature-Forest — she counts.
+    // Loop: Elder taps for untap ability → untaps Elder + Ashaya → Ashaya taps {G} → repeat.
     if (combo.needsExtraLand) {
-      const untappers = new Set([...(combo.mustPreExist ?? []), "Ashaya, Soul of the Wild"]);
+      const mustPreExistSet = new Set(combo.mustPreExist ?? []);
       const hasSource = [...pool.have].some(c => {
-        if (untappers.has(c)) return false;
+        if (mustPreExistSet.has(c)) return false; // Elder is spent on the untap ability
         const cd = getCard(c);
         if (!cd) return false;
         if (cd.type === "land") return true;
@@ -22507,6 +22510,35 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   }
 
   function toggleTurn() {
+    // Cleanup step: when passing from MY turn to the opponent's, discard down to 7.
+    // If hand size > 7, prompt for each excess card before toggling turns.
+    if (isMyTurn && hand.length > 7) {
+      const excess = hand.length - 7;
+      const discardMultiple = (remaining) => {
+        if (remaining <= 0) {
+          setIsMyTurn(false);
+          addLog("Passing to opponent's turn.", COLORS.textDim);
+          return;
+        }
+        // Re-read hand fresh each time via closure — hand state updates between calls
+        setPendingPicker({
+          label: `CLEANUP STEP — DISCARD TO HAND SIZE (${remaining} more to discard)`,
+          color: COLORS.red,
+          items: hand.map((c, i) => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? 0}`, key: `${c}:${i}`, c, i })),
+          onSelect: ({ c, i }) => {
+            pushUndo();
+            setHand(prev => prev.filter((_, idx) => idx !== i));
+            setGraveyard(prev => [...prev, c]);
+            addLog(`Discarded ${c} (cleanup — hand size > 7).`, COLORS.textDim);
+            discardMultiple(remaining - 1);
+          },
+          onSkip: null, // discard is mandatory
+        });
+        setPickerSelected([]);
+      };
+      discardMultiple(excess);
+      return;
+    }
     setIsMyTurn(prev => {
       addLog(prev ? "Passing to opponent's turn." : "Returning to your turn.", COLORS.textDim);
       return !prev;
