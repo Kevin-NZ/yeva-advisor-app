@@ -1456,7 +1456,7 @@ const COMBOS = [
     name: "Haste Enabler + Kogla + Human Big Dork (taps for CMC+3)",
     onBattlefield: ["Kogla, the Titan Ape"],
     mustPreExist: ["Kogla, the Titan Ape"],
-    description: "Infinite mana — Kogla variant. Kogla's activated ability returns a Human you control to hand for {2} (no green required). Pair with any Human big dork (Selvala, Heart of the Wilds; Marwyn; Karametra's Acolyte; Elvish Archdruid if Human; Fanatic of Rhonas) and a haste enabler. The dork taps immediately on ETB, then Kogla bounces it for {2}. Net positive when dork produces ≥ CMC+3 (covering {2} Kogla bounce + CMC recast). Kogla also destroys an artifact or enchantment each time you cast the Human, adding incidental disruption.",
+    description: "Infinite mana — Kogla variant. Kogla's activated ability returns a Human you control to hand for {1}{G}. Pair with any Human big dork (Selvala, Heart of the Wilds; Marwyn; Karametra's Acolyte; Elvish Archdruid if Human; Fanatic of Rhonas) and a haste enabler. The dork taps immediately on ETB, then Kogla bounces it for {1}{G}. Net positive when dork produces ≥ CMC+3 (covering {1}{G} Kogla bounce + CMC recast). Note: Kogla destroys an artifact or enchantment only when it ATTACKS — not on the bounce activation.",
     requires: ["Kogla, the Titan Ape"],
     needsBigDorkHasteCMC: true,
     needsHasteEnabler: true,
@@ -1466,7 +1466,7 @@ const COMBOS = [
     lines: [
       "Haste enabler + Kogla, the Titan Ape on battlefield, plus a Human big dork in hand.",
       "Cast the Human dork — haste lets it tap immediately for N mana (N ≥ dork's CMC + 3).",
-      "Pay {2}: Kogla returns the Human dork to your hand. Kogla also destroys target artifact or enchantment.",
+      "Pay {1}{G}: Kogla returns the Human dork to your hand (Kogla gains indestructible until end of turn).",
       "Recast the Human dork for CMC. Total cost per loop: {2} + CMC.",
       "Net mana per loop: N − CMC − 2 (≥ +1 when N ≥ CMC+3). Repeat for infinite mana.",
     ],
@@ -1479,7 +1479,7 @@ const COMBOS = [
     name: "Kogla, the Titan Ape + Karametra's Acolyte (devotion ≥6)",
     onBattlefield: ["Kogla, the Titan Ape", "Karametra's Acolyte"],
     mustPreExist: ["Karametra's Acolyte"],
-    description: "Infinite mana — Spellbook combo #2. No haste enabler required. Karametra's Acolyte taps for {G} equal to your green devotion. Kogla bounces her for {1}{G} (Human subtype). Recast for {3}{G}. Net positive when devotion ≥6 (producing 6 mana to cover {1}{G}+{3}{G}=5 total cost). Each recast also destroys an artifact or enchantment via Kogla.",
+    description: "Infinite mana — Spellbook combo #2. No haste enabler required. Karametra's Acolyte taps for {G} equal to your green devotion. Kogla bounces her for {1}{G} (Human subtype). Recast for {3}{G}. Net positive when devotion ≥6 (producing 6 mana to cover {1}{G}+{3}{G}=5 total cost). Note: Kogla destroys an artifact or enchantment only when it ATTACKS — not triggered by recasting Acolyte.",
     requires: ["Kogla, the Titan Ape", "Karametra's Acolyte"],
     needsMinElves: 0,  // devotion check handled via needsBigDork threshold
     needsBigDork: 6,
@@ -1489,9 +1489,9 @@ const COMBOS = [
       "Kogla, the Titan Ape + Karametra's Acolyte on battlefield. Acolyte does NOT have summoning sickness. Your devotion to green is at least 6.",
       "Activate Karametra's Acolyte ({T}): add {G} equal to your green devotion (≥6 mana).",
       "Pay {1}{G}: activate Kogla, returning Karametra's Acolyte (a Human) to your hand.",
-      "Cast Karametra's Acolyte ({3}{G}): Kogla triggers, destroying target artifact or enchantment.",
+      "Cast Karametra's Acolyte ({3}{G}). (Kogla's destroy trigger fires only when Kogla attacks — not on Human cast.)",
       "Total loop cost: {1}{G} bounce + {3}{G} recast = 5 mana. Net: devotion − 5 per loop.",
-      "Repeat for infinite green mana and incidental artifact/enchantment removal.",
+      "Repeat for infinite green mana.",
     ],
   },
 
@@ -1549,7 +1549,7 @@ const COMBOS = [
     name: "Kogla + Hyrax Tower Scout + Big Dork (≥6 mana, named)",
     onBattlefield: ["Kogla, the Titan Ape"],
     mustPreExist: ["Kogla, the Titan Ape"],
-    description: "Infinite mana — Kogla variant. Kogla bounces Hyrax Tower Scout (a Human) for {1}{G}; recast Scout for {2}{G} to untap the big dork. Loop cost identical to Sabertooth line. Covers: Priest of Titania (5+ elves), Selvala (power 6+ + {G}), Karametra's Acolyte (6+ devotion), Circle of Dreams Druid (5+ creatures), Elvish Archdruid (5+ elves), Marwyn (5+ power), Wirewood Channeler (5+ elves). Kogla also destroys an artifact or enchantment each time Scout is recast.",
+    description: "Infinite mana — Kogla variant. Kogla bounces Hyrax Tower Scout (a Human) for {1}{G}; recast Scout for {2}{G} to untap the big dork. Loop cost identical to Sabertooth line. Covers: Priest of Titania (5+ elves), Selvala (power 6+ + {G}), Karametra's Acolyte (6+ devotion), Circle of Dreams Druid (5+ creatures), Elvish Archdruid (5+ elves), Marwyn (5+ power), Wirewood Channeler (5+ elves). Note: Kogla destroys an artifact or enchantment only when it ATTACKS — not triggered by bouncing or recasting Scout.",
     requires: ["Kogla, the Titan Ape", "Hyrax Tower Scout"],
     needsBigDork: 6,
     needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Circle of Dreams Druid", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
@@ -1558,7 +1558,7 @@ const COMBOS = [
     lines: [
       "Kogla + Hyrax Tower Scout + big dork (≥6 mana) on battlefield.",
       "Tap big dork for ≥6 mana.",
-      "Pay {1}{G}: Kogla bounces Hyrax Tower Scout (a Human) to hand. Kogla destroys target artifact/enchantment.",
+      "Pay {1}{G}: Kogla bounces Hyrax Tower Scout (a Human) to hand (Kogla gains indestructible until end of turn).",
       "Recast Hyrax Tower Scout ({2}{G}): ETB untaps the big dork.",
       "Loop cost: {3}{G}. Net: ≥+{G}{G} when dork taps for ≥6. Repeat.",
     ],
@@ -4573,6 +4573,67 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
     // Build a prioritised target list based on current game state
     const survTargets = [];
+
+    // ── WIN NOW: Survival → fetch Kogla → flash via Yeva → Kogla+Acolyte (pre-existing, not sick) infinite ──
+    // Acolyte is already on board (not summoning sick) + devotion ≥ 6.
+    // Kogla {1}{G}: return target Human to hand — NO TAP REQUIRED, works immediately after ETB.
+    // Loop: Acolyte {T} (devotion mana) → Kogla {1}{G} bounce Acolyte → recast Acolyte {3}{G}.
+    // Net positive when devotion ≥ 6 (6 mana - 1-{G} bounce - 3-{G} recast = 5 cost, 6-5=+1).
+    // This fires on opponent's turn because: Yeva gives flash to green creatures,
+    // Kogla is green, Acolyte's tap ability is not restricted by summoning sickness on Kogla.
+    {
+      const survKoglaLine = (() => {
+        if (infiniteManaActive) return null; // already infinite
+        if (!board.has("Survival of the Fittest")) return null;
+        if (board.has("Kogla, the Titan Ape") || inHand.has("Kogla, the Titan Ape")) return null; // already accessible
+        const yevaFlashAvail = yevaFlash || board.has("Yeva, Nature's Herald") || yevaAvailable;
+        if (!yevaFlashAvail && !isMyTurn) return null;
+        const acolyteReady = board.has("Karametra's Acolyte")
+          && !(sickCreatures && sickCreatures.has("Karametra's Acolyte"));
+        if (!acolyteReady) return null;
+        // Calculate devotion including Kogla once cast (Kogla has 3 green pips)
+        const koglaGreenPips = getCard("Kogla, the Titan Ape")?.greenPips ?? 3;
+        const devotionWithKogla = devotionOnBoard + koglaGreenPips;
+        if (devotionWithKogla < 6) return null; // loop not net-positive
+        // Need something to discard for Survival activation
+        const survDiscard = hand.find(c => getCard(c)?.type === "creature") ?? null;
+        if (!survDiscard) return null;
+        // Need enough mana for Survival {G} + Kogla {3}{G}{G}{G}=6
+        const koglaCmc = getCard("Kogla, the Titan Ape")?.cmc ?? 6;
+        const yevaCmd = (!board.has("Yeva, Nature's Herald") && yevaAvailable) ? 4 : 0;
+        const totalCost = 1 + koglaCmc + yevaCmd; // Survival {G} + Kogla + optional Yeva
+        if (mana < totalCost) return null;
+        // Check win outlet: Duskwatch in hand is instant win; otherwise need to chain
+        const hasDuskwatchWin = inHand.has("Duskwatch Recruiter") || board.has("Duskwatch Recruiter");
+        const loopNet = devotionWithKogla - 5; // devotion - ({1}{G} bounce + {3}{G} recast)
+        return { survDiscard, devotionWithKogla, loopNet, hasDuskwatchWin, yevaCmd };
+      })();
+
+      if (survKoglaLine && (isMyTurn || yevaAvailable) && !results.some(r => r.priority >= 14)) {
+        const { survDiscard, devotionWithKogla, loopNet, hasDuskwatchWin, yevaCmd } = survKoglaLine;
+        const yevaStep = yevaCmd > 0 ? [`Cast Yeva, Nature's Herald ({2}{G}{G}) from command zone — gives all green creatures flash until end of turn.`] : [];
+        const duskStep = hasDuskwatchWin
+          ? ["With infinite mana: activate Duskwatch Recruiter repeatedly. Find Endurance + Geier Reach Sanitarium → mill all opponents → WIN."]
+          : ["With infinite mana: activate Survival of the Fittest to find Duskwatch Recruiter. Activate Duskwatch repeatedly → assemble win pile → WIN."];
+        results.push({
+          priority: 15,
+          category: "🔥 WIN NOW",
+          headline: `Survival of the Fittest → Kogla, the Titan Ape → Kogla+Karametra's Acolyte (devotion ${devotionWithKogla}) = infinite → WIN`,
+          combo: "survival_kogla_acolyte_win",
+          detail: `Karametra's Acolyte is already on board (not summoning sick). Activate Survival of the Fittest ({G}): discard ${survDiscard} → fetch Kogla, the Titan Ape. Cast Kogla at instant speed via Yeva's flash. Kogla's activated ability {1}{G} returns a Human to hand — no tap required, works immediately. Loop: Acolyte {T} for ${devotionWithKogla} mana (devotion ${devotionWithKogla}) → {1}{G} Kogla bounces Acolyte → recast Acolyte {3}{G}. Net +${loopNet} mana per loop → infinite.`,
+          steps: [
+            ...yevaStep,
+            `Activate Survival of the Fittest ({G}): discard ${survDiscard} → search library for Kogla, the Titan Ape.`,
+            `Cast Kogla, the Titan Ape (${yevaCmd > 0 ? "instant speed via Yeva's flash" : "{3}{G}{G}{G}"}).`,
+            `Karametra's Acolyte is already on board. Activate Acolyte ({T}): add ${devotionWithKogla}{G} (green devotion = ${devotionWithKogla}).`,
+            `Pay {1}{G}: activate Kogla — return Karametra's Acolyte (Human) to hand. Kogla gains indestructible until end of turn.`,
+            `Recast Karametra's Acolyte ({3}{G}). Net +${loopNet} mana per loop → repeat → infinite mana.`,
+            ...duskStep,
+          ],
+          color: "#ff4500",
+        });
+      }
+    }
 
     // 1. Win now targets (if infinite mana active)
     if (infiniteManaActive) {
@@ -9829,8 +9890,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Minimum mana to execute the full sequence this turn: Speaker(3) + Ashaya(5) = 8.
     // When Ashaya IS already on board, we only need Speaker(3).
     const minManaForWin = ashayaOnBoard ? 3 : 8;
-    // canAfford check: Speaker={2}{G} (1 pip). Without Ashaya also need {3}{G}{G} (2 pips) = 3 green total.
-    const canAffordWinDirect = ashayaOnBoard ? canAfford(3, 1) : canAfford(8, 3);
+    // canAfford uses maxGreen which can be inflated by _bfPool bonuses (Elder untap before Ashaya
+    // enters, Nykthos gross output). Use actual `mana` for the gate so WIN NOW only fires
+    // when the player can genuinely pay the full cost this turn.
+    const canAffordWinDirect = ashayaOnBoard
+      ? (mana >= 3 && maxGreen >= 1)      // Speaker(3), 1 green pip
+      : (mana >= 8 && maxGreen >= 3);     // Speaker(3)+Ashaya(5), 3 green pips
     // Arbor Elf mana bonus: when Ashaya is in hand (not on board yet), casting Ashaya makes all
     // creatures into Forests — Arbor Elf can then immediately untap any of them (e.g. Elvish Archdruid).
     // Additionally, ALL untapped creatures become Forest mana sources after Ashaya resolves.
@@ -9904,6 +9969,53 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         if (t === "power")     return (creaturesOnBoard + speakerElvBonus) >= 3;
         return false;
       });
+
+      // ── Elder+Ashaya infinite path (no traditional dork loop needed) ──────────
+      // When Argothian Elder is on board (not sick) and Ashaya is not yet in play,
+      // Speaker ETB finds Ashaya → Elder becomes a Forest → Elder untaps itself → infinite.
+      // This fires even when dorkForLoop is null (no {G}≥3 dork on board).
+      // Covers both: my turn (mana≥8) and opponent's turn (Yeva+mana≥12).
+      if (!dorkForLoop && !results.some(r => r.combo === "speaker_hand_cast_to_win")) {
+        const elderBoard   = board.has("Argothian Elder") && !(sickCreatures?.has("Argothian Elder"));
+        const ashayaMissing = !board.has("Ashaya, Soul of the Wild");
+        const discardCard  = bestDiscardFromHand(hand, ["Formidable Speaker"]);
+
+        if (elderBoard && ashayaMissing && discardCard) {
+          // My turn: need Speaker(3) + Ashaya(5) = 8 mana, 3 green pips
+          const canWinMyTurn = isMyTurn && mana >= 8 && maxGreen >= 3;
+          // Opponent's turn: cast Yeva(4) first → flash → Speaker(3) + Ashaya(5) = 12 mana
+          const canWinViaYeva = !isMyTurn && !yevaFlash && yevaAvailable && mana >= 12 && maxGreen >= 3;
+          // Opponent's turn with Yeva already giving flash:
+          const canWinViaFlash = !isMyTurn && yevaFlash && mana >= 8 && maxGreen >= 3;
+
+          if (canWinMyTurn || canWinViaYeva || canWinViaFlash) {
+            const yevaSource = yevaInHand ? "in hand" : "from command zone";
+            const yevaStep = canWinViaYeva
+              ? [`Cast Yeva, Nature's Herald (${yevaSource}, {2}{G}{G}). All green creatures now have flash this turn.`]
+              : [];
+            results.push({
+              priority: 15,
+              category: canWinViaYeva ? "⚡ CAST TO WIN" : "🔥 WIN NOW",
+              headline: canWinViaYeva
+                ? `Cast Yeva → flash in Formidable Speaker → find Ashaya → Argothian Elder infinite mana → WIN`
+                : `Cast Formidable Speaker → find Ashaya → Argothian Elder infinite mana → WIN`,
+              combo: "speaker_hand_cast_to_win",
+              detail: canWinViaYeva
+                ? `Cast Yeva ({2}{G}{G}) to give all green creatures flash. Immediately flash in Formidable Speaker ({2}{G}): ETB discard ${discardCard} → search library for Ashaya, Soul of the Wild. Cast Ashaya ({3}{G}{G}): all creatures become Forests. Argothian Elder is now a Forest — tap Elder, activate its untap ability targeting Elder + another land. Elder untaps itself → infinite mana. Bounce Speaker with Temur or find Duskwatch directly → WIN.`
+                : `Cast Formidable Speaker ({2}{G}): ETB discard ${discardCard} → search library for Ashaya, Soul of the Wild. Cast Ashaya ({3}{G}{G}): all creatures become Forests. Argothian Elder is now a Forest — tap Elder, activate its untap ability targeting Elder + another land → infinite mana. Find Duskwatch Recruiter → WIN.`,
+              steps: [
+                ...yevaStep,
+                `Cast Formidable Speaker ({2}{G}): ETB — discard ${discardCard} → search your entire library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+                `Cast Ashaya, Soul of the Wild ({3}{G}{G}). Every nontoken creature you control is now a Forest in addition to its other types.`,
+                `Argothian Elder is now a Forest land. Tap Elder as a Forest for {G}. Activate Elder's tap ability ({T}): untap two target lands — target Elder itself + any other land. Elder untaps itself.`,
+                `Repeat: Elder re-taps for {G}, untaps itself + another land → infinite mana.`,
+                `With infinite mana: find Duskwatch Recruiter (via Temur+Speaker loop, or any tutor). Activate Duskwatch repeatedly → assemble Endurance + Sanitarium win pile → WIN.`,
+              ],
+              color: "#ff4500",
+            });
+          }
+        }
+      }
 
       if (dorkForLoop && !results.some(r => r.combo === "speaker_hand_cast_to_win")) {
         const dorkName = dorkForLoop;
@@ -10356,6 +10468,71 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       }
     }
 
+    // ── CAST TEMUR: Speaker on board + Elder on board + Temur in hand → cast Temur → Speaker ETB chain
+    // Temur bounces Speaker ({1}{G}) → recast Speaker ({2}{G}) → ETB: discard → find Ashaya →
+    // cast Ashaya (5) → Elder is a Forest → Elder untaps itself → infinite mana → WIN.
+    // This turn: need ≥4 (Temur) + 2 (bounce) + 3 (Speaker) + 5 (Ashaya) - tappable mana = variable.
+    // Simpler path: cast Temur (4) now, set up the loop. Next turn: bounce Speaker, find Ashaya, infinite.
+    // Priority: 14 (CAST TO WIN) when we have enough mana this turn to complete; 13 (setup) otherwise.
+    {
+      const ctsTemurInHand   = inHand.has("Temur Sabertooth");
+      const ctsSpeakerBoard  = board.has("Formidable Speaker");
+      const ctsElderBoard    = board.has("Argothian Elder");
+      const ctsNoAshaya      = !board.has("Ashaya, Soul of the Wild") && !inHand.has("Ashaya, Soul of the Wild");
+      const ctsTemurNotBoard = !board.has("Temur Sabertooth");
+      const ctsAlreadyWin    = results.some(r => r.priority >= 14);
+      const ctsElderNotSick  = !(sickCreatures && sickCreatures.has("Argothian Elder"));
+      const ctsSpeakerNotSick= !(sickCreatures && sickCreatures.has("Formidable Speaker"));
+      // Need a discard for Speaker ETB (not Temur itself, since it's in hand and going to battlefield)
+      const ctsDiscardCard   = bestDiscardFromHand(hand, ["Temur Sabertooth"]) || null;
+      const ctsManaOk        = mana >= 4; // at minimum must be able to cast Temur
+
+      if (ctsTemurInHand && ctsSpeakerBoard && ctsElderBoard && ctsNoAshaya
+          && ctsTemurNotBoard && ctsElderNotSick && ctsSpeakerNotSick
+          && ctsManaOk && ctsDiscardCard
+          && (isMyTurn || yevaAvailable) && !ctsAlreadyWin) {
+
+        // Can we complete the full loop this turn?
+        // Full cost: 4 (Temur) + 2 ({1}{G} bounce Speaker) + 3 ({2}{G} recast Speaker) = 9 mana from pool.
+        // After that, Speaker ETB finds Ashaya (hand). Ashaya costs 5.
+        // We estimate tap sources available AFTER casting Temur (creatures + lands not yet tapped).
+        // Conservatively: just check if mana - 4 (Temur) - 2 (bounce) - 3 (Speaker recast) >= 0,
+        // i.e. mana >= 9, then the player still needs 5 for Ashaya from remaining mana + tapped sources.
+        const manaAfterTemur = mana - 4;
+        const canBounceAndRecast = manaAfterTemur >= 5; // {1}{G} bounce + {2}{G} recast
+        const ashayaCmc = 5;
+        // Very rough estimate: after Temur + bounce + Speaker recast, remaining pool + available taps
+        const roughManaAfterLoop = manaAfterTemur - 5; // deduct bounce + recast
+        const canCastAshayaSameTurn = roughManaAfterLoop >= ashayaCmc;
+
+        const winThisTurn = canBounceAndRecast && canCastAshayaSameTurn;
+        const category = winThisTurn ? "⚡ CAST TO WIN" : "⚡ CAST NOW — WIN NEXT TURN";
+        const priority  = winThisTurn ? 14 : 13.5;
+        const nextNote  = winThisTurn
+          ? ""
+          : " Next turn: bounce Speaker → ETB finds Ashaya → Elder infinite → WIN.";
+
+        results.push({
+          priority,
+          category,
+          headline: `Cast Temur Sabertooth → bounce Formidable Speaker → ETB finds Ashaya → Argothian Elder infinite mana → WIN`,
+          combo: "speaker_board_temur_hand_elder_ashaya_win",
+          detail: `Formidable Speaker and Argothian Elder are already in play. Cast Temur Sabertooth (4 mana). Pay {1}{G}: Temur bounces Formidable Speaker to hand. Recast Speaker ({2}{G}) → ETB: discard ${ctsDiscardCard} → search library for Ashaya, Soul of the Wild. Cast Ashaya (5 mana): every creature becomes a Forest. Argothian Elder is now a Forest — activate Elder's tap ability targeting Elder + any other land. Elder untaps itself → loop → infinite mana. Then bounce Speaker again with Temur → ETB finds Duskwatch Recruiter → WIN.${nextNote}`,
+          steps: [
+            `Cast Temur Sabertooth ({3}{G}).`,
+            `Pay {1}{G}: activate Temur Sabertooth — return Formidable Speaker to your hand.`,
+            `Recast Formidable Speaker ({2}{G}): ETB — discard ${ctsDiscardCard} → search your library for Ashaya, Soul of the Wild. Put Ashaya into your hand, then shuffle.`,
+            `Cast Ashaya, Soul of the Wild ({3}{G}{G}). Each nontoken creature you control becomes a Forest in addition to its other types.`,
+            `Argothian Elder is now a Forest land. Tap Elder as a Forest for {G}. Activate Elder's tap ability: untap two target lands — target Elder itself and any other land.`,
+            `Elder untaps itself. Repeat: Elder re-taps for {G}, untaps itself + a land → infinite mana.`,
+            `Win: pay {1}{G} Temur → bounce Formidable Speaker. Recast Speaker ({2}{G}): ETB → discard any card → find Duskwatch Recruiter. Activate Duskwatch repeatedly with infinite mana.`,
+            `Assemble win pile (Endurance + Geier Reach Sanitarium) → mill all opponents → WIN.`,
+          ],
+          color: "#e67e22",
+        });
+      }
+    }
+
     // ── WIN NOW: Bellower → Speaker (ETB finds Temur) → Temur+Hope Tender+big land = infinite → WIN ──
     // Temur bounces ANY creature ({1}{G}), including Hope Tender (resets exert) AND Formidable Speaker.
     // Line: Bellower(6) → Speaker enters → ETB: discard → find Temur Sabertooth → cast Temur(4).
@@ -10637,6 +10814,88 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   }
 
+
+  // ---- SANITARIUM DRAW-LIBRARY WIN NOW (Elder+Ashaya+Sanitarium) ----
+  // With infinite mana + Ashaya + Argothian Elder + Geier Reach Sanitarium already on board:
+  // Elder's tap ability can untap Sanitarium (it's a Forest via Ashaya, so Elder untaps it + another land).
+  // Loop: pay {2} → Sanitarium: each player draws 1 + discards 1 → Elder untaps Sanitarium → repeat.
+  // With infinite mana the loop cost is irrelevant. Draw entire library → find Duskwatch Recruiter → WIN.
+  // No Endurance needed: you're drawing to find Duskwatch, not milling opponents directly.
+  // When Elder is not sick (mustPreExist — it can tap this turn), this is WIN NOW.
+  {
+    const elderReady    = board.has("Argothian Elder") && !(sickCreatures?.has("Argothian Elder"));
+    const ashayaBoard   = board.has("Ashaya, Soul of the Wild");
+    const sanitariumBrd = board.has("Geier Reach Sanitarium");
+    const hasDuskAccess = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter")
+      || inDeck("Duskwatch Recruiter");
+    if (infiniteManaActive && elderReady && ashayaBoard && sanitariumBrd && hasDuskAccess
+        && !results.some(r => r.priority >= 15 && (r.category?.includes("WIN NOW") || r.category?.includes("DRAW LIBRARY")))) {
+      results.push({
+        priority: 15,
+        category: "🔥 WIN NOW — DRAW LIBRARY",
+        headline: "Infinite mana + Argothian Elder + Ashaya + Sanitarium → draw entire library → Duskwatch → WIN",
+        combo: "elder_ashaya_sanitarium_draw",
+        detail: "Argothian Elder's tap ability untaps two target lands — target Geier Reach Sanitarium (a Forest via Ashaya) and any other land. Loop: pay {2} to activate Sanitarium (each player draws 1 then discards 1), then tap Elder to untap Sanitarium again. With infinite mana, repeat until you draw Duskwatch Recruiter. Activate Duskwatch repeatedly to assemble the win pile → WIN.",
+        steps: [
+          "Ashaya makes all nontoken creatures Forests, including Argothian Elder.",
+          "Geier Reach Sanitarium is also a land — Elder can target it with its untap ability.",
+          "LOOP: Pay {2},{T} — activate Sanitarium: each player draws 1 card, then each player discards 1 card.",
+          "Tap Argothian Elder ({T}): untap two target lands — target Sanitarium + any other land. Both untap.",
+          "Repeat the loop with infinite mana until Duskwatch Recruiter is in your hand.",
+          "Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly — look at top 3 cards, put any creature into hand.",
+          "Assemble: Endurance + Geier Reach Sanitarium. Flash in Endurance (via Yeva or end step) to reset your library mid-loop. Mill all opponents → WIN.",
+        ],
+        color: "#ff4500",
+      });
+    }
+  }
+
+  // ---- RECLAIMER → SANITARIUM WIN NOW (Elder+Ashaya+Reclaimer in hand, no Sanitarium) ----
+  // With infinite mana + Ashaya + Elder (not sick) and Elvish Reclaimer in hand or on board:
+  // Reclaimer fetches Geier Reach Sanitarium. With Ashaya, Sanitarium is a Forest-creature,
+  // so Elder can untap it. Then loop Sanitarium + Elder (infinite mana) → draw library → WIN.
+  // Reclaimer needs haste (Ashaya makes it a Forest-creature → Destiny Spinner gives haste) 
+  // OR it can be cast + wait a turn. For WIN NOW: Reclaimer must already be on board (not sick),
+  // OR Ashaya + land-animate (Destiny Spinner/Badgermole) gives it immediate haste.
+  {
+    const elderReady2    = board.has("Argothian Elder") && !(sickCreatures?.has("Argothian Elder"));
+    const ashayaBoard2   = board.has("Ashaya, Soul of the Wild");
+    const noSanitarium   = !board.has("Geier Reach Sanitarium");
+    const hasDuskAccess2 = board.has("Duskwatch Recruiter") || inHand.has("Duskwatch Recruiter")
+      || inDeck("Duskwatch Recruiter");
+    // Reclaimer can fetch immediately if: already on board (not sick) + haste or isMyTurn,
+    // OR it's in hand with Ashaya + land-animate (enters as Forest-creature with haste).
+    const reclaimerOnBoardReady = board.has("Elvish Reclaimer")
+      && !(sickCreatures?.has("Elvish Reclaimer"))
+      && (isMyTurn || (ashayaBoard2 && hasLandAnimate));
+    const reclaimerInHandHaste  = inHand.has("Elvish Reclaimer") && ashayaBoard2 && hasLandAnimate
+      && canAfford(1, 1); // {G} to cast
+    const reclaimerCanFetch = reclaimerOnBoardReady || reclaimerInHandHaste;
+    if (infiniteManaActive && elderReady2 && ashayaBoard2 && noSanitarium && reclaimerCanFetch
+        && hasDuskAccess2
+        && !results.some(r => r.priority >= 15 && (r.category?.includes("WIN NOW") || r.category?.includes("DRAW LIBRARY")))) {
+      const reclaimerStep = reclaimerInHandHaste
+        ? "Cast Elvish Reclaimer ({G}). With Ashaya, it enters as a Forest-creature. Destiny Spinner/Badgermole Cub grants haste."
+        : "Elvish Reclaimer is already on board (not summoning sick).";
+      results.push({
+        priority: 15,
+        category: "🔥 WIN NOW — DRAW LIBRARY",
+        headline: "Elvish Reclaimer → fetch Geier Reach Sanitarium → Elder+Sanitarium loop → draw library → WIN",
+        combo: "reclaimer_sanitarium_draw",
+        detail: "Elvish Reclaimer fetches Geier Reach Sanitarium. With Ashaya, Sanitarium becomes a Forest — Argothian Elder can untap it. Loop: Sanitarium draws cards, Elder untaps Sanitarium, repeat with infinite mana until Duskwatch Recruiter is in hand. Activate Duskwatch to assemble win pile → WIN.",
+        steps: [
+          reclaimerStep,
+          "Pay {1},{T}: activate Elvish Reclaimer — search library for Geier Reach Sanitarium → put onto battlefield tapped.",
+          "Ashaya makes Sanitarium a Forest-creature. Argothian Elder can now untap it.",
+          "LOOP (with infinite mana): Pay {2},{T} — activate Sanitarium: each player draws 1, each player discards 1.",
+          "Tap Argothian Elder ({T}): untap two target lands — target Sanitarium + any other land. Repeat.",
+          "Draw your entire library. Find Duskwatch Recruiter → cast it → activate repeatedly.",
+          "Assemble win pile: Endurance + Sanitarium → mill all opponents → WIN.",
+        ],
+        color: "#ff4500",
+      });
+    }
+  }
 
   // ---- DISCIPLE OF FREYALISE LOOP ----
   if ((board.has("Disciple of Freyalise") || (inHand.has("Disciple of Freyalise") && canCastNow))
@@ -11906,6 +12165,60 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         winPaths.push({ path: "finale", priority: 3, desc: "Finale of Devastation X≥10: all creatures get +X/+X haste", missing: [] });
       }
     }
+    // ── Sanitarium on board + untap method ready, but missing Endurance ──
+    // Fires independently of hasDuskwatch — Sanitarium IS the win-con, just needs Endurance.
+    if (hasSanitarium && hasUntapLand && !hasEndurance) {
+      const enduranceTutors = ["Worldly Tutor","Summoner's Pact","Chord of Calling",
+        "Survival of the Fittest","Fauna Shaman","Green Sun's Zenith","Shared Summons",
+        "Duskwatch Recruiter"].filter(t => board.has(t) || inHand.has(t));
+      const tutorNote = enduranceTutors.length > 0
+        ? `Use ${enduranceTutors[0]} to find Endurance.`
+        : "Find Endurance via any available tutor.";
+      results.push({
+        priority: 13.5,
+        category: "⚡ ONE CARD FROM WIN",
+        headline: "Find Endurance → execute Geier Reach Sanitarium mill win",
+        combo: "sanitarium_needs_endurance",
+        detail: `Infinite mana is active. Geier Reach Sanitarium is on board with a land untap method ready. The only missing piece is Endurance — it protects your library by shuffling your graveyard back in each loop, preventing you from decking yourself while opponents draw to death. ${tutorNote}`,
+        steps: [
+          tutorNote,
+          "Cast Endurance (flash creature — can be cast at instant speed). ETB: shuffle your graveyard into your library.",
+          "With infinite mana: activate Geier Reach Sanitarium ({2},{T}) — each player draws a card, then each player discards a card.",
+          "Untap Sanitarium with your land untap method. Repeat — each loop drains opponents' libraries.",
+          "Before YOU run out: Endurance's ETB resets your library. Loop continues until all opponents have drawn from an empty library.",
+          "State-based: players who draw from an empty library lose the game.",
+        ],
+        color: "#e67e22",
+      });
+    }
+    // ── Elvish Reclaimer accessible + infinite mana → fetch Sanitarium → then find Endurance ──
+    if (!hasSanitarium && (board.has("Elvish Reclaimer") || inHand.has("Elvish Reclaimer")) && hasUntapLand && !hasEndurance) {
+      const reclaimerReady = board.has("Elvish Reclaimer") && !(sickCreatures && sickCreatures.has("Elvish Reclaimer"));
+      const reclaimerNote = reclaimerReady
+        ? "Elvish Reclaimer is already on board — pay {1}, tap, sacrifice a land to fetch Sanitarium immediately."
+        : "Cast Elvish Reclaimer ({1}{G}) — next turn pay {1}, tap, sacrifice a land to fetch Geier Reach Sanitarium.";
+      const enduranceTutors2 = ["Worldly Tutor","Summoner's Pact","Chord of Calling",
+        "Survival of the Fittest","Fauna Shaman","Green Sun's Zenith","Duskwatch Recruiter"]
+        .filter(t => board.has(t) || inHand.has(t));
+      results.push({
+        priority: 13,
+        category: reclaimerReady ? "⚡ ONE CARD FROM WIN" : "🌿 CAST NOW — WIN NEXT TURN",
+        headline: `Elvish Reclaimer → fetch Geier Reach Sanitarium → find Endurance → mill win`,
+        combo: "reclaimer_sanitarium_endurance_win",
+        detail: `Infinite mana is active and a land untap method is ready. ${reclaimerNote} Then find Endurance (${enduranceTutors2.length > 0 ? enduranceTutors2[0] : "any tutor"}) to safely loop Sanitarium without decking yourself — mill all opponents.`,
+        steps: [
+          reclaimerNote,
+          "Pay {1}, tap Elvish Reclaimer, sacrifice a Forest → fetch Geier Reach Sanitarium onto the battlefield.",
+          enduranceTutors2.length > 0
+            ? `Use ${enduranceTutors2[0]} to find Endurance.`
+            : "Find Endurance via any available tutor.",
+          "Cast Endurance (flash). ETB: shuffle your graveyard into your library.",
+          "Loop Geier Reach Sanitarium: activate ({2},{T}) → each player draws and discards. Untap Sanitarium with your untap method. Repeat.",
+          "Opponents draw from an empty library and lose the game.",
+        ],
+        color: "#e67e22",
+      });
+    }
     // Poison path is independent of Duskwatch — Infectious Bite + EWit + bouncer works standalone
     {
       const hasBite = poolHave.has("Infectious Bite") || inGrave.has("Infectious Bite");
@@ -12551,7 +12864,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         const nextUpkeep = sumManaPool(battlefield);
         return nextUpkeep.green >= 2;
       })(),
-      note:"free — pay {2}{G}{G} next upkeep or lose", putsToBattlefield: true, nextTurnCost:4 },
+      note:"free — pay {2}{G}{G} next upkeep or lose", putsToBattlefield: false, nextTurnCost:4},
     { name:"Green Sun's Zenith",   finds:"creature-green", baseCost:"cmc+2", usable: inHand.has("Green Sun's Zenith"),
       note:"{X}{G}{G}: find green creature MV≤X → battlefield", putsToBattlefield:true },
     { name:"Nature's Rhythm",      finds:"creature",       baseCost:"cmc+2", usable: inHand.has("Nature's Rhythm"),
@@ -12588,10 +12901,11 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     // Formidable Speaker: ETB only fires on entry. Already-on-board Speaker can only
     // be re-used as a tutor if a bouncer (Temur Sabertooth) is also available to
     // return it to hand. Kogla bounces Humans only — Speaker is not a Human.
-    { name:"Formidable Speaker",   finds:"creature",       baseCost:4,
+    { name:"Formidable Speaker",   finds:"creature",       baseCost:3,
       usable: inHand.has("Formidable Speaker") ||
               (board.has("Formidable Speaker") && board.has("Temur Sabertooth")),
-      note:"ETB: discard → find creature → hand",               constraint:"discard", putsToBattlefield:true, sorcerySpeed:true },
+      // ETB finds creature to HAND (not battlefield) — found piece CMC is charged as castCostForHand.
+      note:"ETB: discard → find creature → hand",               constraint:"discard", putsToBattlefield:false, sorcerySpeed:true },
     { name:"Crop Rotation",        finds:"land",           baseCost:1,  usable: inHand.has("Crop Rotation"),
       note:"{G}, instant, sacrifice a land → find any land → battlefield", putsToBattlefield:true, constraint:"sacrifice-land" },
     { name:"Sylvan Scrying",       finds:"land",           baseCost:2,  usable: inHand.has("Sylvan Scrying"),
@@ -13249,16 +13563,100 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       !t.putsToTopOfLibrary); // top-of-library tutors can't deliver the outlet this turn
     // Tutor for Duskwatch
     const duskwatchTutor = winTutors.find(t => tutorCanFind(t, "Duskwatch Recruiter", poolAfterInfinite.usedGraveyard));
-    if (duskwatchTutor) return {
+    // When Formidable Speaker is the duskwatch tutor, always route through the detailed Speaker
+    // path below so the steps explain the ETB mechanism (and Temur bounce if available).
+    const speakerIsDuskwatchTutor = duskwatchTutor?.name === "Formidable Speaker";
+    if (duskwatchTutor && !speakerIsDuskwatchTutor) return {
       outlet: "Duskwatch Recruiter",
       steps: [`${duskwatchTutor.name} → Duskwatch Recruiter (${duskwatchTutor.note ?? ""})`],
       note: `tutor via ${duskwatchTutor.name}` };
     // Tutor for Formidable Speaker → finds Duskwatch
+    // Speaker accessible (in hand/board or as an active tutor) + Temur/Kogla available → bounce loop
+    const speakerInPool = poolAfterInfinite.have.has("Formidable Speaker")
+      || inHand.has("Formidable Speaker") || board.has("Formidable Speaker")
+      || speakerIsDuskwatchTutor; // Speaker is already identified as the tutor for Duskwatch
+    const temurInPool  = poolAfterInfinite.have.has("Temur Sabertooth")
+      || (inHand.has("Temur Sabertooth") && !usedTutors.has("Temur Sabertooth"))
+      || board.has("Temur Sabertooth");
+    const koglaInPool  = poolAfterInfinite.have.has("Kogla, the Titan Ape")
+      || (inHand.has("Kogla, the Titan Ape") && !usedTutors.has("Kogla, the Titan Ape"))
+      || board.has("Kogla, the Titan Ape");
+    const bouncerInPool = temurInPool || koglaInPool;
+    if (speakerInPool && bouncerInPool && inDeckFn("Duskwatch Recruiter")) {
+      const bouncerName = temurInPool ? "Temur Sabertooth" : "Kogla, the Titan Ape";
+      const speakerOnBd = board.has("Formidable Speaker");
+      const temurOnBd   = board.has(bouncerName);
+      const castTemur   = !temurOnBd ? [`Cast ${bouncerName}.`] : [];
+      const castSpeaker = !speakerOnBd ? [`Cast Formidable Speaker ({2}{G}).`] : [];
+      return {
+        outlet: "Duskwatch Recruiter via Formidable Speaker + bouncer",
+        steps: [
+          ...castTemur,
+          ...castSpeaker,
+          `Pay {1}{G}: ${bouncerName} bounces Formidable Speaker to hand.`,
+          `Recast Formidable Speaker ({2}{G}): ETB — discard any card → search library for Duskwatch Recruiter.`,
+          `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana → assemble win pile → WIN.`,
+        ],
+        note: `${bouncerName} bounces Speaker → ETB finds Duskwatch` };
+    }
+    // Formidable Speaker in pool (no bouncer) → cast Speaker → ETB finds Duskwatch directly
+    if (speakerInPool && inDeckFn("Duskwatch Recruiter")) {
+      const speakerOnBd = board.has("Formidable Speaker");
+      return {
+        outlet: "Duskwatch Recruiter via Formidable Speaker",
+        steps: [
+          ...(!speakerOnBd ? [`Cast Formidable Speaker ({2}{G}).`] : []),
+          `Formidable Speaker ETB — discard a card → search library for Duskwatch Recruiter.`,
+          `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana → WIN.`,
+        ],
+        note: "cast Speaker → ETB finds Duskwatch" };
+    }
+    // Woodland Bellower in pool → puts Duskwatch directly onto battlefield
+    if (poolAfterInfinite.have.has("Woodland Bellower") && inDeckFn("Duskwatch Recruiter")) {
+      return {
+        outlet: "Duskwatch Recruiter via Woodland Bellower",
+        steps: [
+          `Cast Woodland Bellower ({5}{G}): ETB — search library for Duskwatch Recruiter (CMC 3 ≤ 6, non-legendary green) → put directly onto battlefield.`,
+          `Activate Duskwatch Recruiter ({2}{G}) repeatedly with infinite mana → assemble win pile → WIN.`,
+        ],
+        note: "Bellower ETB → Duskwatch" };
+    }
     const speakerTutor = winTutors.find(t => tutorCanFind(t, "Formidable Speaker", poolAfterInfinite.usedGraveyard));
-    if (speakerTutor && inDeckFn("Formidable Speaker") && inDeckFn("Duskwatch Recruiter")) return {
-      outlet: "Duskwatch Recruiter via Formidable Speaker",
-      steps: [`${speakerTutor.name} → Formidable Speaker → ETB: discard → find Duskwatch Recruiter.`],
-      note: "Speaker chain → Duskwatch" };
+    if (speakerTutor && inDeckFn("Formidable Speaker") && inDeckFn("Duskwatch Recruiter")) {
+      // If Speaker IS the tutor (already in hand) and Temur is also available → explain bounce mechanism
+      const speakerIsTheTutor = speakerTutor.name === "Formidable Speaker";
+      const temurAvailForOutlet = (inHand.has("Temur Sabertooth") && !usedTutors.has("Temur Sabertooth"))
+        || board.has("Temur Sabertooth");
+      const koglaAvailForOutlet = (inHand.has("Kogla, the Titan Ape") && !usedTutors.has("Kogla, the Titan Ape"))
+        || board.has("Kogla, the Titan Ape");
+      const bouncerForOutlet = temurAvailForOutlet ? "Temur Sabertooth" : koglaAvailForOutlet ? "Kogla, the Titan Ape" : null;
+      const bellowerForOutlet = (inHand.has("Woodland Bellower") && !usedTutors.has("Woodland Bellower"));
+      if (speakerIsTheTutor && bouncerForOutlet) {
+        const castBouncerStep = !board.has(bouncerForOutlet) ? [`Cast ${bouncerForOutlet}.`] : [];
+        return {
+          outlet: "Duskwatch Recruiter via Formidable Speaker + bouncer",
+          steps: [
+            ...castBouncerStep,
+            `Cast Formidable Speaker ({2}{G}): ETB — discard a card → search library for Duskwatch Recruiter.`,
+            `   OR: Pay {1}{G}: ${bouncerForOutlet} bounces Formidable Speaker → recast Speaker ({2}{G}) → ETB again → find Duskwatch Recruiter.`,
+            `Cast Duskwatch Recruiter ({1}{G}). Activate ({2}{G}) repeatedly with infinite mana → assemble win pile → WIN.`,
+          ],
+          note: `Speaker ETB (or bounced via ${bouncerForOutlet}) → Duskwatch` };
+      } else if (speakerIsTheTutor && bellowerForOutlet) {
+        return {
+          outlet: "Duskwatch Recruiter via Formidable Speaker or Woodland Bellower",
+          steps: [
+            `Cast Formidable Speaker ({2}{G}): ETB — discard a card → search library for Duskwatch Recruiter.`,
+            `   OR: Cast Woodland Bellower ({5}{G}): ETB puts Duskwatch Recruiter (CMC 3) directly onto the battlefield.`,
+            `Activate Duskwatch Recruiter ({2}{G}) repeatedly with infinite mana → assemble win pile → WIN.`,
+          ],
+          note: "Speaker ETB or Bellower → Duskwatch" };
+      }
+      return {
+        outlet: "Duskwatch Recruiter via Formidable Speaker",
+        steps: [`${speakerTutor.name} → Formidable Speaker → ETB: discard → find Duskwatch Recruiter.`],
+        note: "Speaker chain → Duskwatch" };
+    }
     // Top-of-library tutors (e.g. Worldly Tutor) can find the outlet next turn only.
     // Return as a valid outlet but mark as next-turn so the path is classified correctly.
     const topLibTutors = activeTutors.filter(t =>
@@ -13403,7 +13801,14 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
 
     // Apply Elder's untap-two-lands bonus when Elder is already on the battlefield
     // (mustPreExist ensures it — Elder tapped as a combo participant, not newly cast).
-    const elderApplies = elderBonusFRL > 0 && (
+    // CRITICAL: Elder's loop ability only works AFTER Ashaya enters (making Elder a Forest).
+    // If the path tutors Ashaya to HAND (putsToBattlefield:false), the player still pays
+    // Ashaya's CMC separately — Elder can't loop until after that cost, so don't count
+    // Elder's bonus mana as available for the assembly. Exception: tutors that put Ashaya
+    // DIRECTLY to battlefield (Nature's Rhythm, Natural Order) let Elder loop immediately.
+    const ashayaTutoredToHand = !board.has("Ashaya, Soul of the Wild") &&
+      allSteps.some(s => s.target === "Ashaya, Soul of the Wild" && !s.putsToBattlefield);
+    const elderApplies = elderBonusFRL > 0 && !ashayaTutoredToHand && (
       (combo.mustPreExist ?? []).includes("Argothian Elder") ||
       ((combo.requires ?? []).includes("Argothian Elder") && board.has("Argothian Elder"))
     );
@@ -18189,6 +18594,68 @@ function simActivateAbilities(simState, manaPool) {
     }
   }
 
+  // ── Formidable Speaker + Temur Sabertooth: infinite-mana tutor loop ──────
+  // With infinite mana, Temur ({1}{G}) bounces Speaker to hand, recast Speaker ({2}{G}),
+  // ETB: discard a card → search library for any creature → hand.
+  // Repeat to assemble the full win pile (Endurance, Geier Reach Sanitarium path).
+  // Only fires when: infinite active, Temur on board (not sick), Speaker on board (not sick),
+  // Duskwatch NOT already on board (Duskwatch loop above handles that).
+  if (_actInfActive && !used.has("SpeakerTemurLoop")
+      && board.has("Temur Sabertooth") && !sickSet.has("Temur Sabertooth")
+      && board.has("Formidable Speaker") && !sickSet.has("Formidable Speaker")
+      && !board.has("Duskwatch Recruiter")) {
+    const WIN_TARGETS = [
+      "Duskwatch Recruiter", "Endurance", "Eternal Witness",
+      "Quirion Ranger", "Scryb Ranger", "Ashaya, Soul of the Wild",
+      "Argothian Elder", "Destiny Spinner", "Elvish Reclaimer",
+    ];
+    let loopCount = 0;
+    const maxLoops = Math.min(library.length, 15);
+    let foundSomething = false;
+    while (loopCount++ < maxLoops) {
+      // Find best discard target (least-valuable card in hand, not a key piece)
+      const discardCandidates = hand.filter(c => {
+        const cd = getCard(c);
+        if (!cd) return false;
+        if (cd.tags?.includes("combo") || cd.tags?.includes("key")) return false;
+        if (cd.tags?.includes("dork") && (cd.cmc ?? 0) === 1) return false;
+        return true;
+      });
+      if (discardCandidates.length === 0) break; // nothing safe to discard
+      discardCandidates.sort((a, b) => {
+        const sA = (getCard(a)?.cmc ?? 0);
+        const sB = (getCard(b)?.cmc ?? 0);
+        return sA - sB;
+      });
+      const discardIdx = hand.indexOf(discardCandidates[0]);
+      hand.splice(discardIdx, 1); // discard
+      // Bounce Speaker to hand (Temur {1}{G}) — no-op on battlefield since Speaker just ETBs again
+      // Search library for best win target
+      let found = null;
+      for (const t of WIN_TARGETS) {
+        const libIdx = library.indexOf(t);
+        if (libIdx !== -1 && !board.has(t)) { found = t; break; }
+      }
+      if (!found) {
+        // No priority target — grab any creature not on board
+        found = library.find(c => getCard(c)?.type === "creature" && !board.has(c)) ?? null;
+      }
+      if (!found) break;
+      library.splice(library.indexOf(found), 1);
+      hand.push(found);
+      // Shuffle library
+      for (let i = library.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [library[i], library[j]] = [library[j], library[i]];
+      }
+      foundSomething = true;
+      // Stop once we have Duskwatch (main loop will cast it)
+      if (found === "Duskwatch Recruiter") break;
+    }
+    used.add("SpeakerTemurLoop");
+    if (foundSomething) return true;
+  }
+
   // Yisan, the Wanderer Bard: {2}{G}, TAP, verse counter. Once per turn (taps).
 
   // Regal Force: ETB draw (one per green creature you control).
@@ -20178,7 +20645,7 @@ function PlayfieldImageView({
   tapped, counters, cardKey,
   onHandClick, onBattlefieldClick, onContextMenu,
   dragOver, dropZoneProps,
-  getCard, isFetch, landPlayed, attachments, totalMana = 0,
+  getCard, isFetch, landPlayed, attachments, totalMana = 0, gfInfinite = false,
 }) {
   // Build a map: landIndex → [{ auraCard, auraIndex }] for overlay rendering
   const landAuras = new Map();
@@ -20238,7 +20705,7 @@ function PlayfieldImageView({
               const isGraveCard = isGrave;
               const cantPlay = isHand && getCard(c)?.type === "land" && landPlayed;
               const cd = getCard(c);
-              const cantAfford = isHand && cd?.type !== "land" && (cd?.cmc ?? 0) > 0 && (cd?.cmc ?? 0) > totalMana;
+              const cantAfford = !gfInfinite && isHand && cd?.type !== "land" && (cd?.cmc ?? 0) > 0 && (cd?.cmc ?? 0) > totalMana;
               const unplayable = cantPlay || cantAfford;
               return (
                 <PlayfieldCardImg
@@ -22021,7 +22488,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // ── ENCHANT-LAND ATTACHMENT HELPERS ─────────────────────────
   // Add a card to the battlefield. If it's an enchant-land aura and there are valid
   // land targets, show the picker modal first. Otherwise add directly.
-  function goldfishAddToBattlefield(card) {
+  // pendingRemovals: number of cards already queued for removal from battlefield via
+  // functional setBattlefield updaters that haven't flushed yet (e.g. Lotus Petal sacs).
+  // Because React batches state updates, battlefield.length reads the stale pre-removal
+  // length. Subtracting pendingRemovals gives the correct post-flush index for the new card.
+  function goldfishAddToBattlefield(card, pendingRemovals = 0) {
     const isEnchantLand = getCard(card)?.tags?.includes("enchant-land");
     if (isEnchantLand) {
       const forestOnly = card === "Utopia Sprawl";
@@ -22041,7 +22512,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         return; // AuraTargetModal will call goldfishConfirmAura when target is chosen
       }
     }
-    const newIdxForSick = battlefield.length; // synchronous read before append
+    // Subtract pendingRemovals: cards queued for removal via functional updaters haven't
+    // flushed yet, so battlefield.length is inflated by that many. The new card will land
+    // at (battlefield.length - pendingRemovals) once all updates flush.
+    const newIdxForSick = battlefield.length - pendingRemovals;
     setBattlefield(prev => [...prev, card]);
     // Mark creatures as sick using their stable index key.
     // Dryad Arbor has type "land" but is also a creature — it gets summoning sickness too.
@@ -22313,11 +22787,24 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const greenPips = cardData?.greenPips ?? 0;
     pushUndo();
 
+    // ── Infinite mana: top up the pool so any spell is always castable ──────
+    // When the infinite mana loop is active, mana is not a real constraint.
+    // Set pool to max(99, cmc) so deductions succeed and X costs resolve large.
+    // NOTE: `infiniteMana` is not a local state in GoldfishModal — use analysis instead.
+    const isInfiniteMana = analysis?.infiniteManaActive ?? false;
+    if (isInfiniteMana && cmc > manaPool) {
+      const topUp = Math.max(99, cmc) - manaPool;
+      setManaPool(prev => prev + topUp);
+      flashMana(topUp);
+      addLog(`∞ Infinite mana — pool topped up to ${Math.max(99, cmc)} for ${card}.`, COLORS.purple);
+    }
+
     // ── Colour legality guard ─────────────────────────────────────────────────
     // Reject the cast if green pips cannot be covered by available green mana.
-    // availableGreen is derived from tapped + untapped permanents at render time —
-    // see the stateless computation above (greenInPool formula).
-    if (greenPips > 0 && availableGreen < greenPips) {
+    // availableGreen = currentManaPool.green (untapped sources) + greenInPool (already tapped).
+    // Auto-tap fires below and will cover untapped green sources, so they are counted here.
+    // Skip the guard entirely under infinite mana — colour is always satisfiable.
+    if (!isInfiniteMana && greenPips > 0 && availableGreen < greenPips) {
       addLog(`Cannot cast ${card} — need ${greenPips}{G} but only ${availableGreen} green available.`, COLORS.red);
       return;
     }
@@ -22325,6 +22812,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     // ── Auto-tap: if manaPool < cmc, tap untapped mana sources to cover cost ──
     // Tap green sources first when the card has green pips to ensure colour is satisfied.
     // Compute effectiveTapped synchronously so pickers built later in this call see the right state.
+    // pendingBattlefieldRemovals: tracks cards removed via queued setBattlefield functional updaters
+    // (e.g. Lotus Petal sacs) that haven't flushed yet. Used to compute the correct sick key index.
+    let pendingBattlefieldRemovals = 0;
     let effectiveTapped = new Set(tapped);
     if (cmc > 0 && manaPool < cmc) {
       const needed = cmc - manaPool;
@@ -22390,6 +22880,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             }
             return next;
           });
+          // Track pending removals so goldfishAddToBattlefield computes the correct sick key index.
+          pendingBattlefieldRemovals += petalsToSac.length;
           setGraveyard(prev => [...prev, ...petalsToSac.map(() => "Lotus Petal")]);
           for (const p of petalsToSac) {
             addLog(`Lotus Petal: sacrificed for {G}.`, COLORS.gold);
@@ -22484,7 +22976,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             }
             return without;
           });
-          goldfishAddToBattlefield(chosen);
+          goldfishAddToBattlefield(chosen, pendingBattlefieldRemovals);
           fireETB(chosen);
           addLog(`Nature's Rhythm (X=${rhythmX}) → ${chosen} onto battlefield. Library shuffled. (Harmonize now available from graveyard.)`, COLORS.green2);
         });
@@ -22529,7 +23021,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             }
             return without;
           });
-          goldfishAddToBattlefield(chosen);
+          goldfishAddToBattlefield(chosen, pendingBattlefieldRemovals);
           fireETB(chosen);
           // Chord's X = creature's CMC; deduct that from the pool (castFromHand already deducted Chord's own cmc:3)
           setManaPool(p => Math.max(0, p - chosenCmc));
@@ -22659,7 +23151,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           } else {
             setGraveyard(prev => prev.filter(c => c !== chosen));
           }
-          goldfishAddToBattlefield(chosen);
+          goldfishAddToBattlefield(chosen, pendingBattlefieldRemovals);
           fireETB(chosen);
           if (finaleX >= 10) addLog(`Finale of Devastation (X=${finaleX}) → ${chosen} onto battlefield. X≥10: all your creatures get haste and +${finaleX}/+${finaleX} this turn!`, COLORS.green3);
           else addLog(`Finale of Devastation (X=${finaleX}) → ${chosen} onto battlefield. Library shuffled.`, COLORS.green2);
@@ -22787,7 +23279,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       } else if (card === "Great Oak Guardian") {
         // Flash creature: ETB handled in goldfishAddToBattlefield (untap all creatures, +2/+2 log)
         setGraveyard(prev => [...prev, card]);
-        goldfishAddToBattlefield(card);
+        goldfishAddToBattlefield(card, pendingBattlefieldRemovals);
       } else if (card === "Turntimber Symbiosis") {
         // Spell side {4}{G}{G}{G}: look at top 7, put a creature onto battlefield, rest on bottom
         setGraveyard(prev => [...prev, card]);
@@ -22799,7 +23291,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
             label: "TURNTIMBER SYMBIOSIS — PUT A CREATURE ONTO BATTLEFIELD (top 7)", color: COLORS.green2,
             items: creatures.map(c => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? "?"}`, key: c, c })),
             onSelect: ({ c: chosen }) => {
-              goldfishAddToBattlefield(chosen);
+              goldfishAddToBattlefield(chosen, pendingBattlefieldRemovals);
               // Put the rest of the 7 on the bottom of the library
               const rest = top7.filter(c => c !== chosen);
               setLibrary(prev => [...prev, ...rest]);
@@ -22927,13 +23419,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         addLog(`Cast ${card} → graveyard.`, COLORS.textMid);
       }
     } else if (type === "creature" || type === "enchantment" || type === "artifact" || type === "planeswalker" || type === "battle") {
-      goldfishAddToBattlefield(card);
+      goldfishAddToBattlefield(card, pendingBattlefieldRemovals);
       addLog(`Cast ${card} → battlefield.`, COLORS.green2);
       // ── Insidious Fungus: 1/1 creature for {G}. No ETB. Sacrifice ability: {2}, sac → destroy artifact, destroy enchantment, or draw+land ──
       fireETB(card);
     } else {
       // Unknown type (e.g. Scryfall-fetched card not yet classified) — treat as permanent
-      goldfishAddToBattlefield(card);
+      goldfishAddToBattlefield(card, pendingBattlefieldRemovals);
       addLog(`Cast ${card} → battlefield (type: ${type || "unknown"}).`, COLORS.green2);
     }
   }
@@ -26890,7 +27382,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const header = isBellower
       ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CMC \u2264 3`
       : isGSZ
-      ? `${tutorSpellName ? tutorSpellName.toUpperCase() : "GREEN SUN'S ZENITH"} \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
+      ? `${tutorSpellName ? tutorSpellName.toUpperCase() : "TUTOR"} \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
       : isFierceEmpath ? `FIERCE EMPATH \u2014 CREATURES CMC \u2265 6 (${pool.length} cards)`
       : isFinale       ? `FINALE OF DEVASTATION \u2014 GRAVEYARD (${pool.length} cards)`
       : isCreature ? `CREATURE TUTOR \u2014 LIBRARY (${pool.length} cards)`
@@ -27026,10 +27518,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         // Remove sacrificed creature from battlefield
         goldfishRemoveFromBattlefield(sacCard, sacIdx);
         setGraveyard(prev => [...prev, sacCard]);
-        // Natural Order goes to graveyard
-        setGraveyard(prev => [...prev, noCard]);
+        // Natural Order goes to graveyard; Eldritch Evolution exiles itself (part of casting cost)
+        if (isNO) {
+          setGraveyard(prev => [...prev, noCard]);
+        } else {
+          setExile(prev => [...prev, noCard]);
+        }
         setPendingNaturalOrder(null);
         // Open tutor modal — creatures only, CMC filter for EE
+        setTutorSpellName(noCard);
         setTutorCreaturesOnly(true);
         if (!isNO) setTutorMaxCmc(sacCmc + 2);
         setTutorOnSelect(() => (chosen) => {
@@ -27912,6 +28409,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     landPlayed={landPlayed}
                     attachments={attachments}
                     totalMana={manaPool + currentMana}
+                    gfInfinite={analysis?.infiniteManaActive ?? false}
                   />
                 ) : (<>
                 {/* Gamestate breadcrumb */}
@@ -27954,15 +28452,14 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           const cd = getCard(card);
                           const isLand = cd?.type === "land";
                           const cantPlay = isLand && landPlayed;
-                          // Affordability: total mana = already-tapped pool + untapped sources still available.
-                          // Colour check: if pool already covers cost, green must come from pool.
-                          // If auto-tap will fire, untapped green sources can cover pips.
+                          // Affordability: total mana = floating pool + untapped sources.
+                          // Green pip check omitted here — auto-tap in castFromHand taps untapped
+                          // green sources before the colour guard fires, so checking it here would
+                          // wrongly block castable spells. castFromHand has its own colour guard.
                           const totalMana = manaPool + currentMana;
                           const cmc = cd?.cmc ?? 0;
-                          const greenPips = cd?.greenPips ?? 0;
                           const gfInfinite = analysis?.infiniteManaActive ?? false;
-                          const cantAfford = !gfInfinite && !isLand && cmc > 0 &&
-                            (cmc > totalMana || (greenPips > 0 && availableGreen < greenPips));
+                          const cantAfford = !gfInfinite && !isLand && cmc > 0 && cmc > totalMana;
                           const unplayable = cantPlay || cantAfford;
                           return renderCard(card, i, "hand", {
                             onClick: () => !unplayable && castFromHand(card, i),
