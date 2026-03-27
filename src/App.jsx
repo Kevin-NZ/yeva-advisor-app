@@ -15497,6 +15497,33 @@ const PRESET_DECKS = [
     ],
   },
   {
+    id: "yeva-budget",
+    name: "Budget",
+    cards: [
+      "Arbor Elf","Ashaya, Soul of the Wild","Autumn's Veil","Beast Whisperer",
+      "Beast Within","Birds of Paradise","Bonders' Enclave","Boreal Druid",
+      "Chord of Calling","Destiny Spinner","Dryad Arbor","Duskwatch Recruiter",
+      "Eldritch Evolution","Elvish Archdruid","Elvish Mystic","Elvish Reclaimer",
+      "Emergence Zone","Eternal Witness","Fierce Empath","Fyndhorn Elves",
+      "Geier Reach Sanitarium","Generous Patron","Glademuse","Great Oak Guardian",
+      "Green Sun's Zenith","Heartwood Storyteller","Hope Tender","Hyrax Tower Scout",
+      "Incubation Druid","Joraga Treespeaker","Kamahl's Will","Karametra's Acolyte",
+      "Kenrith's Transformation","Kogla, the Titan Ape","Ley Weaver","Lignify",
+      "Llanowar Elves","Lotus Cobra","Magus of the Order","Manglehorn","Marwyn, the Nurturer",
+      "Mikokoro, Center of the Sea","Natural Order","Nature's Claim","Nykthos, Shrine to Nyx",
+      "Outland Liberator","Priest of Titania","Quest for Renewal","Quirion Ranger",
+      "Ram Through","Reclaim","Reclamation Sage","Regal Force","Return of the Wildspeaker",
+      "Root Maze","Scryb Ranger","Seedborn Muse","Selvala, Heart of the Wilds",
+      "Shared Summons","Skullwinder","Sol Ring","Summoner's Pact","Temur Sabertooth",
+      "Touch of Vitae","Turntimber Symbiosis","Ulvenwald Tracker","Utopia Sprawl",
+      "Vines of Vastwood","Vitalize","War Room","Wild Growth","Wirewood Lodge",
+      "Wirewood Symbiote","Woodland Bellower","Worldly Tutor","Yeva, Nature's Herald",
+      "Yisan, the Wanderer Bard","Forest","Forest","Forest","Forest","Forest","Forest",
+      "Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest",
+      "Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest",
+    ],
+  },
+  {
     id: "yeva-cedh-jan2026",
     name: "cEDH Jan 2026",
     cards: [
@@ -21995,6 +22022,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [tutorQuery, setTutorQuery] = useState("");
   const [tutorMaxCmc, setTutorMaxCmc] = useState(null); // null = no filter; number = GSZ max X
   const [tutorMinCmc, setTutorMinCmc] = useState(null); // null = no filter; number = Fierce Empath min CMC
+  const [tutorExactCmc, setTutorExactCmc] = useState(null); // null = no filter; number = Yisan exact CMC match
   const [tutorCreaturesOnly, setTutorCreaturesOnly] = useState(false); // Worldly Tutor / Survival mode
   const [tutorLandsOnly,     setTutorLandsOnly]     = useState(false); // Sylvan Scrying mode
   const [tutorTreefolk,      setTutorTreefolk]      = useState(false); // Treefolk Harbinger mode
@@ -23361,7 +23389,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
               setTutorTreefolk(false);
               setTutorElvesOnly(false);
               setTutorNonLegendary(false);
-              setTutorMinCmc(null);
+              setTutorMinCmc(null); setTutorExactCmc(null);
               setTutorMaxCmc(null);
               setTutorFromGraveyard(false);
               setTutorOnSelect(() => (chosen) => {
@@ -23552,7 +23580,7 @@ if (card === "Elvish Harbinger") {
   setTutorLandsOnly(false);
   setTutorTreefolk(false);
   setTutorNonLegendary(false);
-  setTutorMinCmc(null);
+  setTutorMinCmc(null); setTutorExactCmc(null);
   setTutorMaxCmc(null);
   setTutorFromGraveyard(false);
   setTutorOnSelect(() => (chosen) => {
@@ -23787,7 +23815,7 @@ if (card === "Formidable Speaker") {
         addLog(`Formidable Speaker ETB — discarded ${discarded}. Searching for a creature...`, COLORS.green2);
         setTutorCreaturesOnly(true);
         setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false);
-        setTutorNonLegendary(false); setTutorMinCmc(null); setTutorMaxCmc(null); setTutorFromGraveyard(false);
+        setTutorNonLegendary(false); setTutorMinCmc(null); setTutorExactCmc(null); setTutorMaxCmc(null); setTutorFromGraveyard(false);
         setTutorOnSelect(() => (chosen) => {
           setLibrary(prev => {
             const idx = prev.indexOf(chosen); if (idx === -1) return prev;
@@ -23900,7 +23928,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       // GSZ mode: callback handles where the card goes
       const selectCb = tutorOnSelect;
       // Reset tutor state FIRST so any fireETB inside the callback can open a new picker/tutor cleanly
-      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setTutorSpellName("");
+      setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorExactCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setTutorSpellName("");
       // Run the callback after state is cleared so ETB triggers (e.g. Formidable Speaker) can set fresh state
       setTimeout(() => selectCb(card), 0);
       return;
@@ -23924,7 +23952,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       addLog(`Tutored: ${card} (already in hand — no library change).`, COLORS.purple);
     }
     setHand(prev => prev.includes(card) ? prev : [...prev, card]);
-    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
+    setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null); setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorExactCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0);
   }
 
   // ── SCRY ────────────────────────────────────────────────────
@@ -24867,8 +24895,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
               adjustCounter(card, index, +1);
               setTutorCreaturesOnly(true);
-              setTutorMaxCmc(nextVerse);
-              setTutorMinCmc(nextVerse);
+              setTutorExactCmc(nextVerse);  // Yisan fetches creatures with CMC exactly = verse
+              setTutorMaxCmc(null);         // don't use GSZ/Bellower max filter
+              setTutorMinCmc(null);         // don't use Fierce Empath min filter
               setTutorOnSelect(() => (chosen) => {
                 setLibrary(prev => {
                   const idx2 = prev.indexOf(chosen); if (idx2 === -1) return prev;
@@ -27326,10 +27355,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
   // ── Tutor overlay ─────────────────────────────────────────────
   const TutorOverlay = () => {
     if (!showTutor) return null;
-    const isGSZ         = tutorMaxCmc !== null && !tutorNonLegendary && !tutorMinCmc;
+    const isYisan       = tutorExactCmc !== null;                              // Yisan: exact CMC = verse
+    const isGSZ         = tutorMaxCmc !== null && !tutorNonLegendary && !tutorMinCmc && !isYisan;
     const isBellower    = tutorNonLegendary && tutorMaxCmc !== null;
     const isFierceEmpath = tutorMinCmc !== null;
-    const isCreature    = tutorCreaturesOnly && !isGSZ && !isBellower && !isFierceEmpath;
+    const isCreature    = tutorCreaturesOnly && !isYisan && !isGSZ && !isBellower && !isFierceEmpath;
     const isLand        = tutorLandsOnly;
     const isTreefolk    = tutorTreefolk;
     const isElf         = tutorElvesOnly;
@@ -27345,6 +27375,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
     const passesMode = (c) => {
       const d = getCard(c);
+      if (isYisan)       return d?.type === "creature" && (d?.cmc ?? -1) === tutorExactCmc;
       if (isBellower)    return d?.type === "creature" && (d?.cmc ?? 99) <= tutorMaxCmc && !LEGENDARY_NAMES.has(c);
       if (isGSZ)         return (d?.type === "creature" || c === "Dryad Arbor") && (d?.cmc ?? 99) <= tutorMaxCmc;
       if (isFierceEmpath) return d?.type === "creature" && (d?.cmc ?? 0) >= tutorMinCmc;
@@ -27381,6 +27412,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
     const header = isBellower
       ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CMC \u2264 3`
+      : isYisan
+      ? `YISAN, THE WANDERER BARD \u2014 VERSE ${tutorExactCmc} \u2014 CMC = ${tutorExactCmc}`
       : isGSZ
       ? `${tutorSpellName ? tutorSpellName.toUpperCase() : "TUTOR"} \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
       : isFierceEmpath ? `FIERCE EMPATH \u2014 CREATURES CMC \u2265 6 (${pool.length} cards)`
@@ -27391,38 +27424,41 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       : isElf      ? `ELVISH HARBINGER \u2014 ELF CARDS (${pool.length} cards)`
       :              `TUTOR \u2014 LIBRARY (${pool.length} cards)`;
 
-    const hint = isBellower      ? "NON-LEGENDARY CREATURES CMC ≤ 3"
-      : isGSZ                    ? "AFFORDABLE TARGETS"
-      : isFierceEmpath           ? "CREATURES CMC ≥ 6"
-      : isFinale                 ? "CREATURES IN GRAVEYARD"
-      : isCreature               ? "CREATURES IN LIBRARY"
-      : isLand                   ? "LANDS IN LIBRARY"
-      : isTreefolk               ? "TREEFOLK & FORESTS IN LIBRARY"
-      : isElf                    ? "ELF CARDS IN LIBRARY"
+    const hint = isYisan              ? `CREATURES WITH CMC EXACTLY ${tutorExactCmc}`
+      : isBellower                    ? "NON-LEGENDARY CREATURES CMC ≤ 3"
+      : isGSZ                         ? "AFFORDABLE TARGETS"
+      : isFierceEmpath                ? "CREATURES CMC ≥ 6"
+      : isFinale                      ? "CREATURES IN GRAVEYARD"
+      : isCreature                    ? "CREATURES IN LIBRARY"
+      : isLand                        ? "LANDS IN LIBRARY"
+      : isTreefolk                    ? "TREEFOLK & FORESTS IN LIBRARY"
+      : isElf                         ? "ELF CARDS IN LIBRARY"
       : null;
 
-    const emptyMsg = isBellower  ? "No non-legendary creatures with CMC ≤ 3 in library."
-      : isGSZ                    ? `No creatures with CMC ≤ ${tutorMaxCmc} in library.`
-      : isFierceEmpath           ? "No creatures with CMC ≥ 6 in library."
-      : isFinale                 ? "No matching creatures in graveyard."
-      : isCreature               ? "No creatures in library."
-      : isLand                   ? "No lands in library."
-      : isTreefolk               ? "No Treefolk or Forest cards in library."
-      : isElf                    ? "No Elf cards in library."
-      :                            "No matches in library.";
+    const emptyMsg = isYisan         ? `No creatures with CMC = ${tutorExactCmc} in library.`
+      : isBellower                   ? "No non-legendary creatures with CMC ≤ 3 in library."
+      : isGSZ                        ? `No creatures with CMC ≤ ${tutorMaxCmc} in library.`
+      : isFierceEmpath               ? "No creatures with CMC ≥ 6 in library."
+      : isFinale                     ? "No matching creatures in graveyard."
+      : isCreature                   ? "No creatures in library."
+      : isLand                       ? "No lands in library."
+      : isTreefolk                   ? "No Treefolk or Forest cards in library."
+      : isElf                        ? "No Elf cards in library."
+      :                                "No matches in library.";
 
-    const placeholder = isGSZ          ? `Search creatures (CMC ≤ ${tutorMaxCmc})...`
-      : isFierceEmpath                  ? "Search creatures (CMC ≥ 6)..."
-      : isFinale                        ? "Search graveyard creatures..."
-      : isCreature                      ? "Search creatures..."
-      : isLand                          ? "Search lands..."
-      : isTreefolk                      ? "Search Treefolk or Forests..."
-      : isElf                           ? "Search Elves..."
-      :                                   "Type card name...";
+    const placeholder = isYisan             ? `Search creatures (CMC = ${tutorExactCmc})...`
+      : isGSZ                               ? `Search creatures (CMC ≤ ${tutorMaxCmc})...`
+      : isFierceEmpath                      ? "Search creatures (CMC ≥ 6)..."
+      : isFinale                            ? "Search graveyard creatures..."
+      : isCreature                          ? "Search creatures..."
+      : isLand                              ? "Search lands..."
+      : isTreefolk                          ? "Search Treefolk or Forests..."
+      : isElf                               ? "Search Elves..."
+      :                                       "Type card name...";
 
     const closeTutor = () => {
       setShowTutor(false); setTutorQuery(""); setTutorMaxCmc(null);
-      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setTutorSpellName("");
+      setTutorCreaturesOnly(false); setTutorLandsOnly(false); setTutorTreefolk(false); setTutorElvesOnly(false); setTutorNonLegendary(false); setTutorMinCmc(null); setTutorExactCmc(null); setTutorFromGraveyard(false); setTutorOnSelect(null); setTutorSelected(0); setTutorSpellName("");
     };
 
     return (
