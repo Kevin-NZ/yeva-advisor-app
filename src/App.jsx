@@ -22203,9 +22203,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   })();
   const analysis = React.useMemo(() => {
     if (hand.length + battlefield.length === 0) return null;
-    // Extract Yisan verse counter from the generic counters system
-    const yisanIdx = battlefield.indexOf("Yisan, the Wanderer Bard");
-    const yisanKey = yisanIdx >= 0 ? cardKey("Yisan, the Wanderer Bard", yisanIdx) : null;
+    // Extract Yisan verse counter from the generic counters system.
+    // Use name-prefix search rather than battlefield.indexOf so the lookup is robust
+    // against battlefield index shifts (e.g. a card removed before Yisan in the array).
+    const yisanKey = Object.keys(counters).find(k => k.startsWith("Yisan, the Wanderer Bard:")) ?? null;
     const gfYisanCounters = yisanKey ? (counters[yisanKey] ?? 0) : 0;
     try {
       const result = analyzeGameState({
@@ -28688,8 +28689,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 {advisorTab === "lines" && (() => {
                   const deckSet = deckCards.length > 0 ? new Set(deckCards) : null;
                   const _lineMana = currentManaPool.green + currentManaPool.colorless;
-                  const _yisanIdx = battlefield.indexOf("Yisan, the Wanderer Bard");
-                  const _yisanKey = _yisanIdx >= 0 ? cardKey("Yisan, the Wanderer Bard", _yisanIdx) : null;
+                  const _yisanKey = Object.keys(counters).find(k => k.startsWith("Yisan, the Wanderer Bard:")) ?? null;
                   const _lineYisanCounters = _yisanKey ? (counters[_yisanKey] ?? 0) : 0;
                   const lines = findReachableLines(hand, battlefield, graveyard, _lineMana, deckSet, _lineYisanCounters, sickCreatureNames);
                   const typeOpts = [
