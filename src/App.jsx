@@ -22477,66 +22477,84 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       }
       return prev;
     });
-    // Snapshot state at END of current turn (before untap/draw of next)
-    replaySnapshotsRef.current.push({
-      turn: turnRef.current,
-      hand: [...hand],
-      battlefield: [...battlefield],
-      graveyard: [...graveyard],
-      mana: calculateBattlefieldMana(battlefield, sickCreatureNames).total,
-    });
-    turnRef.current = next;
-    setTurnNumber(next);
-    setIsMyTurn(true);
-    setTapped(new Set());
-    setManaPool(0);
-    setLandPlayed(false);
-    setSickCreatures(new Set()); // new turn clears summoning sickness
-    setExpandedSteps(new Set());
-    setShowAllResults(false);
-    // Compute draw synchronously from current library snapshot — never nest setHand inside setLibrary
-    if (library.length === 0) {
-      setLog(l => [{ msg: `── Turn ${next} — untap, upkeep (library empty) ──`, color: COLORS.green3, turn: next }, ...l].slice(0, 100));
+
+    // ── Cleanup step: discard to hand size BEFORE untap/draw ──
+    // MTG rule 514.1: at start of cleanup, active player discards to max hand size (7).
+    // This happens at end of CURRENT turn, before the next turn's untap/draw.
+    const doUntapAndDraw = () => {
+      // Snapshot state at END of current turn (before untap/draw of next)
+      replaySnapshotsRef.current.push({
+        turn: turnRef.current,
+        hand: [...hand],
+        battlefield: [...battlefield],
+        graveyard: [...graveyard],
+        mana: calculateBattlefieldMana(battlefield, sickCreatureNames).total,
+      });
+      turnRef.current = next;
+      setTurnNumber(next);
+      setIsMyTurn(true);
+      setTapped(new Set());
+      setManaPool(0);
+      setLandPlayed(false);
+      setSickCreatures(new Set()); // new turn clears summoning sickness
+      setExpandedSteps(new Set());
+      setShowAllResults(false);
+      // Draw for the turn
+      if (library.length === 0) {
+        setLog(l => [{ msg: `── Turn ${next} — untap, upkeep (library empty) ──`, color: COLORS.green3, turn: next }, ...l].slice(0, 100));
+      } else {
+        const drawn = library[0];
+        setLibrary(library.slice(1));
+        setHand(h => [...h, drawn]);
+        setLog(l => [
+          { msg: `Drew ${drawn}.`, color: COLORS.blue, turn: next },
+          { msg: `── Turn ${next} — untap, upkeep, draw ──`, color: COLORS.green3, turn: next },
+          ...l,
+        ].slice(0, 100));
+      }
+    };
+
+    if (hand.length > 7) {
+      // Discard to 7 first (cleanup), then advance the turn
+      discardToHandSize([...hand], doUntapAndDraw);
     } else {
-      const drawn = library[0];
-      setLibrary(library.slice(1));
-      setHand(h => [...h, drawn]);
-      setLog(l => [
-        { msg: `Drew ${drawn}.`, color: COLORS.blue, turn: next },
-        { msg: `── Turn ${next} — untap, upkeep, draw ──`, color: COLORS.green3, turn: next },
-        ...l,
-      ].slice(0, 100));
+      doUntapAndDraw();
     }
   }
 
+  // ── CLEANUP STEP DISCARD HELPER ────────────────────────────
+  // Called when passing to opponent's turn OR after drawing on nextTurn.
+  // Discards cards one-by-one until hand <= 7, then calls onDone().
+  // Takes currentHand explicitly to avoid stale closure issues —
+  // each iteration receives the already-updated hand list.
+  function discardToHandSize(currentHand, onDone) {
+    const remaining = currentHand.length - 7;
+    if (remaining <= 0) { onDone(); return; }
+    setPendingPicker({
+      label: `CLEANUP STEP — DISCARD TO HAND SIZE (${remaining} card${remaining !== 1 ? "s" : ""} to discard)`,
+      color: COLORS.red,
+      items: currentHand.map((c, i) => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? 0}`, key: `${c}:${i}`, c, i })),
+      onSelect: ({ c, i }) => {
+        pushUndo();
+        const nextHand = currentHand.filter((_, idx) => idx !== i);
+        setHand(nextHand);
+        setGraveyard(prev => [...prev, c]);
+        addLog(`Discarded ${c} (cleanup step — hand size > 7).`, COLORS.textDim);
+        // Pass nextHand explicitly so the picker refreshes with the updated list
+        discardToHandSize(nextHand, onDone);
+      },
+      onSkip: null, // mandatory — cannot skip cleanup discard
+    });
+    setPickerSelected([]);
+  }
+
   function toggleTurn() {
-    // Cleanup step: when passing from MY turn to the opponent's, discard down to 7.
-    // If hand size > 7, prompt for each excess card before toggling turns.
+    // Cleanup step: when passing from MY turn to opponent's, discard down to 7.
     if (isMyTurn && hand.length > 7) {
-      const excess = hand.length - 7;
-      const discardMultiple = (remaining) => {
-        if (remaining <= 0) {
-          setIsMyTurn(false);
-          addLog("Passing to opponent's turn.", COLORS.textDim);
-          return;
-        }
-        // Re-read hand fresh each time via closure — hand state updates between calls
-        setPendingPicker({
-          label: `CLEANUP STEP — DISCARD TO HAND SIZE (${remaining} more to discard)`,
-          color: COLORS.red,
-          items: hand.map((c, i) => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? 0}`, key: `${c}:${i}`, c, i })),
-          onSelect: ({ c, i }) => {
-            pushUndo();
-            setHand(prev => prev.filter((_, idx) => idx !== i));
-            setGraveyard(prev => [...prev, c]);
-            addLog(`Discarded ${c} (cleanup — hand size > 7).`, COLORS.textDim);
-            discardMultiple(remaining - 1);
-          },
-          onSkip: null, // discard is mandatory
-        });
-        setPickerSelected([]);
-      };
-      discardMultiple(excess);
+      discardToHandSize([...hand], () => {
+        setIsMyTurn(false);
+        addLog("Passing to opponent's turn.", COLORS.textDim);
+      });
       return;
     }
     setIsMyTurn(prev => {
