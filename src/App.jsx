@@ -6921,6 +6921,124 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
     }
   }
+
+  // ── TEMUR ON BOARD: TARGETED TUTOR RECOMMENDATIONS ─────────────────────
+  // When Temur Sabertooth is on board, specific tutor targets close the infinite mana loop.
+  // These bespoke advice cards surface the correct creature to find given the board state,
+  // rather than relying on the path planner to surface them generically.
+  if (board.has("Temur Sabertooth") && !sickCreatures?.has?.("Temur Sabertooth") && !infiniteManaActive) {
+    const _tHasElder  = (board.has("Argothian Elder") && !sickCreatures?.has?.("Argothian Elder"))
+                      || (board.has("Ley Weaver") && !sickCreatures?.has?.("Ley Weaver"));
+    const _tElderName = board.has("Argothian Elder") && !sickCreatures?.has?.("Argothian Elder")
+                      ? "Argothian Elder" : board.has("Ley Weaver") && !sickCreatures?.has?.("Ley Weaver")
+                      ? "Ley Weaver" : null;
+    const _tBigLands  = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx"];
+    const _tBigLandName = _tBigLands.find(l => board.has(l));
+    // Estimate big land output
+    const _tCradleMana = _tBigLandName && (_tBigLandName === "Gaea's Cradle" || _tBigLandName === "Itlimoc, Cradle of the Sun")
+      ? creaturesOnBoard : _tBigLandName === "Nykthos, Shrine to Nyx"
+      ? Math.max(0, battlefield.reduce((s,c) => s + (getCard(c)?.greenPips ?? 0), 0) - 2) : 0;
+    // Big dork (non-sick, producing ≥2G)
+    const _tBigDorkNames = new Set(["Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+      "Karametra's Acolyte","Wirewood Channeler","Selvala, Heart of the Wilds","Fanatic of Rhonas","Marwyn, the Nurturer"]);
+    const _tBigDork = battlefield.find(c => _tBigDorkNames.has(c) && !sickCreatures?.has?.(c));
+    const _tElfCount = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+    const _tBigDorkMana = !_tBigDork ? 0
+      : _tBigDork === "Karametra's Acolyte" ? Math.max(0, battlefield.reduce((s,c) => s + (getCard(c)?.greenPips ?? 0), 0) - 2)
+      : _tBigDork === "Circle of Dreams Druid" ? creaturesOnBoard
+      : _tBigDork === "Selvala, Heart of the Wilds" ? Math.max(0, creaturesOnBoard - 1)
+      : _tElfCount;
+    // 1-drop elf on board (CMC=1, elf tag)
+    const _tOneDrop = battlefield.find(c => getCard(c)?.tags?.includes("elf") && (getCard(c)?.cmc ?? 99) === 1 && !sickCreatures?.has?.(c));
+    // Hyrax already on board?
+    const _tHasHyrax = board.has("Hyrax Tower Scout");
+    // Symbiote already on board?
+    const _tHasSymbiote = board.has("Wirewood Symbiote");
+
+    // ── A: Temur + Land Untapper (Elder/Weaver) + BigLand (≥6G) → GET HYRAX ──
+    // Loop: Temur bounces Hyrax ({1}{G}) → recast Hyrax ({2}{G}) → ETB untaps Elder/Weaver
+    //   → Elder taps → untaps BigLand + Elder → BigLand re-taps (≥6G)
+    // Net per cycle: BigLand(≥6G) − loop_cost(5G) = ≥+1G → infinite mana.
+    if (_tHasElder && _tBigLandName && _tCradleMana >= 6 && !_tHasHyrax) {
+      results.push({
+        priority: 12,
+        category: "🎯 GET HYRAX",
+        combo: "temur_elder_land_get_hyrax",
+        headline: `Find Hyrax Tower Scout → Temur+Hyrax+${_tElderName}+${_tBigLandName} = infinite`,
+        detail: `${_tElderName} (land untapper) + ${_tBigLandName} (${_tCradleMana}G) + Temur Sabertooth = the Hyrax loop. Temur bounces Hyrax ({1}{G}) → recast Hyrax ({2}{G}) → ETB untaps ${_tElderName} → ${_tElderName} taps → untaps ${_tBigLandName} + itself → ${_tBigLandName} re-taps for ${_tCradleMana}G. Loop cost 5G, land produces ${_tCradleMana}G → net +${_tCradleMana - 5}G per cycle → infinite mana.`,
+        steps: [
+          `Find Hyrax Tower Scout via any tutor (Chord, GSZ, Summoner's Pact, Worldly Tutor).`,
+          `Cast Hyrax Tower Scout ({2}{G}). ETB: untap ${_tElderName}.`,
+          `${_tElderName} taps: untap two lands (${_tBigLandName} + ${_tElderName} itself).`,
+          `Tap ${_tBigLandName} for ${_tCradleMana}G.`,
+          `Pay {1}{G}: Temur bounces Hyrax. Recast Hyrax ({2}{G}). ETB untaps ${_tElderName} again.`,
+          `Repeat: each cycle nets +${_tCradleMana - 5}G → INFINITE MANA → find Duskwatch → WIN.`,
+        ],
+        color: "#f59e0b",
+      });
+    }
+
+    // ── B: Temur + BigLand (≥6G) + BigDork (≥5G) → GET HYRAX ──
+    // Loop: Temur bounces Hyrax ({1}{G}) → recast Hyrax ({2}{G}) → ETB untaps BigDork
+    //   → BigDork re-taps for ≥6G. Loop cost 5G, dork ≥6G → net +1G → infinite.
+    // Also fires when just BigDork produces ≥6 and BigLand provides the initial mana pool.
+    if (_tBigDork && _tBigDorkMana >= 6 && !_tHasHyrax && !_tHasElder) {
+      results.push({
+        priority: 12,
+        category: "🎯 GET HYRAX",
+        combo: "temur_bigdork_get_hyrax",
+        headline: `Find Hyrax Tower Scout → Temur+Hyrax+${_tBigDork} (${_tBigDorkMana}G) = infinite`,
+        detail: `${_tBigDork} produces ${_tBigDorkMana}G — enough for the Hyrax+Temur loop. Hyrax ETB untaps ${_tBigDork} → ${_tBigDork} re-taps for ${_tBigDorkMana}G. Loop cost = Temur bounce({1}{G}) + Hyrax recast({2}{G}) = 5G. Net: +${_tBigDorkMana - 5}G per cycle → infinite mana.`,
+        steps: [
+          `Find Hyrax Tower Scout via any tutor.`,
+          `Cast Hyrax Tower Scout ({2}{G}). ETB: untap ${_tBigDork}.`,
+          `Tap ${_tBigDork} for ${_tBigDorkMana}G.`,
+          `Pay {1}{G}: Temur bounces Hyrax. Recast Hyrax ({2}{G}). ETB untaps ${_tBigDork} again.`,
+          `Each cycle costs 5G, ${_tBigDork} produces ${_tBigDorkMana}G → net +${_tBigDorkMana - 5}G → INFINITE MANA.`,
+          `Find Duskwatch Recruiter → activate → draw library → WIN.`,
+        ],
+        color: "#f59e0b",
+      });
+    }
+
+    // ── C: Temur + (CMC1-Elf + BigDork≥5G) OR (Elder + BigLand) → GET SYMBIOTE ──
+    // Symbiote loop:
+    //   C1 (dork path): Symbiote bounces 1-drop elf → untaps BigDork. Temur bounces Symbiote
+    //     → recast Symbiote. Net cost: Temur({1}{G}) + Symbiote({G}) + 1-drop({G}) = 5G max
+    //     but 1-drop goes to hand (not graveyard). If BigDork≥5G → net positive → infinite.
+    //     Actually: cost per full cycle = Temur_bounce(2G) + Symbiote_recast(1G) + 1drop_recast(1G) = 4G
+    //     BigDork needs ≥5G for net +1G.
+    //   C2 (elder path): Symbiote bounces 1-drop elf → untaps Elder → Elder taps → untaps BigLand.
+    //     Cycle cost = Temur_bounce(2G) + Symbiote_recast(1G) + 1drop_recast(1G) = 4G
+    //     BigLand needs ≥5G for net +1G.
+    const _tSymbioteDorkViable  = _tOneDrop && _tBigDork && _tBigDorkMana >= 5;
+    const _tSymbioteElderViable = _tOneDrop && _tHasElder && _tBigLandName && _tCradleMana >= 5;
+    if (!_tHasSymbiote && (_tSymbioteDorkViable || _tSymbioteElderViable)) {
+      const _path = _tSymbioteDorkViable ? "dork" : "elder";
+      const _manaSource = _path === "dork" ? _tBigDork : _tBigLandName;
+      const _manaOutput = _path === "dork" ? _tBigDorkMana : _tCradleMana;
+      const _untapTarget = _path === "dork" ? _tBigDork : _tElderName;
+      results.push({
+        priority: 11,
+        category: "🎯 GET SYMBIOTE",
+        combo: "temur_get_symbiote",
+        headline: `Find Wirewood Symbiote → Symbiote+Temur+${_tOneDrop}+${_manaSource} = infinite`,
+        detail: `${_tOneDrop} (1-drop elf) serves as Symbiote's bounce target. Loop: Symbiote bounces ${_tOneDrop} → untaps ${_untapTarget} → ${_manaSource} taps for ${_manaOutput}G. Temur bounces Symbiote ({1}{G}) → recast both. Cycle cost 4G, ${_manaSource} produces ${_manaOutput}G → net +${_manaOutput - 4}G → infinite mana.`,
+        steps: [
+          `Find Wirewood Symbiote via any tutor.`,
+          `Cast Wirewood Symbiote ({G}).`,
+          `Symbiote ability: return ${_tOneDrop} to hand → untap ${_untapTarget}.`,
+          _path === "elder"
+            ? `${_untapTarget} taps → untaps two lands (${_tBigLandName} + itself) → tap ${_tBigLandName} for ${_manaOutput}G.`
+            : `Tap ${_manaSource} for ${_manaOutput}G.`,
+          `Pay {1}{G}: Temur bounces Symbiote. Cast Symbiote ({G}) + cast ${_tOneDrop} ({G}). Repeat.`,
+          `Each cycle nets +${_manaOutput - 4}G → INFINITE MANA → find Duskwatch → WIN.`,
+        ],
+        color: "#f59e0b",
+      });
+    }
+  }
+  // ── ELADAMRI + BEAST WHISPERER / GLADEMUSE CHAIN ───────────────────────
   // #8: Eladamri plays creatures from the top of library. Beast Whisperer draws on each
   // creature cast. The chain: cast top creature → draw → see new top → cast that too.
   // This is a powerful storm engine that can chain through multiple creatures per turn.
