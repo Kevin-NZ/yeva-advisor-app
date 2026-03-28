@@ -6762,7 +6762,165 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     }
   }
 
-  // ── ELADAMRI + BEAST WHISPERER / GLADEMUSE CHAIN ───────────────────────
+  // ── SPEAKER → SYMBIOTE → TEMUR: INFINITE MANA THIS TURN ───────────────
+  // When Speaker is in hand with a big mana land AND big mana dork on board,
+  // a multi-step chain assembles infinite mana this turn without Ashaya or a Ranger:
+  //   1. Cast Speaker ({2}{G}) → ETB: discard a card → find Wirewood Symbiote → hand
+  //   2. Cast Symbiote ({G}) → Symbiote bounces Speaker (an elf) → untaps the big dork
+  //   3. Big dork re-taps → cast Speaker again → ETB: discard → find Temur Sabertooth
+  //   4. Cast Temur ({2}{G}{G}) → Temur+Speaker+big land = infinite loop
+  //   5. With infinite mana: find Duskwatch Recruiter → draw library → WIN.
+  // Mana gate: total chain costs 11G (Speaker×2 + Symbiote + Temur).
+  // Available = mana pool (already includes initial land+dork taps) + bigDork re-tap.
+  // Condition: maxGreen + bigDorkMana >= 11.
+  if (isMyTurn && !infiniteManaActive && inHand.has("Formidable Speaker")
+      && !board.has("Formidable Speaker")
+      && !board.has("Wirewood Symbiote") && !board.has("Temur Sabertooth")) {
+
+    const _bigLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx"];
+    const _bigLandOnBoard = _bigLands.find(l => board.has(l));
+    const _bigLandMana = _bigLandOnBoard
+      ? (_bigLandOnBoard === "Gaea's Cradle" || _bigLandOnBoard === "Itlimoc, Cradle of the Sun"
+          ? creaturesOnBoard
+          : Math.max(0, battlefield.reduce((s,c) => s + (getCard(c)?.greenPips ?? 0), 0) - 2))
+      : 0;
+
+    const _BIG_DORK_NAMES = new Set([
+      "Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+      "Karametra's Acolyte","Wirewood Channeler","Selvala, Heart of the Wilds",
+      "Fanatic of Rhonas","Marwyn, the Nurturer",
+    ]);
+    const _bigDork = battlefield.find(c =>
+      _BIG_DORK_NAMES.has(c) && !sickCreatures?.has?.(c));
+    const _elfCount = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+    const _bigDorkMana = !_bigDork ? 0
+      : _bigDork === "Karametra's Acolyte"
+          ? Math.max(0, battlefield.reduce((s,c) => s + (getCard(c)?.greenPips ?? 0), 0) - 2)
+      : _bigDork === "Circle of Dreams Druid" ? creaturesOnBoard
+      : _bigDork === "Selvala, Heart of the Wilds" ? Math.max(0, creaturesOnBoard - 1)
+      : _elfCount;
+
+    const _discardTarget = hand.find(c => c !== "Formidable Speaker");
+
+    const _isCradle = _bigLandOnBoard === "Gaea's Cradle" || _bigLandOnBoard === "Itlimoc, Cradle of the Sun";
+    const _loopMana = _bigLandMana + (_isCradle ? 3 : 0);
+    const _infiniteLoopViable = _loopMana >= 6;
+
+    if (_bigLandOnBoard && _bigDork && _bigDorkMana >= 2
+        && _discardTarget && (maxGreen + _bigDorkMana) >= 11) {
+      results.push({
+        priority: _infiniteLoopViable ? 14 : 12,
+        category: _infiniteLoopViable ? "⚡ SPEAKER → INFINITE" : "⚡ SPEAKER CHAIN",
+        combo: "speaker_symbiote_temur_chain",
+        headline: `Speaker → Symbiote → Temur${_infiniteLoopViable ? ": infinite mana this turn" : " chain"}`,
+        detail: `Cast Formidable Speaker → ETB finds Wirewood Symbiote. Symbiote bounces Speaker → untaps ${_bigDork}. Retap ${_bigDork} (${_bigDorkMana}G) → recast Speaker → ETB finds Temur Sabertooth. Now Temur+Speaker+${_bigLandOnBoard}: bounce Speaker for ${_loopMana}G net per cycle → INFINITE MANA. Find Duskwatch → WIN.`,
+        steps: [
+          `Cast Formidable Speaker ({2}{G}). ETB: discard ${_discardTarget} → find Wirewood Symbiote.`,
+          `Cast Wirewood Symbiote ({G}). Return Speaker (elf) to hand → untap ${_bigDork}.`,
+          `Tap ${_bigDork} again (${_bigDorkMana}G). Cast Formidable Speaker ({2}{G}). ETB: discard a card → find Temur Sabertooth.`,
+          `Cast Temur Sabertooth ({2}{G}{G}).`,
+          `Loop: Temur {1}{G}: bounce Speaker → recast ({2}{G}) → ETB untaps ${_bigLandOnBoard} → tap for ${_loopMana}G. Net +${_loopMana - 5}G per cycle → INFINITE MANA.`,
+          `With infinite mana: find Duskwatch Recruiter → activate → draw library → WIN.`,
+        ],
+        color: "#c084fc",
+      });
+    }
+  }
+
+  // ── SPEAKER → SYMBIOTE: SETUP NEXT TURN ────────────────────────────────
+  // Even when we can't afford the full Speaker→Symbiote→Temur chain this turn,
+  // casting Speaker to find Wirewood Symbiote is still correct: Symbiote on board means
+  // next turn we can bounce Speaker with Symbiote → re-tap big dork → recast Speaker →
+  // find Temur → run the infinite loop. The key insight: getting Symbiote into play NOW
+  // costs only Speaker(3G) + Symbiote(1G) = 4G, and sets up a near-certain win next turn.
+  // Fires when: Speaker in hand + big dork on board + can afford Speaker+Symbiote (≥4G)
+  //             + the full chain is NOT already firing (maxGreen+bigDork < 11)
+  //             + Symbiote not already on board (no need to fetch)
+  if (isMyTurn && !infiniteManaActive && inHand.has("Formidable Speaker")
+      && !board.has("Formidable Speaker") && !board.has("Wirewood Symbiote")
+      && !board.has("Temur Sabertooth")) {
+    // Reuse _bigDork detection inline
+    const _sBigDorkNames = new Set([
+      "Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+      "Karametra's Acolyte","Wirewood Channeler","Selvala, Heart of the Wilds",
+      "Fanatic of Rhonas","Marwyn, the Nurturer",
+    ]);
+    const _sBigDork = battlefield.find(c => _sBigDorkNames.has(c) && !sickCreatures?.has?.(c));
+    const _sElfCount = battlefield.filter(c => getCard(c)?.tags?.includes("elf")).length;
+    const _sBigDorkMana = !_sBigDork ? 0
+      : _sBigDork === "Karametra's Acolyte"
+          ? Math.max(0, battlefield.reduce((s,c) => s + (getCard(c)?.greenPips ?? 0), 0) - 2)
+      : _sBigDork === "Circle of Dreams Druid" ? creaturesOnBoard
+      : _sBigDork === "Selvala, Heart of the Wilds" ? Math.max(0, creaturesOnBoard - 1)
+      : _sElfCount;
+    // Only show this advice when the full chain can't fire (to avoid duplication)
+    const _sFullChainViable = _sBigDork && (maxGreen + _sBigDorkMana) >= 11;
+    const _sCanAffordSetup = maxGreen >= 4; // Speaker(3G) + Symbiote(1G)
+    const _sDiscardTarget = hand.find(c => c !== "Formidable Speaker");
+
+    if (_sBigDork && _sBigDorkMana >= 2 && _sCanAffordSetup
+        && _sDiscardTarget && !_sFullChainViable) {
+      const _sBigLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx"];
+      const _sBigLand = _sBigLands.find(l => board.has(l));
+      results.push({
+        priority: 11,
+        category: "⏭️ SPEAKER SETUP",
+        combo: "speaker_symbiote_setup",
+        headline: `Cast Speaker → find Symbiote → next turn: Symbiote bounces Speaker → Temur → infinite`,
+        detail: `Not enough mana for the full chain this turn (need maxMana + ${_sBigDorkMana} ≥ 11). But cast Speaker now (ETB finds Wirewood Symbiote), then cast Symbiote. Next turn: Symbiote bounces Speaker → untaps ${_sBigDork} → recast Speaker → ETB finds Temur Sabertooth → run the Temur+Speaker+${_sBigLand ?? "big land"} infinite loop.`,
+        steps: [
+          `Cast Formidable Speaker ({2}{G}). ETB: discard ${_sDiscardTarget} → find Wirewood Symbiote → hand.`,
+          `Cast Wirewood Symbiote ({G}). Now both are on board.`,
+          `NEXT TURN: Symbiote ability → return Speaker (elf) to hand → untap ${_sBigDork}.`,
+          `Tap ${_sBigDork} (${_sBigDorkMana}G)${_sBigLand ? ` + tap ${_sBigLand}` : ""}. Cast Formidable Speaker ({2}{G}).`,
+          `Speaker ETB: discard a card → find Temur Sabertooth. Cast Temur ({2}{G}{G}).`,
+          `Temur+Speaker infinite loop → find Duskwatch → WIN next turn.`,
+        ],
+        color: "#a855f7",
+      });
+    }
+  }
+
+  // ── SPEAKER → SOWING MYCOSPAWN: LAND RAMP ──────────────────────────────
+  // When we need a big mana land (Cradle/Nykthos not yet on board) and can't combo yet,
+  // Speaker's ETB can find Sowing Mycospawn. On-cast, Mycospawn tutors any land directly
+  // onto the battlefield — so it fetches Gaea's Cradle or Nykthos, Shrine to Nyx.
+  // With Cradle/Nykthos in play, the next Speaker cast can often assemble the full combo.
+  // Fires when: Speaker in hand + no Cradle/Nykthos on board + enough mana for Speaker+Mycospawn
+  //             + Mycospawn is in the library (it's in the deck)
+  if (isMyTurn && !infiniteManaActive && inHand.has("Formidable Speaker")
+      && !board.has("Formidable Speaker")
+      && !board.has("Gaea's Cradle") && !board.has("Itlimoc, Cradle of the Sun")
+      && !board.has("Nykthos, Shrine to Nyx")
+      && !inHand.has("Sowing Mycospawn")) {
+    // Speaker(3G) + Mycospawn(4G) = 7G minimum
+    const _mDiscardTarget = hand.find(c => c !== "Formidable Speaker");
+    const _mBigDorkPresent = battlefield.some(c => {
+      const cd = getCard(c);
+      return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork")
+              || ["Priest of Titania","Elvish Archdruid","Circle of Dreams Druid",
+                  "Karametra's Acolyte","Wirewood Channeler"].includes(c))
+             && !sickCreatures?.has?.(c);
+    });
+    if (_mDiscardTarget && maxGreen >= 7) {
+      results.push({
+        priority: _mBigDorkPresent ? 10 : 9,
+        category: "🌿 SPEAKER RAMP",
+        combo: "speaker_mycospawn_ramp",
+        headline: `Cast Speaker → find Sowing Mycospawn → fetch Gaea's Cradle${_mBigDorkPresent ? " → enables combo next turn" : ""}`,
+        detail: `No big mana land yet. Cast Formidable Speaker (ETB: find Sowing Mycospawn). Cast Mycospawn ({3}{G}): on-cast trigger fetches any land directly onto the battlefield — get Gaea's Cradle or Nykthos, Shrine to Nyx. With a big dork${_mBigDorkPresent ? " already on board" : ""}, the next Speaker cast can assemble the Symbiote→Temur infinite chain.`,
+        steps: [
+          `Cast Formidable Speaker ({2}{G}). ETB: discard ${_mDiscardTarget} → find Sowing Mycospawn → hand.`,
+          `Cast Sowing Mycospawn ({3}{G}). On-cast: search library for a land → put onto battlefield.`,
+          `Fetch Gaea's Cradle (or Nykthos, Shrine to Nyx if Cradle unavailable).`,
+          ..._mBigDorkPresent
+            ? [`Next turn: big mana land + big dork in play → cast Speaker again → Symbiote → Temur → infinite mana → WIN.`]
+            : [`Next turn: with Cradle/Nykthos + a big dork, cast Speaker → Symbiote → Temur → infinite.`],
+        ],
+        color: "#22c55e",
+      });
+    }
+  }
   // #8: Eladamri plays creatures from the top of library. Beast Whisperer draws on each
   // creature cast. The chain: cast top creature → draw → see new top → cast that too.
   // This is a powerful storm engine that can chain through multiple creatures per turn.
@@ -7101,6 +7259,37 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ],
         color: "#27ae60",
       });
+    }
+  }
+
+  // ---- DESTINY SPINNER / BADGERMOLE CUB: ANIMATE CRADLE OR NYKTHOS ----
+  // Destiny Spinner {2}{G}: target land becomes a 3/3 creature with haste until EOT.
+  // With Gaea's Cradle or Nykthos on board this is a significant mana accelerant.
+  // Net mana for animating Cradle: Cradle taps for (N+1)G; cost is 3G; net positive when N >= 3.
+  if (board.has("Destiny Spinner") && !sickCreatures?.has?.("Destiny Spinner")) {
+    const _dsHasCradle  = board.has("Gaea's Cradle") || board.has("Itlimoc, Cradle of the Sun");
+    const _dsHasNykthos = board.has("Nykthos, Shrine to Nyx");
+    if ((_dsHasCradle || _dsHasNykthos) && maxGreen >= 3) {
+      const bigLand = _dsHasCradle ? "Gaea's Cradle" : "Nykthos, Shrine to Nyx";
+      const afterAnim = creaturesOnBoard + 1; // animated land counts itself as a creature
+      const netMana = afterAnim - 3; // Cradle taps for afterAnim, activation costs 3G
+      if (netMana > 0) {
+        const hasQuirion = board.has("Quirion Ranger") || board.has("Scryb Ranger");
+        results.push({
+          priority: netMana >= 4 ? 9 : 7,
+          category: "🌿 MANA BOOST",
+          headline: `Destiny Spinner: animate ${bigLand} → tap for ${afterAnim} mana (net +${netMana}G)`,
+          detail: `Activate Destiny Spinner ({2}{G}): ${bigLand} becomes a 3/3 with haste and counts as a creature. It can tap immediately for ${afterAnim} mana (${creaturesOnBoard} existing creatures + itself). Activation costs 3G → net +${netMana} mana this turn.${hasQuirion ? " With Quirion/Scryb Ranger, bounce the animated land as a Forest to untap another creature." : ""}`,
+          steps: [
+            `Activate Destiny Spinner: pay {2}{G}, target ${bigLand}.`,
+            `${bigLand} becomes a 3/3 Elemental creature-land with haste (still a Forest).`,
+            `Tap ${bigLand} for ${afterAnim} mana (counts all ${creaturesOnBoard} other creatures + itself = ${afterAnim}).`,
+            `Net gain: ${afterAnim}G tapped − 3G activation cost = +${netMana}G.`,
+            ...(hasQuirion ? [`Quirion/Scryb Ranger: return the now-Forest animated land to hand → untap another creature.`] : []),
+          ],
+          color: "#27ae60",
+        });
+      }
     }
   }
 
