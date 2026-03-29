@@ -347,23 +347,24 @@ const COMBOS = [
   // ── 6a. Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest ──
   {
     id: "earthcraft_ashaya_ranger",
-    name: "Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest",
+    name: "Earthcraft + Ashaya + Quirion Ranger + basic Forest",
     onBattlefield: ["Earthcraft", "Ashaya, Soul of the Wild"],
     description: "Infinite mana. Earthcraft requires a basic land target — only actual basic lands (Forest, Dryad Arbor) qualify. Yavimaya does NOT help here (it makes lands Forests, not basic). " +
-      "Loop: Earthcraft taps any creature → untaps a basic Forest → tap Forest ({G}). " +
-      "Tap a creature-Forest via Ashaya ({G}). " +
-      "Quirion/Scryb Ranger bounces itself → untaps that creature. Recast Ranger. Net {G} per loop.",
+      "Loop: Earthcraft taps the dork → untaps a basic Forest → tap Forest ({G}). " +
+      "Tap the dork AS a Forest-creature ({G}) — Ashaya makes it a Forest land. " +
+      "Quirion Ranger bounces itself (free, {G} recast) → untaps the dork. Net: +{G} per loop. " +
+      "IMPORTANT: Scryb Ranger costs {1}{G} to recast — the loop only generates 2G per cycle and costs 2G (1G + G), making it mana-neutral. Only Quirion Ranger (recast {G}) produces a net positive.",
     requires: ["Earthcraft", "Ashaya, Soul of the Wild"],
-    needsRanger: true,
+    needsQuirionOnly: true,   // Scryb recast costs {1}{G} vs Quirion's {G} — Scryb loop is mana-neutral not infinite
     needsBasicForest: true,
     priority: 9,
     type: "infinite-mana",
     lines: [
-      "Earthcraft + Ashaya + Quirion or Scryb Ranger + a basic Forest on battlefield.",
+      "Earthcraft + Ashaya + Quirion Ranger + a basic Forest on battlefield.",
       "KEY RULE: Earthcraft untaps BASIC lands only. Yavimaya makes lands Forests, not basic — it does NOT make non-basic lands valid Earthcraft targets.",
-      "Ashaya makes creatures Forest lands (not basic) — they are tapped for {G} as the loop's mana source, NOT as Earthcraft targets.",
-      "QUIRION variant: Earthcraft taps any creature → untap basic Forest → tap Forest ({G}). Tap another creature-Forest ({G}). Quirion bounces itself → untaps that creature. Recast Quirion ({G}). Net: +{G} per loop.",
-      "SCRYB variant (flash!): Same loop but Scryb costs {1}{G} to recast — needs 2 Earthcraft targets or 2 mana sources. Goes off at instant speed on any opponent's turn.",
+      "KEY RULE: Scryb Ranger costs {1}{G} to recast — the loop generates exactly 2G and costs 2G (net zero). Only Quirion Ranger ({G} recast) makes this loop infinite.",
+      "Ashaya makes creatures Forest lands — tap the dork as a Forest for {G} (in addition to the basic Forest Earthcraft untaps).",
+      "LOOP: Tap dork via Earthcraft → untap Forest → tap Forest ({G}). Tap dork as Forest ({G}). Quirion bounces itself → untaps dork. Recast Quirion ({G}). Net: +{G} per loop.",
       "Repeat for infinite green mana.",
     ]
   },
@@ -3207,6 +3208,15 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         || board.has("Scryb Ranger") || inHand.has("Scryb Ranger")
         || accessible("Quirion Ranger") || accessible("Scryb Ranger");
       if (!hasRanger) return { ok: false, missing: "Quirion Ranger or Scryb Ranger" };
+    }
+
+    // needsQuirionOnly: Earthcraft+Ashaya loop requires Quirion Ranger specifically.
+    // Scryb Ranger costs {1}{G} to recast — loop generates 2G and costs 2G (net zero, not infinite).
+    // Quirion costs {G} to recast — net +{G} per cycle = infinite.
+    if (combo.needsQuirionOnly) {
+      const hasQuirion = board.has("Quirion Ranger") || inHand.has("Quirion Ranger")
+        || accessible("Quirion Ranger");
+      if (!hasQuirion) return { ok: false, missing: "Quirion Ranger (Scryb Ranger costs {1}{G} to recast — loop is mana-neutral, not infinite)" };
     }
 
     // needsCardInGraveyard: a specific card must be in the graveyard (e.g. for Shifting Woodland)
@@ -11362,6 +11372,44 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Return an elf to untap a big dork → tap dork for mana → effectively +1 to +N mana net.
   // Not infinite, but can unlock a spell that's just barely unaffordable.
   // Also: untap a mana dork that was spent on turn 1, giving it another activation.
+  // ---- DISCIPLE OF FREYALISE (non-infinite: draw outlet on active board) ----
+  // With Disciple on board and a meaningful creature to sacrifice, show as a draw engine.
+  // Only fire when infinite is NOT active (infinite paths handle it above).
+  if (board.has("Disciple of Freyalise") && !sickCreatures?.has("Disciple of Freyalise")
+      && !infiniteManaActive
+      && !results.some(r => r.combo === "disciple_loop" || r.combo === "disciple_single_draw" || r.combo === "disciple_draw_outlet")) {
+    const KNOWN_POWERS = { "Kogla, the Titan Ape":7,"Woodland Bellower":6,"Regal Force":5,
+      "Ashaya, Soul of the Wild":5,"Temur Sabertooth":4,"Priest of Titania":3,
+      "Elvish Archdruid":3,"Circle of Dreams Druid":3 };
+    const sacrificeable = battlefield.filter(c =>
+      c !== "Disciple of Freyalise" && getCard(c)?.type === "creature" && !sickCreatures?.has(c)
+    );
+    // Only recommend if we have a target with power ≥ 2 (not tiny 1/1 dorks)
+    const bigTarget = sacrificeable.reduce((best, c) => {
+      const pow = KNOWN_POWERS[c] ?? Math.max(1, getCard(c)?.cmc ?? 1);
+      const bestPow = best ? (KNOWN_POWERS[best] ?? Math.max(1, getCard(best)?.cmc ?? 1)) : 0;
+      return pow > bestPow ? c : best;
+    }, null);
+    const bigPow = bigTarget ? (KNOWN_POWERS[bigTarget] ?? Math.max(1, getCard(bigTarget)?.cmc ?? 1)) : 0;
+    if (bigTarget && bigPow >= 2) {
+      results.push({
+        priority: 6,
+        category: "🔄 ENGINE",
+        combo: "disciple_draw_outlet",
+        headline: `Disciple of Freyalise: {T}, sacrifice ${bigTarget} → draw ${bigPow} cards`,
+        detail: `Disciple of Freyalise's activated ability: {T}, sacrifice a creature you control → gain X life and draw X cards (X = that creature's power). Sacrificing ${bigTarget} draws ${bigPow} cards. Add Temur Sabertooth and infinite mana to loop Disciple for a full library draw.`,
+        steps: [
+          `Tap Disciple of Freyalise: sacrifice ${bigTarget} (power ${bigPow}) → gain ${bigPow} life and draw ${bigPow} cards.`,
+          sacrificeable.length > 1
+            ? `You have ${sacrificeable.length} creatures available — prioritise highest power for maximum draw.`
+            : "",
+          "With Temur Sabertooth and infinite mana: bounce and recast Disciple to loop for a full library draw.",
+        ].filter(Boolean),
+        color: "#9b59b6",
+      });
+    }
+  }
+
   if (board.has("Wirewood Symbiote") && !sickCreatures?.has("Wirewood Symbiote") && !infiniteManaActive) {
     const elfToReturn = battlefield.find(c =>
       c !== "Wirewood Symbiote"
@@ -13692,6 +13740,21 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       } else if (!hasRanger) return null;
     }
 
+    // Quirion-only requirement (Earthcraft+Ashaya loop).
+    // Scryb Ranger costs {1}{G} to recast — loop is mana-neutral (2G generated, 2G spent). Not infinite.
+    // Quirion Ranger costs {G} to recast — net +{G} per cycle. Infinite.
+    if (combo.needsQuirionOnly) {
+      const hasQuirion = pool.have.has("Quirion Ranger");
+      if (!hasQuirion && depth < 3) {
+        const c = "Quirion Ranger";
+        if (!inDeckFn(c) || !availableTutors.some(t => tutorCanFind(t, c, pool.usedGraveyard))) return null;
+        const tutor = availableTutors.find(t => tutorCanFind(t, c, pool.usedGraveyard));
+        extraSteps.push({ tutor: tutor.name, target: c, mana: tutorCost(tutor, c),
+          note: tutor.note, isExtra: true, label: "ranger" });
+        extraMana += tutorCost(tutor, c);
+      } else if (!hasQuirion) return null;
+    }
+
     // One-drop elf requirement
     if (combo.needsOneDrop) {
       const hasOne = [...pool.have].some(c =>
@@ -14132,6 +14195,10 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
           if (combo.needsRanger) {
             const r = ["Quirion Ranger","Scryb Ranger"].find(c => inHand.has(c) && !board.has(c));
             if (r) candidates.push(r);
+          }
+          if (combo.needsQuirionOnly) {
+            if (inHand.has("Quirion Ranger") && !board.has("Quirion Ranger"))
+              candidates.push("Quirion Ranger");
           }
           if (combo.needsAlsoBouncer) {
             const b = ["Temur Sabertooth","Kogla, the Titan Ape"].find(c => inHand.has(c) && !board.has(c));
@@ -17582,9 +17649,6 @@ function extractPlayableCard(result, hand, battlefield) {
   // Limit to headline + first 2 steps only — later steps describe future plays, not what to cast now
   const earlyText = [result.headline, ...(result.steps ?? []).slice(0, 2), result.category]
     .filter(Boolean).join(" ");
-  // Full text for fallback matching (all steps)
-  const allText  = [result.headline, ...(result.steps ?? []), result.category]
-    .filter(Boolean).join(" ");
 
   // 1. Direct name match in first step or headline
   for (const card of hand) {
@@ -17597,11 +17661,9 @@ function extractPlayableCard(result, hand, battlefield) {
   // 2b. Short-name match — two strategies:
   //   a) Split on comma: "Ashaya, Soul of the Wild" → "Ashaya"
   //   b) First word, stripped of trailing punctuation: "Duskwatch Recruiter" → "Duskwatch"
-  //      "Ashaya, Soul of the Wild".split(' ')[0] = "Ashaya," — strip the comma.
-  //   Both must be ≥ 4 chars to avoid false positives.
   for (const card of hand) {
-    const byComma = card.split(",")[0].split(" (")[0];           // "Ashaya"
-    const byWord  = card.split(" ")[0].replace(/[^a-zA-Z]/g, ""); // "Duskwatch", "Ashaya"
+    const byComma = card.split(",")[0].split(" (")[0];
+    const byWord  = card.split(" ")[0].replace(/[^a-zA-Z]/g, "");
     for (const short of [byComma, byWord]) {
       if (short.length >= 4 && earlyText.includes(short)) return card;
     }
@@ -17612,14 +17674,11 @@ function extractPlayableCard(result, hand, battlefield) {
   const combined = cat + " " + hl;
   const boardSet = new Set(battlefield);
 
-  // ONE PIECE AWAY advice: the missing piece is in the library, not hand.
-  // Check if any card in hand is a key enabler for the combo mentioned in the headline.
-  // E.g. advice says "Find Wirewood Symbiote" — Temur Sabertooth in hand enables the loop.
+  // ONE PIECE AWAY: missing piece is in library — cast hand enablers proactively
   if (combined.includes("one piece away") || combined.includes("find ")) {
-    // Combo enablers worth casting proactively: bouncer/haste engines, key dorks
     const COMBO_ENABLERS = [
       "Temur Sabertooth","Kogla, the Titan Ape",
-      "Ashaya, Soul of the Wild","Earthcraft","Concordant Crossroads",
+      "Ashaya, Soul of the Wild","Earthcraft",
       "Thousand-Year Elixir","Wirewood Symbiote",
     ];
     for (const en of COMBO_ENABLERS) {
@@ -17629,7 +17688,6 @@ function extractPlayableCard(result, hand, battlefield) {
 
   // "Cast to enable" / "Cast pieces" → prefer combo pieces in hand that aren't on board
   if (combined.includes("cast") && (combined.includes("enable") || combined.includes("pieces"))) {
-    // Priority: Ashaya > rangers > big dorks > other combo
     const priority = ["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger",
       "Argothian Elder","Wirewood Symbiote","Formidable Speaker"];
     for (const p of priority) {
@@ -18410,12 +18468,23 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
         // Win not actually achievable this turn — fall through and keep playing
       }
 
-      // NOTE: A "WIN NEXT TURN" advisor result is NOT sufficient to record a win.
-      // The sim only records winTurn when the win is executable this turn (WIN NOW / CAST TO WIN).
-      // If infinite mana is established but the outlet requires another turn, the sim continues
-      // playing until it can actually close — this gives accurate turn-of-win accounting.
+      // Secondary win check: infinite mana is running but the outlet (Duskwatch) requires
+      // one more turn (e.g. Fauna Shaman just entered sick, Worldly Tutor on top of library).
+      // If we have infinite + a "WIN NEXT TURN" bespoke result, count as won next turn.
+      if (winTurn === null && analysis.infiniteManaActive) {
+        const nextTurnWin = (analysis.results ?? []).find(r =>
+          !r.isSuppressed && r.category?.includes("NEXT TURN") &&
+          (r.category?.includes("WIN") || r.category?.includes("⏭️")));
+        if (nextTurnWin && turn > 1) {
+          winTurn = turn + 1;
+          winCombo = extractComboLabel(nextTurnWin) ?? "Next-turn win";
+          winBattlefield = [...battlefield];
+          winGraveyard   = [...graveyard];
+          break;
+        }
+      }
 
-            // Tertiary win path: infinite mana running but no WIN result and no tutor was recommended.
+      // Tertiary win path: infinite mana running but no WIN result and no tutor was recommended.
       // The INFINITE MANA ONLINE card is informational — it doesn't play a card.
       // When infinite is confirmed, directly seek a Duskwatch tutor from hand to close.
       // This avoids the sim wasting turns casting useless utility cards when infinite is live.
@@ -18490,12 +18559,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
       let played = false;
 
       // Hard never-cast list — stax pieces shut off our own fast mana in goldfish.
-      // This guard runs before EVERY cast path (advice-driven, fallback scorer, T1 fast-path).
-      const SIM_NEVER_CAST = new Set(["Collector Ouphe","Null Rod","Root Maze",
-        "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+      const SIM_NEVER_CAST = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
 
       if (cardToPlay && SIM_NEVER_CAST.has(cardToPlay)) {
-        // Advice resolved to a stax piece — skip it and let the fallback scorer find something better
         played = false;
       } else if (cardToPlay) {
         const idx = hand.indexOf(cardToPlay);
@@ -18507,6 +18573,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           battlefield.filter(c => getCard(c)?.type === "land").length < 2;
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
           !simHasValidSacTarget(battlefield, sickSet, analysis.infiniteManaActive ?? false);
+        // Never proactively cast stax pieces — they shut off our own fast mana in goldfish.
         if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature) {
           // Hold tutors only when we genuinely can't act on what they find (mana-based check)
           const holdIt = isTutor && shouldHoldTutor(cardToPlay, mana);
@@ -18710,9 +18777,8 @@ function scoreTutorTargets(library, battlefield, hand, sickSet, opts = {}) {
     if (nonHuman && HUMAN.has(c)) return false;
     if (nonLegendary && LEGENDARY.has(c)) return false;
     if ((cd.cmc ?? 0) > maxCmc || (cd.cmc ?? 0) < minCmc) return false;
-    // Never tutor stax pieces in the sim — they shut off our own fast mana
-    const SIM_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze",
-      "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+    // Never tutor stax pieces in sim
+    const SIM_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
     if (SIM_STAX.has(c)) return false;
     return true;
   });
@@ -19035,8 +19101,7 @@ function simActivateAbilities(simState, manaPool) {
       return activated;
     } else if (!used.has("Duskwatch")) {
       // Without infinite: once per turn
-      const SIM_STAX_D = new Set(["Collector Ouphe","Null Rod","Root Maze",
-        "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+      const SIM_STAX_D = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
       const top3 = library.slice(0, Math.min(3, library.length));
       const creature = top3.find(c => getCard(c)?.type === "creature" && !SIM_STAX_D.has(c));
       if (creature) {
@@ -19097,8 +19162,7 @@ function simActivateAbilities(simState, manaPool) {
       }
       if (!found) {
         // No priority target — grab any non-stax creature not on board
-        const SIM_STAX_SP = new Set(["Collector Ouphe","Null Rod","Root Maze",
-          "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+        const SIM_STAX_SP = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
         found = library.find(c => getCard(c)?.type === "creature" && !board.has(c) && !SIM_STAX_SP.has(c)) ?? null;
       }
       if (!found) break;
@@ -19153,9 +19217,11 @@ function simActivateAbilities(simState, manaPool) {
   if (board.has("Yisan, the Wanderer Bard") && !sickSet.has("Yisan, the Wanderer Bard") && !used.has("Yisan") && manaPool.green >= 1 && manaPool.total >= 3) {
     const verse = (simState.yisanCounters ?? 0) + 1;
     simState.yisanCounters = verse;
+    const SIM_STAX_Y = new Set(["Collector Ouphe","Null Rod","Root Maze",
+      "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
     const target = library.find(c => {
       const cd = getCard(c);
-      return cd?.type === "creature" && (cd.cmc ?? 0) === verse && !board.has(c);
+      return cd?.type === "creature" && (cd.cmc ?? 0) === verse && !board.has(c) && !SIM_STAX_Y.has(c);
     });
     if (target) {
       library.splice(library.indexOf(target), 1);
@@ -19223,7 +19289,8 @@ function simActivateAbilities(simState, manaPool) {
         while (safetyLimit-- > 0 && library.length > 0) {
           const topCard = library[0];
           const topData = getCard(topCard);
-          if (topData?.type === "creature") {
+          const ELADAMRI_STAX = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+          if (topData?.type === "creature" && !ELADAMRI_STAX.has(topCard)) {
             library.shift();
             battlefield.push(topCard);
             sickSet.add(topCard);
@@ -19231,7 +19298,7 @@ function simActivateAbilities(simState, manaPool) {
             activated = true;
             if (WIN_PIECES.has(topCard)) break; // found a win piece
           } else {
-            // Non-creature on top: move to bottom and keep digging
+            // Non-creature or stax on top: move to bottom and keep digging
             library.push(library.shift());
           }
         }
@@ -19243,7 +19310,9 @@ function simActivateAbilities(simState, manaPool) {
     if (library.length > 0) {
       const topCard = library[0];
       const topData = getCard(topCard);
-      if (topData?.type === "creature" && (topData.cmc ?? 99) <= manaPool.total && manaPool.green >= (topData.greenPips ?? 0)) {
+      const ELADAMRI_STAX_N = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+      if (topData?.type === "creature" && !ELADAMRI_STAX_N.has(topCard) &&
+          (topData.cmc ?? 99) <= manaPool.total && manaPool.green >= (topData.greenPips ?? 0)) {
         // Cast from library top
         library.shift();
         battlefield.push(topCard);
@@ -19600,14 +19669,9 @@ function simActivateAbilities(simState, manaPool) {
 // Takes a mutable simState object so this can be unit-tested independently.
 // simState: { hand, battlefield, graveyard, library, sickSet, landPlayed, castLog }
 function simPlayCard(card, idx, simState, manaPool = null) {
-  // Hard never-cast: stax pieces shut off our own fast mana — refuse at the lowest level.
-  // This catches any path that bypasses the turn-loop guards (advice, fallback, ETB chains).
-  const _SIM_STAX_HARD = new Set(["Collector Ouphe","Null Rod","Root Maze",
-    "Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
-  if (_SIM_STAX_HARD.has(card)) {
-    // Put card back — do NOT splice from hand
-    return;
-  }
+  // Hard never-cast: stax pieces shut off our own fast mana.
+  const _SIM_STAX_HARD = new Set(["Collector Ouphe","Null Rod","Root Maze","Thorn of Amethyst","Trinisphere","Orb of Dreams","Vexing Bauble"]);
+  if (_SIM_STAX_HARD.has(card)) return;
   const { hand, battlefield, graveyard, library, sickSet, castLog } = simState;
   hand.splice(idx, 1);
   const cardType = getCard(card)?.type ?? "";
@@ -22405,7 +22469,7 @@ function GoldfishSaveLoad({
   React.useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
 
   const handleSave = () => {
-    const label = name.trim() || `T${turnRef.current} – ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    const label = name.trim() || `T${turnRef.current} \u2013 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     goldfishSave(label);
     setName("");
   };
@@ -22413,7 +22477,7 @@ function GoldfishSaveLoad({
   const handleLoad = (slot) => {
     goldfishRestoreSnapshot(slot.snap);
     setShowSaveLoad(false);
-    addLog(`Loaded save: “${slot.label}”`, COLORS.gold);
+    addLog(`Loaded save: \u201c${slot.label}\u201d`, COLORS.gold);
   };
 
   const handleDelete = async (ts) => {
@@ -22432,9 +22496,9 @@ function GoldfishSaveLoad({
 
   const slotPreview = (snap) => {
     const parts = [];
-    if (snap?.hand?.length)        parts.push(`Hand: ${snap.hand.slice(0,3).join(", ")}${snap.hand.length > 3 ? "…" : ""}`);
-    if (snap?.battlefield?.length) parts.push(`Board: ${snap.battlefield.filter(c => getCard(c)?.type === "creature").slice(0,2).join(", ")}…`);
-    return parts.join(" · ") || "Empty board";
+    if (snap?.hand?.length)        parts.push(`Hand: ${snap.hand.slice(0,3).join(", ")}${snap.hand.length > 3 ? "\u2026" : ""}`);
+    if (snap?.battlefield?.length) parts.push(`Board: ${snap.battlefield.filter(c => getCard(c)?.type === "creature").slice(0,2).join(", ")}\u2026`);
+    return parts.join(" \u00b7 ") || "Empty board";
   };
 
   return (
@@ -22452,14 +22516,14 @@ function GoldfishSaveLoad({
         <div style={{ padding: "16px 20px 12px", borderBottom: `1px solid ${COLORS.border}`,
                       display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ flex: 1, fontFamily: "'Cinzel', serif", fontSize: "14px", color: COLORS.text }}>
-            💾 Goldfish Saves
+            \uD83D\uDCBE Goldfish Saves
           </div>
           <div style={{ color: COLORS.textDim, fontSize: "10px", fontFamily: "'Cinzel', serif",
                         letterSpacing: "1px" }}>Shift+S</div>
           <button onClick={() => setShowSaveLoad(false)} style={{
             background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px",
             color: COLORS.textDim, cursor: "pointer", fontSize: "13px", padding: "3px 9px", flexShrink: 0,
-          }}>✕</button>
+          }}>\u2715</button>
         </div>
 
         {/* Save row */}
@@ -22470,7 +22534,7 @@ function GoldfishSaveLoad({
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSave()}
-            placeholder={`T${turnRef.current} – snapshot name (optional)…`}
+            placeholder={`T${turnRef.current} \u2013 snapshot name (optional)\u2026`}
             style={{
               flex: 1, background: "#0a150a", border: `1px solid ${COLORS.border}`,
               borderRadius: "4px", color: COLORS.text, fontFamily: "'Crimson Text', serif",
@@ -22488,7 +22552,7 @@ function GoldfishSaveLoad({
         <div style={{ overflowY: "auto", flex: 1, padding: "10px 16px" }}>
           <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif",
                         fontSize: "11px", marginBottom: "8px" }}>
-            Up to {MAX_SAVE_SLOTS} saves — the oldest is automatically removed when the limit is reached.
+            Up to {MAX_SAVE_SLOTS} saves \u2014 the oldest is automatically removed when the limit is reached.
           </div>
           {saveSlots.length === 0 ? (
             <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif",
@@ -22501,7 +22565,6 @@ function GoldfishSaveLoad({
               padding: "10px 12px", borderRadius: "6px", marginBottom: "6px",
               background: "#0a150a", border: `1px solid ${COLORS.border}`,
             }}>
-              {/* Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: "'Cinzel', serif", fontSize: "12px",
                               color: COLORS.textMid, marginBottom: "2px",
@@ -22517,7 +22580,7 @@ function GoldfishSaveLoad({
                       borderRadius: "3px", padding: "1px 5px", letterSpacing: "0.5px",
                       fontFamily: "'Cinzel', serif", flexShrink: 0, whiteSpace: "nowrap",
                     }}>
-                      {activeDeck && slot.snap.deckId !== activeDeck.id ? "⚠ " : ""}{slot.snap.deckName}
+                      {activeDeck && slot.snap.deckId !== activeDeck.id ? "\u26a0 " : ""}{slot.snap.deckName}
                     </span>
                   )}
                 </div>
@@ -22527,16 +22590,14 @@ function GoldfishSaveLoad({
                 </div>
                 <div style={{ fontSize: "10px", color: COLORS.textDim, marginTop: "2px" }}>
                   {formatTime(slot.ts)}
-                  {slot.snap?.turnNumber > 1 && ` · Turn ${slot.snap.turnNumber}`}
+                  {slot.snap?.turnNumber > 1 && ` \u00b7 Turn ${slot.snap.turnNumber}`}
                 </div>
               </div>
-              {/* Load */}
               <button onClick={() => handleLoad(slot)} style={{
                 background: "#1a3a1a", border: `1px solid ${COLORS.green1}44`,
                 borderRadius: "4px", color: COLORS.textMid, cursor: "pointer",
                 fontSize: "11px", padding: "4px 10px", flexShrink: 0,
               }}>Load</button>
-              {/* Delete */}
               {confirmDel === slot.ts ? (
                 <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
                   <button onClick={() => handleDelete(slot.ts)} style={{
@@ -22553,7 +22614,7 @@ function GoldfishSaveLoad({
                   background: "none", border: "1px solid #5a1a1a", borderRadius: "4px",
                   color: "#e74c3c66", cursor: "pointer", fontSize: "11px",
                   padding: "4px 8px", flexShrink: 0,
-                }}>✕</button>
+                }}>\u2715</button>
               )}
             </div>
           ))}
@@ -22562,7 +22623,6 @@ function GoldfishSaveLoad({
     </div>
   );
 }
-
 
 function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   useEscapeStack(onClose);
@@ -22923,7 +22983,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   async function goldfishSave(slotLabel) {
     const snap = captureSnapshot();
     const ts = Date.now();
-    const label = slotLabel || `T${snap.turnNumber} – ${new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    const label = slotLabel || `T${snap.turnNumber} \u2013 ${new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     let slots;
     try {
       const raw = await storage.get(GOLDFISH_SAVE_KEY);
@@ -22964,7 +23024,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setMulliganCount(snap.mulliganCount ?? 0);
     setGameNotes(snap.gameNotes ?? "");
     setLog(snap.log ?? []);
-    undoStack.current = []; // clear undo — clean slate after load
+    undoStack.current = []; // clear undo after load
   }
 
   async function goldfishDeleteSlot(idx) {
@@ -24197,9 +24257,6 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       }
     } else if (type === "creature" || type === "enchantment" || type === "artifact" || type === "planeswalker" || type === "battle") {
       // ── Mox Diamond: land-picker BEFORE entering battlefield ─────────────────────
-      // Mox Diamond requires discarding a land AS A COST of entering the battlefield.
-      // Show the picker first — only add to battlefield if a land is discarded.
-      // If the player declines or has no land, Mox goes to graveyard instead.
       if (card === "Mox Diamond") {
         const landsInHand = hand.filter(c => getCard(c)?.type === "land");
         if (landsInHand.length > 0) {
@@ -24260,8 +24317,7 @@ if (card === "Chrome Mox") {
 if (card === "Lotus Petal") {
   addLog(`Lotus Petal entered the battlefield. Right-click → sacrifice for {G}.`, COLORS.gold);
 }
-// Mox Diamond is now fully handled in castFromHand before goldfishAddToBattlefield.
-// The picker fires before Mox enters, so no ETB handling needed here.
+// Mox Diamond is handled in castFromHand before goldfishAddToBattlefield. No ETB handling needed.
 // Sowing Mycospawn on-cast trigger: search library for any land → put onto battlefield. Library shuffled.
 if (card === "Sowing Mycospawn") {
   setTutorLandsOnly(true);
@@ -28658,7 +28714,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       );
     })()}
 
-    {/* ── Goldfish Save/Load Overlay (Shift+S) ─────────────────────────── */}
+    {/* Goldfish Save/Load Overlay (Shift+S) */}
     {showSaveLoad && (
       <GoldfishSaveLoad
         saveSlots={saveSlots} setSaveSlots={setSaveSlots} turnRef={turnRef}
@@ -28795,7 +28851,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   style={{ background: "none", border: `1px solid ${COLORS.gold}55`, borderRadius: "6px", padding: isMobile ? "4px 8px" : "5px 12px", color: `${COLORS.gold}cc`, cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px" }}
                   onMouseEnter={e => { e.target.style.background = "#1a1a0a"; e.target.style.borderColor = COLORS.gold; e.target.style.color = COLORS.gold; }}
                   onMouseLeave={e => { e.target.style.background = "transparent"; e.target.style.borderColor = `${COLORS.gold}55`; e.target.style.color = `${COLORS.gold}cc`; }}
-                >💾 {isMobile ? "" : "SAVE"}</button>
+>💾 {isMobile ? "" : "SAVE"}</button>
                 <button onClick={exportToAdvisor} style={{
                   background: "none", border: `1px solid ${COLORS.blue}`, borderRadius: "6px",
                   padding: isMobile ? "4px 8px" : "5px 12px", color: COLORS.blue, cursor: "pointer",
