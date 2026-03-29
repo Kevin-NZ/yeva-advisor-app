@@ -901,7 +901,7 @@ const COMBOS = [
       "Eternal Witness + Temur Sabertooth (or Kogla) on battlefield.",
       "Cast Infectious Bite ({1}{G}): target creature you control fights any opponent's creature. Each opponent gets 1 poison counter. (1/10)",
       "With Sabertooth: pay {1}{G} to bounce Eternal Witness. Recast Witness ({2}{G}) → ETB retrieves Infectious Bite.",
-      "With Kogla: Kogla attacks → return Eternal Witness (Human) to hand → recast Witness → retrieve Bite.",
+      "With Kogla: pay {1}{G}: Kogla returns Eternal Witness (Human) to hand → recast Witness → retrieve Bite.",
       "Repeat 10 times. All opponents accumulate 10 poison counters simultaneously and lose.",
     ]
   },
@@ -1329,7 +1329,7 @@ const COMBOS = [
       "CLEANUP PHASE: Use Infectious Bite to fight away all relevant blockers and the Beast token(s) just created.",
       "  • Each Bite cast: target one of your creatures — it fights target opponent's creature. Chosen opponent gets 1 poison counter per cast.",
       "  • Recover Bite: Sabertooth bounces Eternal Witness → recast Witness → ETB retrieves Infectious Bite. Repeat.",
-      "  • With Kogla: attack with Kogla → return Eternal Witness (Human) to hand → recast Witness → retrieve Bite.",
+      "  • With Kogla: pay {1}{G}: Kogla returns Eternal Witness (Human) to hand → recast Witness → retrieve Bite.",
       "After clearing all blockers (and incidentally accumulating poison counters), attack with your full team for lethal.",
       "NOTE: If opponents have already accumulated ≥10 poison counters during cleanup, that is also a win. Otherwise fall back to combat damage.",
       "TIP: Ram Through and Tail Swipe serve the same blocker-removal role without recursion if they are in hand and the target count is low.",
@@ -6321,7 +6321,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         detail: `Formidable Speaker's ETB tutors any creature from your library. Using ${tutorUsed} to find Speaker first is strictly better than tutoring ${best.name} directly — you get Speaker's body AND a free search for any creature. ${best.reason}.`,
         combo: "speaker_etb_tutor",
         steps: [
-          `${tutorUsed} ({G}): search library for Formidable Speaker, put it on top. ${drawNote}`,
+          tutorUsed === "Chord of Calling"
+            ? `${tutorUsed} (convoke — tap creatures to reduce cost): search library for Formidable Speaker and put it directly onto the battlefield. ${drawNote}`
+            : tutorUsed === "Summoner's Pact"
+            ? `${tutorUsed} (free — pay {2}{G}{G} at next upkeep): search library for Formidable Speaker and put it into your hand. Cast Speaker ({2}{G}) immediately.`
+            : `${tutorUsed} ({G}): search library for Formidable Speaker, put it on top of your library. ${drawNote}`,
           `Cast Formidable Speaker ({2}{G}): ETB — discard ${discardCard} → search entire library for any creature → find ${best.name}.`,
           `${best.reason.charAt(0).toUpperCase() + best.reason.slice(1)}.`,
           ...(speakerEtbTargets.length > 1
@@ -6775,7 +6779,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Condition: maxGreen + bigDorkMana >= 11.
   if (isMyTurn && !infiniteManaActive && inHand.has("Formidable Speaker")
       && !board.has("Formidable Speaker")
-      && !board.has("Wirewood Symbiote") && !board.has("Temur Sabertooth")) {
+      && !board.has("Wirewood Symbiote") && !inHand.has("Wirewood Symbiote")
+      && !board.has("Temur Sabertooth")) {
 
     const _bigLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx"];
     const _bigLandOnBoard = _bigLands.find(l => board.has(l));
@@ -6800,7 +6805,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       : _bigDork === "Selvala, Heart of the Wilds" ? Math.max(0, creaturesOnBoard - 1)
       : _elfCount;
 
-    const _discardTarget = hand.find(c => c !== "Formidable Speaker");
+    const _discardTarget = hand.find(c => c !== "Formidable Speaker" && c !== "Wirewood Symbiote")
+      ?? hand.find(c => c !== "Formidable Speaker"); // fall back if only Symbiote is available
 
     const _isCradle = _bigLandOnBoard === "Gaea's Cradle" || _bigLandOnBoard === "Itlimoc, Cradle of the Sun";
     const _loopMana = _bigLandMana + (_isCradle ? 3 : 0);
@@ -6838,6 +6844,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   //             + Symbiote not already on board (no need to fetch)
   if (isMyTurn && !infiniteManaActive && inHand.has("Formidable Speaker")
       && !board.has("Formidable Speaker") && !board.has("Wirewood Symbiote")
+      && !inHand.has("Wirewood Symbiote")
       && !board.has("Temur Sabertooth")) {
     // Reuse _bigDork detection inline
     const _sBigDorkNames = new Set([
@@ -6856,25 +6863,78 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Only show this advice when the full chain can't fire (to avoid duplication)
     const _sFullChainViable = _sBigDork && (maxGreen + _sBigDorkMana) >= 11;
     const _sCanAffordSetup = maxGreen >= 4; // Speaker(3G) + Symbiote(1G)
-    const _sDiscardTarget = hand.find(c => c !== "Formidable Speaker");
+    const _sDiscardTarget = hand.find(c => c !== "Formidable Speaker" && c !== "Wirewood Symbiote")
+      ?? hand.find(c => c !== "Formidable Speaker");
+    // Elder/Ley Weaver is a better Symbiote bounce target than a big dork (untaps 2 lands)
+    const _sHasElder = (board.has("Argothian Elder") && !sickCreatures?.has?.("Argothian Elder"))
+                     || (board.has("Ley Weaver") && !sickCreatures?.has?.("Ley Weaver"));
+    const _sElderName = board.has("Argothian Elder") && !sickCreatures?.has?.("Argothian Elder")
+                      ? "Argothian Elder" : "Ley Weaver";
+    // Big mana land also qualifies — Symbiote loop with Cradle/Nykthos generating ≥2G
+    const _sBigLandNames = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx"];
+    const _sBigLandOnBoard = _sBigLandNames.find(l => board.has(l));
+    const _sBigLandMana = _sBigLandOnBoard
+      ? (_sBigLandOnBoard === "Gaea's Cradle" || _sBigLandOnBoard === "Itlimoc, Cradle of the Sun"
+          ? creaturesOnBoard
+          : Math.max(0, battlefield.reduce((s,c) => s + (getCard(c)?.greenPips ?? 0), 0) - 2))
+      : 0;
+    const _sHasBigLand = _sBigLandOnBoard && _sBigLandMana >= 2;
+    // Any of: big dork (≥2G), Elder/Weaver (land untapper), or big mana land (≥2G) qualifies
+    const _sHasManaSource = (_sBigDork && _sBigDorkMana >= 2) || _sHasElder || _sHasBigLand;
 
-    if (_sBigDork && _sBigDorkMana >= 2 && _sCanAffordSetup
-        && _sDiscardTarget && !_sFullChainViable) {
-      const _sBigLands = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx"];
-      const _sBigLand = _sBigLands.find(l => board.has(l));
+    if (_sHasManaSource && _sCanAffordSetup && _sDiscardTarget && !_sFullChainViable) {
+      const _sBigLand = _sBigLandOnBoard; // already computed above
+      // Priority: untap target preference: Elder > bigDork > big land
+      const _sSymbioteUntapTarget = _sHasElder ? _sElderName
+        : _sBigDork ?? (_sBigLand ? "a big land (via Ashaya/untapper)" : null);
+      const _sUntapEffect = _sHasElder
+        ? `${_sElderName} taps → untaps two lands → lands re-tap for mana`
+        : _sBigDork ? `${_sBigDork} re-taps for ${_sBigDorkMana}G`
+        : `${_sBigLand} re-taps for ${_sBigLandMana}G`;
+      const _sSource = _sBigDork ?? (_sHasElder ? `${_sElderName} + big land` : _sBigLand ?? "mana source");
+      const _sUntapStep = _sHasElder
+        ? `${_sElderName} taps → untap two lands${_sBigLand ? ` (including ${_sBigLand})` : ""}. Tap lands for mana.`
+        : _sBigDork
+        ? `Tap ${_sBigDork} for ${_sBigDorkMana}G.${_sBigLand ? ` Tap ${_sBigLand} too.` : ""}`
+        : `Tap ${_sBigLand} for ${_sBigLandMana}G.`;
       results.push({
-        priority: 11,
+        priority: 13,
         category: "⏭️ SPEAKER SETUP",
         combo: "speaker_symbiote_setup",
-        headline: `Cast Speaker → find Symbiote → next turn: Symbiote bounces Speaker → Temur → infinite`,
-        detail: `Not enough mana for the full chain this turn (need maxMana + ${_sBigDorkMana} ≥ 11). But cast Speaker now (ETB finds Wirewood Symbiote), then cast Symbiote. Next turn: Symbiote bounces Speaker → untaps ${_sBigDork} → recast Speaker → ETB finds Temur Sabertooth → run the Temur+Speaker+${_sBigLand ?? "big land"} infinite loop.`,
+        headline: `Cast Speaker → find Symbiote → Symbiote bounces Speaker → re-ETB finds Temur → infinite`,
+        detail: `Cast Speaker (ETB: discard ${_sDiscardTarget} → find Wirewood Symbiote). Cast Symbiote. Next turn: Symbiote bounces Speaker (an elf) → untaps ${_sSymbioteUntapTarget ?? "mana source"} → ${_sUntapEffect}. Recast Speaker → ETB finds Temur Sabertooth. Now Temur+Speaker+${_sSource} = infinite mana loop.`,
         steps: [
           `Cast Formidable Speaker ({2}{G}). ETB: discard ${_sDiscardTarget} → find Wirewood Symbiote → hand.`,
-          `Cast Wirewood Symbiote ({G}). Now both are on board.`,
-          `NEXT TURN: Symbiote ability → return Speaker (elf) to hand → untap ${_sBigDork}.`,
-          `Tap ${_sBigDork} (${_sBigDorkMana}G)${_sBigLand ? ` + tap ${_sBigLand}` : ""}. Cast Formidable Speaker ({2}{G}).`,
-          `Speaker ETB: discard a card → find Temur Sabertooth. Cast Temur ({2}{G}{G}).`,
-          `Temur+Speaker infinite loop → find Duskwatch → WIN next turn.`,
+          `Cast Wirewood Symbiote ({G}). Both Speaker and Symbiote are now on board.`,
+          `NEXT TURN: Symbiote ability → return Speaker (elf) to hand → untap ${_sSymbioteUntapTarget ?? "mana source"}.`,
+          _sUntapStep,
+          `Recast Formidable Speaker ({2}{G}). ETB: discard a card → find Temur Sabertooth → hand.`,
+          `Cast Temur Sabertooth ({2}{G}{G}). Temur+Speaker+${_sSource} = infinite mana → find Duskwatch → WIN.`,
+        ],
+        color: "#a855f7",
+      });
+    }
+
+    // ── No discard target: Speaker still has value via {1}{T}: untap any permanent ──
+    // Even with only Speaker in hand (nothing to discard), cast it for its body and tap ability.
+    // {1}{T}: Untap another target permanent — with Elder on board this generates net mana:
+    //   Speaker {1}{T} → untap Elder → Elder taps → untap 2 lands → lands re-tap (+1G net).
+    // Strategy: cast Speaker now for the mana engine; when next card is drawn, Speaker's
+    // ETB (via bounce or recast) will find Wirewood Symbiote to complete the infinite setup.
+    if (!_sDiscardTarget && _sCanAffordSetup && _sHasManaSource) {
+      const _sTapTarget = _sHasElder ? _sElderName : _sBigDork;
+      const _sNetMana = _sHasElder ? "+1G net (Elder untaps 2 lands, Speaker costs {1})" : "untaps big dork for another tap";
+      results.push({
+        priority: 9,
+        category: "⏭️ CAST SPEAKER",
+        combo: "speaker_cast_no_discard",
+        headline: `Cast Speaker — {1}{T} untaps ${_sTapTarget} for mana engine + Symbiote target when you draw`,
+        detail: `No discard target yet, so Speaker's ETB search won't fire. But cast it for its tap ability: pay {1}{G}, tap Speaker → untap ${_sTapTarget}${_sHasElder ? ` → ${_sElderName} taps → untap 2 lands → net +1G per activation` : ` → re-tap ${_sTapTarget} for more mana`}. When you draw a card next turn, use Speaker's ETB (via bounce or Symbiote) to find Wirewood Symbiote and complete the infinite setup.`,
+        steps: [
+          `Cast Formidable Speaker ({2}{G}). No card to discard — ETB search skipped.`,
+          `Each turn: pay {1}{G}, tap Speaker → untap ${_sTapTarget}${_sHasElder ? ` → ${_sElderName} taps → untap 2 lands (net +1G).` : ` → ${_sTapTarget} re-taps for mana.`}`,
+          `When you draw another card: discard it to Speaker's ETB (via bounce+recast) → find Wirewood Symbiote.`,
+          `Symbiote + ${_sTapTarget} + ${_sBigDork ?? "big dork"} = setup for infinite. Find Temur Sabertooth next → WIN.`,
         ],
         color: "#a855f7",
       });
@@ -9158,7 +9218,9 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       });
       if (stillNeeded.length === 0) return null;
       if (stillNeeded.length === tokens.length) return line;
-      return stillNeeded.join(" + ") + " on battlefield.";
+      const joined = stillNeeded.join(" + ");
+      // Don't append 'on battlefield' if it's already present in the remaining text
+      return joined.includes("on battlefield") ? joined : joined + " on battlefield.";
     }).filter(Boolean);
   }
 
@@ -9945,7 +10007,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
             bouncer === "Temur Sabertooth"
               ? "Pay {1}{G}: Temur Sabertooth bounces Eternal Witness. Recast Witness → retrieve Infectious Bite."
-              : "Kogla attacks → returns Eternal Witness (Human) to hand. Recast Witness → retrieve Bite.",
+              : "Pay {1}{G}: Kogla returns Eternal Witness (Human) to hand. Recast Witness → retrieve Bite.",
             "Repeat 10 times. All opponents reach 10 poison counters and lose simultaneously.",
           ],
           color: "#27ae60",
@@ -10164,7 +10226,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter.",
           board.has("Temur Sabertooth")
             ? "Sabertooth bounces Witness. Recast → retrieve Bite. Repeat 10× for poison win."
-            : "Kogla attacks → return Witness. Recast → retrieve Bite. Repeat 10× for poison win.",
+            : "Pay {1}{G}: Kogla returns Witness. Recast → retrieve Bite. Repeat 10× for poison win.",
         ] : [
           "Cast Duskwatch Recruiter. Activate repeatedly to assemble win pile:",
           "  • Destiny Spinner + Elvish Reclaimer → Geier Reach Sanitarium",
@@ -11064,7 +11126,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter.",
           speakerBouncer === "Temur Sabertooth"
             ? "Sabertooth bounces Witness. Recast → retrieve Bite. Repeat 10× for poison win."
-            : "Kogla attacks → return Witness. Recast → retrieve Bite. Repeat 10× for poison win.",
+            : "Pay {1}{G}: Kogla returns Witness. Recast → retrieve Bite. Repeat 10× for poison win.",
         ] : [
           "Cast Duskwatch Recruiter. Activate repeatedly to assemble win pile:",
           "  • Destiny Spinner + Elvish Reclaimer → Geier Reach Sanitarium",
@@ -11503,7 +11565,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any opponent's creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
             ? "Pay {1}{G}: Temur Sabertooth bounces Eternal Witness. Recast Witness → retrieve Infectious Bite."
-            : "Kogla attacks → return Eternal Witness (Human) to hand. Recast Witness → retrieve Infectious Bite.",
+            : "Pay {1}{G}: Kogla returns Eternal Witness (Human) to hand. Recast Witness → retrieve Infectious Bite.",
           "Cast Infectious Bite again (2/10). Repeat.",
           "After 10 casts: all opponents have 10 poison counters and lose simultaneously.",
         ],
@@ -11524,7 +11586,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
             ? "Pay {1}{G}: Sabertooth bounces Eternal Witness. Recast Witness → retrieve Infectious Bite."
-            : "Kogla attacks → return Eternal Witness to hand. Recast → retrieve Infectious Bite.",
+            : "Pay {1}{G}: Kogla returns Eternal Witness to hand. Recast → retrieve Infectious Bite.",
           "Repeat 10 times. All opponents lose simultaneously.",
         ],
         color: "#27ae60",
@@ -11545,7 +11607,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
             ? "Pay {1}{G}: Sabertooth bounces Eternal Witness. Recast → retrieve Bite. Repeat 10×."
-            : "Kogla attacks → return Witness to hand. Recast → retrieve Bite. Repeat 10×.",
+            : "Pay {1}{G}: Kogla returns Witness to hand. Recast → retrieve Bite. Repeat 10×.",
         ],
         color: "#27ae60",
       });
@@ -11565,7 +11627,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
             ? "Pay {1}{G}: Sabertooth bounces Eternal Witness. Recast → retrieve Bite. Repeat 10×."
-            : "Kogla attacks → return Eternal Witness to hand. Recast → retrieve Bite. Repeat 10×.",
+            : "Pay {1}{G}: Kogla returns Eternal Witness to hand. Recast → retrieve Bite. Repeat 10×.",
           "After 10 casts all opponents have 10 poison counters and lose simultaneously.",
         ],
         color: "#27ae60",
@@ -11586,7 +11648,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
             ? "Pay {1}{G}: Sabertooth bounces Eternal Witness. Recast → retrieve Bite. Repeat 10×."
-            : "Kogla attacks → return Witness to hand. Recast → retrieve Bite. Repeat 10×.",
+            : "Pay {1}{G}: Kogla returns Witness to hand. Recast → retrieve Bite. Repeat 10×.",
         ],
         color: "#27ae60",
       });
@@ -11607,7 +11669,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Cast Infectious Bite: fight any creature. Each opponent gets 1 poison counter. (1/10)",
           bouncer === "Temur Sabertooth"
             ? "Pay {1}{G}: Sabertooth bounces Eternal Witness. Recast → retrieve Bite. Repeat 10×."
-            : "Kogla attacks → return Eternal Witness to hand. Recast → retrieve Bite. Repeat 10×.",
+            : "Pay {1}{G}: Kogla returns Eternal Witness to hand. Recast → retrieve Bite. Repeat 10×.",
           "After 10 casts all opponents have 10 poison counters and lose simultaneously.",
         ],
         color: "#27ae60",
