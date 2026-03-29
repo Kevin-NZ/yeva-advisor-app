@@ -3546,6 +3546,13 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
                            bestLand === "Yavimaya, Cradle of Growth";
           if (!isForest) return false;
         }
+        // LQR requires a creature target — useless T1 on an empty board
+        if (c === "Legolas's Quick Reflexes" && battlefield.filter(b => getCard(b)?.type === "creature").length === 0) return false;
+        // Instants and sorceries are generally not worth recommending T1 unless they're
+        // tutors (find a creature/land) or have direct board impact — skip pure utility spells
+        if ((cd.type === "instant" || cd.type === "sorcery") &&
+            !cd.tags?.includes("tutor") && !cd.tags?.includes("fast-mana") &&
+            !cd.tags?.includes("dork") && !cd.tags?.includes("ramp")) return false;
         return true;
       }).sort((a, b) => {
         // Prioritize: 1-drop dorks > enchant-land ramp > fast mana > tutors > other
