@@ -4,7 +4,7 @@ import ReactDOM from "react-dom";
 // ── Sentinel for "effectively infinite mana" — used as a fallback threshold
 // when infiniteManaActive is false but the player has so much mana that all
 // the same lines become available. Centralised here so it's easy to adjust.
-const EFFECTIVELY_INFINITE_MANA = 20;
+const EFFECTIVELY_INFINITE_MANA = 80;
 
 // ============================================================
 // CARD DATABASE — every card in the deck with metadata
@@ -2170,7 +2170,8 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
         const landCount = ctx.landCount ?? 0;
         gp = Math.max(gp, landCount + creatureCount);
       }
-      amt = gp + badgermoleBonus;
+      // Subtract 1 for Selvala's {G} activation cost — net output is greatestPower - 1.
+      amt = Math.max(0, gp - 1) + badgermoleBonus;
     } else {
       amt = 1 + badgermoleBonus;
     }
@@ -2358,6 +2359,10 @@ function bestDiscardFromHand(hand, exclude = []) {
 }
 
 function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false, sickCreatures = null }) {
+  // Normalise sickCreatures: accept null, Array, or Set — always use as Set internally.
+  // This prevents crashes from callers passing sickCreatures as [] or ["CardName"].
+  if (Array.isArray(sickCreatures)) sickCreatures = new Set(sickCreatures);
+  else if (sickCreatures !== null && typeof sickCreatures !== "object") sickCreatures = null;
   // deckList: Set of card names in the player's deck. When set, ONE PIECE AWAY advice and
   // combo suggestions are filtered to only show cards that are actually in the deck.
   // null = no filter (all cards valid, legacy behaviour).
@@ -2595,6 +2600,31 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const hasLandAnimate   = board.has("Destiny Spinner") || inHand.has("Destiny Spinner") || badgermoleActive;
   const yevaFlash = board.has("Yeva, Nature's Herald");
 
+  // ---- HELPER: Selvala greatest-power estimate given current battlefield ----
+  // Selvala taps for X mana where X = greatest power among creatures you control.
+  // Activation costs {G}, so net output = greatestPower - 1.
+  // This helper returns greatestPower so callers can subtract 1 for net, or use raw for display.
+  function selvalaGreatestPower(extraCreatures = 0) {
+    const KNOWN_POWERS = {
+      "Kogla, the Titan Ape": 7, "Woodland Bellower": 6, "Regal Force": 5,
+      "Temur Sabertooth": 4, "Seedborn Muse": 4, "Great Oak Guardian": 4,
+      "Surrak and Goreclaw": 6, "Ulvenwald Oddity": 4,
+    };
+    let gp = Math.max(1, creaturesOnBoard + extraCreatures);
+    for (const [name, pow] of Object.entries(KNOWN_POWERS)) {
+      if (board.has(name)) gp = Math.max(gp, pow);
+    }
+    if (board.has("Ashaya, Soul of the Wild")) {
+      const landCount = battlefield.filter(c => getCard(c)?.type === "land" || c === "Dryad Arbor").length;
+      gp = Math.max(gp, landCount + creaturesOnBoard + extraCreatures);
+    }
+    return gp;
+  }
+  // Net mana Selvala produces per activation (greatestPower minus the {G} tap cost).
+  function selvalaNetOutput(extraCreatures = 0) {
+    return Math.max(0, selvalaGreatestPower(extraCreatures) - 1);
+  }
+
   // ---- HELPER: exact mana output of a dork given board context ----
   function estimateDorkOutput(cardName, extraElves = 0) {
     const t = getCard(cardName)?.tapsFor;
@@ -2659,7 +2689,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const ashayaPower = landCount + creaturesOnBoard; // creatures are lands too
         greatestPower = Math.max(greatestPower, ashayaPower);
       }
-      return greatestPower + badgermoleBonus;
+      // Subtract 1 for Selvala's {G} activation cost — net output is greatestPower - 1.
+      return Math.max(0, greatestPower - 1) + badgermoleBonus;
     }
     if (t === "arbor") {
       // Arbor Elf untaps a Forest. With attachments we know precisely which Forest has an aura.
@@ -3817,7 +3848,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       else if (t === "joraga") output = elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
       else if (t === "creatures") output = creaturesOnBoard;
       else if (t === "devotion") output = devotionOnBoard;
-      else if (t === "power") output = creaturesOnBoard;
+      else if (t === "power") output = selvalaNetOutput(); // net = greatestPower - 1 ({G} activation cost)
       else if (t === "ferocious") {
         const hasPower4 = battlefield.some(x => (getCard(x)?.power ?? 0) >= 4);
         output = hasPower4 ? 4 : 1;
@@ -4069,8 +4100,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
             tapDesc = "taps for {G} (ferocious NOT active — no power 4+ creature on board)";
           }
         } else if (cd.tapsFor === "power") {
-          projectedOutput = Math.max(1, creaturesOnBoard);
-          tapDesc = `taps for ~${projectedOutput}{G} (greatest power among creatures)`;
+          projectedOutput = selvalaNetOutput();
+          tapDesc = `taps for ~${selvalaGreatestPower()}{G} gross, net ${projectedOutput}{G} (costs {G} to activate)`;
         } else {
           projectedOutput = typeof cd.tapsFor === "number" ? cd.tapsFor : 1;
           tapDesc = `taps for ${projectedOutput}{G}`;
@@ -4830,7 +4861,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         else if (t === "joraga")   output = elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
         else if (t === "creatures") output = creaturesOnBoard;
         else if (t === "devotion") output = devotionOnBoard;
-        else if (t === "power")    output = creaturesOnBoard;
+        else if (t === "power")    output = selvalaNetOutput(); // net = greatestPower - 1 ({G} activation cost)
         else if (t === "ferocious") output = 4; // Ashaya makes ferocious active
         else output = 1;
         if (output < dorkThreshold) return best;
@@ -4881,7 +4912,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           if (t === "joraga")   return elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
           if (t === "creatures") return creaturesOnBoard;
           if (t === "devotion") return devotionOnBoard;
-          if (t === "power")    return creaturesOnBoard;
+          if (t === "power")    return selvalaNetOutput(); // net = greatestPower - 1 ({G} activation cost)
           if (t === "ferocious") return 4; // in the infinite loop, Ashaya makes dork a 4/4 Forest — ferocious always active
           return dorkThreshold;
         })();
@@ -5015,7 +5046,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (t === "joraga")    return elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
       if (t === "creatures") return creaturesOnBoard + 1;  // +1 for Witness (any creature)
       if (t === "devotion")  return devotionOnBoard + (getCard(c)?.greenPips ?? 0); // Witness devotion 1
-      if (t === "power")     return creaturesOnBoard + 1;
+      if (t === "power")     return selvalaNetOutput(1); // +1 creature (Witness), still -1 for {G} cost
     }
     return 0;
   })();
@@ -5045,7 +5076,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       if (t === "joraga")   return (elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2) >= dorkThreshold;
       if (t === "creatures") return (creaturesOnBoard + 1) >= dorkThreshold;
       if (t === "devotion") return (devotionOnBoard + 1) >= dorkThreshold;
-      if (t === "power")    return (creaturesOnBoard + 1) >= dorkThreshold;
+      if (t === "power")    return selvalaNetOutput(1) >= dorkThreshold; // +1 creature (Witness), -1 for {G} cost
       return false;
     });
     const sacCandidates = battlefield.filter(c =>
@@ -5074,7 +5105,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         if (t === "joraga")   return elvesOnBoard >= 5 ? elvesOnBoard * 2 : 2;
         if (t === "creatures") return creaturesOnBoard + 1;
         if (t === "devotion") return devotionOnBoard + 1;
-        if (t === "power")    return creaturesOnBoard + 1;
+        if (t === "power")    return selvalaNetOutput(1); // +1 creature (Witness), -1 for {G} cost
         if (t === "ferocious") return 4; // in the loop, Ashaya tokens have 4/4 — ferocious always on
         return dorkThreshold;
       })();
@@ -10337,7 +10368,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         if (t === "joraga")    return (postCastElves >= 5 ? postCastElves * 2 : 2) >= 3;
         if (t === "creatures") return (creaturesOnBoard + speakerElvBonus) >= 3;
         if (t === "devotion")  return (devotionOnBoard  + speakerElvBonus) >= 3;
-        if (t === "power")     return (creaturesOnBoard + speakerElvBonus) >= 3;
+        if (t === "power")     return selvalaNetOutput(speakerElvBonus) >= 3; // net = greatestPower - 1 ({G} cost)
         return false;
       });
 
@@ -10398,7 +10429,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           if (t === "joraga")    return postCastElves >= 5 ? postCastElves * 2 : 2;
           if (t === "creatures") return creaturesOnBoard + speakerElvBonus;
           if (t === "devotion")  return devotionOnBoard  + speakerElvBonus;
-          if (t === "power")     return creaturesOnBoard + speakerElvBonus;
+          if (t === "power")     return selvalaNetOutput(speakerElvBonus); // net = greatestPower - 1 ({G} cost)
           return 3;
         })();
         const netMana = dorkOutput - 3; // Speaker costs {2}{G} = 3
@@ -13141,6 +13172,8 @@ function filterComboLinesForDisplay(lines, hand, battlefield) {
 }
 
 function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null, infiniteManaActive = false) {
+  if (Array.isArray(sickCreatures)) sickCreatures = new Set(sickCreatures);
+  else if (sickCreatures !== null && typeof sickCreatures !== "object") sickCreatures = null;
   const board    = new Set(battlefield);
   const inHand   = new Set(hand);
   const inDeckFn = deckList ? (c) => deckList.has(c) : () => true;
@@ -13581,7 +13614,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         if (cd.tapsFor === "joraga")    return elvesNow >= 5 ? (elvesNow * 2 + leylineBonus >= min) : (2 + leylineBonus >= min);
         if (cd.tapsFor === "creatures") return cd.tags?.includes("big-dork") && creaturesNow + leylineBonus >= min;
         if (cd.tapsFor === "devotion")  return cd.tags?.includes("big-dork") && devotionNow + leylineBonus >= min;
-        if (cd.tapsFor === "power")     return cd.tags?.includes("big-dork") && creaturesNow + leylineBonus >= min;
+        if (cd.tapsFor === "power")     return cd.tags?.includes("big-dork") && Math.max(0, (() => { const _kp = {'Kogla, the Titan Ape':7,'Woodland Bellower':6,'Regal Force':5,'Temur Sabertooth':4,'Seedborn Muse':4,'Great Oak Guardian':4,'Surrak and Goreclaw':6,'Ulvenwald Oddity':4}; let _gp = Math.max(1, creaturesNow); for (const [_n,_p] of Object.entries(_kp)) if (board.has(_n)) _gp = Math.max(_gp,_p); if (board.has('Ashaya, Soul of the Wild')) { const _lc = battlefield.filter(c=>getCard(c)?.type==='land').length; _gp = Math.max(_gp, _lc + creaturesNow); } return _gp - 1; })()) + leylineBonus >= min; // Selvala: net = greatestPower - 1
         return false;
       });
       // Ashaya special case: all creatures are Forests tapping for {G}.
@@ -13617,7 +13650,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
             if (t === "joraga")   return elvesNow >= 5 ? elvesNow * 2 + leylineB >= min : 2 + leylineB >= min;
             if (t === "creatures") return creaturesNow + 1 + leylineB >= min;
             if (t === "devotion") return devotionNow + (cd.greenPips ?? 0) + leylineB >= min;
-            if (t === "power")    return creaturesNow + leylineB >= min;
+            if (t === "power")    return Math.max(0, (() => { const _kp = {'Kogla, the Titan Ape':7,'Woodland Bellower':6,'Regal Force':5,'Temur Sabertooth':4,'Seedborn Muse':4,'Great Oak Guardian':4,'Surrak and Goreclaw':6,'Ulvenwald Oddity':4}; let _gp = Math.max(1, creaturesNow); for (const [_n,_p] of Object.entries(_kp)) if (board.has(_n)) _gp = Math.max(_gp,_p); if (board.has('Ashaya, Soul of the Wild')) { const _lc = battlefield.filter(c=>getCard(c)?.type==='land').length; _gp = Math.max(_gp, _lc + creaturesNow); } return _gp - 1; })()) + leylineB >= min; // Selvala: net = greatestPower - 1
             return false;
           });
         const found = candidates.find(c =>
@@ -13696,7 +13729,7 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
         else if (t === "joraga") output = elvesNow >= 5 ? elvesNow * 2 : 2;
         else if (t === "creatures") output = creaturesNow;
         else if (t === "devotion") output = devotionNow;
-        else if (t === "power") output = creaturesNow;
+        else if (t === "power") output = Math.max(0, (() => { const _kp = {'Kogla, the Titan Ape':7,'Woodland Bellower':6,'Regal Force':5,'Temur Sabertooth':4,'Seedborn Muse':4,'Great Oak Guardian':4,'Surrak and Goreclaw':6,'Ulvenwald Oddity':4}; let _gp = Math.max(1, creaturesNow); for (const [_n,_p] of Object.entries(_kp)) if (board.has(_n)) _gp = Math.max(_gp,_p); if (board.has('Ashaya, Soul of the Wild')) { const _lc = battlefield.filter(c=>getCard(c)?.type==='land').length; _gp = Math.max(_gp, _lc + creaturesNow); } return _gp - 1; })()); // Selvala: net = greatestPower - 1
         else if (t === "ferocious") output = 4;
         else output = 1;
         return output >= (data.cmc ?? 0) + 3;
@@ -14256,6 +14289,8 @@ const fonts = `
 
 
 function getTutorOptions(target, hand, battlefield, mana, infiniteMana = false, graveyard = [], sickCreatures = null) {
+  if (Array.isArray(sickCreatures)) sickCreatures = new Set(sickCreatures);
+  else if (sickCreatures !== null && typeof sickCreatures !== "object") sickCreatures = null;
   const options = [];
   const board = new Set(battlefield);
   const inHand = new Set(hand);
