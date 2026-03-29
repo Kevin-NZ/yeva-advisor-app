@@ -3605,17 +3605,38 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // Forest or other green land: can tap same turn (land taps immediately for {G})
         if (castableNow.length > 0) {
           const target = castableNow[0];
-          results.push({
-            priority: 14,   // Outranks path-planner "NEED X MANA" lines (pri 13-11) — this is actionable NOW
-            category: "🌱 T1 SETUP",
-            combo: "t1_land_cast",
-            headline: `T1: Play ${bestLand} → ${hasLotusPetalInHand ? "Lotus Petal → " : ""}cast ${target} ({${getCard(target)?.cmc}})`,
-            detail: `Play your land drop first to access mana this turn.${hasLotusPetalInHand ? " Lotus Petal adds a free {G}." : ""} Casting ${target} establishes early ramp — untaps next turn and begins generating mana.`,
-            steps: [
+          const targetCmc = getCard(target)?.cmc ?? 1;
+          const hasDryadInDeck = deckList ? deckList.has("Dryad Arbor") : true;
+
+          // Card-specific headline / detail / steps overrides
+          let headline, detail, steps;
+          if (target === "Green Sun's Zenith" && hasDryadInDeck) {
+            headline = `T1: Play ${bestLand} → cast Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield`;
+            detail = `GSZ at X=0 costs {G} and puts Dryad Arbor directly onto the battlefield. Dryad Arbor is a Forest, an Elf, and a creature — it counts for Gaea's Cradle, Priest of Titania, and convoke. It has summoning sickness this turn but untaps T2 to tap for {G}, and can immediately be used as a tutor target or sacrifice fodder.`;
+            steps = [
               `Play ${bestLand} as your land drop — tap for {G}.`,
               ...(hasLotusPetalInHand ? ["Cast Lotus Petal ({0}) → tap and sacrifice for {G}."] : []),
-              `Cast ${target} ({${getCard(target)?.cmc}}).`,
-            ],
+              `Cast Green Sun's Zenith with X=0 ({G} total) — shuffle GSZ into library.`,
+              `Search for Dryad Arbor — put it directly onto the battlefield (no mana cost).`,
+              `Dryad Arbor is a 1/1 Forest Elf Dryad: it enters tapped, counts as a creature and elf immediately, and untaps on T2 to produce {G}.`,
+            ];
+          } else {
+            headline = `T1: Play ${bestLand} → ${hasLotusPetalInHand ? "Lotus Petal → " : ""}cast ${target} ({${targetCmc}})`;
+            detail = `Play your land drop first to access mana this turn.${hasLotusPetalInHand ? " Lotus Petal adds a free {G}." : ""} Casting ${target} establishes early ramp — untaps next turn and begins generating mana.`;
+            steps = [
+              `Play ${bestLand} as your land drop — tap for {G}.`,
+              ...(hasLotusPetalInHand ? ["Cast Lotus Petal ({0}) → tap and sacrifice for {G}."] : []),
+              `Cast ${target} ({${targetCmc}}).`,
+            ];
+          }
+
+          results.push({
+            priority: 14,
+            category: "🌱 T1 SETUP",
+            combo: "t1_land_cast",
+            headline,
+            detail,
+            steps,
             color: "#52be80",
           });
         } else if (hasLotusPetalInHand && rampDorksForT2.length > 0) {
