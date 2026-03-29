@@ -18573,8 +18573,10 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           battlefield.filter(c => getCard(c)?.type === "land").length < 2;
         const sacNeedsCreature = (cardToPlay === "Natural Order" || cardToPlay === "Eldritch Evolution") &&
           !simHasValidSacTarget(battlefield, sickSet, analysis.infiniteManaActive ?? false);
+        const lqrNeedsTarget = cardToPlay === "Legolas's Quick Reflexes" &&
+          !battlefield.some(b => getCard(b)?.type === "creature");
         // Never proactively cast stax pieces — they shut off our own fast mana in goldfish.
-        if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature) {
+        if (idx >= 0 && simCanCast(cardToPlay, manaPool, battlefield) && cardType !== "land" && !moxNeedsLand && !sacNeedsCreature && !lqrNeedsTarget) {
           // Hold tutors only when we genuinely can't act on what they find (mana-based check)
           const holdIt = isTutor && shouldHoldTutor(cardToPlay, mana);
           if (!holdIt) {
@@ -18625,6 +18627,9 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           // Natural Order / Eldritch Evolution need a non-sick creature to sacrifice
           if ((c === "Natural Order" || c === "Eldritch Evolution") &&
               !simHasValidSacTarget(battlefield, sickSet, analysis.infiniteManaActive ?? false)) return null;
+          // Legolas's Quick Reflexes needs a creature to target — don't cast it with empty board
+          if (c === "Legolas's Quick Reflexes" &&
+              !battlefield.some(b => getCard(b)?.type === "creature")) return null;
           let score = cmc;
           // Stax/hate pieces disrupt our own fast mana in goldfish — never proactively cast them.
           // They're valid sacrifice fodder for Natural Order/EE (handled separately) but
