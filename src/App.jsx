@@ -3469,7 +3469,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // a creature. Also detect compound lines: land + Lotus Petal → enables casting ramp
   // dorks this turn or T2. This fires before the generic ramp advice so the sequencing
   // advice (land THEN Lotus THEN dork) appears with clear priority.
-  if (isMyTurn && !infiniteManaActive && !landPlayed && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && (cd?.type === "creature" || c === "Dryad Arbor"); }).length === 0) {
+  // Opening hand / T1 setup advice — fires whenever the board is empty (pure hand evaluation),
+  // regardless of whose turn it is. isMyTurn=false is the default in the main advisor UI.
+  const isOpeningHandState = !infiniteManaActive && !landPlayed
+    && battlefield.filter(c => { const cd = getCard(c); return cd?.tags?.includes("dork") && (cd?.type === "creature" || c === "Dryad Arbor"); }).length === 0;
+  if (isOpeningHandState && (isMyTurn || battlefield.length === 0)) {
     const landsToDrop = hand.filter(c => getCard(c)?.type === "land");
     const hasDryadArbor = inHand.has("Dryad Arbor");
     const hasLotusPetalInHand = inHand.has("Lotus Petal");
@@ -3519,6 +3523,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
                      : landsToDrop[0];
       const isDryad = bestLand === "Dryad Arbor";
 
+
+
       // What can we cast THIS turn after playing land + any free mana artifacts?
       // Dryad Arbor has summoning sickness → 0 mana from it this turn.
       // Lotus Petal → +1 green this turn.
@@ -3548,6 +3554,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         }
         // LQR requires a creature target — useless T1 on an empty board
         if (c === "Legolas's Quick Reflexes" && battlefield.filter(b => getCard(b)?.type === "creature").length === 0) return false;
+        // Summoner's Pact: only recommend if ≥2 green mana sources exist (board + this land drop)
+        // to plausibly pay {2}{G}{G} at next upkeep. Pact with no green = death trap.
+        if (c === "Summoner's Pact") {
+          const greenSourcesOnBoard = battlefield.filter(b => {
+            const bcd = getCard(b);
+            return bcd?.tags?.includes("dork") || bcd?.tags?.includes("enchant-land")
+              || (bcd?.type === "land" && (b === "Forest" || bcd?.tags?.includes("green-mana")));
+          }).length;
+          const greenFromThisLand = (bestLand === "Forest" || getCard(bestLand)?.tags?.includes("green-mana")) ? 1 : 0;
+          if (greenSourcesOnBoard + greenFromThisLand < 2) return false;
+        }
         // Instants and sorceries are generally not worth recommending T1 unless they're
         // tutors (find a creature/land) or have direct board impact — skip pure utility spells
         if ((cd.type === "instant" || cd.type === "sorcery") &&
@@ -3656,6 +3673,44 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           });
         }
       }
+    }
+  }
+
+  // ── ARGOTHIAN ELDER T1 SETUP — 7 MANA ON T2 ──────────────────────────────
+  // Ancient Tomb + Mox Diamond + Lotus Petal + Argothian Elder in hand:
+  // T1: Play Tomb(2C) + Mox(discard Forest, 1G) + Petal(sac, 1G) = 4 mana → cast Elder(3G+1 = 4).
+  // T2: Play Forest. Tap Tomb(2C)+Mox(G)+Forest(G) = 4. Elder taps → untap Tomb+Forest → tap again = 3 more.
+  // Total T2 mana: 7 (4C+3G). Elder is tapped after. Strong mana-development line.
+  {
+    const hasTombH  = inHand.has("Ancient Tomb");
+    const hasMoxH   = inHand.has("Mox Diamond");
+    const hasPetalH = inHand.has("Lotus Petal");
+    const hasElderH = inHand.has("Argothian Elder");
+    // Need a spare Forest to discard to Mox (land drop is Tomb, so need ≥1 Forest in hand)
+    const hasSpareForestH = hand.some(c => c === "Forest" || getCard(c)?.tags?.includes("forest"));
+    if (hasTombH && hasMoxH && hasPetalH && hasElderH && hasSpareForestH
+        && !infiniteManaActive
+        && !results.some(r => r.combo === "elder_tomb_t1_setup")) {
+      results.push({
+        priority: 15,
+        category: "🌱 T1 SETUP",
+        combo: "elder_tomb_t1_setup",
+        headline: "T1: Ancient Tomb + Mox Diamond + Lotus Petal → cast Argothian Elder (7 mana T2)",
+        detail: "Ancient Tomb + Mox Diamond + Lotus Petal generates exactly 4 mana (2C+2G) to cast Argothian Elder ({3}{G}). Elder untaps on T2 — tap Tomb+Mox+Forest for 4 mana, then activate Elder ({T}: untap two target lands) to untap Tomb+Forest and tap them again for 3 more. Total T2 mana: 7 (4C+3G). Sets up Ashaya (CMC 5) + a 2-drop, or any other 7-mana sequence.",
+        steps: [
+          "Play Ancient Tomb as your land drop — taps for {C}{C}.",
+          "Cast Mox Diamond ({0}) — discard a Forest. Mox taps for {G}.",
+          "Cast Lotus Petal ({0}) — tap and sacrifice for {G}.",
+          "Tap Tomb({C}{C}) + Mox({G}) + Petal({G}) = 4 mana. Cast Argothian Elder ({3}{G}).",
+          "Pass turn. Elder enters with summoning sickness.",
+          "TURN 2: Play Forest.",
+          "Tap Tomb({C}{C}) + Mox({G}) + Forest({G}) = 4 mana.",
+          "Activate Elder ({T}): untap Tomb + Forest. Tap both again: Tomb({C}{C}) + Forest({G}) = 3 more mana.",
+          "Total T2 mana: 7 (4C + 3G). Elder is tapped after this.",
+          "Spend 5 on Ashaya, Soul of the Wild ({3}{G}{G}) — or any other 7-mana sequence.",
+        ],
+        color: "#52be80",
+      });
     }
   }
 
@@ -6263,7 +6318,12 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         tutorName = "Elvish Harbinger"; tutorCost = "{2}{G}";
         tutorNote = `Cast Elvish Harbinger ({2}{G})${!isMyTurn && yevaFlash ? " at instant speed via Yeva" : ""}: ETB puts Formidable Speaker on top of library.`;
         tutorNow = isMyTurn || yevaFlash;
-      } else if ((inHand.has("Worldly Tutor") || inHand.has("Summoner's Pact"))
+      } else if ((inHand.has("Worldly Tutor") || (inHand.has("Summoner's Pact") && (() => {
+          if (infiniteManaActive) return true;
+          const greenSrc = battlefield.filter(b => { const bcd = getCard(b); return bcd?.tags?.includes("dork") || bcd?.tags?.includes("enchant-land") || (bcd?.type === "land" && (b === "Forest" || bcd?.tags?.includes("green-mana"))); }).length
+            + hand.filter(c => c === "Forest" || getCard(c)?.tags?.includes("green-mana")).length;
+          return greenSrc >= 2;
+        })()))
           && (mana >= 1 || infiniteManaActive)) {
         tutorName = inHand.has("Worldly Tutor") ? "Worldly Tutor" : "Summoner's Pact";
         tutorCost = tutorName === "Worldly Tutor" ? "{G}" : "{0}";
@@ -6344,7 +6404,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const chordConvokeSources = battlefield.filter(c => getCard(c)?.type === "creature").length;
     const chordCostForSpeaker = Math.max(0, 6 - chordConvokeSources); // X=3 + {G}{G}{G} - convoke
     const hasTutorForSpeaker = (inHand.has("Worldly Tutor") && (mana >= 1 || infiniteManaActive))
-      || (inHand.has("Summoner's Pact"))
+      || (inHand.has("Summoner's Pact") && (() => {
+          // Only recommend Pact if upkeep cost {2}{G}{G} is plausibly payable next turn.
+          // Need ≥2 green sources (dorks, enchant-lands, or green lands on board or in hand).
+          if (infiniteManaActive) return true;
+          const greenSources = battlefield.filter(b => {
+            const bcd = getCard(b);
+            return bcd?.tags?.includes("dork") || bcd?.tags?.includes("enchant-land")
+              || (bcd?.type === "land" && (b === "Forest" || bcd?.tags?.includes("green-mana")));
+          }).length
+          + hand.filter(c => c === "Forest" || getCard(c)?.tags?.includes("green-mana")).length;
+          return greenSources >= 2;
+        })())
       || (inHand.has("Chord of Calling") && (mana >= chordCostForSpeaker || infiniteManaActive));
     // Mana needed after tutor resolves to cast Speaker {2}{G}=3. Pact is free so just 3.
     // Worldly puts Speaker on top → draw and cast later, so mana check is across two turns.
@@ -11988,7 +12059,22 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
   // ---- GENERIC HIGH PRIORITY TUTOR WHEN NOTHING ELSE ----
   if (results.filter(r => r.priority >= 7).length === 0) {
-    const tutors = hand.filter(c => getCard(c)?.tags?.includes("tutor") && (getCard(c)?.cmc <= mana || infiniteManaActive));
+    const tutors = hand.filter(c => {
+      const cd = getCard(c);
+      if (!cd?.tags?.includes("tutor")) return false;
+      if ((cd.cmc ?? 0) > mana && !infiniteManaActive) return false;
+      // Summoner's Pact: only recommend if we can plausibly pay {2}{G}{G} next upkeep.
+      // Need either infinite mana, ≥2 green mana sources on board, or a big dork to tap.
+      if (c === "Summoner's Pact" && !infiniteManaActive) {
+        const greenSources = battlefield.filter(b => {
+          const bcd = getCard(b);
+          return bcd?.tags?.includes("dork") || bcd?.tags?.includes("enchant-land")
+            || (bcd?.type === "land" && (b === "Forest" || bcd?.tags?.includes("green-mana")));
+        }).length;
+        if (greenSources < 2) return false; // Can't reliably pay {2}{G}{G} next upkeep
+      }
+      return true;
+    });
     if (tutors.length > 0) {
       const tutor = tutors[0];
       const targets = getPriorityTargets(battlefield, hand, graveyard);
@@ -31523,7 +31609,9 @@ function YevaAdvisor() {
   // Mulligan sim — runs 10 games with the current hand when in pure opening-hand state.
   // Deferred 50ms so the UI renders immediately before the blocking sim runs.
   useEffect(() => {
-    const deckCards = activeDeck?.cards ?? [];
+    const deckCards = activeDeck?.cards?.length >= 20
+      ? activeDeck.cards
+      : PRESET_DECKS[0]?.cards ?? [];   // fall back to Competitive preset so sim always runs
     const isOpeningHand = hand.length > 0 && battlefield.length === 0
       && graveyard.length === 0 && exile.length === 0;
     if (!isOpeningHand || deckCards.length < 20) {
@@ -32411,7 +32499,7 @@ function YevaAdvisor() {
                           fontStyle: "italic",
                         }}>{simNote}</div>
                       )}
-                      {!sim && activeDeck && (
+                      {!sim && (
                         <div style={{
                           fontSize: "11px", color: COLORS.textDim,
                           fontFamily: "'Crimson Text', serif", lineHeight: 1.4,
