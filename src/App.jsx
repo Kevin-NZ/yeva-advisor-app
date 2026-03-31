@@ -9877,10 +9877,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     });
   // Sorcery-speed tutors: only castable on our turn
   // Natural Order & Eldritch Evolution sacrifice a creature — still valid with infinite mana
-  const sorceryCreatureTutors = ["Green Sun's Zenith","Natural Order","Eldritch Evolution"]
+  // Nature's Rhythm: {X}{G}{G} sorcery — search library for creature with CMC ≤ X, put onto battlefield.
+  //   With infinite mana X can be any value → finds any creature including Duskwatch.
+  const natRhythmCastable = inHand.has("Nature's Rhythm") && (mana >= 2 || infiniteManaActive);
+  const sorceryCreatureTutors = ["Green Sun's Zenith","Natural Order","Eldritch Evolution",
+    ...(natRhythmCastable ? ["Nature's Rhythm"] : [])]
     .filter(t => inHand.has(t) || board.has(t));
-  // Activated tutors already on board: Fauna Shaman, Survival of the Fittest
-  // Note: Fierce Empath finds CMC 6+ only; Elvish Harbinger finds elves — Duskwatch is neither
+  // Activated tutors already on board: Fauna Shaman, Survival of the Fittest, Formidable Speaker
+  // Fierce Empath: {2}{G} ETB finds CMC≥6 (e.g. Woodland Bellower) → Bellower finds Duskwatch.
+  //   Two-step chain but reliable with infinite mana. Requires Empath in hand + our turn.
+  // Note: Elvish Harbinger finds elves only — Duskwatch is not an elf.
   // Fauna Shaman requires a creature to discard — check we have one available.
   // Battlefield creatures only count as potential discard fodder if Temur Sabertooth is available
   // and non-sick to bounce them to hand first. Without a bouncer, only hand creatures are valid.
@@ -9900,16 +9906,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     && !(sickCreatures?.has("Fauna Shaman"))
     && (hasCreatureToDiscard || infiniteManaActive);
   // Survival of the Fittest: {G}, discard creature → search library for creature → hand
-  // Survival is an enchantment — it never has summoning sickness, no sick check needed.
-  const survivalCanActivate = board.has("Survival of the Fittest")
+  // Works from board (no sick check — enchantment) OR from hand (cast it first this turn).
+  const survivalCanActivate = (board.has("Survival of the Fittest")
+    || (inHand.has("Survival of the Fittest") && (isMyTurn || yevaAvailable)))
     && (hasCreatureToDiscard || infiniteManaActive);
   // Formidable Speaker: ETB — discard a card → search library for any creature (guaranteed full tutor).
   // Repeatable with Temur Sabertooth or Kogla bounce. No discard cost.
   const speakerCanActivate = board.has("Formidable Speaker") && speakerHasBouncer;
+  // Fierce Empath: {2}{G} ETB finds CMC≥6 → Woodland Bellower → ETB finds Duskwatch (CMC≤3).
+  // Two-step chain. Requires Empath in hand and our turn (or Yeva flash).
+  const fierceEmpathCanChain = (inHand.has("Fierce Empath") || board.has("Fierce Empath"))
+    && (isMyTurn || yevaAvailable)
+    && (mana >= 3 || infiniteManaActive)
+    && !board.has("Woodland Bellower"); // Bellower already on board handled separately
   const activatedCreatureTutors = [
-    ...(faunaCanActivate    ? ["Fauna Shaman"]              : []),
-    ...(survivalCanActivate ? ["Survival of the Fittest"]   : []),
-    ...(speakerCanActivate  ? ["Formidable Speaker"]        : []),
+    ...(faunaCanActivate      ? ["Fauna Shaman"]              : []),
+    ...(survivalCanActivate   ? ["Survival of the Fittest"]   : []),
+    ...(speakerCanActivate    ? ["Formidable Speaker"]        : []),
+    ...(fierceEmpathCanChain  ? ["Fierce Empath"]             : []),
   ];
 
   // Woodland Bellower: ETB puts any non-legendary green creature CMC <= 3 directly onto battlefield.
@@ -10428,12 +10442,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   // Cast Worldly Tutor this turn → Duskwatch on top → draw next turn → win.
   // Show as WIN NEXT TURN (not WIN NOW — the card is drawn next draw step).
   {
-    const topLibForDusk = ["Worldly Tutor","Elvish Harbinger"].filter(t =>
-      inHand.has(t) && (
-        t === "Worldly Tutor" ||
-        (t === "Elvish Harbinger" && getCard("Duskwatch Recruiter")?.tags?.includes("elf"))
-      )
-    );
+    const topLibForDusk = ["Worldly Tutor"].filter(t => inHand.has(t));
     if (topLibForDusk.length > 0 && infiniteManaActive && !duskwatchCastable
         && !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter")) {
       const tutorName = topLibForDusk[0];
@@ -10443,10 +10452,38 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         headline: `Cast ${tutorName} now → Duskwatch Recruiter on top → draw and win next turn`,
         detail: `${tutorName} puts Duskwatch Recruiter on top of your library. With infinite mana already running, draw Duskwatch on your next draw step — then activate it to assemble the win pile.`,
         steps: [
-          `Cast ${tutorName} ({${tutorName === "Worldly Tutor" ? "G" : "2}{G"}}): search for Duskwatch Recruiter, put it on top of your library.`,
+          `Cast ${tutorName} ({G}): search for Duskwatch Recruiter, put it on top of your library.`,
           "Draw Duskwatch Recruiter at the start of your next turn.",
           "Cast Duskwatch Recruiter ({1}{G}{G}). With infinite mana, activate repeatedly to assemble the win pile.",
           "Find Endurance, Temur Sabertooth, Destiny Spinner, Geier Reach Sanitarium → mill all opponents out.",
+        ],
+        color: "#c8a800",
+      });
+    }
+  }
+
+  // ---- ELVISH HARBINGER → SPEAKER → DUSKWATCH (WIN NEXT TURN) ----
+  // Harbinger finds any elf → puts it on top of library. It finds Formidable Speaker (elf).
+  // Next turn: draw Speaker, cast it → ETB discard → find Duskwatch from library → WIN NEXT TURN.
+  // Two-step chain but completely reliable with infinite mana.
+  {
+    const harbingerInHand = inHand.has("Elvish Harbinger");
+    const speakerAvailable = !board.has("Formidable Speaker") && !inHand.has("Formidable Speaker");
+    const harbingerChainViable = harbingerInHand && speakerAvailable
+      && infiniteManaActive && !duskwatchCastable
+      && !board.has("Duskwatch Recruiter") && !inHand.has("Duskwatch Recruiter");
+    if (harbingerChainViable) {
+      results.push({
+        priority: 13,
+        category: "⏭️ WIN NEXT TURN",
+        headline: "Elvish Harbinger → Formidable Speaker on top → draw, cast, find Duskwatch → WIN",
+        detail: "Elvish Harbinger ETB: search library for Formidable Speaker (elf), put it on top. Next turn draw and cast Speaker ({1}{G}): ETB discard any card → search library for Duskwatch Recruiter. With infinite mana, activate Duskwatch to assemble the win pile.",
+        steps: [
+          "Cast Elvish Harbinger ({2}{G}): ETB — search library for Formidable Speaker, put it on top of library.",
+          "Draw Formidable Speaker at the start of your next turn.",
+          "Cast Formidable Speaker ({1}{G}): ETB — discard a card → search library for Duskwatch Recruiter.",
+          "Cast Duskwatch Recruiter ({1}{G}{G}). With infinite mana, activate repeatedly to assemble the win pile.",
+          "Find Endurance + Geier Reach Sanitarium → loop Sanitarium to mill all opponents out.",
         ],
         color: "#c8a800",
       });
@@ -11975,7 +12012,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
 
 
   // ---- NATURE'S RHYTHM DRAW ENGINE ----
-  // Nature's Rhythm is a sorcery — it cannot sit on the board. Block removed.
+  // Nature's Rhythm is handled via sorceryCreatureTutors above — it finds any creature CMC≤X onto battlefield.
 
   // ---- INFINITE MANA — NO WIN CONDITION REACHABLE ----
   // If infinite mana is active but no win-con advice has fired at high priority,
@@ -12753,14 +12790,35 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const faunaInHand = poolHave.has("Fauna Shaman") && !battlefield.some(c => c === "Fauna Shaman");
     const faunaReadyOnBoard = battlefield.some(c => c === "Fauna Shaman") && !sickCreatures?.has("Fauna Shaman");
     const survivalOnBoard = battlefield.some(c => c === "Survival of the Fittest");
+    const survivalInHand = poolHave.has("Survival of the Fittest") && !survivalOnBoard;
     const hasteForFaunaWC = battlefield.some(c => c === "Thousand-Year Elixir");
-    const hasCreatureToDiscard = hand.some(c => c !== "Fauna Shaman" && getCard(c)?.type === "creature");
+    const hasCreatureToDiscard = hand.some(c => c !== "Fauna Shaman" && c !== "Survival of the Fittest" && getCard(c)?.type === "creature");
     const faunaAccessible = (faunaReadyOnBoard || survivalOnBoard || (faunaInHand && hasteForFaunaWC))
       && hasCreatureToDiscard && (isMyTurn || yevaAvailable);
-    // hasDuskwatch: on board/hand, OR reachable via Speaker loop, OR via Finale, OR via Fauna/Survival
+    // Survival in hand: with infinite mana cast it, then discard a creature → finds Duskwatch
+    const survivalInHandAccessible = survivalInHand && hasCreatureToDiscard && (isMyTurn || yevaAvailable);
+    // Fierce Empath finds CMC≥6 → Woodland Bellower → finds Duskwatch (2-step chain, fine with ∞)
+    const fierceEmpathAccessible = poolHave.has("Fierce Empath") && (isMyTurn || yevaAvailable);
+    // Direct creature tutors that can find Duskwatch (CMC 2) in the library
+    const DUSK_TUTORS = new Set([
+      "Green Sun's Zenith",   // X=2, finds any green creature
+      "Chord of Calling",     // convoke, finds any creature
+      "Summoner's Pact",      // finds any green creature (free upkeep cost with ∞)
+      "Shared Summons",       // finds up to 2 creatures
+      "Archdruid's Charm",    // mode: find a Forest or creature
+      "Eldritch Evolution",   // sac a 1-drop → find CMC≤3 → Duskwatch
+      "Woodland Bellower",    // non-legendary CMC≤3 → Duskwatch directly
+      "Nature's Rhythm",      // {X}{G}{G} sorcery — search library for creature CMC≤X, put onto battlefield
+    ]);
+    const directTutorAccessible = [...DUSK_TUTORS].some(t =>
+      poolHave.has(t) && (isMyTurn || yevaAvailable)
+    );
+    // hasDuskwatch: on board/hand, OR reachable via any of the above paths
     const hasDuskwatch = poolHave.has("Duskwatch Recruiter")
       || battlefield.some(c => c === "Duskwatch Recruiter")
-      || speakerBouncerOk || speakerInHandBouncerOk || finaleAccessible || faunaAccessible;
+      || speakerBouncerOk || speakerInHandBouncerOk || finaleAccessible
+      || faunaAccessible || survivalInHandAccessible
+      || fierceEmpathAccessible || directTutorAccessible;
     const hasEndurance = poolHave.has("Endurance");
     const hasSanitarium = poolHave.has("Geier Reach Sanitarium");
     const hasAshaya = poolHave.has("Ashaya, Soul of the Wild");
@@ -12832,6 +12890,18 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         });
         const discardTarget = _wcCandidates[0] ?? "a creature";
         winPaths.push({ path: "duskwatch-via-fauna", priority: 1, desc: `${faunaSource} → discard ${discardTarget} → find Duskwatch Recruiter → activate with infinite mana for win`, missing: [] });
+      } else if (survivalInHandAccessible) {
+        const discardCand = hand.find(c => c !== "Survival of the Fittest" && getCard(c)?.type === "creature") ?? "a creature";
+        winPaths.push({ path: "duskwatch-via-survival", priority: 1, desc: `Cast Survival of the Fittest → discard ${discardCand} → find Duskwatch Recruiter → activate with infinite mana for win`, missing: [] });
+      } else if (fierceEmpathAccessible) {
+        winPaths.push({ path: "duskwatch-via-empath", priority: 1, desc: "Cast Fierce Empath → find Woodland Bellower (CMC 6) → ETB finds Duskwatch Recruiter (CMC ≤ 3) → activate for win", missing: [] });
+      } else if (directTutorAccessible) {
+        const tutor = ["Green Sun's Zenith","Chord of Calling","Summoner's Pact","Shared Summons","Archdruid's Charm","Eldritch Evolution","Woodland Bellower","Nature's Rhythm"]
+          .find(t => poolHave.has(t)) ?? "tutor";
+        const tutorDesc = tutor === "Nature's Rhythm"
+          ? "Nature's Rhythm ({X}{G}{G}) → search library for any creature with CMC ≤ X, put onto battlefield"
+          : `${tutor} → find Duskwatch Recruiter → activate with infinite mana for win`;
+        winPaths.push({ path: "duskwatch-via-tutor", priority: 1, desc: `${tutorDesc} → activate with infinite mana for win`, missing: [] });
       }
       // Mill path
       if (hasEndurance && hasSanitarium && hasUntapLand) {
