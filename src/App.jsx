@@ -21987,6 +21987,16 @@ function gradeOpeningHand(cards, handSize = 7) {
       return { label: "BORDERLINE", passCount: 0, criteria: {} };
     if (greenFastMana.length > 0 && dork1Cards.length >= 1 && colourlessOnlyLands.length > 0)
       return { label: "BORDERLINE", passCount: 0, criteria: {} };
+    // Lotus Petal (or Mox/ESG) + colourless lands + rocks + payoff:
+    // e.g. Tomb + Sol Ring + Lotus Petal → cast 2-drop on T1, Cradle ramps T2.
+    // This is a keepable fast-mana hand even without a green land.
+    if (greenFastMana.length > 0 && colourlessOnlyLands.length >= 1 && rocks >= 1
+        && (combo >= 1 || dorks >= 1 || hasCradle))
+      return { label: "BORDERLINE", passCount: 0, criteria: {} };
+    // Cradle alone as the only land with green fast mana and meaningful payoff:
+    // Cradle + fast green mana + rocks is keepable since Cradle explosively ramps once a creature lands.
+    if (hasCradle && greenFastMana.length > 0 && rocks >= 1 && (dorks >= 1 || combo >= 1))
+      return { label: "BORDERLINE", passCount: 0, criteria: {} };
     return { label: "MULLIGAN", passCount: 0, criteria: {}, hardMulligan: true };
   }
   // Gate 2: no real mana sources at all
@@ -25926,6 +25936,13 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       grade = { label: "KEEP", color: COLORS.green2 };
     } else if (topCat.includes("WIN NEXT")) {
       advisorNotes.push("⚡ WIN NEXT TURN line available");
+      if (grade.label !== "KEEP") grade = { label: "KEEP", color: COLORS.green2 };
+    } else if (topCat.includes("INFINITE MANA — NEXT TURN") || topCat.includes("INFINITE MANA — FIND")) {
+      advisorNotes.push("⏭️ Infinite mana achievable next turn from opening hand");
+      if (grade.label === "MULLIGAN" && !hardMulligan) grade = { label: "BORDERLINE", color: COLORS.gold };
+      if (grade.label === "BORDERLINE") grade = { label: "KEEP", color: COLORS.green2 };
+    } else if (topCat.includes("INFINITE MANA")) {
+      advisorNotes.push("⚙️ Infinite mana line visible from opening hand");
       if (grade.label === "MULLIGAN" && !hardMulligan) grade = { label: "BORDERLINE", color: COLORS.gold };
     } else if (suppressed.length > 0) {
       // A suppressed line means a piece is MISSING — upgrade to BORDERLINE at most, never KEEP
