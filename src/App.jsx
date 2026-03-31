@@ -2359,7 +2359,7 @@ function bestDiscardFromHand(hand, exclude = []) {
   return scored[0].name;
 }
 
-function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false, sickCreatures = null }) {
+function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters = 0, opponentThreats, lifeTotal, deckList = null, attachments = null, threatLevel = "low", opponentOpenMana = false, landPlayed = false, sickCreatures = null, tappedCards = null }) {
   // Normalise sickCreatures: accept null, Array, or Set — always use as Set internally.
   // This prevents crashes from callers passing sickCreatures as [] or ["CardName"].
   if (Array.isArray(sickCreatures)) sickCreatures = new Set(sickCreatures);
@@ -2568,7 +2568,29 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   const esgInHand = hand.includes("Elvish Spirit Guide");
   const esgBonus = esgInHand ? 1 : 0;
 
-  const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus + elderUntapBonus;
+  // Hope Tender exert bonus: {1},T,exert → untap up to 2 target lands this turn.
+  // An untapped Tender can double-tap Tomb+Cradle, effectively re-generating those lands' output
+  // (minus the {1} exert cost). We model this as extra mana available this turn.
+  let tenderExertBonusGreen = 0;
+  let tenderExertBonusColorless = 0;
+  if (isMyTurn && board.has("Hope Tender") && !sickCreatures?.has("Hope Tender")) {
+    const hasTomb = board.has("Ancient Tomb");
+    // Cradle in hand (land drop) or already on board
+    const hasCradle = board.has("Gaea's Cradle") || inHand.has("Gaea's Cradle");
+    const creaturesForCradle = battlefield.filter(c => getCard(c)?.type === "creature").length
+      + (inHand.has("Quirion Ranger") || inHand.has("Scryb Ranger") ? 1 : 0); // ranger cast before loop
+    if (hasTomb && hasCradle) {
+      // Tender retaps Tomb(2C) + Cradle(Nx G where N≥2 after ranger enters)
+      tenderExertBonusColorless += 2;                   // Tomb second tap
+      tenderExertBonusGreen += Math.max(1, creaturesForCradle); // Cradle second tap
+      tenderExertBonusColorless -= 1;                   // exert cost {1}
+    } else if (hasTomb) {
+      tenderExertBonusColorless += 2 - 1;              // Tomb second tap minus exert cost
+    }
+  }
+  const tenderExertBonus = tenderExertBonusGreen + tenderExertBonusColorless;
+
+  const effectiveManaBonus = rangerManaBonus + esgBonus + symbioteRitualBonus + desertedTempleBonus + elderUntapBonus + tenderExertBonus;
   // #8: Convoke bonus for Chord of Calling — each untapped (non-sick) creature can tap to pay {1} or {G}.
   // Summoning-sick creatures cannot tap, so they don't contribute to convoke.
   const convokeCreatures = battlefield.filter(c => {
@@ -2841,8 +2863,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           return _castable;
         });
         if (!allReachable) continue;
-        // Verify we can actually afford to cast all hand pieces this turn
-        if (castCostFromHand > totalMana) continue;
+        // Verify we can actually afford to cast all hand pieces this turn,
+        // AND have mana remaining to activate the loop.
+        // Hope Tender's exert costs {1} to activate — need at least 1 mana beyond cast cost.
+        const loopActivationCost = (combo.id === "hope_tender_ashaya_dork") ? 1 : 0;
+        if (castCostFromHand + loopActivationCost > totalMana) continue;
         const extras = comboExtrasSatisfied(combo, false);
         if (extras.ok) { _inf = true; _infName = combo.name; break; }
       }
@@ -3036,6 +3061,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         ok: false,
         missing: "one of: " + combo.needsNamedDork.slice(0, 4).join(", ") + (combo.needsNamedDork.length > 4 ? ", …" : ""),
       };
+    }
+
+    // hope_tender_ashaya_dork: Hope Tender must be untapped (not sick, not tapped)
+    // and there must be ≥1 mana available to pay the {1} exert activation cost.
+    if (combo.id === "hope_tender_ashaya_dork") {
+      const tenderSick   = sickCreatures?.has("Hope Tender");
+      const tenderTapped = tappedCards != null && (
+        [...tappedCards].some(k => k === "Hope Tender" || k.startsWith("Hope Tender:"))
+      );
+      if (tenderSick || tenderTapped) return { ok: false, missing: "Hope Tender untapped (summoning sickness or tapped)" };
+      if (totalMana < 1) return { ok: false, missing: "{1} mana to activate Hope Tender exert" };
     }
 
     // needsVitalize: Vitalize must be in hand or graveyard (for the Vitalize loop)
@@ -3710,6 +3746,86 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           "Spend 5 on Ashaya, Soul of the Wild ({3}{G}{G}) — or any other 7-mana sequence.",
         ],
         color: "#52be80",
+      });
+    }
+  }
+
+  // ── HOPE TENDER T1 SETUP → T2 INFINITE MANA ─────────────────────────────
+  // Detects: Ancient Tomb + Sol Ring + Lotus Petal + Hope Tender in hand/board,
+  // plus Gaea's Cradle + Ranger (Quirion/Scryb) + Ashaya in hand.
+  // T1: Tomb(2C) + Sol Ring(cast 1→tap 2C) + Petal(sac→1G) = 4 mana → cast Hope Tender({1}{G}).
+  // T2: Play Cradle. Tap Sol Ring(2C) + Tomb(2C) + Cradle(1G, 1 creature) = 5 mana.
+  //   Hope Tender exerts ({1},T): untap Tomb + Cradle. Tap Tomb(2C)+Cradle(1G) again = 3 more = 7 total (3G).
+  //   Cast Ranger (1G). Now Cradle = 2 creatures → 2G. Tap Tomb(2C)+Cradle(2G) = 4 more.
+  //   Cast Ashaya (CMC5, 2G). All creatures are Forests. Ranger bounces self → untaps Tender.
+  //   Tender exerts → untaps Cradle + Tender (Forest via Ashaya). Cradle taps for 3G.
+  //   Net per loop: 3G - 1 cost = +2G. INFINITE.
+  {
+    const haveTombHT   = inHand.has("Ancient Tomb")  || board.has("Ancient Tomb");
+    const haveSolRing  = inHand.has("Sol Ring")       || board.has("Sol Ring");
+    const havePetalHT  = inHand.has("Lotus Petal")    || board.has("Lotus Petal");
+    const haveTender   = inHand.has("Hope Tender")    || board.has("Hope Tender");
+    const haveCradle   = inHand.has("Gaea's Cradle")  || board.has("Gaea's Cradle");
+    const haveRangerHT = inHand.has("Quirion Ranger") || board.has("Quirion Ranger")
+                      || inHand.has("Scryb Ranger")   || board.has("Scryb Ranger");
+    const haveAshayaHT = inHand.has("Ashaya, Soul of the Wild") || board.has("Ashaya, Soul of the Wild");
+
+    // Tender must not be sick (if on board); all key pieces must be present
+    const tenderSick = board.has("Hope Tender") && sickCreatures?.has("Hope Tender");
+    // Only fire the bespoke T1-setup advice when Tender is NOT yet on the battlefield,
+    // OR when Tender is on the battlefield but sick (T1 just played, need to wait for T2).
+    // When Tender is on board and healthy, the path planner's CAST TO ENABLE handles it.
+    const tenderOnBoard = board.has("Hope Tender");
+    const needsBespokeT2Advice = !tenderOnBoard || tenderSick;
+
+    if (haveTombHT && haveSolRing && havePetalHT && haveTender && haveCradle
+        && haveRangerHT && haveAshayaHT && !infiniteManaActive && needsBespokeT2Advice
+        && !results.some(r => r.combo === "tender_tomb_t2_infinite")) {
+
+      const rangerName = inHand.has("Quirion Ranger") || board.has("Quirion Ranger")
+        ? "Quirion Ranger" : "Scryb Ranger";
+      const rangerCost = rangerName === "Quirion Ranger" ? "{G}" : "{1}{G}";
+
+      // Build dynamic steps — skip steps already done (pieces already on board)
+      const tombOnBd   = board.has("Ancient Tomb");
+      const solOnBd    = board.has("Sol Ring");
+      const petalOnBd  = board.has("Lotus Petal");
+      const tenderOnBd = board.has("Hope Tender");
+      const cradleOnBd = board.has("Gaea's Cradle");
+      const rangerOnBd = board.has(rangerName);
+      const ashayaOnBd = board.has("Ashaya, Soul of the Wild");
+      const alreadySetUp = tenderOnBd && solOnBd && tombOnBd;
+
+      const t1Steps = [];
+      if (!tombOnBd)   t1Steps.push("Play Ancient Tomb — taps for {C}{C}.");
+      if (!solOnBd)    t1Steps.push("Cast Sol Ring ({1}) — taps for {C}{C}.");
+      if (!petalOnBd)  t1Steps.push("Cast Lotus Petal ({0}) — sacrifice for {G}.");
+      if (!tenderOnBd) t1Steps.push("Tap Tomb({C}{C}) + Sol Ring({C}{C}) + Petal({G}) = 5 mana → cast Hope Tender ({1}{G}).");
+
+      results.push({
+        priority: 15,
+        category: "⏭️ INFINITE MANA — NEXT TURN",
+        combo: "tender_tomb_t2_infinite",
+        headline: alreadySetUp
+          ? "Hope Tender on board — T2: Cradle + Ranger + Ashaya → INFINITE MANA"
+          : "T1: Ancient Tomb + Sol Ring + Lotus Petal → Hope Tender → T2 INFINITE MANA",
+        detail: "T1: Ancient Tomb + Sol Ring + Lotus Petal generate 5 mana to cast Hope Tender ({1}{G}). T2: Play Gaea's Cradle. Use Tender to double-tap Tomb+Cradle (7 mana). Cast Ranger + Ashaya. Ranger bounces itself → untaps Tender. Tender exerts → untaps Cradle+Tender (Forest via Ashaya). Cradle taps for 3G, net +2G per loop = INFINITE MANA. Then find a win outlet.",
+        steps: [
+          ...(t1Steps.length ? ["TURN 1:", ...t1Steps, "Pass turn. Hope Tender enters with summoning sickness."] : []),
+          "TURN 2:",
+          ...(!cradleOnBd ? ["Play Gaea's Cradle (land drop)."] : []),
+          "Tap Sol Ring({C}{C}) + Tomb({C}{C}) + Cradle({G}, 1 creature) = 5 mana.",
+          "Activate Hope Tender: pay {1}, tap, exert → untap Tomb + Cradle.",
+          "Tap Tomb({C}{C}) + Cradle({G}) again = 3 more mana (7 total, 3G green).",
+          ...(!rangerOnBd ? ["Cast "+rangerName+" ("+rangerCost+"). Cradle now taps for 2G (2 creatures)."] : []),
+          "Tap Tomb({C}{C}) + Cradle({G}{G}) = 4 more mana.",
+          ...(!ashayaOnBd ? ["Cast Ashaya, Soul of the Wild ({3}{G}{G}) — all creatures become Forest lands."] : []),
+          rangerName+" bounces itself (Forest via Ashaya) → untaps Hope Tender.",
+          "INFINITE LOOP: Tender exerts ({1}, tap) → untap Cradle + Tender (both Forests via Ashaya).",
+          "Tap Cradle for {G}{G}{G} (3 creatures: Tender+Ranger+Ashaya) → net +{G}{G} per cycle.",
+          "Repeat for infinite green mana → find a win outlet (Duskwatch, Finale, etc.).",
+        ].filter(Boolean),
+        color: "#c0392b",
       });
     }
   }
@@ -9163,7 +9279,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     const deckSet = deckList ? new Set(deckList) : null;
     // #4: Cache the findReachableLines result — it's expensive (~1-2ms) and called twice
     // (once here for the path planner, once below for the turn clock).
-    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive);
+    if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive, tappedCards);
     const lines = _cachedFRL;
     const topLines = lines.slice(0, 3);
     topLines.forEach((l, idx) => {
@@ -9486,9 +9602,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         }
       } else {
         const totalCost = needToCast.reduce((acc, c) => acc + (getCard(c)?.cmc || 0), 0);
+        const totalGreenPips = needToCast.reduce((acc, c) => acc + (getCard(c)?.greenPips || 0), 0);
         // On opponent's turn via command-zone Yeva: add 4 mana for Yeva's cost.
         const effectiveCost = (!isMyTurn && canCastViaCmdYeva && !yevaFlash) ? totalCost + 4 : totalCost;
-        if (mana >= effectiveCost || infiniteManaActive) {
+        // Use canAffordWithTricks so Hope Tender exert bonus, ranger tricks, etc. are included
+        if (canAffordWithTricks(effectiveCost, totalGreenPips) || infiniteManaActive) {
           // Bootstrap scenario: elevate CAST TO ENABLE to priority 13 so it surfaces above
           // ONE PIECE AWAY results when infinite mana is only reachable (not yet running).
           const isBootstrapPath = infiniteManaActive && !trueInfiniteManaActive
@@ -12579,7 +12697,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     try {
       const deckSet = deckList ? new Set(deckList) : null;
       // #4: Reuse cached result from path planner if available
-      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive);
+      if (!_cachedFRL) _cachedFRL = findReachableLines(hand, battlefield, graveyard, maxGreen + maxColorless, deckSet, yisanCounters, sickCreatures, infiniteManaActive, tappedCards);
       const lines = _cachedFRL;
 
       // Check bespoke advice results first — they catch win paths the path planner may miss
@@ -13333,7 +13451,7 @@ function filterComboLinesForDisplay(lines, hand, battlefield) {
   }).filter(Boolean);
 }
 
-function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null, infiniteManaActive = false) {
+function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanCounters = 0, sickCreatures = null, infiniteManaActive = false, tappedCards = null) {
   if (Array.isArray(sickCreatures)) sickCreatures = new Set(sickCreatures);
   else if (sickCreatures !== null && typeof sickCreatures !== "object") sickCreatures = null;
   const board    = new Set(battlefield);
@@ -13971,6 +14089,14 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
       const hasEngine = pool.have.has("Beast Whisperer") || glademuseActive ||
         (pool.have.has("Nissa, Resurgent Animist") && pool.have.has("Ashaya, Soul of the Wild"));
       if (!hasEngine) return null;
+    }
+
+    // hope_tender_ashaya_dork: Hope Tender must be untapped and ≥1 mana available
+    if (combo.id === "hope_tender_ashaya_dork") {
+      const tenderSick   = sickCreatures?.has("Hope Tender");
+      const tenderTapped = tappedCards != null &&
+        [...tappedCards].some(k => k === "Hope Tender" || k.startsWith("Hope Tender:"));
+      if (tenderSick || tenderTapped || mana < 1) return null;
     }
 
     // needsVitalize: Vitalize must be available
@@ -22588,7 +22714,7 @@ function GoldfishSaveLoad({
   React.useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
 
   const handleSave = () => {
-    const label = name.trim() || `T${turnRef.current} \u2013 ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    const label = name.trim() || `T${turnRef.current} – ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     goldfishSave(label);
     setName("");
   };
@@ -22596,7 +22722,7 @@ function GoldfishSaveLoad({
   const handleLoad = (slot) => {
     goldfishRestoreSnapshot(slot.snap);
     setShowSaveLoad(false);
-    addLog(`Loaded save: \u201c${slot.label}\u201d`, COLORS.gold);
+    addLog(`Loaded save: “${slot.label}”`, COLORS.gold);
   };
 
   const handleDelete = async (ts) => {
@@ -22615,9 +22741,9 @@ function GoldfishSaveLoad({
 
   const slotPreview = (snap) => {
     const parts = [];
-    if (snap?.hand?.length)        parts.push(`Hand: ${snap.hand.slice(0,3).join(", ")}${snap.hand.length > 3 ? "\u2026" : ""}`);
-    if (snap?.battlefield?.length) parts.push(`Board: ${snap.battlefield.filter(c => getCard(c)?.type === "creature").slice(0,2).join(", ")}\u2026`);
-    return parts.join(" \u00b7 ") || "Empty board";
+    if (snap?.hand?.length)        parts.push(`Hand: ${snap.hand.slice(0,3).join(", ")}${snap.hand.length > 3 ? "…" : ""}`);
+    if (snap?.battlefield?.length) parts.push(`Board: ${snap.battlefield.filter(c => getCard(c)?.type === "creature").slice(0,2).join(", ")}…`);
+    return parts.join(" · ") || "Empty board";
   };
 
   return (
@@ -22635,14 +22761,14 @@ function GoldfishSaveLoad({
         <div style={{ padding: "16px 20px 12px", borderBottom: `1px solid ${COLORS.border}`,
                       display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ flex: 1, fontFamily: "'Cinzel', serif", fontSize: "14px", color: COLORS.text }}>
-            \uD83D\uDCBE Goldfish Saves
+            💾 Goldfish Saves
           </div>
           <div style={{ color: COLORS.textDim, fontSize: "10px", fontFamily: "'Cinzel', serif",
                         letterSpacing: "1px" }}>Shift+S</div>
           <button onClick={() => setShowSaveLoad(false)} style={{
             background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "4px",
             color: COLORS.textDim, cursor: "pointer", fontSize: "13px", padding: "3px 9px", flexShrink: 0,
-          }}>\u2715</button>
+          }}>✕</button>
         </div>
 
         {/* Save row */}
@@ -22653,7 +22779,7 @@ function GoldfishSaveLoad({
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSave()}
-            placeholder={`T${turnRef.current} \u2013 snapshot name (optional)\u2026`}
+            placeholder={`T${turnRef.current} – snapshot name (optional)…`}
             style={{
               flex: 1, background: "#0a150a", border: `1px solid ${COLORS.border}`,
               borderRadius: "4px", color: COLORS.text, fontFamily: "'Crimson Text', serif",
@@ -22671,7 +22797,7 @@ function GoldfishSaveLoad({
         <div style={{ overflowY: "auto", flex: 1, padding: "10px 16px" }}>
           <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif",
                         fontSize: "11px", marginBottom: "8px" }}>
-            Up to {MAX_SAVE_SLOTS} saves \u2014 the oldest is automatically removed when the limit is reached.
+            Up to {MAX_SAVE_SLOTS} saves — the oldest is automatically removed when the limit is reached.
           </div>
           {saveSlots.length === 0 ? (
             <div style={{ color: COLORS.textDim, fontFamily: "'Crimson Text', serif",
@@ -22699,7 +22825,7 @@ function GoldfishSaveLoad({
                       borderRadius: "3px", padding: "1px 5px", letterSpacing: "0.5px",
                       fontFamily: "'Cinzel', serif", flexShrink: 0, whiteSpace: "nowrap",
                     }}>
-                      {activeDeck && slot.snap.deckId !== activeDeck.id ? "\u26a0 " : ""}{slot.snap.deckName}
+                      {activeDeck && slot.snap.deckId !== activeDeck.id ? "⚠ " : ""}{slot.snap.deckName}
                     </span>
                   )}
                 </div>
@@ -22709,7 +22835,7 @@ function GoldfishSaveLoad({
                 </div>
                 <div style={{ fontSize: "10px", color: COLORS.textDim, marginTop: "2px" }}>
                   {formatTime(slot.ts)}
-                  {slot.snap?.turnNumber > 1 && ` \u00b7 Turn ${slot.snap.turnNumber}`}
+                  {slot.snap?.turnNumber > 1 && ` · Turn ${slot.snap.turnNumber}`}
                 </div>
               </div>
               <button onClick={() => handleLoad(slot)} style={{
@@ -22733,7 +22859,7 @@ function GoldfishSaveLoad({
                   background: "none", border: "1px solid #5a1a1a", borderRadius: "4px",
                   color: "#e74c3c66", cursor: "pointer", fontSize: "11px",
                   padding: "4px 8px", flexShrink: 0,
-                }}>\u2715</button>
+                }}>✕</button>
               )}
             </div>
           ))}
@@ -22788,6 +22914,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // sickCreatures: Set of "card:index" keys for creatures that entered this turn (summoning sickness)
   // We store keys (not names) so bouncing+recasting a creature correctly gets sickness again.
   const [sickCreatures, setSickCreatures] = useState(new Set());
+  // exertedCreatures: separate from sickCreatures — exerted creatures are tapped but not sick
+  const [exertedCreatures, setExertedCreatures] = useState(new Set());
   // Derived name set for passing to calculateBattlefieldMana (which uses card names)
   const sickCreatureNames = React.useMemo(() => {
     const names = new Set();
@@ -22828,6 +22956,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [tutorSelected, setTutorSelected] = useState(0); // keyboard-highlighted index
   const tutorInputRef = useRef(null);
   const [tapped, setTapped] = useState(new Set());
+  const tapManaLog = useRef(new Map()); // cardKey → {green,colorless} for tapped BF cards
+  const [tappedManaV, setTappedManaV] = useState(0); // bumps to recompute tappedMana
   const [counters, setCounters] = useState({});
   const [scryN, setScryN] = useState(3);
   const [showScry, setShowScry] = useState(false);
@@ -22972,30 +23102,24 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     return m;
   })();
   const currentManaPool = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
-  const currentMana = currentManaPool.total; // flat number for Goldfish mana display
+  const currentMana = currentManaPool.total;
+  // tappedMana: mana generated by tapped battlefield cards (not in manaPool).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const tappedMana = React.useMemo(() => {
+    let g = 0, c = 0;
+    for (const v of tapManaLog.current.values()) {
+      if (typeof v === 'object') { g += v.green || 0; c += v.colorless || 0; }
+      else c += v || 0;
+    }
+    return { green: g, colorless: c, total: g + c };
+  }, [tappedManaV, tapped]);
   // Compute how much green is in the floating mana pool, derived from tapped permanents:
   //   greenInPool = max(0, min(greenFromTapped, manaPool - colorlessFromTapped))
   // This handles the case where colourless sources were tapped after green was spent
   // (e.g. Forest → cast Sol Ring → tap Sol Ring: pool=2 colourless, greenFromTapped=1,
   //  colorlessFromTapped=2 → greenInPool = max(0, min(1, 0)) = 0 correctly).
-  // Chrome Mox with no imprint produces no mana — exclude it from calculations.
-  const availableGreen = (() => {
-    const bCtx = buildBoardContext(battlefield, sickCreatureNames, attachments);
-    let greenFromTapped = 0, colorlessFromTapped = 0;
-    for (const key of tapped) {
-      const lastColon = key.lastIndexOf(":");
-      const cName = key.slice(0, lastColon);
-      const cData = getCard(cName);
-      if (!cData) continue;
-      // Chrome Mox with no imprint produces no mana
-      if (cName === "Chrome Mox" && !imprintedMoxes.has(key)) continue;
-      const { green, colorless } = cardManaContribution(cName, cData, bCtx, sickCreatureNames);
-      greenFromTapped += green;
-      colorlessFromTapped += colorless;
-    }
-    const greenInPool = Math.max(0, Math.min(greenFromTapped, manaPool - colorlessFromTapped));
-    return currentManaPool.green + greenInPool;
-  })();
+  // availableGreen = untapped green sources + green from tapped cards + external pool (Petal/ESG/manual)
+  const availableGreen = currentManaPool.green + tappedMana.green + manaPool;
   const analysis = React.useMemo(() => {
     if (hand.length + battlefield.length === 0) return null;
     // Extract Yisan verse counter from the generic counters system.
@@ -23012,6 +23136,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         yisanCounters: gfYisanCounters,
         landPlayed,
         sickCreatures: sickCreatureNames,
+        tappedCards: tapped,
       });
       // Post-filter: suppress any advice that requires playing a land if we've already
       // used our land drop this turn (T1 SETUP is already gated inside analyzeGameState;
@@ -23036,13 +23161,78 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
   // ── helpers ─────────────────────────────────────────────────
   // ── UNDO ────────────────────────────────────────────────────
+  // Helper: untap lands via an ability (Hope Tender, Argothian Elder, etc.)
+  // The mana those lands previously produced stays floating in tapManaLog.
+  // The cards are removed from tapped so they can be tapped again for MORE mana.
+  // We rename their tapManaLog entry to a "floating" key so it isn't cleared by
+  // future re-taps of the same card, and doesn't confuse the display.
+  function untapLands(targets) {
+    const arr = Array.isArray(targets) ? targets : [targets];
+    arr.forEach(({ c, i }) => {
+      const k = cardKey(c, i);
+      const logged = tapManaLog.current.get(k);
+      if (logged) {
+        // Migrate the mana to a floating key so it persists after untap
+        tapManaLog.current.delete(k);
+        const floatKey = `__float__${k}`;
+        const existing = tapManaLog.current.get(floatKey);
+        if (existing) {
+          tapManaLog.current.set(floatKey, {
+            green:     (existing.green     || 0) + (typeof logged === 'object' ? logged.green     : 0),
+            colorless: (existing.colorless || 0) + (typeof logged === 'object' ? logged.colorless : logged),
+          });
+        } else {
+          tapManaLog.current.set(floatKey, typeof logged === 'object' ? logged : { green: 0, colorless: logged });
+        }
+      }
+    });
+    setTapped(prev => {
+      const next = new Set(prev);
+      arr.forEach(({ c, i }) => next.delete(cardKey(c, i)));
+      return next;
+    });
+    setTappedManaV(v => v + 1);
+  }
+  // Spend N mana: colorless first, then green. Deducts from tapManaLog then manaPool.
+  function spendMana(n) {
+    let rem = n;
+    // Pass 1: spend from colorless entries first
+    for (const [k, v] of tapManaLog.current.entries()) {
+      if (rem <= 0) break;
+      const vc = typeof v === 'object' ? (v.colorless || 0) : (v || 0);
+      if (vc <= 0) continue;
+      const spend = Math.min(vc, rem);
+      const newG = typeof v === 'object' ? (v.green || 0) : 0;
+      const newC = vc - spend;
+      if (newG + newC <= 0) tapManaLog.current.delete(k);
+      else tapManaLog.current.set(k, { green: newG, colorless: newC });
+      rem -= spend;
+    }
+    // Pass 2: spend from green entries if still needed
+    for (const [k, v] of tapManaLog.current.entries()) {
+      if (rem <= 0) break;
+      const vg = typeof v === 'object' ? (v.green || 0) : 0;
+      if (vg <= 0) continue;
+      const spend = Math.min(vg, rem);
+      const newC = typeof v === 'object' ? (v.colorless || 0) : 0;
+      const newG = vg - spend;
+      if (newG + newC <= 0) tapManaLog.current.delete(k);
+      else tapManaLog.current.set(k, { green: newG, colorless: newC });
+      rem -= spend;
+    }
+    if (rem > 0) setManaPool(p => Math.max(0, p - rem));
+    setTappedManaV(v => v + 1);
+    flashMana(-n);
+  }
+
   function pushUndo() {
     undoStack.current = [
       { hand: [...hand], battlefield: [...battlefield], graveyard: [...graveyard],
         library: [...library], exile: [...exile], tapped: new Set(tapped),
         counters: { ...counters }, manaPool, imprintedMoxes: new Set(imprintedMoxes), landPlayed, turnNumber: turnRef.current,
-        sickCreatures: new Set(sickCreatures), attachments: new Map(attachments),
+        sickCreatures: new Set(sickCreatures), exertedCreatures: new Set(exertedCreatures), attachments: new Map(attachments),
         yevaTax,
+        tapManaLog: new Map(tapManaLog.current),
         log: [...log] },
       ...undoStack.current.slice(0, 19), // keep max 20
     ];
@@ -23060,11 +23250,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setTapped(snap.tapped);
     setCounters(snap.counters);
     setManaPool(snap.manaPool);
+    if (snap.tapManaLog) { tapManaLog.current = new Map(snap.tapManaLog); setTappedManaV(v => v + 1); }
     setImprintedMoxes(snap.imprintedMoxes ?? new Set());
     setLandPlayed(snap.landPlayed);
     setTurnNumber(snap.turnNumber);
     turnRef.current = snap.turnNumber;
     setSickCreatures(snap.sickCreatures ?? new Set());
+    setExertedCreatures(snap.exertedCreatures ?? new Set());
     setAttachments(snap.attachments ?? new Map());
     setYevaTax(snap.yevaTax ?? 0);
     setLog(snap.log);
@@ -23083,6 +23275,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       exile: [...exile],
       tapped: [...tapped],
       sickCreatures: [...sickCreatures],
+      exertedCreatures: [...exertedCreatures],
       counters: { ...counters },
       attachments: [...attachments.entries()],
       imprintedMoxes: [...imprintedMoxes],
@@ -23102,7 +23295,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   async function goldfishSave(slotLabel) {
     const snap = captureSnapshot();
     const ts = Date.now();
-    const label = slotLabel || `T${snap.turnNumber} \u2013 ${new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    const label = slotLabel || `T${snap.turnNumber} – ${new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     let slots;
     try {
       const raw = await storage.get(GOLDFISH_SAVE_KEY);
@@ -23131,6 +23324,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setExile(snap.exile ?? []);
     setTapped(new Set(snap.tapped ?? []));
     setSickCreatures(new Set(snap.sickCreatures ?? []));
+    setExertedCreatures(new Set(snap.exertedCreatures ?? []));
     setCounters(snap.counters ?? {});
     setAttachments(new Map(snap.attachments ?? []));
     setImprintedMoxes(new Set(snap.imprintedMoxes ?? []));
@@ -23168,7 +23362,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     const lib = buildLibrary(deckCards);
     setLibrary(lib.slice(7));
     setHand(lib.slice(0, 7));
-    setBattlefield([]); setGraveyard([]); setExile([]); setAttachments(new Map()); setSickCreatures(new Set());
+    setBattlefield([]); setGraveyard([]); setExile([]); setAttachments(new Map()); setSickCreatures(new Set()); setExertedCreatures(new Set());
     setTurnNumber(1); turnRef.current = 1; setIsMyTurn(true); setLandPlayed(false);
     setMulliganCount(0); setLog([]); setPendingBottoms([]);
     setPhase2(null); setYevaTax(0);
@@ -23323,11 +23517,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   // ── UNTAP ALL ───────────────────────────────────────────────
   function untapAll() {
     pushUndo();
-    setTapped(new Set());
+    tapManaLog.current.clear();
+    // Exerted creatures don't untap this step — keep them in tapped, remove from exerted
+    setTapped(exertedCreatures.size > 0 ? new Set(exertedCreatures) : new Set());
+    setTappedManaV(v => v + 1);
     setManaPool(0);
     setLandPlayed(false);
-    setSickCreatures(new Set()); // untap step clears summoning sickness
-    addLog("Untap step — all permanents untapped.", COLORS.green1);
+    setSickCreatures(new Set());
+    setExertedCreatures(new Set()); // exert wears off after this untap step
+    addLog("Untap step — all permanents untapped." + (exertedCreatures.size > 0 ? " (Exerted creatures remain tapped.)" : ""), COLORS.green1);
   }
 
   // ── NEXT TURN ───────────────────────────────────────────────
@@ -23375,6 +23573,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       setManaPool(0);
       setLandPlayed(false);
       setSickCreatures(new Set()); // new turn clears summoning sickness
+      setExertedCreatures(new Set()); // exert wears off at start of next turn
       setExpandedSteps(new Set());
       setShowAllResults(false);
       // Draw for the turn
@@ -23497,20 +23696,22 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       return [...prev.slice(0, i), ...prev.slice(i + 1)];
     });
     // Remap sickCreatures keys: remove the card's key, shift indices above it down by 1
-    setSickCreatures(prev => {
+    const remapKeySet = (prev) => {
       const next = new Set();
       for (const key of prev) {
         const lastColon = key.lastIndexOf(":");
         const keyIdx = parseInt(key.slice(lastColon + 1), 10);
-        if (keyIdx === removeIdx) continue; // this is the removed card — drop it
+        if (keyIdx === removeIdx) continue;
         if (keyIdx > removeIdx) {
-          next.add(key.slice(0, lastColon + 1) + (keyIdx - 1)); // shift down
+          next.add(key.slice(0, lastColon + 1) + (keyIdx - 1));
         } else {
           next.add(key);
         }
       }
       return next;
-    });
+    };
+    setSickCreatures(remapKeySet);
+    setExertedCreatures(remapKeySet);
     // Remap tapped keys the same way — removing a card shifts all higher indices down by 1.
     // Without this, cards that were tapped appear untapped after any removal.
     setTapped(prev => {
@@ -23651,15 +23852,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                 key: `${c}:${idx}`, c, idx,
               })),
               onSelect: ({ c: tc, idx: ti }) => {
-                if (manaPool < 1) {
+                if ((manaPool + tappedMana.total) < 1) {
                   addLog("Wirewood Lodge: need {G} to activate untap ability.", COLORS.red ?? COLORS.textDim);
                   return;
                 }
                 pushUndo();
                 setTapped(prev => { const next = new Set(prev); next.add(key); return next; });
-                setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
-                setManaPool(prev => Math.max(0, prev - 1));
-                flashMana(-1);
+                const _wlCk = cardKey(tc, ti); const _wlLg = tapManaLog.current.get(_wlCk); if (_wlLg) { tapManaLog.current.delete(_wlCk); const _wlFk = `__float__${_wlCk}`; const _wlEx = tapManaLog.current.get(_wlFk); const _wlV = typeof _wlLg === 'object' ? _wlLg : {green:0,colorless:_wlLg}; tapManaLog.current.set(_wlFk, _wlEx ? {green:(_wlEx.green||0)+_wlV.green,colorless:(_wlEx.colorless||0)+_wlV.colorless} : _wlV); setTappedManaV(v => v + 1); }
+                setTapped(prev => { const next = new Set(prev); next.delete(_wlCk); return next; });
+                spendMana(1);
                 addLog(`Wirewood Lodge: paid {G}, tapped → untapped ${tc}.`, COLORS.green2);
               },
             });
@@ -23703,9 +23904,15 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       return next;
     });
     if (cardMana > 0) {
-      const delta = wasTapped ? -cardMana : cardMana;
-      setManaPool(prev => Math.max(0, prev + delta));
-      flashMana(delta);
+      if (!wasTapped) {
+        const ctx = buildBoardContext(battlefield, sickCreatureNames, attachments);
+        const contrib = cardManaContribution(card, getCard(card) ?? {}, ctx, sickCreatureNames);
+        tapManaLog.current.set(key, { green: contrib.green, colorless: contrib.colorless });
+      } else {
+        tapManaLog.current.delete(key);
+      }
+      setTappedManaV(v => v + 1);
+      flashMana(wasTapped ? -cardMana : cardMana);
     }
   }
 
@@ -23718,7 +23925,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setTapped(prev => { const next = new Set(prev); next.add(key); return next; });
     // Untap the target elf
     const targetKey = cardKey(targetCard, targetIdx);
-    setTapped(prev => { const next = new Set(prev); next.delete(targetKey); return next; });
+    const _ck2 = targetKey; const _lg3 = tapManaLog.current.get(_ck2); if (_lg3) { tapManaLog.current.delete(_ck2); const _fk2 = `__float__${_ck2}`; const _ex2 = tapManaLog.current.get(_fk2); const _lg4 = typeof _lg3 === 'object' ? _lg3 : {green:0,colorless:_lg3}; tapManaLog.current.set(_fk2, _ex2 ? {green:(_ex2.green||0)+_lg4.green,colorless:(_ex2.colorless||0)+_lg4.colorless} : _lg4); setTappedManaV(v => v + 1); }
+    setTapped(prev => { const next = new Set(prev); next.delete(_ck2); return next; });
     addLog(`Tapped ${card} → untapped ${targetCard}.`, COLORS.green1);
     setShowUntapModal(null);
   }
@@ -23748,8 +23956,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     // Set pool to max(99, cmc) so deductions succeed and X costs resolve large.
     // NOTE: `infiniteMana` is not a local state in GoldfishModal — use analysis instead.
     const isInfiniteMana = analysis?.infiniteManaActive ?? false;
-    if (isInfiniteMana && cmc > manaPool) {
-      const topUp = Math.max(99, cmc) - manaPool;
+    const _totalAvail = manaPool + tappedMana.total;
+    if (isInfiniteMana && cmc > _totalAvail) {
+      const topUp = Math.max(99, cmc) - _totalAvail;
       setManaPool(prev => prev + topUp);
       flashMana(topUp);
       addLog(`∞ Infinite mana — pool topped up to ${Math.max(99, cmc)} for ${card}.`, COLORS.purple);
@@ -23772,8 +23981,9 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     // (e.g. Lotus Petal sacs) that haven't flushed yet. Used to compute the correct sick key index.
     let pendingBattlefieldRemovals = 0;
     let effectiveTapped = new Set(tapped);
-    if (cmc > 0 && manaPool < cmc) {
-      const needed = cmc - manaPool;
+    const _poolTotal = manaPool + tappedMana.total;
+    if (cmc > 0 && _poolTotal < cmc) {
+      const needed = cmc - _poolTotal;
       // Gather untapped mana producers. When the card needs green, sort green sources first.
       const untappedSources = battlefield
         .map((c, i) => ({ c, i, key: cardKey(c, i), mana: cardManaAt(c, i) }))
@@ -23801,8 +24011,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       }
       if (autoMana > 0) {
         effectiveTapped = tapped_;
+        const atCtx = buildBoardContext(battlefield, sickCreatureNames, attachments);
+        autoTapped.forEach(src2 => {
+          const contrib = cardManaContribution(src2.c, getCard(src2.c) ?? {}, atCtx, sickCreatureNames);
+          tapManaLog.current.set(src2.key, { green: contrib.green, colorless: contrib.colorless });
+        });
         setTapped(tapped_);
-        setManaPool(prev => prev + autoMana);
+        setTappedManaV(v => v + 1);
         if (autoTapped.length === 1) {
           addLog(`Auto-tapped ${autoTapped[0].c} for ${autoTapped[0].mana} mana.`, COLORS.green1);
         } else {
@@ -23848,8 +24063,51 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
 
     // Remove from hand
     setHand(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
-    // Deduct mana cost from pool
-    if (cmc > 0) { setManaPool(p => Math.max(0, p - cmc)); flashMana(-cmc); }
+    // Deduct mana cost: spend from tapManaLog first, then external manaPool.
+    // Pay green pips from green mana, generic remainder from colorless-first then green.
+    if (cmc > 0) {
+      let remGreen = greenPips;   // green pips that must come from green mana
+      let remTotal = cmc;         // total mana still to spend
+
+      // Pass 1: spend green pips from green entries
+      if (remGreen > 0) {
+        for (const [k, v] of tapManaLog.current.entries()) {
+          if (remGreen <= 0) break;
+          const vg = typeof v === 'object' ? (v.green || 0) : 0;
+          if (vg <= 0) continue;
+          const spend = Math.min(vg, remGreen);
+          const newG = vg - spend;
+          const newC = typeof v === 'object' ? (v.colorless || 0) : 0;
+          if (newG + newC <= 0) tapManaLog.current.delete(k);
+          else tapManaLog.current.set(k, { green: newG, colorless: newC });
+          remGreen -= spend;
+          remTotal -= spend;
+        }
+      }
+
+      // Pass 2: spend remaining generic cost from colorless entries first, then green
+      for (const [k, v] of tapManaLog.current.entries()) {
+        if (remTotal <= 0) break;
+        const vg = typeof v === 'object' ? (v.green || 0) : 0;
+        const vc = typeof v === 'object' ? (v.colorless || 0) : (v || 0);
+        const tot = vg + vc;
+        if (tot <= 0) continue;
+        // Prefer spending colorless before green
+        const spendC = Math.min(vc, remTotal);
+        const spendG = Math.min(vg, remTotal - spendC);
+        const spent = spendC + spendG;
+        if (spent <= 0) continue;
+        const newG = vg - spendG;
+        const newC = vc - spendC;
+        if (newG + newC <= 0) tapManaLog.current.delete(k);
+        else tapManaLog.current.set(k, { green: newG, colorless: newC });
+        remTotal -= spent;
+      }
+
+      if (remTotal > 0) setManaPool(p => Math.max(0, p - remTotal));
+      setTappedManaV(v => v + 1);
+      flashMana(-cmc);
+    }
     if (type === "land") {
       if (landPlayed) { addLog(`Already played a land this turn — ${card} returned to hand.`, COLORS.red); setHand(prev => [...prev, card]); return; }
       const dryadIdx = battlefield.length; // synchronous read before append
@@ -23896,7 +24154,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           setTutorOnSelect(() => (chosen) => {
             // Deduct X (the chosen creature's CMC) from the mana pool — castFromHand only deducted {G}
             const chosenCmc = getCard(chosen)?.cmc ?? 0;
-            setManaPool(p => Math.max(0, p - chosenCmc)); flashMana(-chosenCmc);
+            spendMana(chosenCmc);
             const idx = library.indexOf(chosen);
             if (idx !== -1) {
               setLibrary(prev => [...prev.slice(0, idx), ...prev.slice(idx + 1)]);
@@ -24167,7 +24425,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
                   key: `${c}:${i}`, c, i,
                 })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  untapLands([{ c: tc, i: ti }]);
                   addLog(`Emerald Charm (untap) → untapped ${tc}.`, COLORS.green2);
                 },
               });
@@ -24841,11 +25099,14 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       if (newTapped.has(key)) return; // already tapped
       newTapped.add(key);
       const m = cardManaAt(card, i);
+      const ctx2 = buildBoardContext(battlefield, sickCreatureNames, attachments);
+      const contrib2 = cardManaContribution(card, data, ctx2, sickCreatureNames);
+      tapManaLog.current.set(key, { green: contrib2.green, colorless: contrib2.colorless });
       totalAdded += m;
     });
     setTapped(newTapped);
     if (totalAdded > 0) {
-      setManaPool(p => p + totalAdded);
+      setTappedManaV(v => v + 1);
       flashMana(totalAdded);
       addLog(`Tapped all mana sources — +${totalAdded} mana.`, COLORS.green1);
     } else {
@@ -25636,7 +25897,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const isLand = getCard(card)?.type === "land";
     const fetch = isFetch(card);
     const key = cardKey(card, i);
-    const isSick = zone === "battlefield" && sickCreatures.has(key);
+    const isSick = zone === "battlefield" && sickCreatures.has(key) && !exertedCreatures.has(key);
+    const isExerted = zone === "battlefield" && exertedCreatures.has(key);
     // Show attachment target for enchant-land auras
     const targetIdx = zone === "battlefield" ? attachments.get(i) : undefined;
     const attachedTo = targetIdx != null ? battlefield[targetIdx] : undefined;
@@ -25812,7 +26074,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   setGraveyard(prev => [...prev, discard]);
                   // Fauna Shaman taps to activate; Survival of the Fittest does not
                   if (cardName === "Fauna Shaman") toggleTap(cardName, cardIndex);
-                  setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+                  spendMana(1);
                   addLog(`${cardName}: discarded ${discard}, paid {G} — choose a creature to fetch.`, COLORS.purple);
                   setTutorCreaturesOnly(true);
                   setTutorOnSelect(() => (chosen) => {
@@ -25843,7 +26105,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         })()}
         {/* ── Yisan, the Wanderer Bard: {2}{G} tap — add verse counter, tutor creature of CMC = verse ── */}
         {isBF && card === "Yisan, the Wanderer Bard" && (() => {
-          const cost = 3; const canPay = manaPool >= cost;
+          const cost = 3; const canPay = (manaPool + tappedMana.total) >= cost;
           const currentVerse = curCounters; // verse counters tracked via generic counter system
           const nextVerse = currentVerse + 1;
           if (isCardTapped || !canPay) return (
@@ -25855,7 +26117,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             <div onClick={() => {
               pushUndo();
               toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               adjustCounter(card, index, +1);
               setTutorCreaturesOnly(true);
               setTutorExactCmc(nextVerse);  // Yisan fetches creatures with CMC exactly = verse
@@ -25910,7 +26172,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             {/* Ability 2: {G}{T} → Untap target Elf */}
             <div onClick={() => {
               if (elfTargets.length === 0) return;
-              if (manaPool < 1) { addLog("Wirewood Lodge: need {G} to activate untap ability.", COLORS.textDim); closeContextMenu(); return; }
+              if ((manaPool + tappedMana.total) < 1) { addLog("Wirewood Lodge: need {G} to activate untap ability.", COLORS.textDim); closeContextMenu(); return; }
               pushUndo();
               setTapped(prev => { const next = new Set(prev); next.add(lodgeKey); return next; });
               setManaPool(prev => Math.max(0, prev - 1));
@@ -25918,17 +26180,18 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               setPendingPicker({ label: "WIREWOOD LODGE — UNTAP AN ELF", color: COLORS.green2,
                 items: elfTargets.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                  const _ck = cardKey(tc, ti); const _lg = tapManaLog.current.get(_ck); if (_lg) { tapManaLog.current.delete(_ck); const _fk = `__float__${_ck}`; const _ex = tapManaLog.current.get(_fk); const _lg2 = typeof _lg === 'object' ? _lg : {green:0,colorless:_lg}; tapManaLog.current.set(_fk, _ex ? {green:(_ex.green||0)+_lg2.green,colorless:(_ex.colorless||0)+_lg2.colorless} : _lg2); setTappedManaV(v => v + 1); }
+                  setTapped(prev => { const next = new Set(prev); next.delete(_ck); return next; });
                   addLog(`Wirewood Lodge: paid {G}, tapped → untapped ${tc}.`, COLORS.green2);
                 }
               });
               setPickerSelected([]);
               closeContextMenu();
-            }} style={{ padding: "6px 14px", cursor: elfTargets.length > 0 && manaPool >= 1 ? "pointer" : "default",
-              color: elfTargets.length > 0 && manaPool >= 1 ? COLORS.green2 : COLORS.textDim, letterSpacing: "1px" }}
-              onMouseEnter={e => { if (elfTargets.length > 0 && manaPool >= 1) e.currentTarget.style.background = "#162616"; }}
+            }} style={{ padding: "6px 14px", cursor: elfTargets.length > 0 && (manaPool + tappedMana.total) >= 1 ? "pointer" : "default",
+              color: elfTargets.length > 0 && (manaPool + tappedMana.total) >= 1 ? COLORS.green2 : COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { if (elfTargets.length > 0 && (manaPool + tappedMana.total) >= 1) e.currentTarget.style.background = "#162616"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-              ⚡ {"{G}"}{"{T}"} — Untap an Elf{elfTargets.length === 0 ? " (no targets)" : manaPool < 1 ? " (need {G})" : ` (${elfTargets.length} target${elfTargets.length > 1 ? "s" : ""})`}
+              ⚡ {"{G}"}{"{T}"} — Untap an Elf{elfTargets.length === 0 ? " (no targets)" : (manaPool + tappedMana.total) < 1 ? " (need {G})" : ` (${elfTargets.length} target${elfTargets.length > 1 ? "s" : ""})`}
             </div>
           </>);
         })()}
@@ -25936,7 +26199,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Elvish Reclaimer: {2}{T}, sacrifice a land — search library for a land → battlefield tapped ── */}
         {isBF && card === "Elvish Reclaimer" && (() => {
           const cost = 2;
-          const canPay = manaPool >= cost;
+          const canPay = (manaPool + tappedMana.total) >= cost;
           const lands = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "land");
           if (isCardTapped || !canPay || lands.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -25965,7 +26228,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   })),
                 onSelect: ({ c: sacCard, i: sacIdx }) => {
                   // Pay mana cost
-                  setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+                  spendMana(cost);
                   // Remove sacrificed land and tap Reclaimer in one atomic update
                   // so Reclaimer's final index is correct after the splice
                   setBattlefield(prev => {
@@ -26017,7 +26280,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Temur Sabertooth: {1}{G} — bounce a creature to hand ── */}
         {isBF && card === "Temur Sabertooth" && (() => {
-          const cost = 2; const canPay = manaPool >= cost;
+          const cost = 2; const canPay = (manaPool + tappedMana.total) >= cost;
           const targets = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.type === "creature" && c !== "Temur Sabertooth");
           if (!canPay || targets.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -26048,7 +26311,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Kogla, the Titan Ape: {1}{G} — bounce a Human to hand ── */}
         {isBF && card === "Kogla, the Titan Ape" && (() => {
-          const cost = 2; const canPay = manaPool >= cost;
+          const cost = 2; const canPay = (manaPool + tappedMana.total) >= cost;
           const targets = battlefield.map((c,i) => ({c,i})).filter(({c}) => getCard(c)?.tags?.includes("human") && c !== "Kogla, the Titan Ape");
           if (!canPay || targets.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -26141,6 +26404,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   // the old `tapped` closure value would still have pre-splice indices).
                   const remappedTapped = remapKeySet(tapped);
                   setSickCreatures(remapKeySet);
+                  setExertedCreatures(remapKeySet);
                   setTapped(remappedTapped);
                   setHand(prev => [...prev, forestCard]);
                   addLog(`${card}: bounced ${forestCard} to hand. Now choose a creature to untap.`, COLORS.green3);
@@ -26152,7 +26416,20 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       .filter(({c:bc}) => getCard(bc)?.type === "creature" || bc === "Dryad Arbor")
                       .map(({c:bc,i:bi}) => ({ label: bc, sub: remappedTapped.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
                     onSelect: ({ c: tc, i: ti }) => {
-                      setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                      const ck = cardKey(tc, ti);
+                      // If the creature had tapped-mana logged, migrate to float so it persists after untap
+                      const logged = tapManaLog.current.get(ck);
+                      if (logged) {
+                        tapManaLog.current.delete(ck);
+                        const fk = `__float__${ck}`;
+                        const ex = tapManaLog.current.get(fk);
+                        const lg = typeof logged === 'object' ? logged : { green: 0, colorless: logged };
+                        tapManaLog.current.set(fk, ex
+                          ? { green: (ex.green||0)+lg.green, colorless: (ex.colorless||0)+lg.colorless }
+                          : lg);
+                        setTappedManaV(v => v + 1);
+                      }
+                      setTapped(prev => { const next = new Set(prev); next.delete(ck); return next; });
                       addLog(`${card}: untapped ${tc}.`, COLORS.green3);
                     },
                     onSkip: () => addLog(`${card}: no creature untap chosen.`, COLORS.textDim),
@@ -26207,6 +26484,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     return next;
                   };
                   setSickCreatures(remapKeySet);
+                  setExertedCreatures(remapKeySet);
                   // Compute remapped tapped synchronously for the step-2 picker — same fix as
                   // Quirion/Scryb Ranger: React setState is async so `tapped` closure is stale.
                   const remappedTappedWS = remapKeySet(tapped);
@@ -26219,7 +26497,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       .filter(({c:bc}) => getCard(bc)?.type === "creature" || bc === "Dryad Arbor")
                       .map(({c:bc,i:bi}) => ({ label: bc, sub: remappedTappedWS.has(cardKey(bc,bi)) ? "● tapped" : "○ untapped", key: `${bc}:${bi}`, c: bc, i: bi })),
                     onSelect: ({ c: tc, i: ti }) => {
-                      setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                      const _ck = cardKey(tc, ti); const _lg = tapManaLog.current.get(_ck); if (_lg) { tapManaLog.current.delete(_ck); const _fk = `__float__${_ck}`; const _ex = tapManaLog.current.get(_fk); const _lg2 = typeof _lg === 'object' ? _lg : {green:0,colorless:_lg}; tapManaLog.current.set(_fk, _ex ? {green:(_ex.green||0)+_lg2.green,colorless:(_ex.colorless||0)+_lg2.colorless} : _lg2); setTappedManaV(v => v + 1); }
+                      setTapped(prev => { const next = new Set(prev); next.delete(_ck); return next; });
                       addLog(`Wirewood Symbiote: untapped ${tc}.`, COLORS.green3);
                     },
                     onSkip: () => addLog(`Wirewood Symbiote: no untap chosen.`, COLORS.textDim),
@@ -26349,7 +26628,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         })()}
 
         {isBF && card === "Duskwatch Recruiter" && (() => {
-          const cost = 3; const canPay = manaPool >= cost; const top3 = library.slice(0,3);
+          const cost = 3; const canPay = (manaPool + tappedMana.total) >= cost; const top3 = library.slice(0,3);
           const creaturesInTop3 = top3.filter(c => getCard(c)?.type === "creature");
           if (!canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -26391,7 +26670,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Skyshroud Poacher: {3}{G} tap — search for an Elf → battlefield ── */}
         {isBF && card === "Skyshroud Poacher" && (() => {
-          const cost = 4; const canPay = manaPool >= cost;
+          const cost = 4; const canPay = (manaPool + tappedMana.total) >= cost;
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Poach Elf ({'{3}{G}'}) — {isCardTapped ? "tapped" : `need ${cost} mana`}
@@ -26428,7 +26707,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Selvala, Heart of the Wilds: {G} tap — draw + add mana = biggest power ── */}
         {isBF && card === "Selvala, Heart of the Wilds" && (() => {
-          const cost = 1; const canPay = manaPool >= cost;
+          const cost = 1; const canPay = (manaPool + tappedMana.total) >= cost;
           // Estimate power: use +1/+1 counters on top of a base power value
           const BASE_POWER = { "Kogla, the Titan Ape": 7, "Temur Sabertooth": 4, "Selvala, Heart of the Wilds": 2,
             "Craterhoof Behemoth": 5, "Ghalta, Primal Hunger": 12, "Woodland Bellower": 6,
@@ -26477,7 +26756,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 onSelect: (chosen) => {
                   // chosen is array of 2 when multi:2
                   const arr = Array.isArray(chosen) ? chosen : [chosen];
-                  setTapped(prev => { const next = new Set(prev); arr.forEach(({c:lc,i:li}) => next.delete(cardKey(lc,li))); return next; });
+                  untapLands(arr);
                   addLog(`Argothian Elder: untapped ${arr.map(x=>x.c).join(" and ")}.`, COLORS.green2);
                 },
               });
@@ -26553,11 +26832,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       key: `${lc}:${li}`, c: lc, i: li,
                     })),
                     onSelect: ({ c: landCard, i: landIdx }) => {
-                      setTapped(prev => {
-                        const next = new Set(prev);
-                        next.delete(cardKey(landCard, landIdx));
-                        return next;
-                      });
+                      untapLands([{ c: landCard, i: landIdx }]);
                       addLog(`Earthcraft: untapped ${landCard}.`, "#f39c12");
                     },
                     onSkip: () => addLog(`Earthcraft: no land untap chosen.`, COLORS.textDim),
@@ -26577,7 +26852,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Scavenging Ooze: {G} — exile card from graveyard, +1/+1 ── */}
         {isBF && card === "Scavenging Ooze" && (() => {
-          const cost = 1; const canPay = manaPool >= cost;
+          const cost = 1; const canPay = (manaPool + tappedMana.total) >= cost;
           const anyGrave = graveyard.length > 0;
           if (!canPay || !anyGrave) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -26610,22 +26885,22 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Saryth, the Viper's Fang: {1},{T} — untap another target creature or land ── */}
         {isBF && card === "Saryth, the Viper's Fang" && (() => {
           const targets = battlefield.map((c,i) => ({c,i})).filter(({c}) => c !== "Saryth, the Viper's Fang" && (getCard(c)?.type === "creature" || getCard(c)?.type === "land"));
-          const canAct = !isCardTapped && !sickCreatures.has(key) && manaPool >= 1 && targets.length > 0;
+          const canAct = !isCardTapped && !sickCreatures.has(key) && (manaPool + tappedMana.total) >= 1 && targets.length > 0;
           if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Creature/Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need {1}" : "no targets"}
+              ⚡ Untap Creature/Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : (manaPool + tappedMana.total) < 1 ? "need {1}" : "no targets"}
             </div>
           );
           return (
             <div onClick={() => {
-              if (manaPool < 1) { addLog("Saryth: need {1} to activate.", COLORS.red); return; }
+              if ((manaPool + tappedMana.total) < 1) { addLog("Saryth: need {1} to activate.", COLORS.red); return; }
               pushUndo();
               toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              spendMana(1);
               setPendingPicker({ label: "SARYTH — UNTAP A CREATURE OR LAND", color: COLORS.green2,
                 items: targets.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc,ti)); return next; });
+                  untapLands([{ c: tc, i: ti }]);
                   addLog(`Saryth: paid {1}, tapped — untapped ${tc}.`, COLORS.green2);
                 }
               });
@@ -26648,10 +26923,10 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             const isCreature = cd?.type === "creature" || c === "Dryad Arbor";
             return isCreature && !tapped.has(cardKey(c,i)) && c !== "Eladamri, Korvecdal";
           });
-          const canPay = manaPool >= cost && !isCardTapped && untappedCreatures.length >= 2;
+          const canPay = (manaPool + tappedMana.total) >= cost && !isCardTapped && untappedCreatures.length >= 2;
           if (!canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Library Cheat ({'{G}'}, tap 2) — {isCardTapped ? "tapped" : manaPool < cost ? "need 1 mana" : "need 2 untapped creatures"}
+              ⚡ Library Cheat ({'{G}'}, tap 2) — {isCardTapped ? "tapped" : (manaPool + tappedMana.total) < cost ? "need 1 mana" : "need 2 untapped creatures"}
             </div>
           );
           return (
@@ -26690,7 +26965,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── War Room: {3} tap — draw a card ── */}
         {isBF && card === "War Room" && (() => {
           const cost = 3; const lifeCost = 1; // Yeva is mono-green — 1 color in identity = 1 life
-          const canPay = manaPool >= cost;
+          const canPay = (manaPool + tappedMana.total) >= cost;
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Draw ({'{3}'}tap, 1 life) — {isCardTapped ? "tapped" : `need ${cost} mana`}
@@ -26715,7 +26990,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Ominous Cemetery: {5},{T}, Exile — target creature's owner shuffles it into their library ── */}
         {isBF && card === "Ominous Cemetery" && (() => {
           const cost = 5;
-          const canAct = !isCardTapped && manaPool >= cost;
+          const canAct = !isCardTapped && (manaPool + tappedMana.total) >= cost;
           if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Shuffle away creature ({'{5}'}tap+exile) — {isCardTapped ? "tapped" : `need ${cost} mana`}
@@ -26724,7 +26999,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           return (
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               toggleTap(card, index);
               // Sacrifice / exile the land
               goldfishRemoveFromBattlefield(card, index);
@@ -26740,7 +27015,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Geier Reach Sanitarium: {2},{T} — each player draws then discards ── */}
         {isBF && card === "Geier Reach Sanitarium" && (() => {
-          const cost = 2; const canPay = manaPool >= cost;
+          const cost = 2; const canPay = (manaPool + tappedMana.total) >= cost;
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Group loot ({'{2}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
@@ -26765,7 +27040,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Bonders' Enclave: {4} tap — draw a card if you control a power 4+ creature ── */}
         {isBF && card === "Bonders' Enclave" && (() => {
-          const cost = 4; const canPay = manaPool >= cost;
+          const cost = 4; const canPay = (manaPool + tappedMana.total) >= cost;
           const POWER4_NAMES = new Set(["Kogla, the Titan Ape","Temur Sabertooth","Selvala, Heart of the Wilds","Craterhoof Behemoth","Ghalta, Primal Hunger","Yorvo, Lord of Garenbrig","Rhonas the Indomitable","Nylea, God of the Hunt"]);
           const hasPower4 = battlefield.some(c => POWER4_NAMES.has(c) || getCard(c)?.tags?.includes("power4") || getCard(c)?.tags?.includes("big-creature"));
           if (isCardTapped || !canPay || !hasPower4) return (
@@ -26791,7 +27066,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Castle Garenbrig: {2}{G}{G} tap — add {G}{G}{G}{G}{G}{G} ── */}
         {isBF && card === "Castle Garenbrig" && (() => {
-          const cost = 4; const canPay = manaPool >= cost;
+          const cost = 4; const canPay = (manaPool + tappedMana.total) >= cost;
           if (isCardTapped || !canPay) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Big Mana ({'{2}{G}{G}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
@@ -26816,21 +27091,21 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {isBF && card === "Deserted Temple" && (() => {
           const cost = 1;
           const lands = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.type === "land" && c !== "Deserted Temple");
-          const canAct = !isCardTapped && manaPool >= cost && lands.length > 0;
+          const canAct = !isCardTapped && (manaPool + tappedMana.total) >= cost && lands.length > 0;
           if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Land ({'{1}'}tap) — {isCardTapped ? "tapped" : manaPool < cost ? "need {1}" : "no other lands"}
+              ⚡ Untap Land ({'{1}'}tap) — {isCardTapped ? "tapped" : (manaPool + tappedMana.total) < cost ? "need {1}" : "no other lands"}
             </div>
           );
           return (
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               toggleTap(card, index);
               setPendingPicker({ label: "DESERTED TEMPLE — UNTAP A LAND", color: COLORS.green2,
                 items: lands.map(({c,i}) => ({ label: c, sub: tapped.has(cardKey(c,i)) ? "● tapped" : "○ untapped", key: `${c}:${i}`, c, i })),
                 onSelect: ({ c: lc, i: li }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(lc,li)); return next; });
+                  untapLands([{ c: lc, i: li }]);
                   addLog(`Deserted Temple: paid {1}, tapped — untapped ${lc}.`, COLORS.green2);
                 }
               });
@@ -26849,7 +27124,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           const cost = 2;
           const devotion = battlefield.reduce((s, c) => s + (getCard(c)?.greenPips ?? 0), 0);
           const netMana = Math.max(0, devotion - cost); // net after paying {2}
-          if (isCardTapped || manaPool < cost) return (
+          if (isCardTapped || (manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Nykthos ({'{2}'}tap) — {isCardTapped ? "tapped" : `need ${cost} mana`} · Devotion: {devotion}
             </div>
@@ -26873,9 +27148,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {isBF && card === "Magus of the Candelabra" && (() => {
           const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
           const maxX = Math.min(manaPool, lands.length);
-          if (isCardTapped || sickCreatures.has(key) || lands.length === 0 || manaPool < 1) return (
+          if (isCardTapped || sickCreatures.has(key) || lands.length === 0 || (manaPool + tappedMana.total) < 1) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap X Lands — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need mana" : "no lands"}
+              ⚡ Untap X Lands — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : (manaPool + tappedMana.total) < 1 ? "need mana" : "no lands"}
             </div>
           );
           // Offer to pick how many lands to untap (up to min(manaPool, landCount))
@@ -26883,7 +27158,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             <div onClick={() => {
               pushUndo();
               toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - maxX)); flashMana(-maxX);
+              spendMana(maxX);
               setPendingPicker({
                 label: `MAGUS OF THE CANDELABRA — UNTAP ${maxX} LAND${maxX !== 1 ? "S" : ""} (X=${maxX})`,
                 color: COLORS.green2, multi: maxX,
@@ -26893,7 +27168,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 })),
                 onSelect: (chosen) => {
                   const arr = Array.isArray(chosen) ? chosen : [chosen];
-                  setTapped(prev => { const next = new Set(prev); arr.forEach(({ c: lc, i: li }) => next.delete(cardKey(lc, li))); return next; });
+                  untapLands(arr);
                   addLog(`Magus of the Candelabra (X=${maxX}): untapped ${arr.map(x => x.c).join(", ")}.`, COLORS.green2);
                 },
               });
@@ -26927,7 +27202,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 })),
                 onSelect: (chosen) => {
                   const arr = Array.isArray(chosen) ? chosen : [chosen];
-                  setTapped(prev => { const next = new Set(prev); arr.forEach(({ c: lc, i: li }) => next.delete(cardKey(lc, li))); return next; });
+                  untapLands(arr);
                   addLog(`Ley Weaver: untapped ${arr.map(x => x.c).join(" and ")}.`, COLORS.green2);
                 },
               });
@@ -26955,16 +27230,16 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {isBF && card === "Thousand-Year Elixir" && (() => {
           const cost = 1;
           const creatures = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
-          if (isCardTapped || manaPool < cost || creatures.length === 0) return (
+          if (isCardTapped || (manaPool + tappedMana.total) < cost || creatures.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Creature ({'{1}'}tap) — {isCardTapped ? "tapped" : manaPool < cost ? `need ${cost} mana` : "no creatures"}
+              ⚡ Untap Creature ({'{1}'}tap) — {isCardTapped ? "tapped" : (manaPool + tappedMana.total) < cost ? `need ${cost} mana` : "no creatures"}
             </div>
           );
           return (
             <div onClick={() => {
               pushUndo();
               toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               setPendingPicker({
                 label: "THOUSAND-YEAR ELIXIR — UNTAP A CREATURE", color: COLORS.gold,
                 items: creatures.map(({ c, i }) => ({
@@ -26972,7 +27247,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   key: `${c}:${i}`, c, i,
                 })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  const _tyCk = cardKey(tc, ti); const _tyLg = tapManaLog.current.get(_tyCk); if (_tyLg) { tapManaLog.current.delete(_tyCk); const _tyFk = `__float__${_tyCk}`; const _tyEx = tapManaLog.current.get(_tyFk); const _tyV = typeof _tyLg === 'object' ? _tyLg : {green:0,colorless:_tyLg}; tapManaLog.current.set(_tyFk, _tyEx ? {green:(_tyEx.green||0)+_tyV.green,colorless:(_tyEx.colorless||0)+_tyV.colorless} : _tyV); setTappedManaV(v => v + 1); }
+                  setTapped(prev => { const next = new Set(prev); next.delete(_tyCk); return next; });
                   // Also remove summoning sickness (Elixir gives haste-like effect for activated abilities)
                   setSickCreatures(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
                   addLog(`Thousand-Year Elixir: paid {1}, tapped — untapped ${tc}. Note: Elixir also lets you activate creature abilities as though they had haste.`, COLORS.gold);
@@ -27026,15 +27302,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {isBF && card === "Nylea, Keen-Eyed" && (() => {
           const cost = 4;
           const creaturesInHand = hand.filter(c => getCard(c)?.type === "creature");
-          if (manaPool < cost || creaturesInHand.length === 0) return (
+          if ((manaPool + tappedMana.total) < cost || creaturesInHand.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Put Creature onto BF ({'{3}{G}'}) — {manaPool < cost ? `need ${cost} mana` : "no creatures in hand"}
+              ⚡ Put Creature onto BF ({'{3}{G}'}) — {(manaPool + tappedMana.total) < cost ? `need ${cost} mana` : "no creatures in hand"}
             </div>
           );
           return (
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               setPendingPicker({
                 label: "NYLEA, KEEN-EYED — PUT A CREATURE FROM HAND ONTO BATTLEFIELD", color: COLORS.green3,
                 items: creaturesInHand.map(c => ({ label: c, sub: `CMC ${getCard(c)?.cmc ?? "?"}`, key: c, c })),
@@ -27058,7 +27334,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Beastrider Vanguard: mana sink — activated ability ── */}
         {isBF && card === "Beastrider Vanguard" && (() => {
           const cost = 5; // {4}{G}: look at top 3, may reveal a permanent card → hand
-          if (isCardTapped || manaPool < cost) return (
+          if (isCardTapped || (manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Scry/reveal ({'{4}{G}'}, tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
@@ -27072,7 +27348,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             <div onClick={() => {
               pushUndo();
               toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               if (permanents.length === 0) {
                 setLibrary(prev => [...prev.slice(3), ...top3]);
                 addLog(`Beastrider Vanguard: paid {4}{G}, tapped — no permanent cards in top ${top3.length}. All placed on bottom.`, COLORS.green2);
@@ -27109,7 +27385,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {isBF && card === "Insidious Fungus" && (() => {
           const cost = 2;
           const hasLandInHand = hand.some(c => getCard(c)?.type === "land");
-          if (manaPool < cost) return (
+          if ((manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Sacrifice ability — need {cost} mana
             </div>
@@ -27117,7 +27393,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           return (<>
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               goldfishRemoveFromBattlefield(card, index);
               setGraveyard(prev => [...prev, card]);
               addLog(`Insidious Fungus: paid {2}, sacrificed — destroyed target artifact.`, COLORS.green1);
@@ -27129,7 +27405,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             </div>
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               goldfishRemoveFromBattlefield(card, index);
               setGraveyard(prev => [...prev, card]);
               addLog(`Insidious Fungus: paid {2}, sacrificed — destroyed target enchantment.`, COLORS.green1);
@@ -27141,7 +27417,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             </div>
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               goldfishRemoveFromBattlefield(card, index);
               setGraveyard(prev => [...prev, card]);
               if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
@@ -27158,7 +27434,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Outland Liberator: {G} sacrifice — destroy target artifact or enchantment ── */}
         {isBF && card === "Outland Liberator" && (() => {
           const cost = 1;
-          if (manaPool < cost) return (
+          if ((manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Destroy artifact/enchantment ({'{1}'}sac) — need 1 mana
             </div>
@@ -27166,7 +27442,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           return (
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               goldfishRemoveFromBattlefield(card, index);
               setGraveyard(prev => [...prev, card]);
               addLog(`Outland Liberator: paid {1}, sacrificed — destroyed target artifact or enchantment.`, COLORS.green1);
@@ -27252,7 +27528,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   addLog(`Harmonize: tapped ${c} (power ~${pwr}) — reduces generic cost by ${pwr}.`, COLORS.textDim);
                 });
                 // Deduct the 4 green pips from pool
-                setManaPool(p => Math.max(0, p - harmonizeBase)); flashMana(-harmonizeBase);
+                spendMana(harmonizeBase);
                 const harmonizeX = Math.max(0, poolAtCast - harmonizeBase + powerReduction);
                 // Remove from graveyard now, will go to exile after resolution
                 setGraveyard(prev => prev.filter((c, gi) => !(c === "Nature's Rhythm" && gi === index)));
@@ -27358,7 +27634,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   key: `${c}:${i}`, c, i,
                 })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  untapLands([{ c: tc, i: ti }]);
                   addLog(`Arbor Elf: tapped — untapped ${tc}.`, COLORS.green2);
                 },
               });
@@ -27374,18 +27650,19 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Hope Tender: {1},{T} — untap a land; {1},{T},Exert — untap 2 lands ── */}
         {isBF && card === "Hope Tender" && (() => {
           const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
-          const canAct = !isCardTapped && !sickCreatures.has(key) && manaPool >= 1 && lands.length >= 1;
-          const canExert = canAct && !sickCreatures.has(key);
+          const isExerted = exertedCreatures.has(key);
+          const canAct = !isCardTapped && !sickCreatures.has(key) && (manaPool + tappedMana.total) >= 1 && lands.length >= 1;
+          const canExert = canAct; // can exert multiple times per turn if untapped between uses
           if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need {1}" : "no lands"}
+              ⚡ Untap Land — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : (manaPool + tappedMana.total) < 1 ? "need {1}" : "no lands"}
             </div>
           );
           return (<>
             <div onClick={() => {
-              if (manaPool < 1) { addLog("Hope Tender: need {1} to activate.", COLORS.red); return; }
+              if ((manaPool + tappedMana.total) < 1) { addLog("Hope Tender: need {1} to activate.", COLORS.red); return; }
               pushUndo(); toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              spendMana(1);
               setPendingPicker({
                 label: "HOPE TENDER — UNTAP A LAND", color: COLORS.green2,
                 items: lands.map(({ c, i }) => ({
@@ -27393,7 +27670,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   key: `${c}:${i}`, c, i,
                 })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  untapLands([{ c: tc, i: ti }]);
                   addLog(`Hope Tender: paid {1}, tapped — untapped ${tc}.`, COLORS.green2);
                 },
               });
@@ -27405,11 +27682,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             </div>
             {canExert && (
               <div onClick={() => {
-                if (manaPool < 1) { addLog("Hope Tender exert: need {1} to activate.", COLORS.red); return; }
+                if ((manaPool + tappedMana.total) < 1) { addLog("Hope Tender exert: need {1} to activate.", COLORS.red); return; }
                 pushUndo(); toggleTap(card, index);
-                setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
-                // Mark as exerted (won't untap next turn — track via sickCreatures as a proxy)
-                setSickCreatures(prev => { const next = new Set(prev); next.add(key); return next; });
+                spendMana(1);
+                // Mark as exerted (won't untap next turn — tracked separately from summoning sickness)
+                setExertedCreatures(prev => { const next = new Set(prev); next.add(key); return next; });
                 setPendingPicker({
                   label: "HOPE TENDER (EXERT) — UNTAP UP TO 2 LANDS", color: COLORS.green2, multi: Math.min(2, lands.length),
                   items: lands.map(({ c, i }) => ({
@@ -27418,7 +27695,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   })),
                   onSelect: (chosen) => {
                     const arr = Array.isArray(chosen) ? chosen : [chosen];
-                    setTapped(prev => { const next = new Set(prev); arr.forEach(({ c: lc, i: li }) => next.delete(cardKey(lc, li))); return next; });
+                    untapLands(arr);
                     addLog(`Hope Tender (exert): paid {1}, tapped — untapped ${arr.map(x => x.c).join(" and ")}. Won't untap next turn.`, COLORS.green2);
                   },
                 });
@@ -27515,17 +27792,17 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Formidable Speaker: {1},{T} — untap another target permanent ── */}
         {isBF && card === "Formidable Speaker" && (() => {
           const permanents = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => c !== "Formidable Speaker");
-          const canAct = !isCardTapped && !sickCreatures.has(key) && manaPool >= 1 && permanents.length > 0;
+          const canAct = !isCardTapped && !sickCreatures.has(key) && (manaPool + tappedMana.total) >= 1 && permanents.length > 0;
           if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-              ⚡ Untap Permanent — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : manaPool < 1 ? "need {1}" : "no other permanents"}
+              ⚡ Untap Permanent — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : (manaPool + tappedMana.total) < 1 ? "need {1}" : "no other permanents"}
             </div>
           );
           return (
             <div onClick={() => {
-              if (manaPool < 1) { addLog("Formidable Speaker: need {1} to activate.", COLORS.red); return; }
+              if ((manaPool + tappedMana.total) < 1) { addLog("Formidable Speaker: need {1} to activate.", COLORS.red); return; }
               pushUndo(); toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - 1)); flashMana(-1);
+              spendMana(1);
               setPendingPicker({
                 label: "FORMIDABLE SPEAKER — UNTAP ANOTHER PERMANENT", color: COLORS.green2,
                 items: permanents.map(({ c, i }) => ({
@@ -27533,7 +27810,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   key: `${c}:${i}`, c, i,
                 })),
                 onSelect: ({ c: tc, i: ti }) => {
-                  setTapped(prev => { const next = new Set(prev); next.delete(cardKey(tc, ti)); return next; });
+                  untapLands([{ c: tc, i: ti }]);
                   addLog(`Formidable Speaker: paid {1}, tapped — untapped ${tc}.`, COLORS.green2);
                 },
               });
@@ -27576,10 +27853,10 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
               🌿 Tap trigger — +1 bonus mana (dork tapped)
             </div>
-            {manaPool >= pumpCost && creatures.length > 0 && (
+            {(manaPool + tappedMana.total) >= pumpCost && creatures.length > 0 && (
               <div onClick={() => {
                 pushUndo();
-                setManaPool(p => Math.max(0, p - pumpCost)); flashMana(-pumpCost);
+                spendMana(pumpCost);
                 addLog(`Leyline of Abundance: paid {6}{G}{G} — put +1/+1 counter on each of ${creatures.length} creatures.`, COLORS.green2);
                 closeContextMenu();
               }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
@@ -27639,7 +27916,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           const topData = topCard ? getCard(topCard) : null;
           const isTopCreature = topData?.type === "creature";
           const topCmc = topData?.cmc ?? 99;
-          const canCastTop = isTopCreature && manaPool >= topCmc;
+          const canCastTop = isTopCreature && (manaPool + tappedMana.total) >= topCmc;
           // Hand cheat: {G}, tap self, tap two untapped creatures → reveal creature from hand → battlefield
           const cost = 1;
           const untappedCreatureList = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => {
@@ -27648,7 +27925,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             return isCreature && !tapped.has(cardKey(c,i)) && c !== "Eladamri, Korvecdal";
           });
           const handCreatures = hand.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "creature");
-          const canActivateHand = !isCardTapped && manaPool >= cost && untappedCreatureList.length >= 2 && handCreatures.length > 0;
+          const canActivateHand = !isCardTapped && (manaPool + tappedMana.total) >= cost && untappedCreatureList.length >= 2 && handCreatures.length > 0;
           return (<>
             {topCard && (
               <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -27661,7 +27938,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 setLibrary(prev => prev.slice(1));
                 setBattlefield(prev => [...prev, topCard]);
                 setSickCreatures(s => new Set([...s, `${topCard}:${battlefield.length}`]));
-                setManaPool(p => Math.max(0, p - topCmc)); flashMana(-topCmc);
+                spendMana(topCmc);
                 addLog(`Eladamri: cast ${topCard} (CMC ${topCmc}) from library top.`, COLORS.green2);
                 fireETB(topCard); // creature enters the battlefield — fire its ETB triggers
                 // Trigger draw engines
@@ -27688,7 +27965,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             {canActivateHand ? (
               <div onClick={() => {
                 pushUndo();
-                setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+                spendMana(cost);
                 toggleTap(card, index);
                 // Step 1: pick 2 creatures to tap
                 setPendingPicker({ label: "ELADAMRI — TAP TWO CREATURES (CHOOSE 2)", color: COLORS.gold, multi: 2,
@@ -27725,7 +28002,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               </div>
             ) : (
               <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
-                ⚡ Hand cheat ({'{G}'}, tap 2) — {isCardTapped ? "tapped" : manaPool < cost ? "need 1 mana" : untappedCreatureList.length < 2 ? "need 2 untapped creatures" : "no creatures in hand"}
+                ⚡ Hand cheat ({'{G}'}, tap 2) — {isCardTapped ? "tapped" : (manaPool + tappedMana.total) < cost ? "need 1 mana" : untappedCreatureList.length < 2 ? "need 2 untapped creatures" : "no creatures in hand"}
               </div>
             )}
           </>);
@@ -27797,7 +28074,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           const gyTypes = new Set(graveyard.map(c => getCard(c)?.type).filter(Boolean));
           const hasDelirium = gyTypes.size >= 4;
           const deliriumCost = 4; // {2}{G}{G} = 4 mana
-          const canDelirium = !isCardTapped && hasDelirium && manaPool >= deliriumCost && graveyard.length > 0;
+          const canDelirium = !isCardTapped && hasDelirium && (manaPool + tappedMana.total) >= deliriumCost && graveyard.length > 0;
           if (isCardTapped) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Shifting Woodland — tapped ({gyTypes.size} card types in GY)
@@ -27818,7 +28095,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               <div onClick={() => {
                 if (manaPool < deliriumCost) { addLog(`Shifting Woodland delirium: need {2}{G}{G} (4 mana).`, COLORS.textDim); closeContextMenu(); return; }
                 pushUndo(); toggleTap(card, index);
-                setManaPool(p => Math.max(0, p - deliriumCost)); flashMana(-deliriumCost);
+                spendMana(deliriumCost);
                 // Show picker to choose which graveyard permanent card to copy
                 const permanentCards = graveyard.map((c, i) => ({ c, i, type: getCard(c)?.type })).filter(({ type }) => type !== "instant" && type !== "sorcery");
                 if (permanentCards.length > 0) {
@@ -27854,7 +28131,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Emergence Zone: {1}+tap+sac — cast spells as though they had flash this turn ── */}
         {isBF && card === "Emergence Zone" && (() => {
           const cost = 1;
-          if (isCardTapped || manaPool < cost) return (
+          if (isCardTapped || (manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Flash this turn — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
@@ -27862,7 +28139,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           return (
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               setBattlefield(prev => prev.filter((_, i) => i !== index));
               setGraveyard(prev => [...prev, card]);
               addLog(`Emergence Zone: paid {1}, tapped, sacrificed — you may cast spells as though they had flash this turn.`, COLORS.gold);
@@ -27878,7 +28155,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Mikokoro, Center of the Sea: {2},{T} — each player draws a card ── */}
         {isBF && card === "Mikokoro, Center of the Sea" && (() => {
           const cost = 2;
-          if (isCardTapped || manaPool < cost) return (
+          if (isCardTapped || (manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               📖 Group draw ({'{2}'}tap) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
@@ -27886,7 +28163,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           return (
             <div onClick={() => {
               pushUndo(); toggleTap(card, index);
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               if (library.length > 0) { setHand(prev => [...prev, library[0]]); setLibrary(prev => prev.slice(1)); }
               addLog(`Mikokoro: paid {2}, tapped — each player draws a card.`, COLORS.blue);
               closeContextMenu();
@@ -27901,7 +28178,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Urza's Cave: {3},{T},sac — search library for any land → battlefield tapped ── */}
         {isBF && card === "Urza's Cave" && (() => {
           const cost = 3;
-          if (isCardTapped || manaPool < cost) return (
+          if (isCardTapped || (manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Fetch land ({'{3}'}tap+sac) — {isCardTapped ? "tapped" : `need ${cost} mana`}
             </div>
@@ -27910,7 +28187,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             <div onClick={() => {
               pushUndo();
               // Pay {3}, tap, and sacrifice Urza's Cave
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               setBattlefield(prev => prev.filter((_, i) => i !== index));
               setGraveyard(prev => [...prev, card]);
               // Open land picker — selected land enters battlefield tapped
@@ -27952,7 +28229,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           // Channel costs {1}{G} = 2 mana, minus 1 per legendary creature you control
           const legendaryCount = battlefield.filter(c => getCard(c)?.tags?.includes("legendary") || c === "Yeva, Nature's Herald").length;
           const cost = Math.max(1, 2 - legendaryCount); // minimum 1 (the {G} component)
-          if (manaPool < cost) return (
+          if ((manaPool + tappedMana.total) < cost) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               🌳 Channel — need {cost} mana ({legendaryCount} legendary → {2 - legendaryCount} discount)
             </div>
@@ -27960,7 +28237,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           return (
             <div onClick={() => {
               pushUndo();
-              setManaPool(p => Math.max(0, p - cost)); flashMana(-cost);
+              spendMana(cost);
               setHand(prev => prev.filter((_, i) => i !== index));
               setGraveyard(prev => [...prev, card]);
               addLog(`Boseiju (channel): paid {1}{G} (${legendaryCount} legendary → −${2 - legendaryCount} discount = ${cost} paid), discarded — destroyed target artifact, enchantment, or nonbasic land. Opponent may search for a basic land.`, COLORS.green1);
@@ -27975,7 +28252,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Talon Gates of Madara: ETB phases out a creature; {T} +1 colorless; {1}{T} any color; {4} play from hand ── */}
         {isBF && card === "Talon Gates of Madara" && (() => {
-          const canAny = !isCardTapped && manaPool >= 1;
+          const canAny = !isCardTapped && (manaPool + tappedMana.total) >= 1;
           return (<>
             {!isCardTapped && (
               <div onClick={() => {
@@ -28001,7 +28278,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 ⚡ {'{1}'}Tap — +1 mana any color
               </div>
             )}
-            {zone === "hand" && manaPool >= 4 && (
+            {zone === "hand" && (manaPool + tappedMana.total) >= 4 && (
               <div onClick={() => {
                 pushUndo();
                 setManaPool(p => Math.max(0, p - 4)); flashMana(-4);
@@ -28042,7 +28319,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {isBF && card === "Mariposa Military Base" && (() => {
           const radCounters = counters[key] ?? 0;
           const drawCost = Math.max(0, 5 - radCounters);
-          const canDraw = !isCardTapped && manaPool >= drawCost;
+          const canDraw = !isCardTapped && (manaPool + tappedMana.total) >= drawCost;
           return (<>
             {!isCardTapped && (
               <div onClick={() => {
@@ -28379,18 +28656,18 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const borderColor = isBellower ? COLORS.green2 : isGSZ ? COLORS.green2 : isFierceEmpath ? COLORS.gold : COLORS.purple;
 
     const header = isBellower
-      ? `WOODLAND BELLOWER \u2014 NON-LEGENDARY CMC \u2264 3`
+      ? `WOODLAND BELLOWER — NON-LEGENDARY CMC ≤ 3`
       : isYisan
-      ? `YISAN, THE WANDERER BARD \u2014 VERSE ${tutorExactCmc} \u2014 CMC = ${tutorExactCmc}`
+      ? `YISAN, THE WANDERER BARD — VERSE ${tutorExactCmc} — CMC = ${tutorExactCmc}`
       : isGSZ
-      ? `${tutorSpellName ? tutorSpellName.toUpperCase() : "TUTOR"} \u2014 X=${tutorMaxCmc} \u2014 CMC \u2264 ${tutorMaxCmc}`
-      : isFierceEmpath ? `FIERCE EMPATH \u2014 CREATURES CMC \u2265 6 (${pool.length} cards)`
-      : isFinale       ? `FINALE OF DEVASTATION \u2014 GRAVEYARD (${pool.length} cards)`
-      : isCreature ? `CREATURE TUTOR \u2014 LIBRARY (${pool.length} cards)`
-      : isLand     ? `LAND TUTOR \u2014 LIBRARY (${pool.length} cards)`
-      : isTreefolk ? `TREEFOLK HARBINGER \u2014 TREEFOLK OR FOREST (${pool.length} cards)`
-      : isElf      ? `ELVISH HARBINGER \u2014 ELF CARDS (${pool.length} cards)`
-      :              `TUTOR \u2014 LIBRARY (${pool.length} cards)`;
+      ? `${tutorSpellName ? tutorSpellName.toUpperCase() : "TUTOR"} — X=${tutorMaxCmc} — CMC ≤ ${tutorMaxCmc}`
+      : isFierceEmpath ? `FIERCE EMPATH — CREATURES CMC ≥ 6 (${pool.length} cards)`
+      : isFinale       ? `FINALE OF DEVASTATION — GRAVEYARD (${pool.length} cards)`
+      : isCreature ? `CREATURE TUTOR — LIBRARY (${pool.length} cards)`
+      : isLand     ? `LAND TUTOR — LIBRARY (${pool.length} cards)`
+      : isTreefolk ? `TREEFOLK HARBINGER — TREEFOLK OR FOREST (${pool.length} cards)`
+      : isElf      ? `ELVISH HARBINGER — ELF CARDS (${pool.length} cards)`
+      :              `TUTOR — LIBRARY (${pool.length} cards)`;
 
     const hint = isYisan              ? `CREATURES WITH CMC EXACTLY ${tutorExactCmc}`
       : isBellower                    ? "NON-LEGENDARY CREATURES CMC ≤ 3"
@@ -28913,10 +29190,10 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   Turn {turnNumber} · {isMyTurn ? "Your Turn" : "Opp Turn"} ⇄
                 </div>
                 {/* Mana pool tracker */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0px", background: "#071407", border: `1px solid ${manaPool > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "visible", transition: "border-color 0.2s", position: "relative" }}>
-                  <button onClick={() => { setManaPool(p => Math.max(0, p - 1)); flashMana(-1); }} style={{ background: "none", border: "none", borderRight: `1px solid ${COLORS.border}`, padding: "4px 8px", color: COLORS.textDim, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>−</button>
-                  <div style={{ padding: "4px 10px", fontFamily: "'Cinzel', serif", fontSize: "11px", color: manaPool > 0 ? COLORS.green1 : COLORS.textDim, letterSpacing: "1px", minWidth: "52px", textAlign: "center", position: "relative" }}>
-                    {manaPool} <span style={{ fontSize: "9px", opacity: 0.7 }}>MANA</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "0px", background: "#071407", border: `1px solid ${(manaPool + tappedMana.total) > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "visible", transition: "border-color 0.2s", position: "relative" }}>
+                  <button onClick={() => { spendMana(1); }} style={{ background: "none", border: "none", borderRight: `1px solid ${COLORS.border}`, padding: "4px 8px", color: COLORS.textDim, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>−</button>
+                  <div style={{ padding: "4px 10px", fontFamily: "'Cinzel', serif", fontSize: "11px", color: (manaPool + tappedMana.total) > 0 ? COLORS.green1 : COLORS.textDim, letterSpacing: "1px", minWidth: "52px", textAlign: "center", position: "relative" }}>
+                    {manaPool + tappedMana.total} <span style={{ fontSize: "9px", opacity: 0.7 }}>MANA</span>
                     {manaPoolDelta && (
                       <span key={manaPoolDelta.id} style={{
                         position: "absolute", top: "-18px", left: "50%", transform: "translateX(-50%)",
@@ -28945,9 +29222,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 >
                   T{turnNumber}{isMyTurn ? "" : "⊘"}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", background: "#071407", border: `1px solid ${manaPool > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", background: "#071407", border: `1px solid ${(manaPool + tappedMana.total) > 0 ? COLORS.green1 : COLORS.border}`, borderRadius: "6px", overflow: "hidden" }}>
                   <button onClick={() => { setManaPool(p => Math.max(0, p - 1)); }} style={{ background: "none", border: "none", borderRight: `1px solid ${COLORS.border}`, padding: "3px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>−</button>
-                  <span style={{ padding: "3px 7px", fontFamily: "'Cinzel', serif", fontSize: "10px", color: manaPool > 0 ? COLORS.green1 : COLORS.textDim }}>{manaPool}◆</span>
+                  <span style={{ padding: "3px 7px", fontFamily: "'Cinzel', serif", fontSize: "10px", color: (manaPool + tappedMana.total) > 0 ? COLORS.green1 : COLORS.textDim }}>{manaPool + tappedMana.total}◆</span>
                   <button onClick={() => setManaPool(p => p + 1)} style={{ background: "none", border: "none", borderLeft: `1px solid ${COLORS.border}`, padding: "3px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "12px" }}>+</button>
                 </div>
               </div>
@@ -29380,24 +29657,36 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px" }} title="Mana available from untapped sources">UNTAPPED</span>
                   <span style={{
                     fontFamily: "'Cinzel', serif", fontSize: "13px", fontWeight: "bold", minWidth: "18px", textAlign: "center",
-                    color: currentMana === 0 ? COLORS.textDim : currentMana >= 7 ? "#c084fc" : currentMana >= 4 ? COLORS.green2 : COLORS.green1,
+                    color: currentMana === 0 ? COLORS.textDim : currentMana >= 4 ? COLORS.green2 : COLORS.green1,
                   }}>{currentMana}</span>
-                  {/* Floating mana pool */}
-                  {manaPool > 0 && (<>
-                    <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>+</span>
-                    <span style={{
-                      fontFamily: "'Cinzel', serif", fontSize: "13px", fontWeight: "bold", minWidth: "18px", textAlign: "center",
-                      color: "#c084fc", position: "relative",
-                    }} title="Floating mana already in pool">{manaPool}
-                      {manaPoolDelta && (
-                        <span style={{ position: "absolute", top: "-10px", right: "-6px", fontSize: "9px", color: manaPoolDelta.value > 0 ? COLORS.green2 : COLORS.red, fontFamily: "'Cinzel', serif", pointerEvents: "none" }}>
-                          {manaPoolDelta.value > 0 ? `+${manaPoolDelta.value}` : manaPoolDelta.value}
+                  {/* Floating mana pool: tappedMana (from tapped BF cards) + manaPool (external) */}
+                  {(manaPool + tappedMana.total) > 0 && (() => {
+                    const floatG = tappedMana.green + (manaPool > 0 ? manaPool : 0); // treat external pool as colourless-capable
+                    const floatC = tappedMana.colorless;
+                    const floatTotal = manaPool + tappedMana.total;
+                    return (<>
+                      <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>+</span>
+                      {tappedMana.green > 0 && (
+                        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "13px", fontWeight: "bold", color: COLORS.green2, position: "relative" }}
+                              title={`${tappedMana.green} green floating`}>
+                          {tappedMana.green}<span style={{ fontSize: "9px", opacity: 0.8 }}>{"{G}"}</span>
                         </span>
                       )}
-                    </span>
-                    <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>= {manaPool + currentMana}</span>
-                    <button onClick={() => { setManaPool(0); addLog("Mana pool cleared.", COLORS.textDim); }} style={{ ...btnStyle(COLORS.border), padding: "0px 5px", fontSize: "9px" }} title="Clear floating mana pool">✕</button>
-                  </>)}
+                      {(tappedMana.colorless + manaPool) > 0 && (
+                        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "13px", fontWeight: "bold", color: "#c084fc", position: "relative" }}
+                              title={`${tappedMana.colorless + manaPool} colorless floating`}>
+                          {tappedMana.colorless + manaPool}<span style={{ fontSize: "9px", opacity: 0.8 }}>{"{C}"}</span>
+                          {manaPoolDelta && (
+                            <span style={{ position: "absolute", top: "-10px", right: "-6px", fontSize: "9px", color: manaPoolDelta.value > 0 ? COLORS.green2 : COLORS.red, fontFamily: "'Cinzel', serif", pointerEvents: "none" }}>
+                              {manaPoolDelta.value > 0 ? `+${manaPoolDelta.value}` : manaPoolDelta.value}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      <span style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>= {floatTotal + currentMana}</span>
+                      <button onClick={() => { tapManaLog.current.clear(); setTappedManaV(v=>v+1); setManaPool(0); addLog("Mana pool cleared.", COLORS.textDim); }} style={{ ...btnStyle(COLORS.border), padding: "0px 5px", fontSize: "9px" }} title="Clear floating mana pool">✕</button>
+                    </>);
+                  })()}
                 </div>
               </div>
 
@@ -29433,7 +29722,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                     isFetch={isFetch}
                     landPlayed={landPlayed}
                     attachments={attachments}
-                    totalMana={manaPool + currentMana}
+                    totalMana={manaPool + tappedMana.total + currentMana}
                     gfInfinite={analysis?.infiniteManaActive ?? false}
                   />
                 ) : (<>
@@ -29448,7 +29737,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   ).length;
                   const crumbs = [
                     { label: `T${turnNumber}`, color: COLORS.gold },
-                    { label: `${currentMana}◆`, color: currentMana >= 6 ? "#c084fc" : currentMana >= 3 ? COLORS.green2 : COLORS.green1 },
+                    { label: `${currentMana}◆`, color: currentMana >= 3 ? COLORS.green2 : COLORS.green1 },
                     elves > 0 && { label: `${elves} elf${elves !== 1 ? "s" : ""}`, color: COLORS.green3 },
                     dorks > 0 && { label: `${dorks} dork${dorks !== 1 ? "s" : ""}`, color: COLORS.green2 },
                     devotion > 0 && { label: `${devotion}🌿`, color: devotion >= 5 ? COLORS.green3 : COLORS.textMid },
@@ -29477,14 +29766,12 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           const cd = getCard(card);
                           const isLand = cd?.type === "land";
                           const cantPlay = isLand && landPlayed;
-                          // Affordability: total mana = floating pool + untapped sources.
-                          // Green pip check omitted here — auto-tap in castFromHand taps untapped
-                          // green sources before the colour guard fires, so checking it here would
-                          // wrongly block castable spells. castFromHand has its own colour guard.
-                          const totalMana = manaPool + currentMana;
+                          // Affordability: total mana and green pip check.
+                          const totalMana = manaPool + tappedMana.total + currentMana;
                           const cmc = cd?.cmc ?? 0;
+                          const greenPips = cd?.greenPips ?? 0;
                           const gfInfinite = analysis?.infiniteManaActive ?? false;
-                          const cantAfford = !gfInfinite && !isLand && cmc > 0 && cmc > totalMana;
+                          const cantAfford = !gfInfinite && !isLand && cmc > 0 && (cmc > totalMana || greenPips > availableGreen);
                           const unplayable = cantPlay || cantAfford;
                           return renderCard(card, i, "hand", {
                             onClick: () => !unplayable && castFromHand(card, i),
@@ -29629,7 +29916,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   const _lineMana = currentManaPool.green + currentManaPool.colorless;
                   const _yisanKey = Object.keys(counters).find(k => k.startsWith("Yisan, the Wanderer Bard:")) ?? null;
                   const _lineYisanCounters = _yisanKey ? (counters[_yisanKey] ?? 0) : 0;
-                  const lines = findReachableLines(hand, battlefield, graveyard, _lineMana, deckSet, _lineYisanCounters, sickCreatureNames);
+                  const lines = findReachableLines(hand, battlefield, graveyard, _lineMana, deckSet, _lineYisanCounters, sickCreatureNames, false, tapped);
                   const typeOpts = [
                     ["all", "All"],
                     ["infinite-mana", "∞ Mana"],
