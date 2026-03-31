@@ -2867,7 +2867,23 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // AND have mana remaining to activate the loop.
         // Hope Tender's exert costs {1} to activate — need at least 1 mana beyond cast cost.
         const loopActivationCost = (combo.id === "hope_tender_ashaya_dork") ? 1 : 0;
-        if (castCostFromHand + loopActivationCost > totalMana) continue;
+        // hope_tender_ashaya_dork: Tender exerts to untap 2 lands mid-sequence, generating
+        // extra mana that reduces the effective setup cost.
+        // We add: (a) initial Cradle tap from hand if playable this turn,
+        //         (b) net bonus from Tender untapping 2 lands (top-2 output minus {1} cost).
+        let tenderMidBonus = 0;
+        if (combo.id === "hope_tender_ashaya_dork" && board.has("Hope Tender") && isMyTurn) {
+          const _hasCradleHand = inHand.has("Gaea's Cradle") || inHand.has("Itlimoc, Cradle of the Sun");
+          const _cradleInitial = _hasCradleHand ? 1 : 0; // 1G from initial Cradle tap (Tender on board)
+          const _landOuts = battlefield
+            .filter(c => getCard(c)?.type === "land")
+            .map(c => { const cd = getCard(c); return typeof cd?.tapsFor === "number" ? cd.tapsFor : 1; })
+            .sort((a, b) => b - a);
+          if (_hasCradleHand) _landOuts.push(_cradleInitial); // Cradle also untappable by Tender
+          const _top2 = _landOuts.slice(0, 2).reduce((s, v) => s + v, 0);
+          tenderMidBonus = _cradleInitial + Math.max(0, _top2 - 1); // initial tap + net untap bonus
+        }
+        if (castCostFromHand + loopActivationCost > totalMana + tenderMidBonus) continue;
         const extras = comboExtrasSatisfied(combo, false);
         if (extras.ok) { _inf = true; _infName = combo.name; break; }
       }
