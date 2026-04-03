@@ -1153,27 +1153,6 @@ const COMBOS = [
     ]
   },
 
-  // ── Elvish Guidance + Arbor Elf + Wirewood Lodge (≥2 elves) ───────────
-  {
-    id: "elvish_guidance_arbor_lodge",
-    name: "Elvish Guidance + Arbor Elf + Wirewood Lodge (≥1 elf)",
-    onBattlefield: ["Elvish Guidance", "Arbor Elf", "Wirewood Lodge"],
-    mustPreExist: ["Arbor Elf", "Wirewood Lodge"],
-    description: "Infinite mana with 1+ elf. Elvish Guidance: enchanted Forest still taps for its base {G}, PLUS an additional {G} per Elf on the battlefield. So with N elves the Forest taps for (1+N){G}. Arbor Elf untaps that Forest (free). Wirewood Lodge ({G}) untaps Arbor Elf. Net per loop: tap Forest twice = 2×(1+N) mana, minus 1G for Lodge = 2N+1 mana per loop. Infinite when you have ≥1 elf (Arbor itself counts).",
-    requires: ["Elvish Guidance", "Arbor Elf", "Wirewood Lodge"],
-    needsMinElves: 1,
-    priority: 9,
-    type: "infinite-mana",
-    lines: [
-      "Elvish Guidance enchanting a Forest. Arbor Elf + Wirewood Lodge on battlefield. ≥1 elf in play.",
-      "Tap the Guidance-enchanted Forest for (1 + elf count) {G}. E.g. with 4 elves = 5{G}.",
-      "Activate Arbor Elf: untap the enchanted Forest (free).",
-      "Tap enchanted Forest again for another (1 + elf count) {G} — second activation.",
-      "Spend {G}: activate Wirewood Lodge, untapping Arbor Elf.",
-      "Net: elf count mana per full loop (pay {G} Lodge, gain 1 + elves twice). With 1 elf = 1 net. Repeat for infinite mana.",
-    ]
-  },
-
   // ── Magus of the Candelabra + Wirewood Symbiote + Big Land ───────────
   // NOTE: Magus is NOT an elf — Wirewood Lodge cannot untap it.
   // NOTE: Magus is NOT an elf — Wirewood Lodge cannot untap it.
@@ -1630,6 +1609,33 @@ const COMBOS = [
       "Pay {1}, tap and exert Hope Tender: untap Hope Tender AND the tapped source.",
       "Net: ≥+{G} per loop (≥2 produced minus {1} exert cost). Hope Tender re-readies for next activation.",
       "Repeat for infinite mana.",
+    ],
+  },
+
+  // ── Hope Tender + Quirion/Scryb Ranger + Ashaya + Gaea's Cradle ─────────
+  // The infinite version: Quirion Ranger bounces itself (a Forest via Ashaya) to untap
+  // Hope Tender, resetting Tender's exert restriction each loop.
+  // Loop: Tap Cradle (N{G}) → Pay {1}, Tender exerts to untap Cradle + itself →
+  //       Ranger bounces itself to untap Tender → recast Ranger ({G}) → net +{G} per cycle.
+  // Tender must pre-exist (activated ability requires no summoning sickness).
+  // Quirion/Scryb Ranger ability has no tap cost — usable immediately on entry.
+  {
+    id: "hope_tender_ranger_ashaya_cradle",
+    name: "Hope Tender + Ranger + Ashaya + Gaea's Cradle (true infinite)",
+    onBattlefield: ["Ashaya, Soul of the Wild", "Hope Tender", "Gaea's Cradle"],
+    mustPreExist: ["Hope Tender"],
+    description: "True infinite mana. With Ashaya, Quirion/Scryb Ranger is a Forest. Ranger bounces itself to untap Hope Tender, resetting the exert restriction each loop. Tap Cradle for N{G}. Tender exerts ({1}) to untap Cradle + Tender. Ranger bounces itself to untap Tender. Recast Ranger ({G}). Net +{G} per cycle. Ranger's ability has no tap cost so summoning sickness does not apply.",
+    requires: ["Ashaya, Soul of the Wild", "Hope Tender", "Gaea's Cradle"],
+    needsAnyOf: ["Quirion Ranger", "Scryb Ranger"],
+    priority: 9,
+    type: "infinite-mana",
+    lines: [
+      "Ashaya + Hope Tender (not sick) + Quirion or Scryb Ranger + Gaea's Cradle on battlefield.",
+      "Tap Gaea's Cradle for {G} × (number of creatures).",
+      "Pay {1}, tap and exert Hope Tender: untap Gaea's Cradle + Hope Tender (two targets).",
+      "Activate Quirion Ranger: return itself (a Forest via Ashaya) to hand, untapping Hope Tender.",
+      "Recast Quirion Ranger for {G}. Net: +(creature count − 2) per loop → infinite.",
+      "With ≥3 creatures: infinite green mana. Cradle produces more as you repeat.",
     ],
   },
 
@@ -17750,6 +17756,1364 @@ function useForceGraph(nodeList, linkList, width, height, enabled) {
 }
 
 // ============================================================
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  SOLVER ENGINE — Inlined from Solver/*.js                                ║
+// ║  GameState, SOLVER_CARDS, generateActions, checkCombos                   ║
+// ║  Used by: auto-sim combo detection                                       ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
+// ── Solver/GameState.js ─────────────────────────────────────────────────────
+/**
+ * MTG Combo Solver — GameState
+ *
+ * Immutable (clone-on-write) game state. Every action returns a new
+ * GameState so the solver can explore branches without side effects.
+ */
+
+
+class ManaPool {
+  constructor(pool = {}) {
+    this.W = pool.W ?? 0;
+    this.U = pool.U ?? 0;
+    this.B = pool.B ?? 0;
+    this.R = pool.R ?? 0;
+    this.G = pool.G ?? 0;
+    this.C = pool.C ?? 0; // generic / colorless
+  }
+
+  total() {
+    return this.W + this.U + this.B + this.R + this.G + this.C;
+  }
+
+  clone() {
+    return new ManaPool(this);
+  }
+
+  add(color, amount = 1) {
+    const p = this.clone();
+    p[color] += amount;
+    return p;
+  }
+
+  /**
+   * Pay a mana cost string like "1GG", "3GG", "0", "G", "CC"
+   * Returns new pool or null if can't afford.
+   * Rules: colored symbols paid first from matching color, then generic from any.
+   */
+  pay(costStr) {
+    const parsed = parseCost(costStr);
+    const pool = this.clone();
+
+    // Pay colored symbols first
+    for (const [color, amt] of Object.entries(parsed.colored)) {
+      if (pool[color] < amt) return null;
+      pool[color] -= amt;
+    }
+
+    // Pay generic with leftover (any color, prefer colorless first)
+    let generic = parsed.generic;
+    for (const color of ['C', 'G', 'W', 'U', 'B', 'R']) {
+      if (generic <= 0) break;
+      const use = Math.min(generic, pool[color]);
+      pool[color] -= use;
+      generic -= use;
+    }
+
+    if (generic > 0) return null; // can't afford
+    return pool;
+  }
+
+  toString() {
+    const parts = [];
+    if (this.W) parts.push(`{W}x${this.W}`);
+    if (this.U) parts.push(`{U}x${this.U}`);
+    if (this.B) parts.push(`{B}x${this.B}`);
+    if (this.R) parts.push(`{R}x${this.R}`);
+    if (this.G) parts.push(`{G}x${this.G}`);
+    if (this.C) parts.push(`{C}x${this.C}`);
+    return parts.length ? parts.join(' ') : '{0}';
+  }
+}
+
+/**
+ * Parse a mana cost string into { generic: N, colored: { G:n, W:n, ... } }
+ */
+function parseCost(costStr) {
+  if (!costStr || costStr === '0') return { generic: 0, colored: {} };
+  const colored = {};
+  let generic = 0;
+  let i = 0;
+  while (i < costStr.length) {
+    const ch = costStr[i];
+    if (/\d/.test(ch)) {
+      // collect full number
+      let num = '';
+      while (i < costStr.length && /\d/.test(costStr[i])) num += costStr[i++];
+      generic += parseInt(num, 10);
+    } else if ('WUBRGC'.includes(ch)) {
+      colored[ch] = (colored[ch] || 0) + 1;
+      i++;
+    } else {
+      i++;
+    }
+  }
+  return { generic, colored };
+}
+
+/**
+ * A permanent on the battlefield.
+ */
+class Permanent {
+  constructor(data) {
+    this.id = data.id;              // unique id for this instance
+    this.name = data.name;
+    this.types = data.types ?? [];  // ['creature','land','artifact',...]
+    this.subtypes = data.subtypes ?? [];
+    this.tapped = data.tapped ?? false;
+    this.summoningSick = data.summoningSick ?? false;
+    // snapshot of card definition for ability dispatch
+    this.cardKey = data.cardKey;
+    // runtime flags set by other cards
+    this.isForest = data.isForest ?? false;
+    // has this ability been used this turn?
+    this.abilitiesUsed = data.abilitiesUsed ?? {};
+  }
+
+  is(type) {
+    return this.types.includes(type.toLowerCase());
+  }
+
+  clone() {
+    return new Permanent({
+      ...this,
+      types: [...this.types],
+      subtypes: [...this.subtypes],
+      abilitiesUsed: { ...this.abilitiesUsed },
+    });
+  }
+
+  get label() {
+    const tFlag = this.tapped ? '[T]' : '   ';
+    const sFlag = this.summoningSick ? '[S]' : '   ';
+    const fFlag = this.isForest ? '[Forest]' : '';
+    return `${tFlag}${sFlag} ${this.name}${fFlag}`;
+  }
+}
+
+/**
+ * Full game state snapshot.
+ */
+class GameState {
+  constructor(data = {}) {
+    this.turn        = data.turn ?? 1;
+    this.phase       = data.phase ?? 'main1';
+    this.landDrops   = data.landDrops ?? 1; // drops remaining this turn
+    this.hand        = data.hand ? [...data.hand] : [];
+    this.battlefield = data.battlefield ? data.battlefield.map(p => p instanceof Permanent ? p : new Permanent(p)) : [];
+    this.graveyard   = data.graveyard ? [...data.graveyard] : [];
+    this.exile       = data.exile ? [...data.exile] : [];
+    this.mana        = data.mana instanceof ManaPool ? data.mana : new ManaPool(data.mana ?? {});
+    this.life        = data.life ?? 40;
+    this.storm       = data.storm ?? 0;
+    this.comboAchieved = data.comboAchieved ?? false;
+    this.comboName     = data.comboName ?? null;
+    this._nextId       = data._nextId ?? 1;
+    this.history       = data.history ? [...data.history] : [];
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  creatures() {
+    return this.battlefield.filter(p => p.is('creature'));
+  }
+
+  lands() {
+    return this.battlefield.filter(p => p.is('land'));
+  }
+
+  untappedLands() {
+    return this.lands().filter(p => !p.tapped);
+  }
+
+  untappedCreatures() {
+    return this.creatures().filter(p => !p.tapped && !p.summoningSick);
+  }
+
+  hasPermanent(name) {
+    return this.battlefield.some(p => p.name === name);
+  }
+
+  getPermanent(name) {
+    return this.battlefield.find(p => p.name === name);
+  }
+
+  getPermanentById(id) {
+    return this.battlefield.find(p => p.id === id);
+  }
+
+  forestsInHand() {
+    return this.hand.filter(c => {
+      const def = (typeof SOLVER_CARDS !== 'undefined' ? SOLVER_CARDS : _SCARDS)[c];
+      return def && def.subtypes && def.subtypes.includes('Forest');
+    });
+  }
+
+  // ── Mutation helpers (return new state) ──────────────────────────────────
+
+  clone() {
+    return new GameState({
+      ...this,
+      hand: [...this.hand],
+      battlefield: this.battlefield.map(p => p.clone()),
+      graveyard: [...this.graveyard],
+      exile: [...this.exile],
+      mana: this.mana.clone(),
+      history: [...this.history],
+    });
+  }
+
+  log(msg) {
+    const s = this.clone();
+    s.history = [...s.history, { turn: s.turn, msg }];
+    return s;
+  }
+
+  addMana(color, amount = 1) {
+    const s = this.clone();
+    s.mana = s.mana.add(color, amount);
+    return s;
+  }
+
+  payMana(costStr) {
+    const newPool = this.mana.pay(costStr);
+    if (newPool === null) return null;
+    const s = this.clone();
+    s.mana = newPool;
+    return s;
+  }
+
+  tapPermanent(id) {
+    const s = this.clone();
+    const p = s.getPermanentById(id);
+    if (!p || p.tapped) return null;
+    p.tapped = true;
+    return s;
+  }
+
+  untapPermanent(id) {
+    const s = this.clone();
+    const p = s.getPermanentById(id);
+    if (!p) return null;
+    p.tapped = false;
+    return s;
+  }
+
+  enterBattlefield(cardKey, extra = {}) {
+    const cards = (typeof SOLVER_CARDS !== 'undefined' ? SOLVER_CARDS : _SCARDS);
+    const def = cards[cardKey];
+    if (!def) throw new Error(`Unknown card: ${cardKey}`);
+    const s = this.clone();
+    const id = s._nextId++;
+    const perm = new Permanent({
+      id,
+      name: def.name,
+      types: [...def.types],
+      subtypes: [...(def.subtypes ?? [])],
+      cardKey,
+      tapped: extra.tapped ?? false,
+      summoningSick: def.types.includes('creature') ? true : false,
+      isForest: def.subtypes?.includes('Forest') ?? false,
+      ...extra,
+    });
+    s.battlefield = [...s.battlefield, perm];
+    // trigger: if Ashaya is already in play, new creatures become Forests
+    if (s.hasPermanent('Ashaya, Soul of the Wild') && perm.is('creature')) {
+      perm.isForest = true;
+      perm.types.push('land');
+    }
+    // trigger Ashaya entering — mark all existing non-token creatures as Forests
+    if (cardKey === 'ashaya') {
+      for (const bf of s.battlefield) {
+        if (bf.is('creature')) {bf.isForest = true; bf.types.push('land');}
+      }
+    }
+    return s;
+  }
+
+  removeFromBattlefield(id, zone = 'graveyard') {
+    const s = this.clone();
+    const idx = s.battlefield.findIndex(p => p.id === id);
+    if (idx === -1) return null;
+    const [removed] = s.battlefield.splice(idx, 1);
+    if (zone === 'graveyard') s.graveyard = [...s.graveyard, removed.name];
+    if (zone === 'exile') s.exile = [...s.exile, removed.name];
+    return s;
+  }
+
+  removeFromHand(cardKey) {
+    const s = this.clone();
+    const idx = s.hand.indexOf(cardKey);
+    if (idx === -1) return null;
+    s.hand = [...s.hand.slice(0, idx), ...s.hand.slice(idx + 1)];
+    return s;
+  }
+
+  addToHand(cardKey) {
+    const s = this.clone();
+    s.hand = [...s.hand, cardKey];
+    return s;
+  }
+
+  markAbilityUsed(id, abilityKey) {
+    const s = this.clone();
+    const p = s.getPermanentById(id);
+    if (!p) return null;
+    p.abilitiesUsed = { ...p.abilitiesUsed, [abilityKey]: true };
+    return s;
+  }
+
+  startNewTurn() {
+    const s = this.clone();
+    s.turn++;
+    s.landDrops = 1;
+    s.mana = new ManaPool();
+    s.storm = 0;
+    // untap all, remove summoning sickness
+    for (const p of s.battlefield) {
+      p.tapped = false;
+      p.summoningSick = false;
+      p.abilitiesUsed = {};
+    }
+    s.history = [...s.history, { turn: s.turn, msg: `-- Begin Turn ${s.turn} --` }];
+    return s;
+  }
+
+  /** Serialise to a compact string for visited-state deduplication */
+  fingerprint() {
+    const hand = [...this.hand].sort().join(',');
+    const bf = this.battlefield
+      .map(p => `${p.name}:${p.tapped?'T':'U'}:${p.isForest?'F':''}:${JSON.stringify(p.abilitiesUsed)}`)
+      .sort().join('|');
+    const m = this.mana.toString();
+    return `T${this.turn}|H:${hand}|BF:${bf}|M:${m}|L:${this.landDrops}`;
+  }
+
+  printSummary() {
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`Turn ${this.turn} | Life: ${this.life} | Mana: ${this.mana}`);
+    console.log(`Hand: ${this.hand.join(', ') || '(empty)'}`);
+    console.log(`Battlefield:`);
+    for (const p of this.battlefield) console.log(`  ${p.label}`);
+    console.log(`Graveyard: ${this.graveyard.join(', ') || '—'}`);
+    if (this.comboAchieved) console.log(`\n  *** COMBO: ${this.comboName} ***`);
+    console.log('═'.repeat(60));
+  }
+}
+
+// ── Solver/cards.js ─────────────────────────────────────────────────────────
+/**
+ * MTG Combo Solver — Card Definitions (expanded)
+ * All cards from card_data.md plus original combo pieces.
+ */
+
+
+function devotionToGreen(state) {
+  let count = 0;
+  for (const p of state.battlefield) {
+    const def = _SCARDS[p.cardKey];
+    if (!def || !def.cost) continue;
+    for (const ch of def.cost) if (ch === 'G') count++;
+  }
+  return count;
+}
+
+function countElves(state) {
+  return state.battlefield.filter(p => p.subtypes && p.subtypes.includes('Elf')).length;
+}
+
+function simpleTap(label, colorPairs) {
+  return function tapForMana(state, perm) {
+    if (perm.tapped || perm.summoningSick) return [];
+    let s = state.tapPermanent(perm.id);
+    if (!s) return [];
+    for (const [color, amt] of colorPairs) for (let i = 0; i < amt; i++) s = s.addMana(color);
+    s = s.log(`Tap ${perm.name} → ${label}`);
+    return [s];
+  };
+}
+
+function bounceToUntap(label, filterFn, selfKey) {
+  return {
+    label,
+    fn(state, perm) {
+      const cards = SOLVER_CARDS;
+      const results = [];
+      const bounceable = state.battlefield.filter(p => filterFn(p));
+      for (const target of bounceable) {
+        const creaturesCanUntap = state.creatures().filter(c => c.id !== target.id && c.tapped);
+        const untapTargets = target.id === perm.id
+          ? creaturesCanUntap
+          : [...creaturesCanUntap, { ...perm, _isSelf: true }];
+        if (untapTargets.length === 0) continue;
+        for (const ut of untapTargets) {
+          let s = state;
+          if (target.id === perm.id) {
+            s = s.removeFromBattlefield(perm.id, null);
+            if (!s) continue;
+            s = s.addToHand(selfKey || perm.cardKey);
+          } else {
+            s = s.removeFromBattlefield(target.id, null);
+            if (!s) continue;
+            const fk = Object.keys(cards).find(k => cards[k].name === target.name);
+            if (fk) s = s.addToHand(fk);
+          }
+          if (ut._isSelf) {
+            const sp = s.getPermanentById(perm.id);
+            if (sp) s = s.untapPermanent(sp.id);
+          } else {
+            s = s.untapPermanent(ut.id);
+          }
+          s = s.log(`${perm.name}: return ${target.name} → untap ${ut._isSelf ? perm.name : ut.name}`);
+          results.push(s);
+        }
+      }
+      return results;
+    },
+  };
+}
+
+const _SCARDS = {
+
+  // ─── LANDS ───────────────────────────────────────────────────────────────
+
+  ancient_tomb: {
+    name: 'Ancient Tomb', types: ['land'], subtypes: [], cost: null,
+    tapForMana(state, perm) {
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      s.life -= 2; s = s.addMana('C').addMana('C');
+      return [s.log(`Tap ${perm.name} → {C}{C} (pay 2 life, life now ${s.life})`)];
+    },
+  },
+
+  gaeas_cradle: {
+    name: "Gaea's Cradle", types: ['land'], subtypes: ['Legendary', 'Forest'], cost: null,
+    tapForMana(state, perm) {
+      const n = state.creatures().length; if (n === 0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i = 0; i < n; i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${n} (${n} creature${n !== 1 ? 's' : ''})`)];
+    },
+  },
+
+  itlimoc: {
+    name: 'Itlimoc, Cradle of the Sun', types: ['land'], subtypes: ['Legendary'], cost: null,
+    tapForMana(state, perm) {
+      const n = state.creatures().length;
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i = 0; i <= n; i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${n + 1}`)];
+    },
+  },
+
+  nykthos: {
+    name: 'Nykthos, Shrine to Nyx', types: ['land'], subtypes: ['Legendary'], cost: null,
+    tapForMana(state, perm) {
+      const results = [];
+      let s1 = state.tapPermanent(perm.id); if (s1) { s1 = s1.addMana('C'); results.push(s1.log(`Tap ${perm.name} → {C}`)); }
+      const dev = devotionToGreen(state);
+      const p2 = state.payMana('2');
+      if (p2 && dev > 0) {
+        let s2 = p2.tapPermanent(perm.id);
+        if (s2) { for (let i = 0; i < dev; i++) s2 = s2.addMana('G'); results.push(s2.log(`Tap ${perm.name} (devotion) → {G}x${dev}`)); }
+      }
+      return results;
+    },
+  },
+
+  deserted_temple: {
+    name: 'Deserted Temple', types: ['land'], subtypes: [], cost: null,
+    tapForMana: simpleTap('{C}', [['C', 1]]),
+    abilities: {
+      untap_land: {
+        label: '{1}, {T}: Untap target land',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          const ap = state.payMana('1'); if (!ap) return [];
+          const results = [];
+          for (const land of state.lands().filter(l => l.tapped)) {
+            let s = ap.tapPermanent(perm.id); if (!s) continue;
+            s = s.untapPermanent(land.id);
+            results.push(s.log(`Deserted Temple → untap ${land.name}`));
+          }
+          return results;
+        },
+      },
+    },
+  },
+
+  yavimaya: {
+    name: 'Yavimaya, Cradle of Growth', types: ['land'], subtypes: ['Legendary'], cost: null,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+  },
+
+  wirewood_lodge: {
+    name: 'Wirewood Lodge', types: ['land'], subtypes: [], cost: null,
+    tapForMana: simpleTap('{C}', [['C', 1]]),
+    abilities: {
+      untap_elf: {
+        label: '{G}, {T}: Untap target Elf',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          const ap = state.payMana('G'); if (!ap) return [];
+          const results = [];
+          for (const elf of state.battlefield.filter(p => p.subtypes && p.subtypes.includes('Elf') && p.tapped)) {
+            let s = ap.tapPermanent(perm.id); if (!s) continue;
+            s = s.untapPermanent(elf.id);
+            results.push(s.log(`Wirewood Lodge → untap ${elf.name}`));
+          }
+          return results;
+        },
+      },
+    },
+  },
+
+  forest: { name: 'Forest', types: ['land'], subtypes: ['Forest'], cost: null, isBasic: true, tapForMana: simpleTap('{G}', [['G', 1]]) },
+
+  castle_garenbrig: {
+    name: 'Castle Garenbrig', types: ['land'], subtypes: [], cost: null,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+    abilities: {
+      big_green: {
+        label: '{2}{G}{G}, {T}: Add {G}x6 (for creatures)',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          const ap = state.payMana('2GG'); if (!ap) return [];
+          let s = ap.tapPermanent(perm.id); if (!s) return [];
+          for (let i = 0; i < 6; i++) s = s.addMana('G');
+          return [s.log(`Castle Garenbrig → {G}x6`)];
+        },
+      },
+    },
+  },
+
+  dryad_arbor: {
+    name: 'Dryad Arbor', types: ['land', 'creature'], subtypes: ['Forest', 'Dryad'], cost: null,
+    power: 1, toughness: 1,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+  },
+
+  misty_rainforest:  { name: 'Misty Rainforest',  types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
+  verdant_catacombs: { name: 'Verdant Catacombs', types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
+  windswept_heath:   { name: 'Windswept Heath',   types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
+  wooded_foothills:  { name: 'Wooded Foothills',  types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
+
+  shifting_woodland:   { name: 'Shifting Woodland',          types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{G}', [['G',1]]) },
+  emergence_zone:      { name: 'Emergence Zone',             types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  boseiju:             { name: 'Boseiju, Who Endures',       types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{G}', [['G',1]]) },
+  talon_gates:         { name: 'Talon Gates of Madara',      types: ['land'], subtypes: ['Gate'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  war_room:            { name: 'War Room',                   types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  geier_reach:         { name: 'Geier Reach Sanitarium',     types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  bonders_enclave:     { name: "Bonders' Enclave",           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  mikokoro:            { name: 'Mikokoro, Center of the Sea', types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  urza_cave:           { name: "Urza's Cave",                types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  ominous_cemetery:    { name: 'Ominous Cemetery',           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  mariposa_military:   { name: 'Mariposa Military Base',     types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+
+  // ─── ARTIFACTS ───────────────────────────────────────────────────────────
+
+  sol_ring: { name: 'Sol Ring', types: ['artifact'], subtypes: [], cost: '1', tapForMana: simpleTap('{C}{C}', [['C',2]]) },
+
+  lotus_petal: {
+    name: 'Lotus Petal', types: ['artifact'], subtypes: [], cost: '0',
+    abilities: {
+      sac_G: { label:'Sac → {G}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('G').log(`Sacrifice ${perm.name} → {G}`); } },
+      sac_C: { label:'Sac → {C}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('C').log(`Sacrifice ${perm.name} → {C}`); } },
+      sac_W: { label:'Sac → {W}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('W').log(`Sacrifice ${perm.name} → {W}`); } },
+      sac_U: { label:'Sac → {U}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('U').log(`Sacrifice ${perm.name} → {U}`); } },
+      sac_B: { label:'Sac → {B}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('B').log(`Sacrifice ${perm.name} → {B}`); } },
+      sac_R: { label:'Sac → {R}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('R').log(`Sacrifice ${perm.name} → {R}`); } },
+    },
+  },
+
+  mox_diamond:  { name: 'Mox Diamond',  types: ['artifact'], subtypes: [], cost: '0', tapForMana: simpleTap('{any}', [['G',1]]) },
+  chrome_mox:   { name: 'Chrome Mox',   types: ['artifact'], subtypes: [], cost: '0', tapForMana: simpleTap('{G}',   [['G',1]]) },
+
+  thousand_year_elixir: {
+    name: 'Thousand-Year Elixir', types: ['artifact'], subtypes: [], cost: '3',
+    abilities: {
+      untap_creature: {
+        label: '{1}, {T}: Untap target creature',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          const ap = state.payMana('1'); if (!ap) return [];
+          const results = [];
+          for (const c of state.creatures().filter(c => c.tapped)) {
+            let s = ap.tapPermanent(perm.id); if (!s) continue;
+            results.push(s.untapPermanent(c.id).log(`Thousand-Year Elixir → untap ${c.name}`));
+          }
+          return results;
+        },
+      },
+    },
+  },
+
+  cloudstone_curio: { name: 'Cloudstone Curio', types: ['artifact'], subtypes: [], cost: '3' },
+  agatha_cauldron:  { name: "Agatha's Soul Cauldron", types: ['artifact'], subtypes: ['Legendary'], cost: '2' },
+  emerald_medallion:{ name: 'Emerald Medallion', types: ['artifact'], subtypes: [], cost: '2', costReduction: { color: 'G', amount: 1 } },
+  null_rod:         { name: 'Null Rod',          types: ['artifact'], subtypes: [], cost: '2' },
+  thorn_of_amethyst:{ name: 'Thorn of Amethyst', types: ['artifact'], subtypes: [], cost: '2' },
+  trinisphere:      { name: 'Trinisphere',        types: ['artifact'], subtypes: [], cost: '3' },
+  orb_of_dreams:    { name: 'Orb of Dreams',      types: ['artifact'], subtypes: [], cost: '3' },
+  vexing_bauble:    { name: 'Vexing Bauble',       types: ['artifact'], subtypes: [], cost: '1' },
+
+  // ─── CREATURES — Mana Dorks ───────────────────────────────────────────────
+
+  llanowar_elves:  { name: 'Llanowar Elves',  types:['creature'], subtypes:['Elf','Druid'],   cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{G}',[['G',1]]) },
+  elvish_mystic:   { name: 'Elvish Mystic',   types:['creature'], subtypes:['Elf','Druid'],   cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{G}',[['G',1]]) },
+  fyndhorn_elves:  { name: 'Fyndhorn Elves',  types:['creature'], subtypes:['Elf','Druid'],   cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{G}',[['G',1]]) },
+  boreal_druid:    { name: 'Boreal Druid',    types:['creature'], subtypes:['Elf','Druid'],   cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{C}',[['C',1]]) },
+  birds_of_paradise:{ name:'Birds of Paradise',types:['creature'],subtypes:['Bird'],           cost:'G',   power:0,toughness:1, tapForMana: simpleTap('{any}',[['G',1]]) },
+  delighted_halfling:{ name:'Delighted Halfling',types:['creature'],subtypes:['Halfling','Citizen'],cost:'G',power:1,toughness:1, tapForMana: simpleTap('{C}',[['C',1]]) },
+  boreal_druid2:   { name: 'Joraga Treespeaker', types:['creature'],subtypes:['Elf','Druid'], cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{G}',[['G',1]]) },
+  allosaurus_shepherd:{ name:'Allosaurus Shepherd',types:['creature'],subtypes:['Elf','Shaman'],cost:'G', power:1,toughness:1 },
+  insidious_fungus:{ name:'Insidious Fungus',  types:['creature'], subtypes:['Fungus'],        cost:'G',   power:1,toughness:1 },
+  elvish_reclaimer:{ name:'Elvish Reclaimer',   types:['creature'], subtypes:['Elf','Warrior'], cost:'G',  power:1,toughness:1 },
+
+  elvish_spirit_guide: {
+    name: 'Elvish Spirit Guide', types:['creature'], subtypes:['Elf','Spirit'], cost:'2G', power:2,toughness:2,
+    handAbilities: {
+      exile_for_G: {
+        label: 'Exile from hand: Add {G}',
+        fn(state, cardKey) {
+          let s = state.removeFromHand(cardKey); if (!s) return null;
+          s = s.clone(); s.exile = [...(s.exile||[]), 'Elvish Spirit Guide'];
+          return s.addMana('G').log('Exile Elvish Spirit Guide → {G}');
+        },
+      },
+    },
+  },
+
+  arbor_elf: {
+    name: 'Arbor Elf', types:['creature'], subtypes:['Elf','Druid'], cost:'G', power:1,toughness:1,
+    abilities: {
+      untap_forest: {
+        label: '{T}: Untap target Forest',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const results = [];
+          for (const f of state.lands().filter(l => (l.subtypes&&l.subtypes.includes('Forest')||l.isForest)&&l.tapped)) {
+            let s = state.tapPermanent(perm.id); if (!s) continue;
+            results.push(s.untapPermanent(f.id).log(`Arbor Elf → untap ${f.name}`));
+          }
+          return results;
+        },
+      },
+    },
+  },
+
+  priest_of_titania: {
+    name: 'Priest of Titania', types:['creature'], subtypes:['Elf','Druid'], cost:'1G', power:1,toughness:1,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const n = countElves(state); if (n===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<n;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${n} (${n} Elves)`)];
+    },
+  },
+
+  fanatic_of_rhonas: {
+    name: 'Fanatic of Rhonas', types:['creature'], subtypes:['Snake','Druid'], cost:'1G', power:2,toughness:2,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const results = [];
+      let s1 = state.tapPermanent(perm.id);
+      if (s1) results.push(s1.addMana('G').log(`Tap ${perm.name} → {G}`));
+      if (state.creatures().some(c => (c.power||0) >= 4)) {
+        let s2 = state.tapPermanent(perm.id);
+        if (s2) { for(let i=0;i<4;i++) s2=s2.addMana('G'); results.push(s2.log(`Tap ${perm.name} (Ferocious) → {G}x4`)); }
+      }
+      return results;
+    },
+  },
+
+  elvish_archdruid: {
+    name: 'Elvish Archdruid', types:['creature'], subtypes:['Elf','Druid'], cost:'1GG', power:2,toughness:2,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const n = countElves(state); if (n===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<n;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${n} (${n} Elves)`)];
+    },
+  },
+
+  circle_of_dreams_druid: {
+    name: 'Circle of Dreams Druid', types:['creature'], subtypes:['Elf','Druid'], cost:'GGG', power:2,toughness:1,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const n = state.creatures().length; if (n===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<n;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${n} (${n} creatures)`)];
+    },
+  },
+
+  karametra_acolyte: {
+    name: "Karametra's Acolyte", types:['creature'], subtypes:['Human','Druid'], cost:'3G', power:1,toughness:4,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const dev = devotionToGreen(state); if (dev===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<dev;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${dev} (devotion ${dev})`)];
+    },
+  },
+
+  selvala: {
+    name: 'Selvala, Heart of the Wilds', types:['creature'], subtypes:['Elf','Scout'], cost:'1GG', power:2,toughness:3,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const maxP = Math.max(0, ...state.creatures().map(c=>c.power||0)); if (maxP===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<maxP;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${maxP}`)];
+    },
+  },
+
+  marwyn: {
+    name: 'Marwyn, the Nurturer', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:1,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const p = perm.power||1; if (p===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<p;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${p}`)];
+    },
+  },
+
+  wirewood_channeler: {
+    name: 'Wirewood Channeler', types:['creature'], subtypes:['Elf','Druid'], cost:'3G', power:2,toughness:2,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const n = countElves(state); if (n===0) return [];
+      let s = state.tapPermanent(perm.id); if (!s) return [];
+      for (let i=0;i<n;i++) s = s.addMana('G');
+      return [s.log(`Tap ${perm.name} → {G}x${n} (${n} Elves)`)];
+    },
+  },
+
+  magus_of_the_candelabra: {
+    name: 'Magus of the Candelabra', types:['creature'], subtypes:['Human','Wizard'], cost:'G', power:1,toughness:1,
+    abilities: {
+      untap_x_lands: {
+        label: '{X}, {T}: Untap X target lands',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const results = [];
+          const tapped = state.lands().filter(l=>l.tapped);
+          for (let x=1; x<=Math.min(2,tapped.length); x++) {
+            const ap = state.payMana(String(x)); if (!ap) continue;
+            let s = ap.tapPermanent(perm.id); if (!s) continue;
+            const targets = tapped.slice(0,x);
+            for (const l of targets) s = s.untapPermanent(l.id);
+            results.push(s.log(`Magus of the Candelabra: {${x}}, tap → untap ${targets.map(l=>l.name).join(', ')}`));
+          }
+          return results;
+        },
+      },
+    },
+  },
+
+  elvish_harbinger: { name:'Elvish Harbinger', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2, tapForMana: simpleTap('{any}',[['G',1]]) },
+
+  // ─── CREATURES — Untappers ────────────────────────────────────────────────
+
+  hope_tender: {
+    name: 'Hope Tender', types:['creature'], subtypes:['Human','Druid'], cost:'1G', power:1,toughness:1,
+    abilities: {
+      untap_one_land: {
+        label: '{1}, {T}: Untap target land',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const ap = state.payMana('1'); if (!ap) return [];
+          const at = ap.tapPermanent(perm.id); if (!at) return [];
+          const results = [];
+          for (const land of at.lands().filter(l=>l.tapped)) {
+            results.push(at.untapPermanent(land.id).log(`Hope Tender: {1}, tap → untap ${land.name}`));
+          }
+          return results;
+        },
+      },
+      untap_two_lands: {
+        label: '{1}, {T}, Exert: Untap two target lands',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const ap = state.payMana('1'); if (!ap) return [];
+          const at = ap.tapPermanent(perm.id); if (!at) return [];
+          const tl = at.lands().filter(l=>l.tapped); if (tl.length===0) return [];
+          const pairs = tl.length===1 ? [[tl[0]]] : tl.flatMap((a,i)=>tl.slice(i+1).map(b=>[a,b]));
+          return pairs.map(pair => {
+            let s = at;
+            for (const land of pair) s = s.untapPermanent(land.id);
+            return s.log(`Activate Hope Tender: pay {1}, tap → untap [${pair.map(p=>p.name).join(' + ')}]`);
+          });
+        },
+      },
+    },
+  },
+
+  quirion_ranger: {
+    name: 'Quirion Ranger', types:['creature'], subtypes:['Elf','Ranger'], cost:'G', power:1,toughness:1,
+    abilities: {
+      bounce_forest: bounceToUntap(
+        'Return a Forest to hand: Untap a creature (once per turn)',
+        p => p.isForest || (p.subtypes && p.subtypes.includes('Forest')),
+        'quirion_ranger'
+      ),
+    },
+  },
+
+  scryb_ranger: {
+    name: 'Scryb Ranger', types:['creature'], subtypes:['Faerie','Ranger'], cost:'1G', power:1,toughness:1,
+    abilities: {
+      bounce_forest: bounceToUntap(
+        'Return a Forest to hand: Untap a creature (once per turn)',
+        p => p.isForest || (p.subtypes && p.subtypes.includes('Forest')),
+        'scryb_ranger'
+      ),
+    },
+  },
+
+  wirewood_symbiote: {
+    name: 'Wirewood Symbiote', types:['creature'], subtypes:['Insect'], cost:'G', power:1,toughness:1,
+    abilities: {
+      bounce_elf: bounceToUntap(
+        'Return an Elf to hand: Untap a creature (once per turn)',
+        p => p.subtypes && p.subtypes.includes('Elf') && p.types && p.types.includes('creature'),
+        'wirewood_symbiote'
+      ),
+    },
+  },
+
+  argothian_elder: {
+    name: 'Argothian Elder', types:['creature'], subtypes:['Elf','Druid'], cost:'3G', power:2,toughness:2,
+    abilities: {
+      untap_two_lands: {
+        label: '{T}: Untap two target lands',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const tl = state.lands().filter(l=>l.tapped); if (tl.length<2) return [];
+          const at = state.tapPermanent(perm.id); if (!at) return [];
+          return tl.flatMap((a,i) => tl.slice(i+1).map(b => {
+            let s = at.untapPermanent(a.id);
+            return s.untapPermanent(b.id).log(`Argothian Elder → untap ${a.name} + ${b.name}`);
+          }));
+        },
+      },
+    },
+  },
+
+  ley_weaver: {
+    name: 'Ley Weaver', types:['creature'], subtypes:['Human','Druid'], cost:'3G', power:2,toughness:2,
+    abilities: {
+      untap_two_lands: {
+        label: '{T}: Untap two target lands',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const tl = state.lands().filter(l=>l.tapped); if (tl.length<2) return [];
+          const at = state.tapPermanent(perm.id); if (!at) return [];
+          return tl.flatMap((a,i) => tl.slice(i+1).map(b => {
+            let s = at.untapPermanent(a.id);
+            return s.untapPermanent(b.id).log(`Ley Weaver → untap ${a.name} + ${b.name}`);
+          }));
+        },
+      },
+    },
+  },
+
+  saryth: {
+    name: "Saryth, the Viper's Fang", types:['creature'], subtypes:['Human','Warlock'], cost:'2GG', power:3,toughness:3,
+    abilities: {
+      untap_permanent: {
+        label: '{1}, {T}: Untap another creature or land',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const ap = state.payMana('1'); if (!ap) return [];
+          const targets = [...ap.lands().filter(l=>l.tapped), ...ap.creatures().filter(c=>c.tapped&&c.id!==perm.id)];
+          return targets.flatMap(t => {
+            let s = ap.tapPermanent(perm.id); if (!s) return [];
+            return [s.untapPermanent(t.id).log(`Saryth → untap ${t.name}`)];
+          });
+        },
+      },
+    },
+  },
+
+  formidable_speaker: {
+    name: 'Formidable Speaker', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:2,toughness:2,
+    abilities: {
+      untap_permanent: {
+        label: '{1}, {T}: Untap another target permanent',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const ap = state.payMana('1'); if (!ap) return [];
+          return ap.battlefield.filter(p=>p.tapped&&p.id!==perm.id).flatMap(t => {
+            let s = ap.tapPermanent(perm.id); if (!s) return [];
+            return [s.untapPermanent(t.id).log(`Formidable Speaker → untap ${t.name}`)];
+          });
+        },
+      },
+    },
+  },
+
+  earthcraft: {
+    name: 'Earthcraft', types:['enchantment'], subtypes:[], cost:'1G',
+    abilities: {
+      tap_creature_untap_land: {
+        label: 'Tap untapped creature: Untap target basic land',
+        fn(state, perm) {
+          const results = [];
+          const untapped = state.creatures().filter(c=>!c.tapped&&!c.summoningSick);
+          const tbasic  = state.lands().filter(l=>l.tapped&&(l.subtypes&&l.subtypes.includes('Forest')));
+          for (const c of untapped) for (const l of tbasic) {
+            let s = state.tapPermanent(c.id); if (!s) continue;
+            results.push(s.untapPermanent(l.id).log(`Earthcraft: tap ${c.name} → untap ${l.name}`));
+          }
+          return results;
+        },
+      },
+    },
+  },
+
+  temur_sabertooth: {
+    name: 'Temur Sabertooth', types:['creature'], subtypes:['Cat'], cost:'2GG', power:4,toughness:3,
+    abilities: {
+      bounce_creature: {
+        label: '{1}{G}: Return another creature to hand',
+        fn(state, perm) {
+          if (perm.summoningSick) return [];
+          const ap = state.payMana('1G'); if (!ap) return [];
+          const cards = SOLVER_CARDS;
+          return state.creatures().filter(c=>c.id!==perm.id).flatMap(c => {
+            let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
+            const ck = Object.keys(cards).find(k=>cards[k].name===c.name);
+            if (ck) s = s.addToHand(ck);
+            return [s.log(`Temur Sabertooth → return ${c.name} to hand`)];
+          });
+        },
+      },
+    },
+  },
+
+  kogla: {
+    name: 'Kogla, the Titan Ape', types:['creature'], subtypes:['Ape'], cost:'3GGG', power:7,toughness:6,
+    abilities: {
+      bounce_human: {
+        label: '{1}{G}: Return target Human you control to hand',
+        fn(state, perm) {
+          const ap = state.payMana('1G'); if (!ap) return [];
+          const cards = SOLVER_CARDS;
+          return state.creatures().filter(c=>c.subtypes&&c.subtypes.includes('Human')).flatMap(c => {
+            let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
+            const ck = Object.keys(cards).find(k=>cards[k].name===c.name);
+            if (ck) s = s.addToHand(ck);
+            return [s.log(`Kogla → return ${c.name} to hand`)];
+          });
+        },
+      },
+    },
+  },
+
+  // ─── CREATURES — Other ───────────────────────────────────────────────────
+
+  ashaya: {
+    name: 'Ashaya, Soul of the Wild', types:['creature'], subtypes:['Elemental'], cost:'3GG', power:0,toughness:0,
+    onEnter(state, perm) { return state; },
+  },
+
+  yeva:                { name:"Yeva, Nature's Herald",      types:['creature'],subtypes:['Elf','Shaman'],      cost:'2GG',  power:4,toughness:4 },
+  eternal_witness:     { name:'Eternal Witness',            types:['creature'],subtypes:['Human','Shaman'],    cost:'1GG',  power:2,toughness:1 },
+  eladamri:            { name:'Eladamri, Korvecdal',        types:['creature'],subtypes:['Elf','Warrior'],     cost:'1GG',  power:2,toughness:3 },
+  seedborn_muse:       { name:'Seedborn Muse',              types:['creature'],subtypes:['Spirit'],            cost:'3GG',  power:2,toughness:4 },
+  beast_whisperer:     { name:'Beast Whisperer',            types:['creature'],subtypes:['Elf','Druid'],       cost:'2GG',  power:2,toughness:3 },
+  regal_force:         { name:'Regal Force',                types:['creature'],subtypes:['Elemental'],         cost:'4GGG', power:5,toughness:5 },
+  woodland_bellower:   { name:'Woodland Bellower',          types:['creature'],subtypes:['Beast'],             cost:'4GG',  power:6,toughness:5 },
+  great_oak_guardian:  { name:'Great Oak Guardian',         types:['creature'],subtypes:['Treefolk'],          cost:'5G',   power:4,toughness:5 },
+  endurance:           { name:'Endurance',                  types:['creature'],subtypes:['Elemental','Incarnation'],cost:'1GG',power:3,toughness:4 },
+  collector_ouphe:     { name:'Collector Ouphe',            types:['creature'],subtypes:['Ouphe'],             cost:'1G',   power:2,toughness:2 },
+  skyshroud_poacher:   { name:'Skyshroud Poacher',          types:['creature'],subtypes:['Human','Rebel'],     cost:'2GG',  power:2,toughness:4 },
+  fierce_empath:       { name:'Fierce Empath',              types:['creature'],subtypes:['Elf'],               cost:'2G',   power:1,toughness:1 },
+  reclamation_sage:    { name:'Reclamation Sage',           types:['creature'],subtypes:['Elf','Shaman'],      cost:'2G',   power:2,toughness:1 },
+  scavenging_ooze:     { name:'Scavenging Ooze',            types:['creature'],subtypes:['Ooze'],              cost:'1G',   power:2,toughness:2 },
+  surrak_goreclaw:     { name:'Surrak and Goreclaw',        types:['creature'],subtypes:['Human','Bear'],      cost:'4GG',  power:7,toughness:6 },
+  defiler_of_vigor:    { name:'Defiler of Vigor',           types:['creature'],subtypes:['Phyrexian','Wurm'],  cost:'3GG',  power:6,toughness:6 },
+  glademuse:           { name:'Glademuse',                  types:['creature'],subtypes:['Beast'],             cost:'2G',   power:3,toughness:3 },
+  duskwatch_recruiter: { name:'Duskwatch Recruiter',        types:['creature'],subtypes:['Human','Warrior','Werewolf'],cost:'1G',power:2,toughness:2 },
+  runic_armasaur:      { name:'Runic Armasaur',             types:['creature'],subtypes:['Dinosaur'],          cost:'1GG',  power:2,toughness:3 },
+  heartwood_storyteller:{ name:'Heartwood Storyteller',     types:['creature'],subtypes:['Treefolk'],          cost:'1GG',  power:2,toughness:3 },
+  destiny_spinner:     { name:'Destiny Spinner',            types:['creature','enchantment'],subtypes:['Human'],cost:'1G',  power:2,toughness:2 },
+  treefolk_harbinger:  { name:'Treefolk Harbinger',         types:['creature'],subtypes:['Treefolk','Druid'],  cost:'G',    power:1,toughness:1 },
+  chomping_changeling: { name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
+  lotus_cobra:         { name:'Lotus Cobra',                types:['creature'],subtypes:['Snake'],             cost:'1G',   power:2,toughness:1 },
+  nissa_animist:       { name:'Nissa, Resurgent Animist',   types:['creature'],subtypes:['Elf','Scout'],       cost:'2G',   power:2,toughness:3 },
+  skullwinder:         { name:'Skullwinder',                types:['creature'],subtypes:['Snake'],             cost:'2G',   power:1,toughness:3 },
+  manglehorn:          { name:'Manglehorn',                 types:['creature'],subtypes:['Beast'],             cost:'2G',   power:2,toughness:2 },
+  tireless_provisioner:{ name:'Tireless Provisioner',       types:['creature'],subtypes:['Elf','Scout'],       cost:'2G',   power:3,toughness:2 },
+  sowing_mycospawn:    { name:'Sowing Mycospawn',           types:['creature'],subtypes:['Eldrazi','Fungus'],  cost:'3G',   power:4,toughness:4 },
+  badgermole_cub:      { name:'Badgermole Cub',             types:['creature'],subtypes:['Badger','Mole'],     cost:'1G',   power:2,toughness:2 },
+  outland_liberator:   { name:'Outland Liberator',          types:['creature'],subtypes:['Human','Werewolf'],  cost:'1G',   power:2,toughness:2 },
+  fauna_shaman:        { name:'Fauna Shaman',               types:['creature'],subtypes:['Elf','Shaman'],      cost:'1G',   power:2,toughness:2 },
+  elvish_reclaimer2:   { name:'Elvish Reclaimer',           types:['creature'],subtypes:['Elf','Warrior'],     cost:'G',    power:1,toughness:1 },
+  yisan:               { name:'Yisan, the Wanderer Bard',   types:['creature'],subtypes:['Human','Rogue','Bard'],cost:'2G', power:2,toughness:3 },
+  genesis_hydra:       { name:'Genesis Hydra',              types:['creature'],subtypes:['Plant','Hydra'],     cost:'XGG',  power:0,toughness:0 },
+  king_coldblood:      { name:'King of the Coldblood Curse',types:['creature'],subtypes:['Lizard','Villain'],  cost:'2GG',  power:4,toughness:4 },
+  disciple_freyalise:  { name:'Disciple of Freyalise',      types:['creature'],subtypes:['Elf','Druid'],       cost:'3GGG', power:4,toughness:4 },
+  hyrax_tower_scout:   { name:'Hyrax Tower Scout',          types:['creature'],subtypes:['Human','Scout'],     cost:'2G',   power:2,toughness:2 },
+  woodcaller_automaton:{ name:'Woodcaller Automaton',        types:['creature','artifact'],subtypes:['Construct'],cost:'10', power:7,toughness:7 },
+  cabbage_merchant:    { name:'The Cabbage Merchant',        types:['creature'],subtypes:['Human','Citizen'],  cost:'2G',   power:2,toughness:2 },
+  beastrider_vanguard: { name:'Beastrider Vanguard',         types:['creature'],subtypes:['Human','Knight'],   cost:'1G',   power:2,toughness:2 },
+
+  // ─── ENCHANTMENTS ────────────────────────────────────────────────────────
+
+  concordant_crossroads:  { name:'Concordant Crossroads',  types:['enchantment'],subtypes:[],              cost:'G' },
+  leyline_of_abundance:   { name:'Leyline of Abundance',   types:['enchantment'],subtypes:[],              cost:'2GG' },
+  sylvan_library:         { name:'Sylvan Library',          types:['enchantment'],subtypes:[],              cost:'1G' },
+  guardian_project:       { name:'Guardian Project',        types:['enchantment'],subtypes:[],              cost:'3G' },
+  compost:                { name:'Compost',                 types:['enchantment'],subtypes:[],              cost:'1G' },
+  viridian_revel:         { name:'Viridian Revel',          types:['enchantment'],subtypes:[],              cost:'1GG' },
+  utopia_sprawl:          { name:'Utopia Sprawl',           types:['enchantment'],subtypes:['Aura'],        cost:'G' },
+  wild_growth:            { name:'Wild Growth',             types:['enchantment'],subtypes:['Aura'],        cost:'G' },
+  elvish_guidance:        { name:'Elvish Guidance',         types:['enchantment'],subtypes:['Aura'],        cost:'2G' },
+  carpet_of_flowers:      { name:'Carpet of Flowers',       types:['enchantment'],subtypes:[],              cost:'G' },
+  root_maze:              { name:'Root Maze',               types:['enchantment'],subtypes:[],              cost:'G' },
+  survival_fittest:       { name:'Survival of the Fittest', types:['enchantment'],subtypes:[],              cost:'1G' },
+  lignify:                { name:'Lignify',                 types:['enchantment'],subtypes:['Aura','Treefolk'],cost:'1G' },
+  kenriths_transformation:{ name:"Kenrith's Transformation",types:['enchantment'],subtypes:['Aura'],        cost:'1G' },
+  growing_rites:          { name:'Growing Rites of Itlimoc',types:['enchantment'],subtypes:['Legendary'],   cost:'2G' },
+  titania_song:           { name:"Titania's Song",          types:['enchantment'],subtypes:[],              cost:'3G' },
+
+  // ─── INSTANTS & SORCERIES ────────────────────────────────────────────────
+
+  chord_of_calling:       { name:'Chord of Calling',        types:['instant'],  subtypes:[], cost:'XGGG' },
+  shared_summons:         { name:'Shared Summons',           types:['instant'],  subtypes:[], cost:'3GG'  },
+  summoners_pact:         { name:"Summoner's Pact",          types:['instant'],  subtypes:[], cost:'0'    },
+  archdruid_charm:        { name:"Archdruid's Charm",        types:['instant'],  subtypes:[], cost:'GGG'  },
+  force_of_vigor:         { name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
+  beast_within:           { name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
+  vitalize:               { name:'Vitalize',                 types:['instant'],  subtypes:[], cost:'G'    },
+  touch_of_vitae:         { name:'Touch of Vitae',           types:['instant'],  subtypes:[], cost:'2G'   },
+  legolas_quick_reflexes: { name:"Legolas's Quick Reflexes", types:['instant'],  subtypes:[], cost:'G'    },
+  infectious_bite:        { name:'Infectious Bite',          types:['instant'],  subtypes:[], cost:'1G'   },
+  natures_claim:          { name:"Nature's Claim",           types:['instant'],  subtypes:[], cost:'G'    },
+  ram_through:            { name:'Ram Through',              types:['instant'],  subtypes:[], cost:'1G'   },
+  tail_swipe:             { name:'Tail Swipe',               types:['instant'],  subtypes:[], cost:'G'    },
+  bouncers_beatdown:      { name:"Bouncer's Beatdown",       types:['instant'],  subtypes:[], cost:'2G'   },
+  autumn_veil:            { name:"Autumn's Veil",            types:['instant'],  subtypes:[], cost:'G'    },
+  veil_of_summer:         { name:'Veil of Summer',           types:['instant'],  subtypes:[], cost:'G'    },
+  warping_wail:           { name:'Warping Wail',             types:['instant'],  subtypes:[], cost:'1C'   },
+  emerald_charm:          { name:'Emerald Charm',            types:['instant'],  subtypes:[], cost:'G'    },
+  noxious_revival:        { name:'Noxious Revival',          types:['instant'],  subtypes:[], cost:'G'    },
+  worldly_tutor:          { name:'Worldly Tutor',            types:['instant'],  subtypes:[], cost:'G'    },
+  crop_rotation:          { name:'Crop Rotation',            types:['instant'],  subtypes:[], cost:'G'    },
+
+  green_suns_zenith:      { name:"Green Sun's Zenith",       types:['sorcery'],  subtypes:[], cost:'XG'   },
+  finale_of_devastation:  { name:'Finale of Devastation',    types:['sorcery'],  subtypes:[], cost:'XGG'  },
+  natural_order:          { name:'Natural Order',            types:['sorcery'],  subtypes:[], cost:'2GG'  },
+  eldritch_evolution:     { name:'Eldritch Evolution',       types:['sorcery'],  subtypes:[], cost:'1GG'  },
+  sylvan_scrying:         { name:'Sylvan Scrying',           types:['sorcery'],  subtypes:[], cost:'1G'   },
+  natures_rhythm:         { name:"Nature's Rhythm",          types:['sorcery'],  subtypes:[], cost:'XGG'  },
+  turntimber_symbiosis:   { name:'Turntimber Symbiosis',     types:['sorcery'],  subtypes:[], cost:'4GGG' },
+  bridgeworks_battle:     { name:'Bridgeworks Battle',       types:['sorcery'],  subtypes:[], cost:'2G'   },
+};
+const SOLVER_CARDS = _SCARDS;
+
+// ── Solver/actions.js ───────────────────────────────────────────────────────
+/**
+ * MTG Combo Solver — Action Generator
+ *
+ * generateActions(state) → Action[]
+ *
+ * An Action is:
+ * {
+ *   type: string,
+ *   label: string,
+ *   apply: (state) => GameState | null
+ * }
+ *
+ * The solver calls generateActions, applies each, and recurses.
+ */
+
+
+
+/**
+ * Main entry: return all legal actions from the given state.
+ */
+function generateActions(state) {
+  const actions = [];
+
+  // 1. Play a land
+  if (state.landDrops > 0) {
+    for (const cardKey of uniqueCards(state.hand)) {
+      const def = _SCARDS[cardKey];
+      if (def && def.types.includes('land')) {
+        actions.push({
+          type: 'play_land',
+          label: `Play ${def.name}`,
+          priority: 10,
+          apply(s) {
+            let ns = s.removeFromHand(cardKey);
+            if (!ns) return null;
+            ns = ns.clone();
+            ns.landDrops--;
+            ns = ns.enterBattlefield(cardKey);
+            ns = ns.log(`Play ${def.name}`);
+            return ns;
+          },
+        });
+      }
+    }
+  }
+
+  // 2. Tap lands / artifacts for mana
+  for (const perm of state.battlefield) {
+    if (perm.tapped) continue;
+    const def = _SCARDS[perm.cardKey];
+    if (!def || !def.tapForMana) continue;
+
+    actions.push({
+      type: 'tap_for_mana',
+      label: `Tap ${perm.name} for mana`,
+      priority: 5,
+      apply(s) {
+        const live = s.getPermanentById(perm.id);
+        if (!live || live.tapped) return null;
+        const results = def.tapForMana(s, live);
+        return results.length ? results[0] : null;
+      },
+    });
+  }
+
+  // 3. Cast spells from hand
+  for (const cardKey of uniqueCards(state.hand)) {
+    const def = _SCARDS[cardKey];
+    if (!def || def.types.includes('land')) continue;
+    const costStr = def.cost;
+    if (costStr === null || costStr === undefined) continue;
+
+    // Check affordability (rough check — exact check in apply)
+    const testPay = state.mana.pay(costStr);
+    if (testPay === null) continue;
+
+    actions.push({
+      type: 'cast_spell',
+      label: `Cast ${def.name} (${costStr ? `{${costStr}}` : 'free'})`,
+      priority: 8,
+      apply(s) {
+        const afterPay = s.payMana(costStr);
+        if (!afterPay) return null;
+        let ns = afterPay.removeFromHand(cardKey);
+        if (!ns) return null;
+        ns = ns.enterBattlefield(cardKey);
+        ns = ns.log(`Cast ${def.name}`);
+        return ns;
+      },
+    });
+  }
+
+  // 4. Activated abilities of permanents
+  for (const perm of state.battlefield) {
+    const def = _SCARDS[perm.cardKey];
+    if (!def || !def.abilities) continue;
+
+    for (const [abilKey, ability] of Object.entries(def.abilities)) {
+      if (perm.abilitiesUsed?.[abilKey]) continue;
+
+      if (typeof ability.fn === 'function') {
+        // Abilities may return: null, a single GameState, or GameState[]
+        const raw = ability.fn(state, perm);
+        const results = raw === null || raw === undefined
+          ? []
+          : Array.isArray(raw) ? raw : [raw];
+
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          if (!result) continue;
+          actions.push({
+            type: 'ability',
+            label: `${perm.name}: ${ability.label ?? abilKey}${results.length > 1 ? ` [option ${i + 1}]` : ''}`,
+            priority: 6,
+            apply(_s) {
+              return result; // pre-computed from current state snapshot
+            },
+          });
+        }
+      }
+    }
+  }
+
+  // 5. Pass turn (always available, low priority)
+  actions.push({
+    type: 'pass_turn',
+    label: 'Pass to next turn',
+    priority: 1,
+    apply(s) {
+      return s.startNewTurn();
+    },
+  });
+
+  // Sort: higher priority = try first
+  actions.sort((a, b) => b.priority - a.priority);
+
+  return actions;
+}
+
+/** Deduplicate card keys in hand so we don't generate identical actions */
+function uniqueCards(hand) {
+  return [...new Set(hand)];
+}
+
+// ── Solver/combos.js ────────────────────────────────────────────────────────
+/**
+ * MTG Combo Solver — Combo Detector
+ *
+ * checkCombos(state) → { achieved: bool, name: string, description: string } | null
+ *
+ * Each detector checks for a specific set of pieces being assembled.
+ * Returns the first triggered combo.
+ */
+
+
+const DETECTORS = [
+
+  /**
+   * Infinite Green Mana:
+   * Gaea's Cradle + Hope Tender (untapped, not sick) + Quirion Ranger + Ashaya in play
+   *
+   * Loop:
+   *  1. Tap Cradle → {G} × creatures
+   *  2. Pay {1} to Hope Tender → untap Cradle + Tender
+   *  3. Ranger: return itself (a Forest via Ashaya) → untap Tender
+   *  4. Recast Ranger for {G} → net +{G} per cycle → ∞{G}
+   */
+  {
+    name: 'Infinite Green Mana (Cradle + Tender + Ranger + Ashaya)',
+    description:
+      "Quirion Ranger returns itself (a Forest via Ashaya) to hand → untaps Hope Tender. " +
+      "Tap Gaea's Cradle for {G} per creature. Pay {1} to Tender → untap Cradle + Tender. " +
+      "Recast Ranger for {G}. Net +{G} per cycle → infinite green mana. " +
+      "Note: Ranger's ability has no tap cost, so summoning sickness does not apply.",
+    check(state) {
+      const ashaya = state.battlefield.find(p => p.name === 'Ashaya, Soul of the Wild');
+      const cradle  = state.battlefield.find(p => p.name === "Gaea's Cradle");
+      // Tender needs its tap ability available: not tapped, not sick
+      const tender  = state.battlefield.find(p => p.name === 'Hope Tender' && !p.tapped && !p.summoningSick);
+
+      if (!ashaya || !cradle || !tender) return false;
+
+      // Need ≥2 creatures: Cradle must produce enough to pay Tender's {1} and net a green
+      const creatureCount = state.creatures().length;
+      if (creatureCount < 2) return false;
+
+      // Cradle must be untapped to produce mana
+      if (cradle.tapped) return false;
+
+      return true;
+    },
+  },
+
+  /**
+   * Combo Assembled — all 4 pieces on battlefield.
+   * Less strict: detects the setup even before we verify exact tap states.
+   * Tender must not have summoning sickness (its ability IS a tap ability).
+   * Ranger has no such restriction.
+   */
+  {
+    name: 'Combo Assembled (Cradle + Tender + Ranger + Ashaya)',
+    description:
+      "All four combo pieces are on the battlefield. With Ashaya in play, " +
+      "all non-token creatures are Forests, enabling the Quirion Ranger loop. " +
+      "Quirion Ranger's ability requires no tap, so it is usable immediately on entry.",
+    check(state) {
+      const hasAshaya = state.hasPermanent('Ashaya, Soul of the Wild');
+      const hasCradle = state.hasPermanent("Gaea's Cradle");
+      // Tender's activated ability IS a tap ability → sickness matters
+      const hasTender = state.battlefield.some(p => p.name === 'Hope Tender' && !p.summoningSick);
+      //return hasAshaya && hasCradle && hasTender;
+      return false;
+    },
+  },
+];
+
+/**
+ * @param {GameState} state
+ * @returns {{ achieved: boolean, name: string, description: string } | null}
+ */
+function checkCombos(state) {
+  for (const detector of DETECTORS) {
+    if (detector.check(state)) {
+      return {
+        achieved: true,
+        name: detector.name,
+        description: detector.description,
+      };
+    }
+  }
+  return null;
+}
+
+// ── Bridge: build a Solver GameState from GoldfishModal's flat arrays ───────
+// Converts { battlefield:string[], hand:string[], tapped:Set, sickSet:Set }
+// into a GameState with Permanent objects for Solver ability dispatch.
+function buildSolverState({ battlefield = [], hand = [], tapped = new Set(), sickSet = new Set(), mana = {} } = {}) {
+  // Map card names → solver card keys
+  const NAME_TO_KEY = Object.fromEntries(
+    Object.entries(SOLVER_CARDS).map(([k, v]) => [v.name, k])
+  );
+  const data = new GameState({
+    mana: new ManaPool({ G: mana.green ?? 0, C: mana.colorless ?? 0 }),
+  });
+  let s = data.clone();
+  // Add battlefield permanents
+  for (let i = 0; i < battlefield.length; i++) {
+    const name = battlefield[i];
+    const key = NAME_TO_KEY[name];
+    if (!key) continue;
+    const id = s._nextId++;
+    const def = SOLVER_CARDS[key];
+    const perm = new Permanent({
+      id, name, types: [...(def.types ?? [])], subtypes: [...(def.subtypes ?? [])],
+      cardKey: key,
+      tapped: tapped instanceof Set ? tapped.has(name + ':' + i) || tapped.has(name) : false,
+      summoningSick: sickSet instanceof Set ? sickSet.has(name) : false,
+      isForest: def.subtypes?.includes('Forest') ?? false,
+    });
+    s.battlefield = [...s.battlefield, perm];
+  }
+  // Apply Ashaya effect
+  if (s.hasPermanent('Ashaya, Soul of the Wild')) {
+    for (const p of s.battlefield) {
+      if (p.is('creature')) { p.isForest = true; if (!p.types.includes('land')) p.types.push('land'); }
+    }
+  }
+  // Add hand
+  for (const name of hand) {
+    const key = NAME_TO_KEY[name];
+    if (key) s = s.addToHand(key);
+  }
+  return s;
+}
+
+// ── Solver combo check for auto-sim ─────────────────────────────────────────
+// Returns true if any registered combo is achieved in the given flat state.
+function solverCheckInfinite(battlefield, hand, tapped, sickSet) {
+  try {
+    const state = buildSolverState({ battlefield, hand, tapped, sickSet });
+    return checkCombos(state) !== null;
+  } catch { return false; }
+}
+
 // GOLDFISH MODE
 // Simulates a game from a shuffled deck: draw opening hand,
 // step through turns, get advisor guidance each turn.
@@ -18015,7 +19379,7 @@ function extractPlayableCard(result, hand, battlefield) {
   // "Cast to enable" / "Cast pieces" → prefer combo pieces in hand that aren't on board
   if (combined.includes("cast") && (combined.includes("enable") || combined.includes("pieces"))) {
     const priority = ["Ashaya, Soul of the Wild","Quirion Ranger","Scryb Ranger",
-      "Argothian Elder","Wirewood Symbiote","Formidable Speaker"];
+      "Argothian Elder","Wirewood Symbiote","Formidable Speaker","Hope Tender"];
     for (const p of priority) {
       if (hand.includes(p) && !boardSet.has(p)) return p;
     }
@@ -18033,7 +19397,11 @@ function extractPlayableCard(result, hand, battlefield) {
     if (dork) return dork;
   }
   // Combo / win advice → prefer combo-tagged cards not yet on battlefield
+  // Also check for Hope Tender explicitly (tagged untap-lands, not combo)
   if (combined.includes("combo") || combined.includes("win") || combined.includes("infinite")) {
+    if (combined.includes("hope tender") || combined.includes("hope_tender")) {
+      if (hand.includes("Hope Tender") && !boardSet.has("Hope Tender")) return "Hope Tender";
+    }
     const combo = hand.find(c => getCard(c)?.tags?.includes("combo") && !boardSet.has(c));
     if (combo) return combo;
   }
@@ -18501,9 +19869,11 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
     // Mana budget: compute once after land drop, track spending to prevent re-tapping.
     // turnManaCapacity is set after the land drop resolves. manaSpent tracks total CMC cast.
     // bonusMana tracks one-shot sources that enter mid-turn (Lotus Petal, Chrome Mox, etc.)
+    // bonusGreenMana: green portion of bonusMana (Lotus Petal, ESG = green; Sol Ring = colorless).
     let turnManaCapacity = -1; // -1 = not yet computed
     let manaSpent = 0;
     let bonusMana = 0;
+    let bonusGreenMana = 0; // subset of bonusMana that is green
 
     while (madePlay && turnsPlays < 20) {
       madePlay = false;
@@ -18535,6 +19905,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
           // Pick up any bonus mana from landfall triggers (Tireless Provisioner Treasures)
           if (simState._petalManaThisTurn > 0) {
             bonusMana += simState._petalManaThisTurn;
+            bonusGreenMana += simState._petalManaThisTurn; // Lotus Petal produces {G}
             simState._petalManaThisTurn = 0;
           }
           madePlay = true;
@@ -18554,6 +19925,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
             hand.splice(esgIdx, 1);
             if (castLog) castLog.add("Elvish Spirit Guide");
             bonusMana += 1; // ESG adds 1G mid-turn
+            bonusGreenMana += 1; // ESG is green mana
             const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
             if (odIdx >= 0) { playCard(hand[odIdx], odIdx); manaSpent += 1; t1Dork = true; }
             madePlay = true;
@@ -18567,9 +19939,13 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
       const basePool = calculateSimManaPool(battlefield, sickSet, simState.simAttachments ?? null);
       // Add Argothian Elder's untap-two-lands bonus (precise per-land calculation).
       const elderBonus = simElderManaBonus(battlefield, sickSet);
-      const rawPool = elderBonus > 0
-        ? { green: basePool.green + elderBonus, colorless: basePool.colorless, total: basePool.total + elderBonus }
-        : basePool;
+      // Also add any green bonus mana accumulated this turn (Lotus Petal, ESG) to the
+      // raw pool's green component so simCanCast sees it correctly for pip requirements.
+      const rawPool = {
+        green: basePool.green + elderBonus + bonusGreenMana,
+        colorless: basePool.colorless,
+        total: basePool.total + elderBonus + bonusGreenMana,
+      };
 
       // Clamp by mana budget: effective mana = min(rawPool, capacity - spent + bonus)
       // On first iteration (before land drop), turnManaCapacity = -1 → use raw pool
@@ -18598,7 +19974,13 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
 
       // Smarter sequencing: always try to cast a 1-drop dork T1 before anything else.
       // Also: GSZ X=0 → Dryad Arbor is a valid T1 play (costs {G}, enters as creature+elf).
-      if (turn === 1 && manaPool.green >= 1 && !battlefield.some(c => getCard(c)?.tags?.includes("dork"))) {
+      // Exception: if Hope Tender + a big land (Cradle/Nykthos) are in hand and we have
+      // enough mana, Tender T1 enables a T2 infinite loop — skip dork priority in that case.
+      const _hopeTenderT1Skip = turn === 1
+        && hand.includes("Hope Tender")
+        && hand.some(c => c === "Gaea's Cradle" || c === "Nykthos, Shrine to Nyx")
+        && manaPool.total >= 2 && manaPool.green >= 1;
+      if (turn === 1 && manaPool.green >= 1 && !_hopeTenderT1Skip && !battlefield.some(c => getCard(c)?.tags?.includes("dork"))) {
         const odIdx = hand.findIndex(c => getCard(c)?.tags?.includes("dork") && getCard(c)?.cmc === 1);
         if (odIdx >= 0) { playCard(hand[odIdx], odIdx); manaSpent += 1; t1Dork = true; madePlay = true; continue; }
         // Fallback: GSZ X=0 → Dryad Arbor if no literal 1-drop dork
@@ -18917,6 +20299,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
             // Pick up any Petal-style bonus mana generated by simPlayCard
             if (simState._petalManaThisTurn > 0) {
               bonusMana += simState._petalManaThisTurn;
+              bonusGreenMana += simState._petalManaThisTurn; // Lotus Petal produces {G}
               simState._petalManaThisTurn = 0;
             }
             played = true;
@@ -18972,9 +20355,25 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
               (bfSet.has("Argothian Elder") && !sickSet.has("Argothian Elder"));
             const _hasBigDorkNow = battlefield.some(b =>
               getCard(b)?.tags?.includes("big-dork") || getCard(b)?.tags?.includes("infinite-dork"));
+            const _hasTenderNow = bfSet.has("Hope Tender") && !sickSet.has("Hope Tender");
             if (_hasRangerNow && _hasBigDorkNow) score += 50; // WIN this turn or next
+            else if (_hasRangerNow && _hasTenderNow) score += 40; // Ranger+Tender+Ashaya = infinite loop
             else if (_hasRangerNow || _hasBigDorkNow) score += 25; // 2/3 pieces assembled
             else score += 10; // most important single piece
+          }
+          // Hope Tender: high value when Cradle/Nykthos/Ancient Tomb is in play or hand — exert
+          // untaps big lands for net +mana. Even higher when Ashaya+Ranger are on board
+          // (Ranger bounces Tender as a Forest each loop, resetting exert restriction → infinite).
+          if (c === "Hope Tender") {
+            const bfSet = new Set(battlefield);
+            const hasBigLand = bfSet.has("Gaea's Cradle") || bfSet.has("Itlimoc, Cradle of the Sun") ||
+              bfSet.has("Nykthos, Shrine to Nyx") || bfSet.has("Ancient Tomb") ||
+              hand.some((hc,hi) => hi !== i && (hc === "Gaea's Cradle" || hc === "Nykthos, Shrine to Nyx" || hc === "Ancient Tomb"));
+            const hasAshayaRanger = (bfSet.has("Ashaya, Soul of the Wild") || sickSet.has("Ashaya, Soul of the Wild")) &&
+              (bfSet.has("Quirion Ranger") || bfSet.has("Scryb Ranger") ||
+               sickSet.has("Quirion Ranger") || sickSet.has("Scryb Ranger"));
+            if (hasBigLand && hasAshayaRanger) score += 40; // Ashaya+Ranger+Tender+Cradle = infinite mana
+            else if (hasBigLand) score += 15; // exert loops for big mana, worth prioritising
           }
           if (tags.includes("fast-mana"))                score += 9; // play ASAP for acceleration
           else if (tags.includes("enchant-land"))        score += 7; // Utopia Sprawl / Wild Growth — permanent ramp
@@ -19263,6 +20662,9 @@ function simActivateAbilities(simState, manaPool) {
   const used = simState._usedAbilities;
 
   // Detect infinite mana once — used by tutor handlers to prioritise win outlets.
+  // Primary: check all COMBOS (existing advisor combo list).
+  // Augmented: also check Solver/combos.js via solverCheckInfinite() for combos
+  // defined in the Solver that may not be in the COMBOS array (e.g. Cradle+Tender+Ranger+Ashaya).
   const _actInfActive = (() => {
     for (const combo of COMBOS) {
       if (combo.type !== "infinite-mana") continue;
@@ -19274,6 +20676,12 @@ function simActivateAbilities(simState, manaPool) {
           continue;
       }
       return true;
+    }
+    // Solver-registered combos (Cradle+Tender+Ranger+Ashaya and future additions)
+    if (typeof solverCheckInfinite === "function") {
+      try {
+        if (solverCheckInfinite(battlefield, hand, new Set(), sickSet)) return true;
+      } catch { /* ignore — Solver is best-effort */ }
     }
     return false;
   })();
@@ -19995,6 +21403,32 @@ function simActivateAbilities(simState, manaPool) {
     }
   }
 
+  // ── Hope Tender activated ability ─────────────────────────────────────────
+  // {1},{T}: Untap target land.
+  // {1},{T}, Exert: Untap two target lands. (Exerted creatures don't untap next turn —
+  //   but Kogla can bounce Tender to reset the exert, or Ranger can bounce Tender via Ashaya.)
+  // Model: when Cradle/Nykthos is on board and produces ≥3 mana, exert Tender to
+  //   untap it (nets land output − 1 per activation). Fire once per turn unless
+  //   Ashaya is on board (Ranger-bounce resets the exert restriction each iteration).
+  if (board.has("Hope Tender") && !sickSet.has("Hope Tender") && !used.has("HopeTender")
+      && manaPool.total >= 1) {
+    const BIG_LANDS_TENDER = ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Ancient Tomb"];
+    const ctx = buildBoardContext(battlefield, sickSet, null);
+    const bigLandT = BIG_LANDS_TENDER.find(l => {
+      if (!board.has(l)) return false;
+      const { green: g, colorless: c } = cardManaContribution(l, getCard(l) ?? {}, ctx, sickSet);
+      return (g + c) >= 3; // worth untapping: net +2 after paying {1} exert
+    });
+    if (bigLandT) {
+      const { green: landG, colorless: landC } = cardManaContribution(bigLandT, getCard(bigLandT) ?? {}, ctx, sickSet);
+      const netGain = (landG + landC) - 1; // produce land output, pay {1} exert cost
+      manaPool.green  += Math.max(0, netGain - landC); // colorless part stays colorless
+      manaPool.total  += netGain;
+      used.add("HopeTender");
+      return true;
+    }
+  }
+
   return false;
 }
 // Takes a mutable simState object so this can be unit-tested independently.
@@ -20023,6 +21457,9 @@ function simPlayCard(card, idx, simState, manaPool = null) {
           continue;
       }
       return true;
+    }
+    if (typeof solverCheckInfinite === "function") {
+      try { if (solverCheckInfinite(battlefield, hand, new Set(), sickSet)) return true; } catch {}
     }
     return false;
   })();
@@ -20684,6 +22121,11 @@ function simPlayCard(card, idx, simState, manaPool = null) {
     // Chomping Changeling: ETB destroys up to one artifact or enchantment.
     // In goldfish sim, no opponent permanents to destroy — but track for completeness.
     // (No sim effect needed in goldfish mode.)
+
+    // Hope Tender: no on-cast ETB — but its activated ability ({1},{T}: untap target land;
+    // {1},{T}, Exert: untap two target lands) is modeled in simActivateAbilities.
+    // On the turn it enters it has summoning sickness, so simActivateAbilities won't
+    // fire it that turn (sickSet check). No ETB needed here.
 
     // Woodcaller Automaton: ETB untaps target land and animates it with haste.
     // Key effect: untaps Cradle/Nykthos for double-tap. Sim doesn't track tap state
@@ -27708,7 +29150,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
           }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
             onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
             onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-            🌸 Sacrifice — +1 {G}
+            🌸 Sacrifice — +1 green
           </div>
         )}
 
