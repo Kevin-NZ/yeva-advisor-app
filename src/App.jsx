@@ -2779,6 +2779,7 @@ function _buildSolverBundle() {
         },
       },
     },
+    treefolk_harbinger:{ name:'Treefolk Harbinger',types:['creature'],subtypes:['Treefolk','Druid'],cost:'G',power:1,toughness:1 },
     elvish_reclaimer:{ name:'Elvish Reclaimer',   types:['creature'], subtypes:['Elf','Warrior'], cost:'G',  power:1,toughness:1 },
 
     elvish_spirit_guide: {
@@ -3163,6 +3164,7 @@ function _buildSolverBundle() {
       onEnter(state, perm) { return state; },
     },
 
+    yeva:                { name:"Yeva, Nature's Herald",      types:['creature'],subtypes:['Elf','Shaman'],      cost:'2GG',  power:4,toughness:4 },
     eternal_witness: {
       name: 'Eternal Witness', types: ['creature'], subtypes: ['Human','Shaman'],
       cost: '1GG', power: 2, toughness: 1,
@@ -4875,20 +4877,10 @@ function _buildSolverBundle() {
     // ── Display ───────────────────────────────────────────────────────────────
 
     printSummary() {
-      console.log(`\n${'═'.repeat(64)}`);
-      console.log(`Turn ${this.turn} | Mana: ${this.mana}`);
-      console.log('\nPlayers:');
-      for (const p of this.players) console.log(`  ${p.toDetailedString().replace(/\n/g, '\n  ')}`);
-      console.log(`\nHand (${this.hand.length}): ${this.hand.join(', ') || '(empty)'}`);
-      console.log('Battlefield:');
-      for (const p of this.battlefield) console.log(`  ${p.label}`);
       const losses = this.getLosses();
       if (losses.length) {
-        console.log('\n⚠  Loss conditions:');
-        for (const l of losses) console.log(`   ${l.reason}`);
       }
       if (this.comboAchieved) console.log(`\n  *** COMBO: ${this.comboName} ***`);
-      console.log('═'.repeat(64));
     }
   }
 
@@ -6924,88 +6916,16 @@ var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
+
+
+
+
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 // Builds a Worker from a Blob URL so no separate worker file is needed.
 // The worker receives a serialisable payload, runs the Solver off the main
 // thread, and posts back the result. A new Worker is created per solve so
 // it can be terminated immediately if the board changes.
-var _solverWorkerURL = null;
-function _getSolverWorkerURL() {
-  if (_solverWorkerURL) return _solverWorkerURL;
-  // Inline the bundle source into the worker script
-  const bundleSrc = '(' + _buildSolverBundle.toString() + ')();';
-  const workerSrc = `
-${bundleSrc}
-// name→key map (rebuilt inside the worker)
-var _wSolverNameMap = {};
-for (var [k, v] of Object.entries(CARDS)) { if (v && v.name) _wSolverNameMap[v.name] = k; }
-
-self.onmessage = function(e) {
-  var d = e.data;
-  try {
-    var sickSet = new Set(d.sickCards || []);
-    var tappedSet = new Set(d.tappedCards || []);
-    var handKeys = (d.hand || []).map(n => _wSolverNameMap[n]).filter(Boolean);
-    var graveyardKeys = (d.graveyard || []).map(n => _wSolverNameMap[n]).filter(Boolean);
-    var libraryKeys = d.library ? d.library.map(n => _wSolverNameMap[n]).filter(Boolean) : null;
-
-    var state = new GameState({
-      hand: handKeys,
-      mana: { G: Math.min(d.greenMana || 0, 30), C: Math.min(d.colorlessMana || 0, 30) },
-      turn: 1, landDrops: 1,
-      life: d.life || 40,
-      ...(libraryKeys ? { library: libraryKeys } : { librarySize: Math.max(0, (d.librarySize || 99)) }),
-      graveyard: graveyardKeys,
-    });
-
-    for (var name of (d.battlefield || [])) {
-      var key = _wSolverNameMap[name];
-      if (!key) continue;
-      var isTapped = tappedSet.has(name) || [...tappedSet].some(k => k.startsWith(name + ':'));
-      try { state = state.enterBattlefield(key, { summoningSick: sickSet.has(name), tapped: isTapped }); }
-      catch(_) {}
-    }
-
-    var solver = new Solver({ maxTurns: 4, maxDepth: 50, maxStates: 200000, verbose: false });
-    var result = solver.solve(state);
-    if (!result) { self.postMessage({ found: false }); return; }
-
-    var lastState = result.line[result.line.length - 1];
-    var turns = [];
-    var currentTurn = 0;
-    for (var i = 1; i < result.line.length; i++) {
-      var st = result.line[i];
-      var h = st.history[st.history.length - 1];
-      if (!h) continue;
-      if (st.turn !== currentTurn) { currentTurn = st.turn; turns.push({ turn: currentTurn, steps: [] }); }
-      var manaStr = st.mana && st.mana.toString ? st.mana.toString() : '';
-      turns[turns.length - 1].steps.push({
-        msg: typeof h === 'string' ? h : (h.msg || String(h)),
-        mana: (manaStr && manaStr !== '{0}') ? manaStr : null,
-      });
-    }
-
-    self.postMessage({
-      found: true,
-      comboName:    result.combo && result.combo.name        || 'Infinite Mana',
-      comboDesc:    result.combo && result.combo.description || '',
-      winCondition: result.combo && result.combo.winCondition || null,
-      manaCombo:    result.combo && (result.combo.manaCombo || result.combo.name) || 'Infinite Mana',
-      steps: (lastState.history || []).map(h => typeof h === 'string' ? h : (h.msg || String(h))),
-      winTurn: lastState.turn || 1,
-      turns: turns,
-      finalBf: (lastState.battlefield || []).map(p => p.name || String(p)),
-      finalMana: lastState.mana && lastState.mana.toString ? lastState.mana.toString() : '',
-    });
-  } catch(err) {
-    self.postMessage({ found: false, error: err.message });
-  }
-};
-`;
-  const blob = new Blob([workerSrc], { type: 'application/javascript' });
-  _solverWorkerURL = URL.createObjectURL(blob);
-  return _solverWorkerURL;
-}
 
 
 
@@ -27802,6 +27722,20 @@ function GoldfishSaveLoad({
       </div>
     </div>
   );
+}
+
+// Solver Web Worker — loaded from solver-worker.js via Vite's import.meta.url
+// A new Worker is created per solve and terminated immediately when the board changes.
+var _solverWorkerURL = null;
+function _getSolverWorkerURL() {
+  if (_solverWorkerURL) return _solverWorkerURL;
+  try {
+    // Vite resolves this to the built asset URL at compile time
+    _solverWorkerURL = new URL('./solver-worker.js', import.meta.url).href;
+  } catch(_) {
+    _solverWorkerURL = './solver-worker.js';
+  }
+  return _solverWorkerURL;
 }
 
 function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
