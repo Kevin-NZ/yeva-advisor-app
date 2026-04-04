@@ -2779,7 +2779,6 @@ function _buildSolverBundle() {
         },
       },
     },
-    treefolk_harbinger:{ name:'Treefolk Harbinger',types:['creature'],subtypes:['Treefolk','Druid'],cost:'G',power:1,toughness:1 },
     elvish_reclaimer:{ name:'Elvish Reclaimer',   types:['creature'], subtypes:['Elf','Warrior'], cost:'G',  power:1,toughness:1 },
 
     elvish_spirit_guide: {
@@ -3164,7 +3163,6 @@ function _buildSolverBundle() {
       onEnter(state, perm) { return state; },
     },
 
-    yeva:                { name:"Yeva, Nature's Herald",      types:['creature'],subtypes:['Elf','Shaman'],      cost:'2GG',  power:4,toughness:4 },
     eternal_witness: {
       name: 'Eternal Witness', types: ['creature'], subtypes: ['Human','Shaman'],
       cost: '1GG', power: 2, toughness: 1,
@@ -6915,6 +6913,7 @@ var SolverGameState = _solverExports.GameState;
 var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
+
 
 
 
