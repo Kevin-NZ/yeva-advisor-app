@@ -2365,6 +2365,967 @@ function bestDiscardFromHand(hand, exclude = []) {
 // INLINED SOLVER — generated from Solver/*.js (do not edit directly)
 // ═══════════════════════════════════════════════════════════════════════
 function _buildSolverBundle() {
+  // GameState.js
+  /**
+   * MTG Combo Solver — GameState
+   *
+   * Immutable (clone-on-write) game state. Every action returns a new
+   * GameState so the solver can explore branches without side effects.
+   *
+   * ── Zone ownership ────────────────────────────────────────────────────────
+   *   Each of the four players owns their own graveyard and exile pile.
+   *   The battlefield and stack are shared zones.
+   *   Hand/library are per-player (library tracked as a count).
+   *
+   *   players[0] = you (active player)
+   *   players[1..3] = opponents
+   *
+   * ── Per-player state ──────────────────────────────────────────────────────
+   *   life        — 40 in Commander; ≤ 0 → lose
+   *   librarySize — cards remaining; drawing from 0 → lose
+   *   poison      — ≥ 10 → lose
+   *   graveyard   — string[] of card names in your graveyard (ordered, top-first)
+   *   exile       — string[] of card names in your exile
+   */
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  Constants
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const DEFAULT_LIBRARY_SIZE    = 99;   // Commander deck minus commander (used as fallback)
+  const POISON_LOSS_THRESHOLD   = 10;
+
+  // ── Authoritative 100-card Yeva decklist (card keys) ─────────────────────
+  // Yeva is included here; she is removed when building the library since she
+  // starts in the command zone.  Cards in hand/battlefield/graveyard/exile are
+  // also removed before the library is assembled.
+  const DEFAULT_DECKLIST = [
+    'allosaurus_shepherd','ancient_tomb','arbor_elf','archdruid_charm',
+    'argothian_elder','ashaya','badgermole_cub','beast_whisperer',
+    'beast_within','birds_of_paradise','boreal_druid','boseiju',
+    'chomping_changeling','chord_of_calling','chrome_mox','circle_of_dreams_druid',
+    'collector_ouphe','crop_rotation','delighted_halfling','deserted_temple',
+    'destiny_spinner','disciple_freyalise','dryad_arbor','duskwatch_recruiter',
+    'earthcraft','eladamri','eldritch_evolution','elvish_archdruid',
+    'elvish_guidance','elvish_harbinger','elvish_mystic','elvish_reclaimer2',
+    'elvish_spirit_guide','emergence_zone','endurance','eternal_witness',
+    'fanatic_of_rhonas','fauna_shaman','fierce_empath','force_of_vigor',
+    'forest','forest','forest','forest','forest','forest','forest','forest','forest','forest',
+    'formidable_speaker','fyndhorn_elves','gaeas_cradle','geier_reach',
+    'glademuse','green_suns_zenith','growing_rites','heartwood_storyteller',
+    'hope_tender','hyrax_tower_scout','karametra_acolyte','kogla',
+    'legolas_quick_reflexes','llanowar_elves','lotus_petal','magus_of_the_candelabra',
+    'misty_rainforest','mox_diamond','natural_order','natures_rhythm',
+    'nykthos','priest_of_titania','quirion_ranger','regal_force',
+    'scryb_ranger','seedborn_muse','shared_summons','shifting_woodland',
+    'sol_ring','sowing_mycospawn','summoners_pact','survival_fittest',
+    'sylvan_scrying','talon_gates','temur_sabertooth',
+    'urza_cave','utopia_sprawl','verdant_catacombs','war_room','wild_growth',
+    'windswept_heath','wirewood_lodge','wirewood_symbiote','woodcaller_automaton',
+    'wooded_foothills','woodland_bellower','worldly_tutor',
+    'yavimaya','yisan','yeva',
+  ];
+
+  /**
+   * Build the library for a new game.
+   *
+   * @param {object} opts
+   * @param {string[]} opts.commandZone  Card keys in the command zone (removed from library)
+   * @param {string[]} opts.hand         Card keys in the opening hand (removed from library)
+   * @param {string[]} opts.battlefield  Card keys on the battlefield (removed from library)
+   * @param {string[]} opts.graveyard    Card names in graveyard (not removed by key — names ≠ keys)
+   * @returns {string[]} Shuffled library
+   */
+  function buildDefaultLibrary(opts = {}) {
+    const exclude = new Set([
+      ...(opts.commandZone  ?? ['yeva']),
+      ...(opts.hand         ?? []),
+      ...(opts.battlefield  ?? []),
+    ]);
+
+    // Remove one copy per excluded key (multiset subtraction)
+    const deck = [...DEFAULT_DECKLIST];
+    for (const key of exclude) {
+      const idx = deck.indexOf(key);
+      if (idx !== -1) deck.splice(idx, 1);
+    }
+
+    // Fisher-Yates shuffle
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    return deck;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  Player
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  class Player {
+    /**
+     * @param {object}   data
+     * @param {string}   data.name
+     * @param {number}   data.life
+     * @param {string[]} data.library     card keys, index 0 = top of deck
+     * @param {number}   data.librarySize fallback when library array not provided
+     * @param {number}   data.poison
+     * @param {string[]} data.graveyard   card names, index 0 = top of pile
+     * @param {string[]} data.exile       card names
+     */
+    constructor(data = {}) {
+      this.name      = data.name        ?? 'Player';
+      this.life      = data.life        ?? 40;
+      this.poison    = data.poison      ?? 0;
+      this.graveyard = data.graveyard   ? [...data.graveyard] : [];
+      this.exile     = data.exile       ? [...data.exile]     : [];
+
+      // Library: prefer explicit array; fall back to size-only count (legacy)
+      if (data.library && Array.isArray(data.library)) {
+        this.library = [...data.library];
+      } else {
+        const sz = data.librarySize ?? DEFAULT_LIBRARY_SIZE;
+        // Build a placeholder array of 'unknown' to represent unseen cards
+        this.library = Array(sz).fill('unknown');
+      }
+    }
+
+    get librarySize() { return this.library.length; }
+    /** Backward-compat setter: resizes the library array to exactly N 'unknown' entries. */
+    set librarySize(n) {
+      if (n === this.library.length) return;
+      if (n < this.library.length) {
+        this.library = this.library.slice(0, n);
+      } else {
+        const extra = Array(n - this.library.length).fill('unknown');
+        this.library = [...this.library, ...extra];
+      }
+    }
+
+    clone() {
+      return new Player({
+        name:      this.name,
+        life:      this.life,
+        library:   [...this.library],
+        poison:    this.poison,
+        graveyard: [...this.graveyard],
+        exile:     [...this.exile],
+      });
+    }
+
+    /** Returns { lost: bool, reason?: string } */
+    hasLost() {
+      if (this.life <= 0)
+        return { lost: true,  reason: `${this.name} has 0 or less life (${this.life})` };
+      if (this.poison >= POISON_LOSS_THRESHOLD)
+        return { lost: true,  reason: `${this.name} has ${this.poison} poison counters` };
+      return { lost: false };
+    }
+
+    /**
+     * Attempt to draw N cards. Removes from top of library array.
+     * Returns drawn card keys (may be 'unknown' for opponent libraries).
+     * librarySize is clamped to 0 — loss fires when getLosses() checks after draw.
+     */
+    draw(n = 1) {
+      const p = this.clone();
+      const drawn = p.library.splice(0, Math.min(n, p.library.length));
+      // If we couldn't draw enough, library is empty (loss triggers on next check)
+      return p;
+    }
+
+    /**
+     * Draw and return the top card key (or null if empty).
+     * Removes it from the library.
+     */
+    drawCard() {
+      if (this.library.length === 0) return { player: this, cardKey: null };
+      const p = this.clone();
+      const cardKey = p.library.shift();
+      return { player: p, cardKey };
+    }
+
+    /**
+     * Search library for a card matching predicate fn(cardKey) → bool.
+     * Returns { player, cardKey } — player has the card removed from library.
+     * Returns { player: this, cardKey: null } if not found.
+     */
+    searchLibrary(fn) {
+      const idx = this.library.findIndex(fn);
+      if (idx === -1) return { player: this, cardKey: null };
+      const p = this.clone();
+      const [cardKey] = p.library.splice(idx, 1);
+      return { player: p, cardKey };
+    }
+
+    /** Move the top N cards of the graveyard back into the library (shuffle). */
+    shuffleGraveyardIntoLibrary() {
+      const p = this.clone();
+      // Append graveyard card names as 'unknown' keys (names ≠ keys, but close enough for size)
+      p.library = [...p.library, ...p.graveyard.map(() => 'unknown')];
+      p.graveyard = [];
+      return p;
+    }
+
+    /** Put a card name on top of the graveyard. */
+    putInGraveyard(cardName) {
+      const p = this.clone();
+      p.graveyard = [cardName, ...p.graveyard];
+      return p;
+    }
+
+    /** Put a card name into exile. */
+    putInExile(cardName) {
+      const p = this.clone();
+      p.exile = [...p.exile, cardName];
+      return p;
+    }
+
+    /**
+     * Exile a card from the graveyard by name.
+     * Returns new Player or null if not found.
+     */
+    exileFromGraveyard(cardName) {
+      const idx = this.graveyard.indexOf(cardName);
+      if (idx === -1) return null;
+      const p = this.clone();
+      p.graveyard = p.graveyard.filter((_, i) => i !== idx);
+      p.exile = [...p.exile, cardName];
+      return p;
+    }
+
+    /**
+     * Discard the named card (moves from hand into graveyard).
+     * Hand is managed at the GameState level; this just adds to the pile.
+     */
+    receiveDiscard(cardName) {
+      return this.putInGraveyard(cardName);
+    }
+
+    toString() {
+      const lc = this.hasLost();
+      const status = lc.lost ? ` ⚠ LOST` : '';
+      return (
+        `${this.name}: life=${this.life} lib=${this.librarySize} ` +
+        `poison=${this.poison} gy=${this.graveyard.length} ex=${this.exile.length}${status}`
+      );
+    }
+
+    /** Detailed zone dump for printSummary */
+    toDetailedString() {
+      const gy = this.graveyard.length
+        ? `  GY  : ${this.graveyard.join(', ')}`
+        : '  GY  : (empty)';
+      const ex = this.exile.length
+        ? `  Exile: ${this.exile.join(', ')}`
+        : '  Exile: (empty)';
+      return `${this.toString()}\n${gy}\n${ex}`;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  ManaPool
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  class ManaPool {
+    constructor(pool = {}) {
+      this.W = pool.W ?? 0;
+      this.U = pool.U ?? 0;
+      this.B = pool.B ?? 0;
+      this.R = pool.R ?? 0;
+      this.G = pool.G ?? 0;
+      this.C = pool.C ?? 0;
+    }
+
+    total() { return this.W + this.U + this.B + this.R + this.G + this.C; }
+    clone() { return new ManaPool(this); }
+
+    add(color, amount = 1) {
+      const p = this.clone();
+      p[color] += amount;
+      return p;
+    }
+
+    pay(costStr) {
+      const parsed = parseCost(costStr);
+      const pool = this.clone();
+      for (const [color, amt] of Object.entries(parsed.colored)) {
+        if (pool[color] < amt) return null;
+        pool[color] -= amt;
+      }
+      let generic = parsed.generic;
+      for (const color of ['C', 'G', 'W', 'U', 'B', 'R']) {
+        if (generic <= 0) break;
+        const use = Math.min(generic, pool[color]);
+        pool[color] -= use;
+        generic -= use;
+      }
+      if (generic > 0) return null;
+      return pool;
+    }
+
+    toString() {
+      const parts = [];
+      if (this.W) parts.push(`{W}x${this.W}`);
+      if (this.U) parts.push(`{U}x${this.U}`);
+      if (this.B) parts.push(`{B}x${this.B}`);
+      if (this.R) parts.push(`{R}x${this.R}`);
+      if (this.G) parts.push(`{G}x${this.G}`);
+      if (this.C) parts.push(`{C}x${this.C}`);
+      return parts.length ? parts.join(' ') : '{0}';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  parseCost
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function parseCost(costStr) {
+    if (!costStr || costStr === '0') return { generic: 0, colored: {} };
+    const colored = {};
+    let generic = 0;
+    let i = 0;
+    while (i < costStr.length) {
+      const ch = costStr[i];
+      if (/\d/.test(ch)) {
+        let num = '';
+        while (i < costStr.length && /\d/.test(costStr[i])) num += costStr[i++];
+        generic += parseInt(num, 10);
+      } else if ('WUBRGC'.includes(ch)) {
+        colored[ch] = (colored[ch] || 0) + 1;
+        i++;
+      } else {
+        i++;
+      }
+    }
+    return { generic, colored };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  Permanent
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  class Permanent {
+    constructor(data) {
+      this.id            = data.id;
+      this.name          = data.name;
+      this.types         = data.types       ?? [];
+      this.subtypes      = data.subtypes    ?? [];
+      this.tapped        = data.tapped      ?? false;
+      this.summoningSick = data.summoningSick ?? false;
+      this.cardKey       = data.cardKey;
+      this.isForest      = data.isForest    ?? false;
+      this.abilitiesUsed = data.abilitiesUsed ?? {};
+      this.counters      = data.counters    ?? {};
+      this.power         = data.power;
+      this.toughness     = data.toughness;
+    }
+
+    is(type) { return this.types.includes(type.toLowerCase()); }
+
+    clone() {
+      return new Permanent({
+        ...this,
+        types:         [...this.types],
+        subtypes:      [...this.subtypes],
+        abilitiesUsed: { ...this.abilitiesUsed },
+        counters:      { ...this.counters },
+      });
+    }
+
+    get label() {
+      const t = this.tapped        ? '[T]' : '   ';
+      const s = this.summoningSick ? '[S]' : '   ';
+      const f = this.isForest      ? '[Forest]' : '';
+      const c = Object.entries(this.counters).map(([k, v]) => `${v}${k}`).join(' ');
+      return `${t}${s} ${this.name}${f}${c ? ' (' + c + ')' : ''}`;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  GameState
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  class GameState {
+    /**
+     * Construct a game state.
+     *
+     * Preferred form — explicit players array:
+     *   new GameState({
+     *     players: [
+     *       { name:'You',        life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
+     *       { name:'Opponent 1', life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
+     *       { name:'Opponent 2', life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
+     *       { name:'Opponent 3', life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
+     *     ],
+     *     hand: [...],
+     *   })
+     *
+     * Legacy shorthand (your stats only, opponents default):
+     *   new GameState({ life:40, hand:[...] })
+     */
+    constructor(data = {}) {
+      this.turn          = data.turn        ?? 1;
+      this.phase         = data.phase       ?? 'main1';
+      this.landDrops     = data.landDrops   ?? 1;
+      this.hand          = data.hand        ? [...data.hand] : [];
+      this.battlefield   = data.battlefield
+        ? data.battlefield.map(p => p instanceof Permanent ? p : new Permanent(p))
+        : [];
+      this.mana          = data.mana instanceof ManaPool ? data.mana : new ManaPool(data.mana ?? {});
+      this.storm         = data.storm       ?? 0;
+      this.comboAchieved = data.comboAchieved ?? false;
+      this.comboName     = data.comboName     ?? null;
+      this._nextId       = data._nextId       ?? 1;
+      this.history       = data.history       ? [...data.history] : [];
+
+      // ── Command zone ─────────────────────────────────────────────────────────
+      // commandZone: card keys of commanders currently in the command zone
+      // commanderTax: extra generic mana cost per previous commander cast
+      this.commandZone    = data.commandZone  ? [...data.commandZone]  : ['yeva'];
+      this.commanderTax   = data.commanderTax ?? 0;
+      // isOpponentTurn: true when modelling a flash window on an opponent's turn
+      this.isOpponentTurn = data.isOpponentTurn ?? false;
+      // topDecked: card key placed on top of library by a tutor.
+      // When set, startNewTurn draws exactly that card into hand, then clears this flag.
+      // When null, no draw step occurs — keeping the solver deterministic.
+      this.topDecked      = data.topDecked ?? null;
+      // _hasSTAX: true when a STAX permanent is on the battlefield.
+      // Enables fast-path in effectiveCost that skips Thorn/Trinisphere checks.
+      this._hasSTAX       = data._hasSTAX ?? false;
+
+      // ── Players (own their zones) ────────────────────────────────────────────
+      if (data.players && Array.isArray(data.players)) {
+        this.players = data.players.map((p, i) =>
+          p instanceof Player ? p : new Player({
+            name:        p.name        ?? (i === 0 ? 'You' : `Opponent ${i}`),
+            life:        p.life        ?? 40,
+            library:     p.library     ?? null,
+            librarySize: p.librarySize ?? DEFAULT_LIBRARY_SIZE,
+            poison:      p.poison      ?? 0,
+            graveyard:   p.graveyard   ?? [],
+            exile:       p.exile       ?? [],
+          })
+        );
+      } else {
+        // Legacy: build player 0 with the default decklist library
+        this.players = [
+          new Player({
+            name:      'You',
+            life:      data.life        ?? 40,
+            library:   data.library     ?? buildDefaultLibrary({
+              commandZone: this.commandZone,
+              hand:        this.hand,
+            }),
+            poison:    data.poison      ?? 0,
+            graveyard: data.graveyard   ?? [],
+            exile:     data.exile       ?? [],
+          }),
+          new Player({ name: 'Opponent 1' }),
+          new Player({ name: 'Opponent 2' }),
+          new Player({ name: 'Opponent 3' }),
+        ];
+      }
+      while (this.players.length < 4) {
+        this.players.push(new Player({ name: `Opponent ${this.players.length}` }));
+      }
+    }
+
+    // ── Convenience zone accessors for active player (players[0]) ────────────
+
+    get life()        { return this.players[0].life; }
+    set life(v)       { this.players[0].life = v; }
+
+    get librarySize() { return this.players[0].librarySize; }
+    set librarySize(v){ this.players[0].librarySize = v; }
+
+    get poison()      { return this.players[0].poison; }
+    set poison(v)     { this.players[0].poison = v; }
+
+    /** Your graveyard (top = index 0). */
+    get graveyard()   { return this.players[0].graveyard; }
+    set graveyard(v)  { this.players[0].graveyard = v; }
+
+    /** Your exile pile. */
+    get exile()       { return this.players[0].exile; }
+    set exile(v)      { this.players[0].exile = v; }
+
+    // ── Loss checks ───────────────────────────────────────────────────────────
+
+    getLosses() {
+      const losses = [];
+      for (let i = 0; i < this.players.length; i++) {
+        const check = this.players[i].hasLost();
+        if (check.lost) losses.push({ playerIndex: i, player: this.players[i], reason: check.reason });
+      }
+      return losses;
+    }
+
+    youLost()          { return this.players[0].hasLost().lost; }
+    opponentsAllLost() { return this.players.slice(1).every(p => p.hasLost().lost); }
+
+    // ── Permanent helpers ─────────────────────────────────────────────────────
+
+    creatures()         { return this.battlefield.filter(p => p.is('creature')); }
+    lands()             { return this.battlefield.filter(p => p.is('land')); }
+    untappedLands()     { return this.lands().filter(p => !p.tapped); }
+    untappedCreatures() { return this.creatures().filter(p => !p.tapped && !p.summoningSick); }
+    hasPermanent(name)  { return this.battlefield.some(p => p.name === name); }
+    getPermanent(name)  { return this.battlefield.find(p => p.name === name); }
+    getPermanentById(id){ return this.battlefield.find(p => p.id === id); }
+
+    forestsInHand() {
+      return this.hand.filter(c => {
+        const def = CARDS[c];
+        return def && def.subtypes && def.subtypes.includes('Forest');
+      });
+    }
+
+    // ── Clone ─────────────────────────────────────────────────────────────────
+
+    clone() {
+      return new GameState({
+        turn:           this.turn,
+        phase:          this.phase,
+        landDrops:      this.landDrops,
+        hand:           [...this.hand],
+        battlefield:    this.battlefield.map(p => p.clone()),
+        mana:           this.mana.clone(),
+        storm:          this.storm,
+        comboAchieved:  this.comboAchieved,
+        comboName:      this.comboName,
+        _nextId:        this._nextId,
+        history:        [...this.history],
+        players:        this.players.map(p => p.clone()),
+        commandZone:    [...this.commandZone],
+        commanderTax:   this.commanderTax,
+        isOpponentTurn: this.isOpponentTurn ?? false,
+        topDecked:      this.topDecked ?? null,
+        _hasSTAX:       this._hasSTAX ?? false,
+      });
+    }
+
+    // ── Logging ───────────────────────────────────────────────────────────────
+
+    log(msg) {
+      const s = this.clone();
+      s.history = [...s.history, { turn: s.turn, msg }];
+      return s;
+    }
+
+    // ── Mana ─────────────────────────────────────────────────────────────────
+
+    addMana(color, amount = 1) {
+      const s = this.clone();
+      s.mana = s.mana.add(color, amount);
+      return s;
+    }
+
+    payMana(costStr) {
+      const newPool = this.mana.pay(costStr);
+      if (newPool === null) return null;
+      const s = this.clone();
+      s.mana = newPool;
+      return s;
+    }
+
+    // ── Player zone mutations (return new GameState) ──────────────────────────
+
+    /**
+     * Modify a player's numeric stats by delta.
+     * @param {number} pi      Player index (0=you, 1-3=opponents)
+     * @param {object} changes { life?, librarySize?, poison? } — deltas
+     */
+    modifyPlayer(pi, changes) {
+      const s = this.clone();
+      const p = s.players[pi].clone();
+      if (changes.life        !== undefined) p.life        += changes.life;
+      if (changes.librarySize !== undefined) p.librarySize += changes.librarySize;
+      if (changes.poison      !== undefined) p.poison      += changes.poison;
+      s.players[pi] = p;
+      return s;
+    }
+
+    dealDamage(pi, { damage = 0, poison = 0, infect = false } = {}) {
+      const s = this.clone();
+      const p = s.players[pi].clone();
+      if (infect) { p.poison += damage; }
+      else        { p.life -= damage; p.poison += poison; }
+      s.players[pi] = p;
+      return s;
+    }
+
+    gainLife(pi, amount) { return this.modifyPlayer(pi, { life: amount }); }
+    addPoison(pi, amount = 1) { return this.modifyPlayer(pi, { poison: amount }); }
+
+    /**
+     * A player draws N cards.
+     * librarySize clamps to 0 if over-drawn (loss detected via getLosses()).
+     */
+    /**
+     * A player draws N cards. For player 0, moves card keys from library to hand.
+     * For opponents (pi > 0), just removes from their library (hand not tracked).
+     */
+    playerDraws(pi, n = 1) {
+      if (pi === 0) {
+        return this.playerDrawCards(n);
+      }
+      // Opponent: remove from library only (hand not tracked)
+      const s = this.clone();
+      s.players[pi] = s.players[pi].draw(n);
+      return s;
+    }
+
+    /**
+     * Draw cards from your library into your hand (player 0 only).
+     * Moves actual card keys from library[0..n-1] into hand.
+     * Unknown cards ('unknown') are silently discarded (opponent libraries, pre-game state).
+     * @returns new GameState
+     */
+    playerDrawCards(n = 1) {
+      const s = this.clone();
+      for (let i = 0; i < n; i++) {
+        if (s.players[0].library.length === 0) break;
+        const cardKey = s.players[0].library.shift();
+        if (cardKey && cardKey !== 'unknown') {
+          s.hand = [...s.hand, cardKey];
+        }
+      }
+      return s;
+    }
+
+    /**
+     * Search your library for the first card matching predicate fn(cardKey) → bool.
+     * Removes it from the library and returns { state, cardKey }.
+     * If not found returns { state: this, cardKey: null }.
+     */
+    searchLibraryFor(fn) {
+      const idx = this.players[0].library.findIndex(fn);
+      if (idx === -1) return { state: this, cardKey: null };
+      const s = this.clone();
+      const [cardKey] = s.players[0].library.splice(idx, 1);
+      return { state: s, cardKey };
+    }
+
+    /**
+     * Put a card name into a player's graveyard (top of pile).
+     * @param {number} pi  Player index
+     * @param {string} cardName
+     */
+    addToGraveyard(pi, cardName) {
+      const s = this.clone();
+      s.players[pi] = s.players[pi].putInGraveyard(cardName);
+      return s;
+    }
+
+    /**
+     * Put a card name into a player's exile.
+     * @param {number} pi  Player index
+     * @param {string} cardName
+     */
+    addToExile(pi, cardName) {
+      const s = this.clone();
+      s.players[pi] = s.players[pi].putInExile(cardName);
+      return s;
+    }
+
+    /**
+     * Exile a specific card from a player's graveyard by name.
+     * Returns new GameState or null if card not found.
+     */
+    exileFromGraveyard(pi, cardName) {
+      const s = this.clone();
+      const updated = s.players[pi].exileFromGraveyard(cardName);
+      if (!updated) return null;
+      s.players[pi] = updated;
+      return s;
+    }
+
+    /**
+     * Shuffle all cards from a player's graveyard back into their library.
+     * Graveyard becomes empty; librarySize increases accordingly.
+     */
+    shuffleGraveyardIntoLibrary(pi) {
+      const s = this.clone();
+      s.players[pi] = s.players[pi].shuffleGraveyardIntoLibrary();
+      return s;
+    }
+
+    /**
+     * Discard a card from your hand into your graveyard.
+     * Removes the card from hand and adds it to players[0].graveyard.
+     * Returns new GameState or null if card not in hand.
+     */
+    discardFromHand(cardKey) {
+      const cards = CARDS;
+      const def = cards[cardKey];
+      const cardName = def ? def.name : cardKey;
+      let s = this.removeFromHand(cardKey);
+      if (!s) return null;
+      s = s.addToGraveyard(0, cardName);
+      return s;
+    }
+
+    // ── Permanent mutations ───────────────────────────────────────────────────
+
+    tapPermanent(id) {
+      const s = this.clone();
+      const p = s.getPermanentById(id);
+      if (!p || p.tapped) return null;
+      p.tapped = true;
+      return s;
+    }
+
+    untapPermanent(id) {
+      const s = this.clone();
+      const p = s.getPermanentById(id);
+      if (!p) return null;
+      p.tapped = false;
+      return s;
+    }
+
+    enterBattlefield(cardKey, extra = {}) {
+      const cards = CARDS;
+      const def = cards[cardKey];
+      if (!def) throw new Error(`Unknown card: ${cardKey}`);
+      let s = this.clone();
+      const id = s._nextId++;
+      const perm = new Permanent({
+        id,
+        name:          def.name,
+        types:         [...def.types],
+        subtypes:      [...(def.subtypes ?? [])],
+        cardKey,
+        tapped:        extra.tapped ?? false,
+        summoningSick: def.types.includes('creature') ? true : false,
+        isForest:      def.subtypes?.includes('Forest') ?? false,
+        power:         def.power,
+        toughness:     def.toughness,
+        ...extra,
+      });
+      s.battlefield = [...s.battlefield, perm];
+
+      // Option B: update _hasSTAX flag when a STAX card enters
+      const STAX_NAMES = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble']);
+      if (STAX_NAMES.has(def.name)) s._hasSTAX = true;
+
+      // ── Static layer: apply existing statics to the new permanent ────────────
+
+      // Ashaya: new creatures become Forest lands
+      if (s.hasPermanent('Ashaya, Soul of the Wild') && perm.is('creature')) {
+        perm.isForest = true;
+        if (!perm.types.includes('land')) perm.types.push('land');
+        if (!perm.subtypes.includes('Forest')) perm.subtypes.push('Forest');
+      }
+
+      // Concordant Crossroads / Thousand-Year Elixir: creatures lose summoning sickness
+      if (perm.is('creature') && (
+        s.hasPermanent('Concordant Crossroads') ||
+        s.hasPermanent('Thousand-Year Elixir')
+      )) {
+        perm.summoningSick = false;
+      }
+
+      // Yavimaya, Cradle of Growth: all lands are Forests
+      if (perm.is('land') && s.hasPermanent('Yavimaya, Cradle of Growth')) {
+        if (!perm.subtypes.includes('Forest')) perm.subtypes.push('Forest');
+        perm.isForest = true;
+      }
+
+      // Leyline of Abundance: tracked as a flag; effects applied in tapForMana wrappers
+
+      // ── ETB triggers: card-specific effects on entry ──────────────────────────
+
+      // Ashaya ETB: all existing non-token creatures become Forest lands
+      if (cardKey === 'ashaya') {
+        for (const bf of s.battlefield) {
+          if (bf.is('creature')) {
+            bf.isForest = true;
+            if (!bf.types.includes('land')) bf.types.push('land');
+            if (!bf.subtypes.includes('Forest')) bf.subtypes.push('Forest');
+          }
+        }
+      }
+
+      // Concordant Crossroads ETB: all existing creatures lose summoning sickness
+      if (cardKey === 'concordant_crossroads') {
+        for (const bf of s.battlefield) {
+          if (bf.is('creature')) bf.summoningSick = false;
+        }
+      }
+
+      // Yavimaya ETB: all existing lands become Forests
+      if (cardKey === 'yavimaya') {
+        for (const bf of s.battlefield) {
+          if (bf.is('land') && !bf.subtypes.includes('Forest')) {
+            bf.subtypes.push('Forest');
+            bf.isForest = true;
+          }
+        }
+      }
+
+      // Lotus Cobra ETB landfall trigger (fires when a land enters after Cobra):
+      // handled in actions.js — playing a land checks for Cobra and adds mana.
+
+      // Marwyn, the Nurturer: whenever another Elf enters, put +1/+1 counter on Marwyn
+      if (perm.is('creature') && perm.subtypes && perm.subtypes.includes('Elf')) {
+        const marwyn = s.battlefield.find(p => p.name === 'Marwyn, the Nurturer' && p.id !== perm.id);
+        if (marwyn) {
+          marwyn.power     = (marwyn.power     || 1) + 1;
+          marwyn.toughness = (marwyn.toughness || 1) + 1;
+        }
+      }
+
+      // Hyrax Tower Scout ETB: untap target creature (deterministic: untap first tapped creature)
+      if (cardKey === 'hyrax_tower_scout') {
+        const tapped = s.creatures().find(c => c.id !== perm.id && c.tapped);
+        if (tapped) s = s.untapPermanent(tapped.id);
+      }
+
+      // Surrak and Goreclaw ETB: existing creatures lose summoning sickness (haste)
+      if (cardKey === 'surrak_goreclaw') {
+        for (const bf of s.battlefield) {
+          if (bf.is('creature') && bf.id !== perm.id) bf.summoningSick = false;
+        }
+      }
+
+      // Great Oak Guardian ETB: target player's creatures get +2/+2 until EOT and untap
+      // (simplified: untap all your creatures; +2/+2 is not tracked in this engine)
+      if (cardKey === 'great_oak_guardian') {
+        for (const bf of s.battlefield) {
+          if (bf.is('creature')) bf.tapped = false;
+        }
+      }
+
+      // Eternal Witness ETB: return target card from graveyard to hand
+      // (deterministic: return last card in graveyard, if any)
+      if (cardKey === 'eternal_witness' && s.players[0].graveyard.length > 0) {
+        const cardName = s.players[0].graveyard[0]; // top of pile
+        s.players[0] = s.players[0].clone();
+        s.players[0].graveyard = s.players[0].graveyard.slice(1);
+        // Find the card key for this name
+        const ck = Object.keys(cards).find(k => cards[k].name === cardName);
+        if (ck) s = s.addToHand(ck);
+      }
+
+      // Regal Force ETB: draw a card for each green creature you control
+      if (cardKey === 'regal_force') {
+        const greenCreatures = s.creatures().length; // simplified: all creatures
+        s = s.playerDraws(0, greenCreatures);
+      }
+
+      // Beast Whisperer: draw a card when you cast a creature — triggered in actions.js
+
+      // Skyshroud Poacher ETB: nothing (ability handled separately)
+
+      // Hyrax Tower Scout already handled above.
+
+      return s;
+    }
+
+    /**
+     * Remove a permanent from the battlefield.
+     * @param {number}          id    Permanent id
+     * @param {string|null}     zone  'graveyard' | 'exile' | null (leaves the game)
+     * @param {number}          pi    Player index that owns the card (default 0 = you)
+     */
+    removeFromBattlefield(id, zone = 'graveyard', pi = 0) {
+      const s = this.clone();
+      const idx = s.battlefield.findIndex(p => p.id === id);
+      if (idx === -1) return null;
+      const [removed] = s.battlefield.splice(idx, 1);
+      if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
+      if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
+      // Option B: recalculate _hasSTAX after removal
+      const STAX_NAMES_R = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble']);
+      s._hasSTAX = s.battlefield.some(p => STAX_NAMES_R.has(p.name));
+      return s;
+    }
+
+    removeFromHand(cardKey) {
+      const s = this.clone();
+      const idx = s.hand.indexOf(cardKey);
+      if (idx === -1) return null;
+      s.hand = [...s.hand.slice(0, idx), ...s.hand.slice(idx + 1)];
+      return s;
+    }
+
+    addToHand(cardKey) {
+      const s = this.clone();
+      s.hand = [...s.hand, cardKey];
+      return s;
+    }
+
+    markAbilityUsed(id, abilityKey) {
+      const s = this.clone();
+      const p = s.getPermanentById(id);
+      if (!p) return null;
+      p.abilitiesUsed = { ...p.abilitiesUsed, [abilityKey]: true };
+      return s;
+    }
+
+    // ── Turn management ───────────────────────────────────────────────────────
+
+    startNewTurn() {
+      const s = this.clone();
+      s.turn++;
+      s.landDrops = 1;
+      s.mana = new ManaPool();
+      s.storm = 0;
+      s.isOpponentTurn = false;   // back to your main phase
+      for (const p of s.battlefield) {
+        p.tapped = false;
+        p.summoningSick = false;
+        p.abilitiesUsed = {};
+      }
+      // Draw for turn — ONLY if a tutor explicitly top-decked a card.
+      // This keeps the solver deterministic: random library draws are not modelled.
+      // When topDecked is set, the named card is guaranteed to be on top of the library.
+      if (s.topDecked !== null) {
+        const topCard = s.topDecked;
+        s.topDecked = null;                      // consume the flag
+        s.players[0] = s.players[0].draw(1);    // remove from library
+        s.hand = [...s.hand, topCard];           // deliver to hand
+      }
+      // If topDecked is null: no draw step — library top is unknown/random.
+      // Opponents still draw (library size tracking only):
+      for (let i = 1; i < s.players.length; i++) {
+        s.players[i] = s.players[i].draw(1);
+      }
+      s.history = [...s.history, {
+        turn: s.turn,
+        msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
+      }];
+      return s;
+    }
+
+    // ── Fingerprint ───────────────────────────────────────────────────────────
+
+    fingerprint() {
+      const hand = [...this.hand].sort().join(',');
+      const bf = this.battlefield
+        .map(p => `${p.name}:${p.tapped ? 'T' : 'U'}:${p.isForest ? 'F' : ''}`)
+        .sort().join('|');
+      const m = this.mana.toString();
+      const players = this.players
+        .map(p => `${p.life}/${p.librarySize}/${p.poison}/${p.graveyard.length}/${p.exile.length}`)
+        .join(',');
+      const cmd = `CZ:${[...this.commandZone].sort().join(',')}:tax${this.commanderTax}`;
+      return `T${this.turn}|H:${hand}|BF:${bf}|M:${m}|L:${this.landDrops}|P:${players}|${cmd}`;
+    }
+
+    // ── Display ───────────────────────────────────────────────────────────────
+
+    printSummary() {
+      const losses = this.getLosses();
+      if (losses.length) {
+      }
+      if (this.comboAchieved) console.log(`\n  *** COMBO: ${this.comboName} ***`);
+    }
+  }
+
+  var _GSM = { GameState, ManaPool, parseCost, Player, Permanent };
+
   // cards.js
   /**
    * MTG Combo Solver — Card Definitions (expanded)
@@ -3938,956 +4899,18 @@ function _buildSolverBundle() {
     },
   };
 
-
-  // GameState.js
-  /**
-   * MTG Combo Solver — GameState
-   *
-   * Immutable (clone-on-write) game state. Every action returns a new
-   * GameState so the solver can explore branches without side effects.
-   *
-   * ── Zone ownership ────────────────────────────────────────────────────────
-   *   Each of the four players owns their own graveyard and exile pile.
-   *   The battlefield and stack are shared zones.
-   *   Hand/library are per-player (library tracked as a count).
-   *
-   *   players[0] = you (active player)
-   *   players[1..3] = opponents
-   *
-   * ── Per-player state ──────────────────────────────────────────────────────
-   *   life        — 40 in Commander; ≤ 0 → lose
-   *   librarySize — cards remaining; drawing from 0 → lose
-   *   poison      — ≥ 10 → lose
-   *   graveyard   — string[] of card names in your graveyard (ordered, top-first)
-   *   exile       — string[] of card names in your exile
-   */
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  Constants
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const DEFAULT_LIBRARY_SIZE    = 99;   // Commander deck minus commander (used as fallback)
-  const POISON_LOSS_THRESHOLD   = 10;
-
-  // ── Authoritative 100-card Yeva decklist (card keys) ─────────────────────
-  // Yeva is included here; she is removed when building the library since she
-  // starts in the command zone.  Cards in hand/battlefield/graveyard/exile are
-  // also removed before the library is assembled.
-  const DEFAULT_DECKLIST = [
-    'allosaurus_shepherd','ancient_tomb','arbor_elf','archdruid_charm',
-    'argothian_elder','ashaya','badgermole_cub','beast_whisperer',
-    'beast_within','birds_of_paradise','boreal_druid','boseiju',
-    'chomping_changeling','chord_of_calling','chrome_mox','circle_of_dreams_druid',
-    'collector_ouphe','crop_rotation','delighted_halfling','deserted_temple',
-    'destiny_spinner','disciple_freyalise','dryad_arbor','duskwatch_recruiter',
-    'earthcraft','eladamri','eldritch_evolution','elvish_archdruid',
-    'elvish_guidance','elvish_harbinger','elvish_mystic','elvish_reclaimer2',
-    'elvish_spirit_guide','emergence_zone','endurance','eternal_witness',
-    'fanatic_of_rhonas','fauna_shaman','fierce_empath','force_of_vigor',
-    'forest','forest','forest','forest','forest','forest','forest','forest','forest','forest',
-    'formidable_speaker','fyndhorn_elves','gaeas_cradle','geier_reach',
-    'glademuse','green_suns_zenith','growing_rites','heartwood_storyteller',
-    'hope_tender','hyrax_tower_scout','karametra_acolyte','kogla',
-    'legolas_quick_reflexes','llanowar_elves','lotus_petal','magus_of_the_candelabra',
-    'misty_rainforest','mox_diamond','natural_order','natures_rhythm',
-    'nykthos','priest_of_titania','quirion_ranger','regal_force',
-    'scryb_ranger','seedborn_muse','shared_summons','shifting_woodland',
-    'sol_ring','sowing_mycospawn','summoners_pact','survival_fittest',
-    'sylvan_scrying','talon_gates','temur_sabertooth',
-    'urza_cave','utopia_sprawl','verdant_catacombs','war_room','wild_growth',
-    'windswept_heath','wirewood_lodge','wirewood_symbiote','woodcaller_automaton',
-    'wooded_foothills','woodland_bellower','worldly_tutor',
-    'yavimaya','yisan','yeva',
-  ];
-
-  /**
-   * Build the library for a new game.
-   *
-   * @param {object} opts
-   * @param {string[]} opts.commandZone  Card keys in the command zone (removed from library)
-   * @param {string[]} opts.hand         Card keys in the opening hand (removed from library)
-   * @param {string[]} opts.battlefield  Card keys on the battlefield (removed from library)
-   * @param {string[]} opts.graveyard    Card names in graveyard (not removed by key — names ≠ keys)
-   * @returns {string[]} Shuffled library
-   */
-  function buildDefaultLibrary(opts = {}) {
-    const exclude = new Set([
-      ...(opts.commandZone  ?? ['yeva']),
-      ...(opts.hand         ?? []),
-      ...(opts.battlefield  ?? []),
-    ]);
-
-    // Remove one copy per excluded key (multiset subtraction)
-    const deck = [...DEFAULT_DECKLIST];
-    for (const key of exclude) {
-      const idx = deck.indexOf(key);
-      if (idx !== -1) deck.splice(idx, 1);
-    }
-
-    // Fisher-Yates shuffle
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [deck[i], deck[j]] = [deck[j], deck[i]];
-    }
-    return deck;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  Player
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  class Player {
-    /**
-     * @param {object}   data
-     * @param {string}   data.name
-     * @param {number}   data.life
-     * @param {string[]} data.library     card keys, index 0 = top of deck
-     * @param {number}   data.librarySize fallback when library array not provided
-     * @param {number}   data.poison
-     * @param {string[]} data.graveyard   card names, index 0 = top of pile
-     * @param {string[]} data.exile       card names
-     */
-    constructor(data = {}) {
-      this.name      = data.name        ?? 'Player';
-      this.life      = data.life        ?? 40;
-      this.poison    = data.poison      ?? 0;
-      this.graveyard = data.graveyard   ? [...data.graveyard] : [];
-      this.exile     = data.exile       ? [...data.exile]     : [];
-
-      // Library: prefer explicit array; fall back to size-only count (legacy)
-      if (data.library && Array.isArray(data.library)) {
-        this.library = [...data.library];
-      } else {
-        const sz = data.librarySize ?? DEFAULT_LIBRARY_SIZE;
-        // Build a placeholder array of 'unknown' to represent unseen cards
-        this.library = Array(sz).fill('unknown');
+  // ── Option A: Pre-cache parseCost on every card definition ───────────────
+  // parseCost is called on every action-generation pass per hand card.
+  // Since card costs never change, compute once at load and store on the def.
+  {
+    const { parseCost } = _GSM;
+    for (const def of Object.values(CARDS)) {
+      if (def.cost != null) {
+        def._parsedCost = parseCost(def.cost);
       }
-    }
-
-    get librarySize() { return this.library.length; }
-    /** Backward-compat setter: resizes the library array to exactly N 'unknown' entries. */
-    set librarySize(n) {
-      if (n === this.library.length) return;
-      if (n < this.library.length) {
-        this.library = this.library.slice(0, n);
-      } else {
-        const extra = Array(n - this.library.length).fill('unknown');
-        this.library = [...this.library, ...extra];
-      }
-    }
-
-    clone() {
-      return new Player({
-        name:      this.name,
-        life:      this.life,
-        library:   [...this.library],
-        poison:    this.poison,
-        graveyard: [...this.graveyard],
-        exile:     [...this.exile],
-      });
-    }
-
-    /** Returns { lost: bool, reason?: string } */
-    hasLost() {
-      if (this.life <= 0)
-        return { lost: true,  reason: `${this.name} has 0 or less life (${this.life})` };
-      if (this.poison >= POISON_LOSS_THRESHOLD)
-        return { lost: true,  reason: `${this.name} has ${this.poison} poison counters` };
-      return { lost: false };
-    }
-
-    /**
-     * Attempt to draw N cards. Removes from top of library array.
-     * Returns drawn card keys (may be 'unknown' for opponent libraries).
-     * librarySize is clamped to 0 — loss fires when getLosses() checks after draw.
-     */
-    draw(n = 1) {
-      const p = this.clone();
-      const drawn = p.library.splice(0, Math.min(n, p.library.length));
-      // If we couldn't draw enough, library is empty (loss triggers on next check)
-      return p;
-    }
-
-    /**
-     * Draw and return the top card key (or null if empty).
-     * Removes it from the library.
-     */
-    drawCard() {
-      if (this.library.length === 0) return { player: this, cardKey: null };
-      const p = this.clone();
-      const cardKey = p.library.shift();
-      return { player: p, cardKey };
-    }
-
-    /**
-     * Search library for a card matching predicate fn(cardKey) → bool.
-     * Returns { player, cardKey } — player has the card removed from library.
-     * Returns { player: this, cardKey: null } if not found.
-     */
-    searchLibrary(fn) {
-      const idx = this.library.findIndex(fn);
-      if (idx === -1) return { player: this, cardKey: null };
-      const p = this.clone();
-      const [cardKey] = p.library.splice(idx, 1);
-      return { player: p, cardKey };
-    }
-
-    /** Move the top N cards of the graveyard back into the library (shuffle). */
-    shuffleGraveyardIntoLibrary() {
-      const p = this.clone();
-      // Append graveyard card names as 'unknown' keys (names ≠ keys, but close enough for size)
-      p.library = [...p.library, ...p.graveyard.map(() => 'unknown')];
-      p.graveyard = [];
-      return p;
-    }
-
-    /** Put a card name on top of the graveyard. */
-    putInGraveyard(cardName) {
-      const p = this.clone();
-      p.graveyard = [cardName, ...p.graveyard];
-      return p;
-    }
-
-    /** Put a card name into exile. */
-    putInExile(cardName) {
-      const p = this.clone();
-      p.exile = [...p.exile, cardName];
-      return p;
-    }
-
-    /**
-     * Exile a card from the graveyard by name.
-     * Returns new Player or null if not found.
-     */
-    exileFromGraveyard(cardName) {
-      const idx = this.graveyard.indexOf(cardName);
-      if (idx === -1) return null;
-      const p = this.clone();
-      p.graveyard = p.graveyard.filter((_, i) => i !== idx);
-      p.exile = [...p.exile, cardName];
-      return p;
-    }
-
-    /**
-     * Discard the named card (moves from hand into graveyard).
-     * Hand is managed at the GameState level; this just adds to the pile.
-     */
-    receiveDiscard(cardName) {
-      return this.putInGraveyard(cardName);
-    }
-
-    toString() {
-      const lc = this.hasLost();
-      const status = lc.lost ? ` ⚠ LOST` : '';
-      return (
-        `${this.name}: life=${this.life} lib=${this.librarySize} ` +
-        `poison=${this.poison} gy=${this.graveyard.length} ex=${this.exile.length}${status}`
-      );
-    }
-
-    /** Detailed zone dump for printSummary */
-    toDetailedString() {
-      const gy = this.graveyard.length
-        ? `  GY  : ${this.graveyard.join(', ')}`
-        : '  GY  : (empty)';
-      const ex = this.exile.length
-        ? `  Exile: ${this.exile.join(', ')}`
-        : '  Exile: (empty)';
-      return `${this.toString()}\n${gy}\n${ex}`;
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  ManaPool
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  class ManaPool {
-    constructor(pool = {}) {
-      this.W = pool.W ?? 0;
-      this.U = pool.U ?? 0;
-      this.B = pool.B ?? 0;
-      this.R = pool.R ?? 0;
-      this.G = pool.G ?? 0;
-      this.C = pool.C ?? 0;
-    }
-
-    total() { return this.W + this.U + this.B + this.R + this.G + this.C; }
-    clone() { return new ManaPool(this); }
-
-    add(color, amount = 1) {
-      const p = this.clone();
-      p[color] += amount;
-      return p;
-    }
-
-    pay(costStr) {
-      const parsed = parseCost(costStr);
-      const pool = this.clone();
-      for (const [color, amt] of Object.entries(parsed.colored)) {
-        if (pool[color] < amt) return null;
-        pool[color] -= amt;
-      }
-      let generic = parsed.generic;
-      for (const color of ['C', 'G', 'W', 'U', 'B', 'R']) {
-        if (generic <= 0) break;
-        const use = Math.min(generic, pool[color]);
-        pool[color] -= use;
-        generic -= use;
-      }
-      if (generic > 0) return null;
-      return pool;
-    }
-
-    toString() {
-      const parts = [];
-      if (this.W) parts.push(`{W}x${this.W}`);
-      if (this.U) parts.push(`{U}x${this.U}`);
-      if (this.B) parts.push(`{B}x${this.B}`);
-      if (this.R) parts.push(`{R}x${this.R}`);
-      if (this.G) parts.push(`{G}x${this.G}`);
-      if (this.C) parts.push(`{C}x${this.C}`);
-      return parts.length ? parts.join(' ') : '{0}';
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  parseCost
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function parseCost(costStr) {
-    if (!costStr || costStr === '0') return { generic: 0, colored: {} };
-    const colored = {};
-    let generic = 0;
-    let i = 0;
-    while (i < costStr.length) {
-      const ch = costStr[i];
-      if (/\d/.test(ch)) {
-        let num = '';
-        while (i < costStr.length && /\d/.test(costStr[i])) num += costStr[i++];
-        generic += parseInt(num, 10);
-      } else if ('WUBRGC'.includes(ch)) {
-        colored[ch] = (colored[ch] || 0) + 1;
-        i++;
-      } else {
-        i++;
-      }
-    }
-    return { generic, colored };
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  Permanent
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  class Permanent {
-    constructor(data) {
-      this.id            = data.id;
-      this.name          = data.name;
-      this.types         = data.types       ?? [];
-      this.subtypes      = data.subtypes    ?? [];
-      this.tapped        = data.tapped      ?? false;
-      this.summoningSick = data.summoningSick ?? false;
-      this.cardKey       = data.cardKey;
-      this.isForest      = data.isForest    ?? false;
-      this.abilitiesUsed = data.abilitiesUsed ?? {};
-      this.counters      = data.counters    ?? {};
-      this.power         = data.power;
-      this.toughness     = data.toughness;
-    }
-
-    is(type) { return this.types.includes(type.toLowerCase()); }
-
-    clone() {
-      return new Permanent({
-        ...this,
-        types:         [...this.types],
-        subtypes:      [...this.subtypes],
-        abilitiesUsed: { ...this.abilitiesUsed },
-        counters:      { ...this.counters },
-      });
-    }
-
-    get label() {
-      const t = this.tapped        ? '[T]' : '   ';
-      const s = this.summoningSick ? '[S]' : '   ';
-      const f = this.isForest      ? '[Forest]' : '';
-      const c = Object.entries(this.counters).map(([k, v]) => `${v}${k}`).join(' ');
-      return `${t}${s} ${this.name}${f}${c ? ' (' + c + ')' : ''}`;
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  GameState
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  class GameState {
-    /**
-     * Construct a game state.
-     *
-     * Preferred form — explicit players array:
-     *   new GameState({
-     *     players: [
-     *       { name:'You',        life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
-     *       { name:'Opponent 1', life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
-     *       { name:'Opponent 2', life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
-     *       { name:'Opponent 3', life:40, librarySize:99, poison:0, graveyard:[], exile:[] },
-     *     ],
-     *     hand: [...],
-     *   })
-     *
-     * Legacy shorthand (your stats only, opponents default):
-     *   new GameState({ life:40, hand:[...] })
-     */
-    constructor(data = {}) {
-      this.turn          = data.turn        ?? 1;
-      this.phase         = data.phase       ?? 'main1';
-      this.landDrops     = data.landDrops   ?? 1;
-      this.hand          = data.hand        ? [...data.hand] : [];
-      this.battlefield   = data.battlefield
-        ? data.battlefield.map(p => p instanceof Permanent ? p : new Permanent(p))
-        : [];
-      this.mana          = data.mana instanceof ManaPool ? data.mana : new ManaPool(data.mana ?? {});
-      this.storm         = data.storm       ?? 0;
-      this.comboAchieved = data.comboAchieved ?? false;
-      this.comboName     = data.comboName     ?? null;
-      this._nextId       = data._nextId       ?? 1;
-      this.history       = data.history       ? [...data.history] : [];
-
-      // ── Command zone ─────────────────────────────────────────────────────────
-      // commandZone: card keys of commanders currently in the command zone
-      // commanderTax: extra generic mana cost per previous commander cast
-      this.commandZone    = data.commandZone  ? [...data.commandZone]  : ['yeva'];
-      this.commanderTax   = data.commanderTax ?? 0;
-      // isOpponentTurn: true when modelling a flash window on an opponent's turn
-      this.isOpponentTurn = data.isOpponentTurn ?? false;
-      // topDecked: card key placed on top of library by a tutor.
-      // When set, startNewTurn draws exactly that card into hand, then clears this flag.
-      // When null, no draw step occurs — keeping the solver deterministic.
-      this.topDecked      = data.topDecked ?? null;
-
-      // ── Players (own their zones) ────────────────────────────────────────────
-      if (data.players && Array.isArray(data.players)) {
-        this.players = data.players.map((p, i) =>
-          p instanceof Player ? p : new Player({
-            name:        p.name        ?? (i === 0 ? 'You' : `Opponent ${i}`),
-            life:        p.life        ?? 40,
-            library:     p.library     ?? null,
-            librarySize: p.librarySize ?? DEFAULT_LIBRARY_SIZE,
-            poison:      p.poison      ?? 0,
-            graveyard:   p.graveyard   ?? [],
-            exile:       p.exile       ?? [],
-          })
-        );
-      } else {
-        // Legacy: build player 0 with the default decklist library
-        this.players = [
-          new Player({
-            name:      'You',
-            life:      data.life        ?? 40,
-            library:   data.library     ?? buildDefaultLibrary({
-              commandZone: this.commandZone,
-              hand:        this.hand,
-            }),
-            poison:    data.poison      ?? 0,
-            graveyard: data.graveyard   ?? [],
-            exile:     data.exile       ?? [],
-          }),
-          new Player({ name: 'Opponent 1' }),
-          new Player({ name: 'Opponent 2' }),
-          new Player({ name: 'Opponent 3' }),
-        ];
-      }
-      while (this.players.length < 4) {
-        this.players.push(new Player({ name: `Opponent ${this.players.length}` }));
-      }
-    }
-
-    // ── Convenience zone accessors for active player (players[0]) ────────────
-
-    get life()        { return this.players[0].life; }
-    set life(v)       { this.players[0].life = v; }
-
-    get librarySize() { return this.players[0].librarySize; }
-    set librarySize(v){ this.players[0].librarySize = v; }
-
-    get poison()      { return this.players[0].poison; }
-    set poison(v)     { this.players[0].poison = v; }
-
-    /** Your graveyard (top = index 0). */
-    get graveyard()   { return this.players[0].graveyard; }
-    set graveyard(v)  { this.players[0].graveyard = v; }
-
-    /** Your exile pile. */
-    get exile()       { return this.players[0].exile; }
-    set exile(v)      { this.players[0].exile = v; }
-
-    // ── Loss checks ───────────────────────────────────────────────────────────
-
-    getLosses() {
-      const losses = [];
-      for (let i = 0; i < this.players.length; i++) {
-        const check = this.players[i].hasLost();
-        if (check.lost) losses.push({ playerIndex: i, player: this.players[i], reason: check.reason });
-      }
-      return losses;
-    }
-
-    youLost()          { return this.players[0].hasLost().lost; }
-    opponentsAllLost() { return this.players.slice(1).every(p => p.hasLost().lost); }
-
-    // ── Permanent helpers ─────────────────────────────────────────────────────
-
-    creatures()         { return this.battlefield.filter(p => p.is('creature')); }
-    lands()             { return this.battlefield.filter(p => p.is('land')); }
-    untappedLands()     { return this.lands().filter(p => !p.tapped); }
-    untappedCreatures() { return this.creatures().filter(p => !p.tapped && !p.summoningSick); }
-    hasPermanent(name)  { return this.battlefield.some(p => p.name === name); }
-    getPermanent(name)  { return this.battlefield.find(p => p.name === name); }
-    getPermanentById(id){ return this.battlefield.find(p => p.id === id); }
-
-    forestsInHand() {
-      return this.hand.filter(c => {
-        const def = CARDS[c];
-        return def && def.subtypes && def.subtypes.includes('Forest');
-      });
-    }
-
-    // ── Clone ─────────────────────────────────────────────────────────────────
-
-    clone() {
-      return new GameState({
-        turn:           this.turn,
-        phase:          this.phase,
-        landDrops:      this.landDrops,
-        hand:           [...this.hand],
-        battlefield:    this.battlefield.map(p => p.clone()),
-        mana:           this.mana.clone(),
-        storm:          this.storm,
-        comboAchieved:  this.comboAchieved,
-        comboName:      this.comboName,
-        _nextId:        this._nextId,
-        history:        [...this.history],
-        players:        this.players.map(p => p.clone()),
-        commandZone:    [...this.commandZone],
-        commanderTax:   this.commanderTax,
-        isOpponentTurn: this.isOpponentTurn ?? false,
-        topDecked:      this.topDecked ?? null,
-      });
-    }
-
-    // ── Logging ───────────────────────────────────────────────────────────────
-
-    log(msg) {
-      const s = this.clone();
-      s.history = [...s.history, { turn: s.turn, msg }];
-      return s;
-    }
-
-    // ── Mana ─────────────────────────────────────────────────────────────────
-
-    addMana(color, amount = 1) {
-      const s = this.clone();
-      s.mana = s.mana.add(color, amount);
-      return s;
-    }
-
-    payMana(costStr) {
-      const newPool = this.mana.pay(costStr);
-      if (newPool === null) return null;
-      const s = this.clone();
-      s.mana = newPool;
-      return s;
-    }
-
-    // ── Player zone mutations (return new GameState) ──────────────────────────
-
-    /**
-     * Modify a player's numeric stats by delta.
-     * @param {number} pi      Player index (0=you, 1-3=opponents)
-     * @param {object} changes { life?, librarySize?, poison? } — deltas
-     */
-    modifyPlayer(pi, changes) {
-      const s = this.clone();
-      const p = s.players[pi].clone();
-      if (changes.life        !== undefined) p.life        += changes.life;
-      if (changes.librarySize !== undefined) p.librarySize += changes.librarySize;
-      if (changes.poison      !== undefined) p.poison      += changes.poison;
-      s.players[pi] = p;
-      return s;
-    }
-
-    dealDamage(pi, { damage = 0, poison = 0, infect = false } = {}) {
-      const s = this.clone();
-      const p = s.players[pi].clone();
-      if (infect) { p.poison += damage; }
-      else        { p.life -= damage; p.poison += poison; }
-      s.players[pi] = p;
-      return s;
-    }
-
-    gainLife(pi, amount) { return this.modifyPlayer(pi, { life: amount }); }
-    addPoison(pi, amount = 1) { return this.modifyPlayer(pi, { poison: amount }); }
-
-    /**
-     * A player draws N cards.
-     * librarySize clamps to 0 if over-drawn (loss detected via getLosses()).
-     */
-    /**
-     * A player draws N cards. For player 0, moves card keys from library to hand.
-     * For opponents (pi > 0), just removes from their library (hand not tracked).
-     */
-    playerDraws(pi, n = 1) {
-      if (pi === 0) {
-        return this.playerDrawCards(n);
-      }
-      // Opponent: remove from library only (hand not tracked)
-      const s = this.clone();
-      s.players[pi] = s.players[pi].draw(n);
-      return s;
-    }
-
-    /**
-     * Draw cards from your library into your hand (player 0 only).
-     * Moves actual card keys from library[0..n-1] into hand.
-     * Unknown cards ('unknown') are silently discarded (opponent libraries, pre-game state).
-     * @returns new GameState
-     */
-    playerDrawCards(n = 1) {
-      const s = this.clone();
-      for (let i = 0; i < n; i++) {
-        if (s.players[0].library.length === 0) break;
-        const cardKey = s.players[0].library.shift();
-        if (cardKey && cardKey !== 'unknown') {
-          s.hand = [...s.hand, cardKey];
-        }
-      }
-      return s;
-    }
-
-    /**
-     * Search your library for the first card matching predicate fn(cardKey) → bool.
-     * Removes it from the library and returns { state, cardKey }.
-     * If not found returns { state: this, cardKey: null }.
-     */
-    searchLibraryFor(fn) {
-      const idx = this.players[0].library.findIndex(fn);
-      if (idx === -1) return { state: this, cardKey: null };
-      const s = this.clone();
-      const [cardKey] = s.players[0].library.splice(idx, 1);
-      return { state: s, cardKey };
-    }
-
-    /**
-     * Put a card name into a player's graveyard (top of pile).
-     * @param {number} pi  Player index
-     * @param {string} cardName
-     */
-    addToGraveyard(pi, cardName) {
-      const s = this.clone();
-      s.players[pi] = s.players[pi].putInGraveyard(cardName);
-      return s;
-    }
-
-    /**
-     * Put a card name into a player's exile.
-     * @param {number} pi  Player index
-     * @param {string} cardName
-     */
-    addToExile(pi, cardName) {
-      const s = this.clone();
-      s.players[pi] = s.players[pi].putInExile(cardName);
-      return s;
-    }
-
-    /**
-     * Exile a specific card from a player's graveyard by name.
-     * Returns new GameState or null if card not found.
-     */
-    exileFromGraveyard(pi, cardName) {
-      const s = this.clone();
-      const updated = s.players[pi].exileFromGraveyard(cardName);
-      if (!updated) return null;
-      s.players[pi] = updated;
-      return s;
-    }
-
-    /**
-     * Shuffle all cards from a player's graveyard back into their library.
-     * Graveyard becomes empty; librarySize increases accordingly.
-     */
-    shuffleGraveyardIntoLibrary(pi) {
-      const s = this.clone();
-      s.players[pi] = s.players[pi].shuffleGraveyardIntoLibrary();
-      return s;
-    }
-
-    /**
-     * Discard a card from your hand into your graveyard.
-     * Removes the card from hand and adds it to players[0].graveyard.
-     * Returns new GameState or null if card not in hand.
-     */
-    discardFromHand(cardKey) {
-      const cards = CARDS;
-      const def = cards[cardKey];
-      const cardName = def ? def.name : cardKey;
-      let s = this.removeFromHand(cardKey);
-      if (!s) return null;
-      s = s.addToGraveyard(0, cardName);
-      return s;
-    }
-
-    // ── Permanent mutations ───────────────────────────────────────────────────
-
-    tapPermanent(id) {
-      const s = this.clone();
-      const p = s.getPermanentById(id);
-      if (!p || p.tapped) return null;
-      p.tapped = true;
-      return s;
-    }
-
-    untapPermanent(id) {
-      const s = this.clone();
-      const p = s.getPermanentById(id);
-      if (!p) return null;
-      p.tapped = false;
-      return s;
-    }
-
-    enterBattlefield(cardKey, extra = {}) {
-      const cards = CARDS;
-      const def = cards[cardKey];
-      if (!def) throw new Error(`Unknown card: ${cardKey}`);
-      let s = this.clone();
-      const id = s._nextId++;
-      const perm = new Permanent({
-        id,
-        name:          def.name,
-        types:         [...def.types],
-        subtypes:      [...(def.subtypes ?? [])],
-        cardKey,
-        tapped:        extra.tapped ?? false,
-        summoningSick: def.types.includes('creature') ? true : false,
-        isForest:      def.subtypes?.includes('Forest') ?? false,
-        power:         def.power,
-        toughness:     def.toughness,
-        ...extra,
-      });
-      s.battlefield = [...s.battlefield, perm];
-
-      // ── Static layer: apply existing statics to the new permanent ────────────
-
-      // Ashaya: new creatures become Forest lands
-      if (s.hasPermanent('Ashaya, Soul of the Wild') && perm.is('creature')) {
-        perm.isForest = true;
-        if (!perm.types.includes('land')) perm.types.push('land');
-        if (!perm.subtypes.includes('Forest')) perm.subtypes.push('Forest');
-      }
-
-      // Concordant Crossroads / Thousand-Year Elixir: creatures lose summoning sickness
-      if (perm.is('creature') && (
-        s.hasPermanent('Concordant Crossroads') ||
-        s.hasPermanent('Thousand-Year Elixir')
-      )) {
-        perm.summoningSick = false;
-      }
-
-      // Yavimaya, Cradle of Growth: all lands are Forests
-      if (perm.is('land') && s.hasPermanent('Yavimaya, Cradle of Growth')) {
-        if (!perm.subtypes.includes('Forest')) perm.subtypes.push('Forest');
-        perm.isForest = true;
-      }
-
-      // Leyline of Abundance: tracked as a flag; effects applied in tapForMana wrappers
-
-      // ── ETB triggers: card-specific effects on entry ──────────────────────────
-
-      // Ashaya ETB: all existing non-token creatures become Forest lands
-      if (cardKey === 'ashaya') {
-        for (const bf of s.battlefield) {
-          if (bf.is('creature')) {
-            bf.isForest = true;
-            if (!bf.types.includes('land')) bf.types.push('land');
-            if (!bf.subtypes.includes('Forest')) bf.subtypes.push('Forest');
-          }
-        }
-      }
-
-      // Concordant Crossroads ETB: all existing creatures lose summoning sickness
-      if (cardKey === 'concordant_crossroads') {
-        for (const bf of s.battlefield) {
-          if (bf.is('creature')) bf.summoningSick = false;
-        }
-      }
-
-      // Yavimaya ETB: all existing lands become Forests
-      if (cardKey === 'yavimaya') {
-        for (const bf of s.battlefield) {
-          if (bf.is('land') && !bf.subtypes.includes('Forest')) {
-            bf.subtypes.push('Forest');
-            bf.isForest = true;
-          }
-        }
-      }
-
-      // Lotus Cobra ETB landfall trigger (fires when a land enters after Cobra):
-      // handled in actions.js — playing a land checks for Cobra and adds mana.
-
-      // Marwyn, the Nurturer: whenever another Elf enters, put +1/+1 counter on Marwyn
-      if (perm.is('creature') && perm.subtypes && perm.subtypes.includes('Elf')) {
-        const marwyn = s.battlefield.find(p => p.name === 'Marwyn, the Nurturer' && p.id !== perm.id);
-        if (marwyn) {
-          marwyn.power     = (marwyn.power     || 1) + 1;
-          marwyn.toughness = (marwyn.toughness || 1) + 1;
-        }
-      }
-
-      // Hyrax Tower Scout ETB: untap target creature (deterministic: untap first tapped creature)
-      if (cardKey === 'hyrax_tower_scout') {
-        const tapped = s.creatures().find(c => c.id !== perm.id && c.tapped);
-        if (tapped) s = s.untapPermanent(tapped.id);
-      }
-
-      // Surrak and Goreclaw ETB: existing creatures lose summoning sickness (haste)
-      if (cardKey === 'surrak_goreclaw') {
-        for (const bf of s.battlefield) {
-          if (bf.is('creature') && bf.id !== perm.id) bf.summoningSick = false;
-        }
-      }
-
-      // Great Oak Guardian ETB: target player's creatures get +2/+2 until EOT and untap
-      // (simplified: untap all your creatures; +2/+2 is not tracked in this engine)
-      if (cardKey === 'great_oak_guardian') {
-        for (const bf of s.battlefield) {
-          if (bf.is('creature')) bf.tapped = false;
-        }
-      }
-
-      // Eternal Witness ETB: return target card from graveyard to hand
-      // (deterministic: return last card in graveyard, if any)
-      if (cardKey === 'eternal_witness' && s.players[0].graveyard.length > 0) {
-        const cardName = s.players[0].graveyard[0]; // top of pile
-        s.players[0] = s.players[0].clone();
-        s.players[0].graveyard = s.players[0].graveyard.slice(1);
-        // Find the card key for this name
-        const ck = Object.keys(cards).find(k => cards[k].name === cardName);
-        if (ck) s = s.addToHand(ck);
-      }
-
-      // Regal Force ETB: draw a card for each green creature you control
-      if (cardKey === 'regal_force') {
-        const greenCreatures = s.creatures().length; // simplified: all creatures
-        s = s.playerDraws(0, greenCreatures);
-      }
-
-      // Beast Whisperer: draw a card when you cast a creature — triggered in actions.js
-
-      // Skyshroud Poacher ETB: nothing (ability handled separately)
-
-      // Hyrax Tower Scout already handled above.
-
-      return s;
-    }
-
-    /**
-     * Remove a permanent from the battlefield.
-     * @param {number}          id    Permanent id
-     * @param {string|null}     zone  'graveyard' | 'exile' | null (leaves the game)
-     * @param {number}          pi    Player index that owns the card (default 0 = you)
-     */
-    removeFromBattlefield(id, zone = 'graveyard', pi = 0) {
-      const s = this.clone();
-      const idx = s.battlefield.findIndex(p => p.id === id);
-      if (idx === -1) return null;
-      const [removed] = s.battlefield.splice(idx, 1);
-      if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
-      if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
-      return s;
-    }
-
-    removeFromHand(cardKey) {
-      const s = this.clone();
-      const idx = s.hand.indexOf(cardKey);
-      if (idx === -1) return null;
-      s.hand = [...s.hand.slice(0, idx), ...s.hand.slice(idx + 1)];
-      return s;
-    }
-
-    addToHand(cardKey) {
-      const s = this.clone();
-      s.hand = [...s.hand, cardKey];
-      return s;
-    }
-
-    markAbilityUsed(id, abilityKey) {
-      const s = this.clone();
-      const p = s.getPermanentById(id);
-      if (!p) return null;
-      p.abilitiesUsed = { ...p.abilitiesUsed, [abilityKey]: true };
-      return s;
-    }
-
-    // ── Turn management ───────────────────────────────────────────────────────
-
-    startNewTurn() {
-      const s = this.clone();
-      s.turn++;
-      s.landDrops = 1;
-      s.mana = new ManaPool();
-      s.storm = 0;
-      s.isOpponentTurn = false;   // back to your main phase
-      for (const p of s.battlefield) {
-        p.tapped = false;
-        p.summoningSick = false;
-        p.abilitiesUsed = {};
-      }
-      // Draw for turn — ONLY if a tutor explicitly top-decked a card.
-      // This keeps the solver deterministic: random library draws are not modelled.
-      // When topDecked is set, the named card is guaranteed to be on top of the library.
-      if (s.topDecked !== null) {
-        const topCard = s.topDecked;
-        s.topDecked = null;                      // consume the flag
-        s.players[0] = s.players[0].draw(1);    // remove from library
-        s.hand = [...s.hand, topCard];           // deliver to hand
-      }
-      // If topDecked is null: no draw step — library top is unknown/random.
-      // Opponents still draw (library size tracking only):
-      for (let i = 1; i < s.players.length; i++) {
-        s.players[i] = s.players[i].draw(1);
-      }
-      s.history = [...s.history, {
-        turn: s.turn,
-        msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
-      }];
-      return s;
-    }
-
-    // ── Fingerprint ───────────────────────────────────────────────────────────
-
-    fingerprint() {
-      const hand = [...this.hand].sort().join(',');
-      const bf = this.battlefield
-        .map(p => `${p.name}:${p.tapped ? 'T' : 'U'}:${p.isForest ? 'F' : ''}`)
-        .sort().join('|');
-      const m = this.mana.toString();
-      const players = this.players
-        .map(p => `${p.life}/${p.librarySize}/${p.poison}/${p.graveyard.length}/${p.exile.length}`)
-        .join(',');
-      const cmd = `CZ:${[...this.commandZone].sort().join(',')}:tax${this.commanderTax}`;
-      return `T${this.turn}|H:${hand}|BF:${bf}|M:${m}|L:${this.landDrops}|P:${players}|${cmd}`;
-    }
-
-    // ── Display ───────────────────────────────────────────────────────────────
-
-    printSummary() {
-      const losses = this.getLosses();
-      if (losses.length) {
-      }
-      if (this.comboAchieved) console.log(`\n  *** COMBO: ${this.comboName} ***`);
-    }
-  }
-
-  const _GSM = { GameState, ManaPool, parseCost, Player, Permanent };
 
   // combos.js
   /**
@@ -5860,7 +5883,7 @@ function _buildSolverBundle() {
     };
   }
 
-  const _COM = { checkCombos, checkVictory };
+  var _COM = { checkCombos, checkVictory };
 
   // actions.js
   /**
@@ -6067,28 +6090,34 @@ function _buildSolverBundle() {
    * Apply reductions and Trinisphere minimum to a cost string.
    * Returns the effective cost string or null if the card is uncounterable-free.
    */
+  // Option A: import parseCost once at module level
   function effectiveCost(state, def) {
-    const { parseCost } = _GSM;
-    const raw = parseCost(def.cost);
+    // Use pre-cached parsed cost (set on def at cards.js load time) — Option A
+    const raw = def._parsedCost ?? _parseCost(def.cost);
+
+    // Option B: skip STAX checks when no STAX is on the battlefield
+    if (!state._hasSTAX) {
+      // Fast path: only check Emerald Medallion cost reduction
+      const reduction = costReductions(state, def);
+      let generic = Math.max(0, raw.generic - reduction);
+      const colored = { ...raw.colored };
+      let costStr = '';
+      if (generic > 0) costStr += String(generic);
+      for (const [color, amt] of Object.entries(colored)) costStr += color.repeat(amt);
+      return costStr || '0';
+    }
+
+    // Slow path: STAX present — apply Thorn and Trinisphere checks
     const reduction = costReductions(state, def);
     const thorn = thornTax(state, def);
-
     let generic = Math.max(0, raw.generic - reduction) + thorn;
     const colored = { ...raw.colored };
-
-    // Trinisphere: total mana paid must be at least 3
     const coloredTotal = Object.values(colored).reduce((a, b) => a + b, 0);
     const triMin = trinisphereMin(state);
-    if (generic + coloredTotal < triMin) {
-      generic = triMin - coloredTotal;
-    }
-
-    // Rebuild cost string
+    if (generic + coloredTotal < triMin) generic = triMin - coloredTotal;
     let costStr = '';
     if (generic > 0) costStr += String(generic);
-    for (const [color, amt] of Object.entries(colored)) {
-      costStr += color.repeat(amt);
-    }
+    for (const [color, amt] of Object.entries(colored)) costStr += color.repeat(amt);
     return costStr || '0';
   }
 
@@ -6500,7 +6529,7 @@ function _buildSolverBundle() {
     return [...new Set(hand)];
   }
 
-  const _ACM = { generateActions };
+  var _ACM = { generateActions };
 
   // Solver.js
   /**
@@ -6518,6 +6547,28 @@ function _buildSolverBundle() {
    *   allLines    {boolean}  Collect ALL winning lines, not just the best (default false)
    *   verbose     {boolean}  Log each winning line as found (default false)
    */
+
+  // ── Option D: Early combo-reachability pruning ────────────────────────────
+  // Returns true if the state has a realistic path to assembling any combo
+  // within the remaining turns. Used to prune branches that cannot win.
+  // Very fast: O(combos × pieces) with no allocations.
+  function canReachCombo(state, turnsLeft) {
+    // Build present set from battlefield + hand (reuse NAME_TO_KEY for O(1) lookup)
+    const present = new Set(state.hand);
+    for (const p of state.battlefield) {
+      const ck = NAME_TO_KEY[p.name];
+      if (ck) present.add(ck);
+    }
+    // A combo is reachable if missing ≤ turnsLeft pieces
+    // (each missing piece costs at least 1 action/turn to acquire via tutor)
+    for (const required of COMBO_REQUIRED_KEYS) {
+      const missing = required.filter(k => !present.has(k)).length;
+      if (missing <= turnsLeft) return true;
+    }
+    // Also reachable if already have infinite mana or near-win
+    if (checkCombos(state)) return true;
+    return false;
+  }
 
   const DEFAULT_OPTIONS = {
     maxTurns:  4,
@@ -6542,6 +6593,27 @@ function _buildSolverBundle() {
            depth            *      10  -
            state.life        *       1  -
            state.mana.total() *      1;
+  }
+
+  // ── Option F: Heuristic child ordering ───────────────────────────────────
+  // Scores a state by how close it is to winning.
+  // Lower = closer to win. Used to sort DFS children so best states explored first.
+  function heuristic(state) {
+    const present = new Set(state.hand);
+    for (const p of state.battlefield) {
+      const ck = NAME_TO_KEY[p.name];
+      if (ck) present.add(ck);
+    }
+    // Count minimum missing pieces across all combos
+    let minMissing = Infinity;
+    for (const required of COMBO_REQUIRED_KEYS) {
+      const missing = required.filter(k => !present.has(k)).length;
+      if (missing < minMissing) minMissing = missing;
+    }
+    // If combo is assembled, score by win condition distance
+    const combo = checkCombos(state);
+    if (combo) minMissing = -1; // infinite mana → prioritise highly
+    return minMissing * 1000 - state.mana.total();
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -6624,14 +6696,28 @@ function _buildSolverBundle() {
         return;
       }
 
-      // Expand
+      // Option D: Early combo-reachability pruning
+      // If no combo is reachable given remaining turns, prune this branch.
+      const turnsLeft = this.opts.maxTurns - state.turn;
+      if (turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1)) {
+        this.pruned++;
+        return;
+      }
+
+      // Option F: Expand with heuristic ordering
+      // Generate all actions, apply them, sort by heuristic (closest to win first)
       const actions = generateActions(state);
+      const children = [];
       for (const action of actions) {
         let next;
         try { next = action.apply(state); }
         catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
         if (!next) continue;
-
+        children.push(next);
+      }
+      // Sort: lower heuristic = closer to win = explore first
+      children.sort((a, b) => heuristic(a) - heuristic(b));
+      for (const next of children) {
         this._dfs(next, [...path, next], depth + 1);
         if (this.statesExplored > this.opts.maxStates) return;
       }
@@ -6766,7 +6852,7 @@ function _buildSolverBundle() {
     }
   }
 
-  const _SLV = { Solver };
+  var _SLV = { Solver };
 
   // Analyzer.js
   /**
@@ -7100,6 +7186,16 @@ var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
+
+
+
+
+
+
+
+
+
+// ── Solver Web Worker ────────────────────────────────────────────────────
 
 
 
@@ -17949,7 +18045,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         } else {
           // Infinite mana confirmed this turn — no win outlet yet
           _category = "♾ INFINITE MANA — SOLVER";
-          _priority = 12.8; _color = "#58d68d";
+          _priority = 14.5; _color = "#58d68d";
           _headline = _solverResult.manaCombo || _solverResult.comboName;
           _detail   = _solverResult.comboDesc || _solverResult.comboName;
         }
@@ -28322,7 +28418,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       _detail   = solverResult.comboDesc || solverResult.comboName;
     } else {
       _category = "♾ INFINITE MANA — SOLVER";
-      _priority = 12.8; _color = "#58d68d";
+      _priority = 14.5; _color = "#58d68d";
       _headline = solverResult.manaCombo || solverResult.comboName;
       _detail   = solverResult.comboDesc || solverResult.comboName;
     }
@@ -37259,7 +37355,20 @@ function YevaAdvisor() {
     };
   }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn]);
 
-  // Merge async Solver result into advice cards (same logic as goldfish analysisWithSolver)
+  // Derive a turn clock from the async Solver result — shown when advisor's own
+  // turnClock is absent or when the Solver found something more specific.
+  const solverTurnClock = useMemo(() => {
+    const sr = advisorSolverResult;
+    if (!sr?.found) return null;
+    const turns = Math.max(0, (sr.winTurn ?? 1) - 1); // winTurn:1 = this turn (T+0)
+    const label = sr.winCondition
+      ? (turns === 0 ? `Win NOW` : `Win T+${turns}`)
+      : (turns === 0 ? `∞ NOW` : `∞ T+${turns}`);
+    const plan = sr.winCondition
+      ? `${sr.winCondition} via ${sr.manaCombo}`
+      : `${sr.manaCombo} — win condition still needed`;
+    return { turns, label, plan, hasWin: !!sr.winCondition };
+  }, [advisorSolverResult]);
   const adviceWithSolver = useMemo(() => {
     const sr = advisorSolverResult;
     if (!sr?.found || !advice.length) return advice;
@@ -37274,7 +37383,7 @@ function YevaAdvisor() {
       _category = "🏆 WIN NOW — SOLVER";   _priority = 16; _color = "#ff6b35";
       _headline = sr.winCondition; _detail = sr.comboDesc || sr.comboName;
     } else if (_isThisTurn && !_hasWinCon) {
-      _category = "♾ INFINITE MANA — SOLVER"; _priority = 12.8; _color = "#58d68d";
+      _category = "♾ INFINITE MANA — SOLVER"; _priority = 14.5; _color = "#58d68d";
       _headline = sr.manaCombo || sr.comboName; _detail = sr.comboDesc || sr.comboName;
     } else {
       _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
@@ -37421,19 +37530,31 @@ function YevaAdvisor() {
                 )}
               </div>
             )}
-            {/* GROUP 3: Turn Clock Display */}
-            {turnClock && !infiniteMana && (
-              <div title={turnClock.plan} style={{
-                padding: "4px 10px",
-                background: turnClock.turns === 0 ? "#1a2e0a" : turnClock.turns <= 2 ? "#1a1e0a" : "#1a0a0a",
-                border: `1px solid ${turnClock.turns === 0 ? "#58d68d" : turnClock.turns <= 2 ? "#c8a800" : "#e74c3c"}`,
-                borderRadius: "6px", fontSize: "11px",
-                color: turnClock.turns === 0 ? "#58d68d" : turnClock.turns <= 2 ? "#c8a800" : "#e74c3c",
-                fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", cursor: "help",
-              }}>
-                ⏱ {turnClock.turns === 0 ? "NOW" : `T+${turnClock.turns}`}
-              </div>
-            )}
+            {/* GROUP 3: Turn Clock Display — advisor logic or Solver result */}
+            {(turnClock || solverTurnClock) && !infiniteMana && (() => {
+              // Prefer advisor's own turnClock if present; otherwise show Solver's
+              const tc = turnClock ?? solverTurnClock;
+              const isSolver = !turnClock && !!solverTurnClock;
+              const t = tc.turns;
+              const clr = t === 0 ? "#58d68d" : t <= 2 ? "#c8a800" : "#e74c3c";
+              const bg  = t === 0 ? "#1a2e0a" : t <= 2 ? "#1a1e0a" : "#1a0a0a";
+              const displayLabel = isSolver
+                ? (solverTurnClock.label)
+                : (t === 0 ? "NOW" : `T+${t}`);
+              const emoji = isSolver ? (solverTurnClock.hasWin ? "🏆" : "♾") : "⏱";
+              return (
+                <div title={tc.plan + (isSolver ? " (Solver)" : "")} style={{
+                  padding: "4px 10px",
+                  background: bg,
+                  border: `1px solid ${clr}`,
+                  borderRadius: "6px", fontSize: "11px",
+                  color: clr,
+                  fontFamily: "'Cinzel', serif", letterSpacing: "0.5px", cursor: "help",
+                }}>
+                  {emoji} {displayLabel}
+                </div>
+              );
+            })()}
             {/* GROUP 2: Win Conversion Paths */}
             {winConversion && winConversion.length > 0 && (
               <div title={winConversion.map(w => `${w.path}: ${w.desc}${w.missing.length > 0 ? " ⚠ MISSING: " + w.missing.join(", ") : ""}`).join("\n")} style={{
