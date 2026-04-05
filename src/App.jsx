@@ -6934,7 +6934,7 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 // Translates analyzeGameState's card-name arrays into Solver's GameState,
 // runs the search, and returns structured results.
 function runSolver(hand, battlefield, greenMana, colorlessMana, sickCreatures, isMyTurn, {
-  graveyard = [], exile = [], library = null, librarySize = 99, life = 40, tappedCards = null,
+  graveyard = [], exile = [], library = null, librarySize = 99, life = 40, tappedCards = null, landDrops = 1,
 } = {}) {
   if (!isMyTurn) return null;
   if (typeof SolverGameState === "undefined") return null;
@@ -6957,7 +6957,7 @@ function runSolver(hand, battlefield, greenMana, colorlessMana, sickCreatures, i
       hand:      handKeys,
       mana:      { G: Math.min(greenMana, 30), C: Math.min(colorlessMana, 30) },
       turn:      1,
-      landDrops: 1,
+      landDrops: landDrops,
       life,
       ...(libraryKeys ? { library: libraryKeys } : { librarySize: Math.max(0, librarySize - hand.length) }),
       graveyard: graveyardKeys,
@@ -28045,6 +28045,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         sickCards:    [...(sickCreatures instanceof Set ? sickCreatures : new Set())],
         tappedCards:  [...tapped],
         life: 40,
+        landDrops:    landPlayed ? 0 : 1,
         librarySize:  Math.max(0, 99 - hand.length - battlefield.length - graveyard.length),
       };
 
@@ -28052,7 +28053,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         setTimeout(() => {
           try {
             const sr = runSolver(hand, battlefield, mana.green, mana.colorless, sickCreatureNames, true, {
-              graveyard, library, life: 40, tappedCards: tapped,
+              graveyard, library, life: 40, tappedCards: tapped, landDrops: landPlayed ? 0 : 1,
             });
             setSolverResult(sr);
           } catch(_) { setSolverResult(null); }
@@ -37037,11 +37038,12 @@ function YevaAdvisor() {
         hand, battlefield, graveyard,
         greenMana: manaAvailable.green, colorlessMana: manaAvailable.colorless,
         sickCards: [], tappedCards: [], life: 40,
+        landDrops: isMyTurn ? 1 : 0,
         librarySize: Math.max(0, 99 - hand.length - battlefield.length - graveyard.length),
       };
       const runInline = () => setTimeout(() => {
         try {
-          const sr = runSolver(hand, battlefield, manaAvailable.green, manaAvailable.colorless, new Set(), true, { graveyard, life: 40 });
+          const sr = runSolver(hand, battlefield, manaAvailable.green, manaAvailable.colorless, new Set(), true, { graveyard, life: 40, landDrops: isMyTurn ? 1 : 0 });
           setAdvisorSolverResult(sr);
         } catch(_) { setAdvisorSolverResult(null); }
       }, 0);
