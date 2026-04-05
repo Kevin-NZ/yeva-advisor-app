@@ -2779,6 +2779,7 @@ function _buildSolverBundle() {
         },
       },
     },
+    treefolk_harbinger:{ name:'Treefolk Harbinger',types:['creature'],subtypes:['Treefolk','Druid'],cost:'G',power:1,toughness:1 },
     elvish_reclaimer:{ name:'Elvish Reclaimer',   types:['creature'], subtypes:['Elf','Warrior'], cost:'G',  power:1,toughness:1 },
 
     elvish_spirit_guide: {
@@ -3437,35 +3438,14 @@ function _buildSolverBundle() {
     duskwatch_recruiter: {
       name: 'Duskwatch Recruiter', types: ['creature'], subtypes: ['Human','Warrior','Werewolf'],
       cost: '1G', power: 2, toughness: 2,
-      // {2G},{T}: Search library for a creature and put it in hand.
-      // Now uses the real library to fetch actual creature keys.
-      abilities: {
-        look_three: {
-          label: '{2}{G}, {T}: Search library for a creature, put in hand',
-          fn(state, perm) {
-            if (perm.tapped || perm.summoningSick) return [];
-            const ap = state.payMana('2G'); if (!ap) return [];
-            let s = ap.tapPermanent(perm.id); if (!s) return [];
-            const cards = CARDS;
-            const results = [];
-            const seen = new Set();
-            for (const ck of s.players[0].library) {
-              if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
-              seen.add(ck);
-              const def = cards[ck];
-              if (!def || !def.types.includes('creature')) continue;
-              const { state: ns, cardKey } = s.searchLibraryFor(k => k === ck);
-              if (!cardKey) continue;
-              results.push(ns.addToHand(cardKey).log(`Duskwatch Recruiter → find ${def.name}`));
-            }
-            // Fallback if library empty or no creatures found
-            if (results.length === 0) {
-              results.push(s.playerDraws(0, 1).log('Duskwatch Recruiter: no creature found'));
-            }
-            return results;
-          },
-        },
-      },
+      // Oracle: {2G},{T}: Look at top 3 cards, may reveal a creature and put in hand.
+      //
+      // NOT modelled as an activated ability in the solver because:
+      // - Without infinite mana: result depends on which 3 cards are on top (non-deterministic).
+      // - With infinite mana: the WIN_CONDITIONS "Duskwatch + Finale" fires directly,
+      //   representing the full loop of activating Duskwatch to empty the library.
+      //
+      // The solver treats Duskwatch as a win condition piece, not an action source.
     },
     runic_armasaur: {
       name: 'Runic Armasaur', types: ['creature'], subtypes: ['Dinosaur'],
@@ -3475,7 +3455,6 @@ function _buildSolverBundle() {
     },
     heartwood_storyteller:{ name:'Heartwood Storyteller',     types:['creature'],subtypes:['Treefolk'],          cost:'1GG',  power:2,toughness:3 },
     destiny_spinner:     { name:'Destiny Spinner',            types:['creature','enchantment'],subtypes:['Human'],cost:'1G',  power:2,toughness:2 },
-    treefolk_harbinger:  { name:'Treefolk Harbinger',         types:['creature'],subtypes:['Treefolk','Druid'],  cost:'G',    power:1,toughness:1 },
     chomping_changeling: { name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
     lotus_cobra: {
       name: 'Lotus Cobra', types: ['creature'], subtypes: ['Snake'], cost: '1G',
@@ -3802,7 +3781,7 @@ function _buildSolverBundle() {
     worldly_tutor: {
       name: 'Worldly Tutor', types: ['instant'], subtypes: [], cost: 'G',
       // Oracle: Search library for a creature, REVEAL it, then SHUFFLE and put on TOP of library.
-      // The card goes to the top of the library — player draws it on their next draw step.
+      // Sets state.topDecked so startNewTurn knows to draw exactly that card into hand.
       castFn(state) {
         const cards = CARDS;
         const results = [];
@@ -3814,10 +3793,11 @@ function _buildSolverBundle() {
           if (!def || !def.types.includes('creature')) continue;
           const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
           if (!cardKey) continue;
-          // Shuffle (order irrelevant for solver) then put creature on top (index 0)
+          // Put creature on top of library and set topDecked flag
           const ns2 = ns.clone();
           ns2.players[0] = ns2.players[0].clone();
           ns2.players[0].library = [cardKey, ...ns2.players[0].library];
+          ns2.topDecked = cardKey;   // startNewTurn will draw this card into hand
           results.push(ns2.log(`Worldly Tutor → put ${def.name} on top of library`));
         }
         return results.length ? results : [state.log('Worldly Tutor: no creature in library')];
@@ -4380,6 +4360,10 @@ function _buildSolverBundle() {
       this.commanderTax   = data.commanderTax ?? 0;
       // isOpponentTurn: true when modelling a flash window on an opponent's turn
       this.isOpponentTurn = data.isOpponentTurn ?? false;
+      // topDecked: card key placed on top of library by a tutor.
+      // When set, startNewTurn draws exactly that card into hand, then clears this flag.
+      // When null, no draw step occurs — keeping the solver deterministic.
+      this.topDecked      = data.topDecked ?? null;
 
       // ── Players (own their zones) ────────────────────────────────────────────
       if (data.players && Array.isArray(data.players)) {
@@ -4487,6 +4471,7 @@ function _buildSolverBundle() {
         commandZone:    [...this.commandZone],
         commanderTax:   this.commanderTax,
         isOpponentTurn: this.isOpponentTurn ?? false,
+        topDecked:      this.topDecked ?? null,
       });
     }
 
@@ -4547,7 +4532,15 @@ function _buildSolverBundle() {
      * A player draws N cards.
      * librarySize clamps to 0 if over-drawn (loss detected via getLosses()).
      */
+    /**
+     * A player draws N cards. For player 0, moves card keys from library to hand.
+     * For opponents (pi > 0), just removes from their library (hand not tracked).
+     */
     playerDraws(pi, n = 1) {
+      if (pi === 0) {
+        return this.playerDrawCards(n);
+      }
+      // Opponent: remove from library only (hand not tracked)
       const s = this.clone();
       s.players[pi] = s.players[pi].draw(n);
       return s;
@@ -4848,8 +4841,20 @@ function _buildSolverBundle() {
         p.summoningSick = false;
         p.abilitiesUsed = {};
       }
-      // Draw for turn
-      s.players[0] = s.players[0].draw(1);
+      // Draw for turn — ONLY if a tutor explicitly top-decked a card.
+      // This keeps the solver deterministic: random library draws are not modelled.
+      // When topDecked is set, the named card is guaranteed to be on top of the library.
+      if (s.topDecked !== null) {
+        const topCard = s.topDecked;
+        s.topDecked = null;                      // consume the flag
+        s.players[0] = s.players[0].draw(1);    // remove from library
+        s.hand = [...s.hand, topCard];           // deliver to hand
+      }
+      // If topDecked is null: no draw step — library top is unknown/random.
+      // Opponents still draw (library size tracking only):
+      for (let i = 1; i < s.players.length; i++) {
+        s.players[i] = s.players[i].draw(1);
+      }
       s.history = [...s.history, {
         turn: s.turn,
         msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
@@ -5457,27 +5462,13 @@ function _buildSolverBundle() {
     // ══════════════════════════════════════════════════════════════════════════
 
     {
-      // Loose assembled check — Earthcraft + Cradle + creatures.
-      // Earthcraft turns any untapped creature into a mana source by untapping a basic land.
-      // With Yavimaya or basic Forests, this loops with Cradle for infinite mana.
-      name: 'Infinite Mana (Earthcraft + Gaea\'s Cradle + Creatures)',
       description:
-        "Earthcraft: tap an untapped creature to untap a basic land. " +
-        "With Gaea's Cradle producing G×creatures and ≥2 untapped creatures, " +
-        "tap creatures to repeatedly untap Cradle. " +
-        "Add Yavimaya to make all lands Forests (Earthcraft targets), or use basic Forests.",
-      check(state) {
-        if (!hasPerm(state, 'Earthcraft')) return false;
-        if (!cradleUntapped(state)) return false;
-        return state.untappedCreatures().length >= 2;
-      },
-    },
-
-    {
-      description:
-        "Earthcraft taps Quirion (creature) to untap a basic Forest. " +
-        "Forest taps {G}. Quirion bounces itself (a Forest under Ashaya) → untaps mana dork. " +
-        "Recast Quirion {G}. Net +{G} from dork per cycle. Requires a basic Forest.",
+        "Earthcraft taps Quirion to untap a basic Forest. " +
+        "Forest taps {G}. " +
+        "Earthcraft taps another creature (Ashaya) to untap a basic Forest. " +
+        "Forest taps {G}. " +
+        "Quirion bounces itself (a Forest under Ashaya) → untaps creature (Ashaya). " +
+        "Recast Quirion {G}. Net +{G} from Ashaya per cycle. Requires a basic Forest.",
       check(state) {
         if (!hasPerm(state, 'Earthcraft')) return false;
         if (!ashayaOut(state)) return false;
@@ -5491,7 +5482,7 @@ function _buildSolverBundle() {
         return state.battlefield.some(p =>
           p.types && p.types.includes('creature') &&
           p.name !== 'Quirion Ranger' &&
-          !p.summoningSick
+          !p.tapped
         );
       },
     },
@@ -5702,6 +5693,117 @@ function _buildSolverBundle() {
       },
     },
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  TUTOR FOR FINISHER
+    //
+    //  With infinite mana and any creature tutor in hand or on the battlefield,
+    //  we can always find Duskwatch Recruiter (or another finisher) and win.
+    //
+    //  With infinite mana: activate Duskwatch repeatedly ({2G},{T}) to pull every
+    //  creature from the library into hand. Cast them all. Then win via:
+    //  - Finale of Devastation X≥10 (haste + attack for lethal)
+    //  - Infectious Bite (10 poison counters)
+    //
+    //  Hand tutors that find a creature:
+    //    GSZ, Shared Summons, Chord of Calling, Summoner's Pact,
+    //    Archdruid's Charm, Nature's Rhythm, Eldritch Evolution, Natural Order,
+    //    Worldly Tutor (topdeck → draw next turn, then immediately available)
+    //
+    //  Hand tutors that find War Room or Geier Reach (land → draw to finisher):
+    //    Sylvan Scrying → fetch War Room → pay life to draw until finisher found
+    //
+    //  Battlefield activated/ETB tutors:
+    //    Fauna Shaman, Survival of the Fittest, Yisan, Formidable Speaker
+    //
+    //  ETB tutors reachable in hand:
+    //    Woodland Bellower (ETB → nonlegendary green MV≤3 → Duskwatch MV2)
+    //    Fierce Empath (ETB → MV≥6 → Woodland Bellower → then Duskwatch)
+    //
+    //  Draw engines that find a finisher:
+    //    Glademuse: pass turn → draw per opponent spell → find Duskwatch/Finale
+    //    Crop Rotation: fetch War Room → pay life to draw to finisher
+    //      (Under Ashaya, all creatures are Forest lands → always a land to sacrifice)
+    //
+    //  topDecked: if a Worldly Tutor has already put a creature on top of the
+    //    library (state.topDecked set), that creature will be drawn next turn —
+    //    treat it as available if it's a useful creature.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    {
+      name: 'Win: Tutor for Finisher (infinite mana + creature tutor)',
+      description:
+        'With infinite mana, any creature tutor finds Duskwatch Recruiter. ' +
+        'Activate Duskwatch ({2G},{T}) to pull every creature from the library into hand. ' +
+        'Cast them all, then win via Finale of Devastation X≥10 (haste, attack for lethal) ' +
+        'or Infectious Bite (10 poison counters). ' +
+        'Hand tutors: GSZ, Shared Summons, Chord of Calling, Summoner\'s Pact, ' +
+        'Archdruid\'s Charm, Nature\'s Rhythm, Eldritch Evolution, Worldly Tutor. ' +
+        'Sylvan Scrying → War Room → draw to finisher. ' +
+        'Activated: Fauna Shaman, Survival of the Fittest, Yisan, Formidable Speaker. ' +
+        'ETB: Woodland Bellower → Duskwatch; Fierce Empath → Bellower → Duskwatch. ' +
+        'Glademuse + pass turn draws cards from opponent spells. ' +
+        'Crop Rotation → War Room (always a land to sacrifice under Ashaya).',
+      check(state) {
+        // ── Hand tutors that find a creature ─────────────────────────────────
+        const handTutors = [
+          'green_suns_zenith',  // {X}{G}: green creature MV≤X → battlefield
+          'shared_summons',     // {3GG}: two creatures → hand
+          'chord_of_calling',   // {X}{G}{G}{G}: creature MV≤X → battlefield (convoke)
+          'summoners_pact',     // {0}: any green creature → hand
+          'archdruid_charm',    // {GGG}: creature or land → hand or battlefield
+          'natures_rhythm',     // {X}{G}{G}: creature MV≤X → battlefield (like GSZ)
+          'eldritch_evolution', // {1GG}: sacrifice → creature 2 MV higher → battlefield
+          'natural_order',      // {2GG}: sacrifice green → any green creature → battlefield
+          'worldly_tutor',      // {G}: creature → top of library (drawn next turn)
+          'sylvan_scrying',     // {1G}: any land → hand (War Room → draw to finisher)
+        ];
+        if (state.hand) {
+          for (const k of handTutors) {
+            if (state.hand.includes(k)) return true;
+          }
+        }
+
+        // ── topDecked: Worldly Tutor already placed a creature on library top ─
+        // The creature will be drawn at the start of next turn. With infinite
+        // mana it's as good as in hand.
+        if (state.topDecked) {
+          const CARDS_local = CARDS;
+          const def = CARDS_local[state.topDecked];
+          if (def && def.types.includes('creature')) return true;
+        }
+
+        // ── Battlefield activated / ETB tutors ────────────────────────────────
+        const bfTutorNames = [
+          'Fauna Shaman',              // {G},{T},discard → any creature → hand
+          'Survival of the Fittest',   // {G},{T},discard → any creature → hand
+          'Yisan, the Wanderer Bard',  // {2G},{T},verse → creature of that MV → BF
+          'Formidable Speaker',        // ETB: discard → any creature → hand
+          'Duskwatch Recruiter',       // {2G},{T} → creature → hand (wins directly!)
+        ];
+        for (const name of bfTutorNames) {
+          if (hasPerm(state, name)) return true;
+        }
+
+        // ── ETB tutors reachable from hand ───────────────────────────────────
+        // Woodland Bellower ETB finds nonlegendary green MV≤3 (Duskwatch is MV 2)
+        if (inHandOrField(state, 'Woodland Bellower', 'woodland_bellower')) return true;
+        // Fierce Empath ETB finds MV≥6 (Woodland Bellower MV 6) → then Bellower → Duskwatch
+        if (inHandOrField(state, 'Fierce Empath', 'fierce_empath')) return true;
+
+        // ── Glademuse: pass turn → draw from opponent spells → find finisher ─
+        if (inHandOrField(state, 'Glademuse', 'glademuse')) return true;
+
+        // ── Crop Rotation → War Room: fetch → pay life to draw → find finisher ─
+        if (state.hand && state.hand.includes('crop_rotation') && state.lands().length > 0) return true;
+
+        // NOTE: Library contents are NOT checked here. A win only fires if the
+        // finisher or tutor is in hand or on the battlefield. If Duskwatch (or
+        // any other finisher) is only in the library, the solver must first play
+        // a tutor action to bring it to hand/battlefield before the win fires.
+        return false;
+      },
+    },
+
   ];
 
   // ── Main exports ──────────────────────────────────────────────────────────
@@ -5784,13 +5886,84 @@ function _buildSolverBundle() {
    *   2   pass turn
    */
 
+  // ── Reverse name→key map (built once at load time) ────────────────────────
+  // Avoids scanning all 159 card keys on every tutor result match.
+  const NAME_TO_KEY = Object.fromEntries(
+    Object.entries(CARDS).map(([k, v]) => [v.name, k])
+  );
+
   // ── STAX cards — never cast, never tutored ────────────────────────────────
-  // These cards slow down opponents but do not contribute to any combo or win
-  // condition in this deck. The solver should ignore them entirely.
   const STAX_CARDS = new Set([
     'collector_ouphe', 'null_rod', 'root_maze',
     'thorn_of_amethyst', 'trinisphere', 'orb_of_dreams', 'vexing_bauble',
   ]);
+
+  // ── Per-combo required card keys ──────────────────────────────────────────
+  // For each combo, the cards that must be present (on BF or in hand) for it
+  // to fire. Used by tutors to fetch the single missing piece rather than
+  // exploring the entire library.
+  const COMBO_REQUIRED_KEYS = [
+    // Ashaya-based infinite mana loops
+    ['ashaya','quirion_ranger'],
+    ['ashaya','scryb_ranger'],
+    ['ashaya','hope_tender','gaeas_cradle'],
+    ['ashaya','argothian_elder'],
+    ['ashaya','ley_weaver'],
+    ['ashaya','magus_of_the_candelabra'],
+    ['ashaya','hyrax_tower_scout'],
+    // Cradle / Nykthos loops
+    ['gaeas_cradle','deserted_temple'],
+    ['gaeas_cradle','wirewood_lodge'],
+    ['nykthos','deserted_temple'],
+    // Earthcraft loops
+    ['earthcraft','gaeas_cradle'],
+    ['earthcraft','quirion_ranger'],
+    // Selvala / Temur Sabertooth
+    ['selvala','temur_sabertooth'],
+    ['selvala','kogla'],
+    // Win condition pairs (need infinite mana already + win piece)
+    ['duskwatch_recruiter','gaeas_cradle'],
+    ['beast_whisperer','gaeas_cradle'],
+    // Note: single-card win conditions (endurance, geier_reach) are omitted here
+    // because they only help AFTER infinite mana is established. Including them would
+    // cause tutors to fetch them even without a mana engine present. The priority
+    // fallback in missingComboCards handles them when no mana combo is in progress.
+  ];
+
+  /**
+   * Returns the set of card keys that would complete (or advance) any combo
+   * given what is currently in hand or on the battlefield.
+   *
+   * For each combo, if all-but-one required pieces are present, the missing
+   * piece is a valid tutor target. Returns a Set of card keys.
+   *
+   * If nothing is one card away, falls back to the single highest-priority
+   * target from TUTOR_PRIORITY_SCORE (to avoid branching explosion).
+   */
+  function missingComboCards(state) {
+    const present = new Set(state.hand);
+    for (const p of state.battlefield) {
+      const ck = NAME_TO_KEY[p.name];
+      if (ck) present.add(ck);
+    }
+
+    const missing = new Set();
+    for (const required of COMBO_REQUIRED_KEYS) {
+      const absent = required.filter(k => !present.has(k));
+      if (absent.length === 1) missing.add(absent[0]);
+    }
+
+    // Strict fallback: if nothing is one card away, return only the
+    // single highest-priority target — prevents unbounded branching.
+    if (missing.size === 0) {
+      let best = null, bestScore = -1;
+      for (const [k, score] of Object.entries(TUTOR_PRIORITY_SCORE)) {
+        if (!present.has(k) && score > bestScore) { best = k; bestScore = score; }
+      }
+      if (best) missing.add(best);
+    }
+    return missing;
+  }
 
   // ── Tutor target priority ─────────────────────────────────────────────────
   // Numeric scores: higher = fetch this first. Used by smartTutorTarget().
@@ -6030,8 +6203,9 @@ function _buildSolverBundle() {
       // Spells that stay on the battlefield (permanents)
       const entersBattlefield = isCreature || isEnchantment || isArtifact;
 
-      // Tutors (castFn): generate the smart best-choice as priority-1 action,
-      // plus ranked alternatives for hand-fetching tutors (not battlefield tutors).
+      // Tutors (castFn): only offer targets that would complete a combo.
+      // missingComboCards() returns the keys one card away from any known combo.
+      // NAME_TO_KEY O(1) lookups replace per-result O(n) card scans.
       if (def.castFn) {
         const costStr2 = effectiveCost(state, def);
         if (state.mana.pay(costStr2) !== null) {
@@ -6040,24 +6214,37 @@ function _buildSolverBundle() {
           if (fromHand0) {
             const allResults = def.castFn(fromHand0);
             if (allResults && allResults.length > 0) {
-              // Sort by priority score
-              const sorted = allResults.slice().sort((a, b) => {
-                const msgA = a.history[a.history.length-1]?.msg ?? '';
-                const msgB = b.history[b.history.length-1]?.msg ?? '';
-                const keyA = Object.keys(CARDS).find(k => msgA.includes(CARDS[k]?.name)) ?? '';
-                const keyB = Object.keys(CARDS).find(k => msgB.includes(CARDS[k]?.name)) ?? '';
-                return (TUTOR_PRIORITY_SCORE[keyB] ?? 0) - (TUTOR_PRIORITY_SCORE[keyA] ?? 0);
+              const needed = missingComboCards(state);
+
+              // Extract fetched card key from a result's last history message.
+              // Fast path: check needed keys first. Slow path: full NAME_TO_KEY scan.
+              function msgKey(r) {
+                const msg = r.history[r.history.length - 1]?.msg ?? '';
+                for (const k of needed) {
+                  if (CARDS[k] && msg.includes(CARDS[k].name)) return k;
+                }
+                for (const [name, k] of Object.entries(NAME_TO_KEY)) {
+                  if (msg.includes(name)) return k;
+                }
+                return null;
+              }
+
+              // Filter to combo-completing targets only
+              const relevant = allResults.filter(r => {
+                const k = msgKey(r);
+                return k && needed.has(k);
               });
 
-              // Determine if this tutor puts the card to battlefield (high branching cost)
-              // or to hand (lower branching cost, player chooses what to find).
-              // Detect by checking if the first result has the card in hand or on battlefield.
-              const firstResult = sorted[0];
-              const firstMsg = firstResult.history[firstResult.history.length - 1]?.msg ?? '';
-              const isBattlefieldTutor =
-                firstMsg.includes('fetch ') ||      // Crop Rotation, GSZ, Natural Order
-                firstMsg.includes('Zenith →');       // GSZ
-              const maxBranches = isBattlefieldTutor ? 1 : 6;
+              const pool = relevant.length > 0 ? relevant : allResults;
+              const sorted = pool.slice().sort((a, b) =>
+                (TUTOR_PRIORITY_SCORE[msgKey(b)] ?? 0) -
+                (TUTOR_PRIORITY_SCORE[msgKey(a)] ?? 0)
+              );
+
+              // Battlefield tutors: 1 action. Hand/topdeck tutors: up to 2.
+              const firstMsg = sorted[0]?.history[sorted[0].history.length - 1]?.msg ?? '';
+              const isBF = firstMsg.includes('fetch ') || firstMsg.includes('Zenith →');
+              const maxBranches = isBF ? 1 : 2;
 
               for (const resultState of sorted.slice(0, maxBranches)) {
                 const msg = resultState.history[resultState.history.length - 1]?.msg ?? `Cast ${def.name}`;
@@ -6081,8 +6268,7 @@ function _buildSolverBundle() {
                 });
               }
             } else {
-              // castFn returned no results — spell cannot be cast (e.g. missing sacrifice target).
-              // Do NOT generate a "no targets" action; the spell simply isn't castable.
+              // castFn returned no results — spell cannot be cast (missing sacrifice target)
             }
           }
         }
@@ -6913,6 +7099,10 @@ var SolverGameState = _solverExports.GameState;
 var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
+
+
+
+
 
 
 
@@ -22265,6 +22455,12 @@ function HelpModal({ onClose, onStartTour }) {
     ),
     changelog: (() => {
       const versions = [
+        { 
+          version: "2.0.0", date: "April 2026", title: "Solver Release",
+          added: [
+            "Inclusion of a detailed Depth (and Breadth) First Search Solver engine to improve advice and combo detection.  Once the solver completes an advice card will appear if something was found.  In Goldfish there is a new 'Solver' memo tab.",
+          ],
+        },
         { 
           version: "1.0.0", date: "March 2026", title: "Initial Release",
           added: [
