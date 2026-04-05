@@ -36792,6 +36792,11 @@ function YevaAdvisor() {
   // Sim result for the mulligan grade banner — computed asynchronously when
   // the hand is set and no permanents are in play (pure opening-hand state).
   const [mulliganSimResult, setMulliganSimResult] = useState(null);
+  // Async Solver result for the main advisor screen (worker-based, non-blocking)
+  const [advisorSolverResult, setAdvisorSolverResult] = useState(null);
+  const advisorWorkerRef     = useRef(null);
+  const advisorWorkerBlocked = useRef(false);
+  const advisorSolverTimer   = useRef(null);
   const advicePanelRef = useRef(null);
   const zoneInputRefs = useRef({}); // populated by CardInput via onRef prop
   const isIdleAuto = false; // auto-timer disabled — use Shift+L to activate
@@ -36999,7 +37004,7 @@ function YevaAdvisor() {
     if (hand.length + battlefield.length > 0) {
       try {
         const manaAvailable = { green: parseInt(greenMana) || 0, colorless: parseInt(colorlessMana) || 0 };
-        const { results, infiniteManaActive, trueInfiniteManaActive, activeComboName: comboName, turnClock, winConversion } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana });
+        const { results, infiniteManaActive, trueInfiniteManaActive, activeComboName: comboName, turnClock, winConversion } = analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTurn, yisanCounters, deckList, attachments, threatLevel, opponentOpenMana, skipSolver: true });
         setAdvice(results);
         setInfiniteMana(trueInfiniteManaActive ?? infiniteManaActive);
         setActiveComboName(comboName);
@@ -37021,7 +37026,69 @@ function YevaAdvisor() {
     }
   }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn, yisanCounters, threatLevel, opponentOpenMana]);
 
-  // Mulligan sim — runs 10 games with the current hand when in pure opening-hand state.
+  // ── Async Solver for main advisor — worker-based, non-blocking ────────────
+  useEffect(() => {
+    if (advisorSolverTimer.current) clearTimeout(advisorSolverTimer.current);
+    if (advisorWorkerRef.current) { advisorWorkerRef.current.terminate(); advisorWorkerRef.current = null; }
+    if (hand.length + battlefield.length === 0) { setAdvisorSolverResult(null); return; }
+    advisorSolverTimer.current = setTimeout(() => {
+      const manaAvailable = { green: parseInt(greenMana) || 0, colorless: parseInt(colorlessMana) || 0 };
+      const payload = {
+        hand, battlefield, graveyard,
+        greenMana: manaAvailable.green, colorlessMana: manaAvailable.colorless,
+        sickCards: [], tappedCards: [], life: 40,
+        librarySize: Math.max(0, 99 - hand.length - battlefield.length - graveyard.length),
+      };
+      const runInline = () => setTimeout(() => {
+        try {
+          const sr = runSolver(hand, battlefield, manaAvailable.green, manaAvailable.colorless, new Set(), true, { graveyard, life: 40 });
+          setAdvisorSolverResult(sr);
+        } catch(_) { setAdvisorSolverResult(null); }
+      }, 0);
+      if (advisorWorkerBlocked.current) { runInline(); return; }
+      try {
+        const worker = new Worker(new URL('./solver-worker.js', import.meta.url));
+        advisorWorkerRef.current = worker;
+        worker.onmessage = (e) => { advisorWorkerRef.current = null; setAdvisorSolverResult(e.data?.found ? e.data : null); };
+        worker.onerror   = ()  => { advisorWorkerRef.current = null; advisorWorkerBlocked.current = true; runInline(); };
+        worker.postMessage(payload);
+      } catch(_) { advisorWorkerBlocked.current = true; runInline(); }
+    }, 150);
+    return () => {
+      clearTimeout(advisorSolverTimer.current);
+      if (advisorWorkerRef.current) { advisorWorkerRef.current.terminate(); advisorWorkerRef.current = null; }
+    };
+  }, [hand, battlefield, graveyard, greenMana, colorlessMana, isMyTurn]);
+
+  // Merge async Solver result into advice cards (same logic as goldfish analysisWithSolver)
+  const adviceWithSolver = useMemo(() => {
+    const sr = advisorSolverResult;
+    if (!sr?.found || !advice.length) return advice;
+    const hasSpecificWin = advice.some(r => !r.isSuppressed &&
+      (r.category?.includes("WIN NOW") || r.category?.includes("CAST TO WIN") ||
+       r.category?.includes("POISON")  || r.category?.includes("PILE")));
+    if (hasSpecificWin) return advice;
+    const _isThisTurn = sr.winTurn <= 1;
+    const _hasWinCon  = !!sr.winCondition;
+    let _category, _priority, _color, _headline, _detail;
+    if (_isThisTurn && _hasWinCon) {
+      _category = "🏆 WIN NOW — SOLVER";   _priority = 16; _color = "#ff6b35";
+      _headline = sr.winCondition; _detail = sr.comboDesc || sr.comboName;
+    } else if (_isThisTurn && !_hasWinCon) {
+      _category = "♾ INFINITE MANA — SOLVER"; _priority = 12.8; _color = "#58d68d";
+      _headline = sr.manaCombo || sr.comboName; _detail = sr.comboDesc || sr.comboName;
+    } else {
+      _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
+      _priority = 14; _color = "#c8a800";
+      _headline = sr.manaCombo || sr.comboName; _detail = sr.comboDesc || sr.comboName;
+    }
+    const _steps = sr.steps?.length > 0 ? sr.steps : ["All combo pieces assembled — execute the loop."];
+    const solverCard = { priority: _priority, category: _category, combo: "solver",
+      headline: _headline, detail: _detail, steps: _steps, color: _color };
+    return [...advice, solverCard]
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+      .slice(0, 7);
+  }, [advice, advisorSolverResult]);
   // Deferred 50ms so the UI renders immediately before the blocking sim runs.
   useEffect(() => {
     const deckCards = activeDeck?.cards?.length >= 20
@@ -37441,9 +37508,9 @@ function YevaAdvisor() {
 
                 <div>
                   <div style={{ color: "#5dade2", marginBottom: "3px", letterSpacing: "1px" }}>
-                    ADVISOR OUTPUT <span style={{ color: COLORS.textDim }}>({advice.length} suggestions, sorted by priority)</span>
+                    ADVISOR OUTPUT <span style={{ color: COLORS.textDim }}>({adviceWithSolver.length} suggestions, sorted by priority)</span>
                   </div>
-                  {advice.length === 0
+                  {adviceWithSolver.length === 0
                     ? <div style={{ paddingLeft: "12px", color: COLORS.textDim, fontStyle: "italic" }}>no advice generated</div>
                     : [...advice].sort((a,b) => b.priority - a.priority).map((a, i) => (
                         <div key={i} style={{
@@ -37667,7 +37734,7 @@ function YevaAdvisor() {
             data-tour="tour-advice"
             style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}
           >
-            {advice.length === 0 ? (
+            {adviceWithSolver.length === 0 ? (
               hand.length === 0 && battlefield.length === 0 && graveyard.length === 0 && exile.length === 0 ? (
               /* ── MULLIGAN ADVICE ── shown when no cards have been entered yet */
               <div style={{ color: COLORS.textMid, lineHeight: 1.7 }}>
@@ -37809,7 +37876,7 @@ function YevaAdvisor() {
                   }}>RECOMMENDED PLAYS</div>
                   <div style={{ flex: 1, height: "1px", background: COLORS.border }} />
                   <div style={{ fontSize: "12px", color: COLORS.textDim }}>
-                    {advice.length} line{advice.length !== 1 ? "s" : ""}
+                    {adviceWithSolver.length} line{adviceWithSolver.length !== 1 ? "s" : ""}
                   </div>
                   <button
                     onClick={() => setCollapseKey(k => k <= 0 ? 1 : k + 1)}
@@ -37937,7 +38004,7 @@ function YevaAdvisor() {
                   );
                 })()}
 
-                {advice.map((a, i) => (
+                {adviceWithSolver.map((a, i) => (
                   <AdviceCard key={i} advice={a} index={i} activeCards={new Set([...hand, ...battlefield])} collapseKey={collapseKey} />
                 ))}
 
