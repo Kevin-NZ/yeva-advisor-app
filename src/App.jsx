@@ -6920,13 +6920,9 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
-// Builds a Worker from a Blob URL so no separate worker file is needed.
-// The worker receives a serialisable payload, runs the Solver off the main
-// thread, and posts back the result. A new Worker is created per solve so
-// it can be terminated immediately if the board changes.
-
-
 
 
 
@@ -27723,20 +27719,6 @@ function GoldfishSaveLoad({
   );
 }
 
-// Solver Web Worker — loaded from solver-worker.js via Vite's import.meta.url
-// A new Worker is created per solve and terminated immediately when the board changes.
-var _solverWorkerURL = null;
-function _getSolverWorkerURL() {
-  if (_solverWorkerURL) return _solverWorkerURL;
-  try {
-    // Vite resolves this to the built asset URL at compile time
-    _solverWorkerURL = new URL('./solver-worker.js', import.meta.url).href;
-  } catch(_) {
-    _solverWorkerURL = './solver-worker.js';
-  }
-  return _solverWorkerURL;
-}
-
 function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   useEscapeStack(onClose);
   // ── state ──────────────────────────────────────────────────
@@ -28041,32 +28023,48 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     } catch (e) { return { results: [], error: e?.message || "Unknown error", infiniteManaActive: false }; }
   }, [hand, battlefield, graveyard, isMyTurn, tapped, counters]);
 
-  // ── Async Solver via Web Worker — runs off the main thread ──
-  // A new Worker is spawned per solve (terminated if board changes before it finishes).
-  // Falls back to inline runSolver if Workers are unavailable (e.g. test harness).
-  const workerRef = React.useRef(null);
+  // ── Async Solver via Web Worker ─────────────────────────────────────────
+  // Uses solver-worker.js (loaded via import.meta.url so Vite bundles it).
+  // Falls back to inline runSolver wrapped in setTimeout(0) if Workers are
+  // unavailable or blocked by CSP (worker.onerror fires in that case).
+  const workerRef        = React.useRef(null);
+  const workerBlockedRef = React.useRef(false);
 
   React.useEffect(() => {
     if (solverTimerRef.current) clearTimeout(solverTimerRef.current);
-    // Terminate any in-flight worker immediately
     if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; }
     if (hand.length + battlefield.length === 0) { setSolverResult(null); setSolverLoading(false); return; }
     setSolverLoading(true);
+
     solverTimerRef.current = setTimeout(() => {
       const mana = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
       const payload = {
-        hand, battlefield, graveyard,
-        library,
+        hand, battlefield, graveyard, library,
         greenMana:    mana.green,
         colorlessMana: mana.colorless,
         sickCards:    [...(sickCreatures instanceof Set ? sickCreatures : new Set())],
         tappedCards:  [...tapped],
         life: 40,
-        librarySize: Math.max(0, 99 - hand.length - battlefield.length - graveyard.length),
+        librarySize:  Math.max(0, 99 - hand.length - battlefield.length - graveyard.length),
       };
+
+      const runInline = () => {
+        setTimeout(() => {
+          try {
+            const sr = runSolver(hand, battlefield, mana.green, mana.colorless, sickCreatureNames, true, {
+              graveyard, library, life: 40, tappedCards: tapped,
+            });
+            setSolverResult(sr);
+          } catch(_) { setSolverResult(null); }
+          setSolverLoading(false);
+        }, 0);
+      };
+
+      if (workerBlockedRef.current) { runInline(); return; }
+
       try {
-        const url = _getSolverWorkerURL();
-        const worker = new Worker(url);
+        const workerUrl = new URL('./solver-worker.js', import.meta.url);
+        const worker = new Worker(workerUrl);
         workerRef.current = worker;
         worker.onmessage = (e) => {
           workerRef.current = null;
@@ -28075,27 +28073,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         };
         worker.onerror = () => {
           workerRef.current = null;
-          // Worker failed — fall back to inline
-          try {
-            const sr = runSolver(hand, battlefield, mana.green, mana.colorless, sickCreatureNames, true, {
-              graveyard, library, life: 40, tappedCards: tapped,
-            });
-            setSolverResult(sr);
-          } catch(_) { setSolverResult(null); }
-          setSolverLoading(false);
+          workerBlockedRef.current = true;   // don't try workers again this session
+          runInline();
         };
         worker.postMessage(payload);
       } catch(_) {
-        // Workers not available (SSR / old browser) — run inline
-        try {
-          const sr = runSolver(hand, battlefield, mana.green, mana.colorless, sickCreatureNames, true, {
-            graveyard, library, life: 40, tappedCards: tapped,
-          });
-          setSolverResult(sr);
-        } catch(__) { setSolverResult(null); }
-        setSolverLoading(false);
+        workerBlockedRef.current = true;
+        runInline();
       }
     }, 150);
+
     return () => {
       clearTimeout(solverTimerRef.current);
       if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; }

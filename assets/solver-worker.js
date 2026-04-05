@@ -1594,7 +1594,6 @@ const CARDS = {
   },
 };
 
-
 // GameState.js
 /**
  * MTG Combo Solver — GameState
@@ -2519,7 +2518,6 @@ class GameState {
 }
 
 const _GSM = { GameState, ManaPool, parseCost, Player, Permanent };
-
 // combos.js
 /**
  * MTG Combo Solver — Combo Detectors (v3)
@@ -3395,7 +3393,6 @@ function checkVictory(state) {
 }
 
 const _COM = { checkCombos, checkVictory };
-
 // actions.js
 /**
  * MTG Combo Solver — Action Generator (v2)
@@ -3951,7 +3948,6 @@ function uniqueCards(hand) {
 }
 
 const _ACM = { generateActions };
-
 // Solver.js
 /**
  * MTG Combo Solver — Solver (v2)
@@ -4217,12 +4213,10 @@ function printAllLines(result) {
 }
 
 
-// name→cardKey lookup
 const _nameMap = {};
 for (const [k, v] of Object.entries(CARDS)) {
   if (v && v.name) _nameMap[v.name] = k;
 }
-
 self.onmessage = function(e) {
   const d = e.data;
   try {
@@ -4230,77 +4224,37 @@ self.onmessage = function(e) {
     const tappedSet = new Set(d.tappedCards || []);
     const handKeys      = (d.hand      || []).map(n => _nameMap[n]).filter(Boolean);
     const graveyardKeys = (d.graveyard || []).map(n => _nameMap[n]).filter(Boolean);
-    const libraryKeys   = d.library
-      ? d.library.map(n => _nameMap[n]).filter(Boolean)
-      : null;
-
+    const libraryKeys   = d.library ? d.library.map(n => _nameMap[n]).filter(Boolean) : null;
     let state = new GameState({
-      hand:      handKeys,
-      mana:      { G: Math.min(d.greenMana    || 0, 30),
-                   C: Math.min(d.colorlessMana || 0, 30) },
-      turn:      1,
-      landDrops: 1,
-      life:      d.life || 40,
-      ...(libraryKeys
-            ? { library: libraryKeys }
-            : { librarySize: Math.max(0, d.librarySize || 99) }),
+      hand: handKeys,
+      mana: { G: Math.min(d.greenMana||0,30), C: Math.min(d.colorlessMana||0,30) },
+      turn: 1, landDrops: 1, life: d.life||40,
+      ...(libraryKeys ? { library: libraryKeys } : { librarySize: Math.max(0,d.librarySize||99) }),
       graveyard: graveyardKeys,
     });
-
-    for (const name of (d.battlefield || [])) {
-      const key = _nameMap[name];
-      if (!key) continue;
-      const isTapped = tappedSet.has(name) ||
-        [...tappedSet].some(k => k.startsWith(name + ':'));
-      try {
-        state = state.enterBattlefield(key, {
-          summoningSick: sickSet.has(name),
-          tapped:        isTapped,
-        });
-      } catch (_) {}
+    for (const name of (d.battlefield||[])) {
+      const key = _nameMap[name]; if (!key) continue;
+      const isTapped = tappedSet.has(name)||[...tappedSet].some(k=>k.startsWith(name+':'));
+      try { state = state.enterBattlefield(key,{summoningSick:sickSet.has(name),tapped:isTapped}); } catch(_) {}
     }
-
-    const solver = new Solver({
-      maxTurns:  4,
-      maxDepth:  50,
-      maxStates: 200000,
-      verbose:   false,
-    });
-    const result = solver.solve(state);
-    if (!result) { self.postMessage({ found: false }); return; }
-
-    const lastState = result.line[result.line.length - 1];
-    const turns = [];
-    let currentTurn = 0;
-    for (let i = 1; i < result.line.length; i++) {
-      const st = result.line[i];
-      const h  = st.history[st.history.length - 1];
-      if (!h) continue;
-      if (st.turn !== currentTurn) {
-        currentTurn = st.turn;
-        turns.push({ turn: currentTurn, steps: [] });
-      }
-      const manaStr = st.mana && st.mana.toString ? st.mana.toString() : '';
-      turns[turns.length - 1].steps.push({
-        msg:  typeof h === 'string' ? h : (h.msg || String(h)),
-        mana: (manaStr && manaStr !== '{0}') ? manaStr : null,
-      });
+    const result = new Solver({maxTurns:4,maxDepth:50,maxStates:200000,verbose:false}).solve(state);
+    if (!result) { self.postMessage({found:false}); return; }
+    const lastState = result.line[result.line.length-1];
+    const turns=[]; let currentTurn=0;
+    for (let i=1;i<result.line.length;i++) {
+      const st=result.line[i],h=st.history[st.history.length-1]; if(!h) continue;
+      if (st.turn!==currentTurn) { currentTurn=st.turn; turns.push({turn:currentTurn,steps:[]}); }
+      const ms=st.mana&&st.mana.toString?st.mana.toString():'';
+      turns[turns.length-1].steps.push({msg:typeof h==='string'?h:(h.msg||String(h)),mana:(ms&&ms!=='{0}')?ms:null});
     }
-
-    self.postMessage({
-      found:        true,
-      comboName:    result.combo?.name         ?? 'Infinite Mana',
-      comboDesc:    result.combo?.description  ?? '',
-      winCondition: result.combo?.winCondition ?? null,
-      manaCombo:    result.combo?.manaCombo ?? result.combo?.name ?? 'Infinite Mana',
-      steps:        (lastState.history || []).map(h =>
-                      typeof h === 'string' ? h : (h.msg || String(h))),
-      winTurn:      lastState.turn || 1,
-      turns,
-      finalBf:      (lastState.battlefield || []).map(p => p.name || String(p)),
-      finalMana:    lastState.mana?.toString?.() ?? '',
+    self.postMessage({found:true,
+      comboName:result.combo?.name??'Infinite Mana',comboDesc:result.combo?.description??'',
+      winCondition:result.combo?.winCondition??null,
+      manaCombo:result.combo?.manaCombo??result.combo?.name??'Infinite Mana',
+      steps:(lastState.history||[]).map(h=>typeof h==='string'?h:(h.msg||String(h))),
+      winTurn:lastState.turn||1,turns,
+      finalBf:(lastState.battlefield||[]).map(p=>p.name||String(p)),
+      finalMana:lastState.mana?.toString?.()??'',
     });
-  } catch (err) {
-    self.postMessage({ found: false, error: err.message });
-  }
+  } catch(err) { self.postMessage({found:false,error:err.message}); }
 };
