@@ -7195,6 +7195,7 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -31108,9 +31109,11 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     // ── Final grade — delegate to gradeOpeningHand, map label to grade object ──
     // Apply sim-based grade adjustments (only on the normal path — hard gates already returned).
     if (simResult) {
-      const { simLabel, winsBy8, t2Mana } = simResult;
-      // Upgrade: sim strongly wins fast — BORDERLINE → KEEP
-      if ((simLabel === "SIM_STRONG" || winsBy8 >= 7) && gradeLabel === "BORDERLINE")
+      const { simLabel, winsBy8, t2Mana, t1DorkRate } = simResult;
+      // Upgrade: sim strongly wins fast AND hand has meaningful T2 development
+      // Require t2Mana >= 2 so hands that get lucky drawing dorks don't get promoted
+      if ((simLabel === "SIM_STRONG" || winsBy8 >= 7) && gradeLabel === "BORDERLINE"
+          && t2Mana >= 2.0 && (criteria.A || t1DorkRate >= 0.4))
         gradeLabel = "KEEP";
       // Downgrade: sim never wins fast even though rubric is happy — KEEP → BORDERLINE
       else if ((simLabel === "SIM_WEAK" || winsBy8 === 0) && gradeLabel === "KEEP"
