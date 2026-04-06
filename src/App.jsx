@@ -18045,7 +18045,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           _detail   = _solverResult.comboDesc || _solverResult.comboName;
         } else if (!_isThisTurn) {
           _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
-          _priority = 14; _color = "#c8a800";
+          _priority = _hasWinCon ? 15.9 : 14; _color = _hasWinCon ? "#ff6b35" : "#c8a800";
           _headline = _solverResult.manaCombo || _solverResult.comboName;
           _detail   = _solverResult.comboDesc || _solverResult.comboName;
         } else {
@@ -28419,7 +28419,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       _detail   = solverResult.comboDesc || solverResult.comboName;
     } else if (!_isThisTurn) {
       _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
-      _priority = 14; _color = "#c8a800";
+      _priority = _hasWinCon ? 15.9 : 14; _color = _hasWinCon ? "#ff6b35" : "#c8a800";
       _headline = solverResult.manaCombo || solverResult.comboName;
       _detail   = solverResult.comboDesc || solverResult.comboName;
     } else {
@@ -30499,23 +30499,32 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       return cd.tags?.includes("forest") || cd.tags?.includes("basic") || c === "Forest";
     });
     // T1 with a castable 1-drop dork in hand → we need mana this turn → fetch Forest, not Dryad Arbor
-    // More generally: prefer Forest whenever there's anything in hand that could be cast with
-    // the green mana a Forest provides this turn (Dryad Arbor has sickness = 0 mana this turn).
-    const hasOneDrop = hand.some(c => getCard(c)?.tags?.includes("dork") && (getCard(c)?.cmc ?? 0) === 1);
-    const currentPoolAfterFetch = manaPool; // fetch enters tapped so contributes 0 immediately
-    // Count mana available this turn from already-tapped + untapped non-Dryad sources
-    const untappedMana = currentManaPool.total; // from untapped battlefield (excl. Dryad)
-    const totalManaThisTurn = currentPoolAfterFetch + untappedMana;
+    // More generally: prefer Forest ONLY when the Forest's extra {G} is the difference between
+    // being able to cast something in hand or not. With 10+ green already available, Dryad Arbor
+    // is strictly better (creature + elf + Natural Order target + untaps with Quirion etc.)
+    //
+    // Full mana available = floating pool + tapped sources + untapped battlefield sources.
+    // The fetch enters tapped so contributes 0 mana this turn regardless.
+    const floatingMana    = manaPool;                            // external floating (Petal, ESG, manual)
+    const tappedManaGreen = tappedMana.green;                   // green from already-tapped cards
+    const tappedManaTot   = tappedMana.total;
+    // Untapped battlefield mana — tap all untapped non-sick sources (Cradle, Forest, dorks, etc.)
+    const untappedPool    = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
+    const totalGreen      = floatingMana + tappedManaGreen + untappedPool.green;
+    const totalMana       = floatingMana + tappedManaTot   + untappedPool.total;
+
     const hasCastableInHand = hand.some(c => {
       const cd = getCard(c);
       if (!cd || cd.type === "land") return false;
       const cmc = cd.cmc ?? 0;
       const pips = cd.greenPips ?? 0;
-      if (cmc === 0) return false; // free spells don't need the Forest
-      // Would adding 1 green (Forest) allow casting this card?
-      const newTotal = totalManaThisTurn + 1;
-      const newGreen = currentManaPool.green + 1;
-      return newTotal >= cmc && newGreen >= pips;
+      if (cmc === 0) return false;
+      // Would the Forest's +1G be the deciding factor that enables casting this card?
+      // If we already have enough mana without the Forest, it's not needed.
+      const alreadyEnough = totalMana >= cmc && totalGreen >= pips;
+      if (alreadyEnough) return false;   // Forest not needed — we can already cast it
+      const withForest    = (totalMana + 1) >= cmc && (totalGreen + 1) >= pips;
+      return withForest;                 // Forest is the difference-maker
     });
     const needsManaThisTurn = isMyTurn && hasCastableInHand;
     // Dryad Arbor wins unless we already have one or need mana urgently this turn
@@ -37395,7 +37404,7 @@ function YevaAdvisor() {
       _headline = sr.manaCombo || sr.comboName; _detail = sr.comboDesc || sr.comboName;
     } else {
       _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
-      _priority = 14; _color = "#c8a800";
+      _priority = _hasWinCon ? 15.9 : 14; _color = _hasWinCon ? "#ff6b35" : "#c8a800";
       _headline = sr.manaCombo || sr.comboName; _detail = sr.comboDesc || sr.comboName;
     }
     const _steps = sr.steps?.length > 0 ? sr.steps : ["All combo pieces assembled — execute the loop."];
@@ -37840,7 +37849,7 @@ function YevaAdvisor() {
                   </div>
                   {adviceWithSolver.length === 0
                     ? <div style={{ paddingLeft: "12px", color: COLORS.textDim, fontStyle: "italic" }}>no advice generated</div>
-                    : [...advice].sort((a,b) => b.priority - a.priority).map((a, i) => (
+                    : [...adviceWithSolver].sort((a,b) => b.priority - a.priority).map((a, i) => (
                         <div key={i} style={{
                           marginBottom: "5px",
                           borderLeft: `2px solid ${a.color ?? COLORS.border}`,
