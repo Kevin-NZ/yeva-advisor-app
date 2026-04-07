@@ -2007,7 +2007,10 @@ function buildBoardContext(battlefield, sickSet = null, attachments = null) {
   const hasAura       = board.has("Utopia Sprawl") || board.has("Wild Growth");
   const hasCradle     = board.has("Gaea's Cradle");
   const hasNykthos    = board.has("Nykthos, Shrine to Nyx");
-  const landCount     = battlefield.filter(c => getCard(c)?.type === "land").length;
+  const landCount     = battlefield.filter(c => {
+    const cd = getCard(c);
+    return cd?.type === "land" || (ashayaOnBoard && cd?.type === "creature");
+  }).length;
   const basicForests  = battlefield.filter(c => {
     const tags = getCard(c)?.tags ?? [];
     return tags.includes("basic"); // only truly basic lands (Forest) — fetch lands are not basic
@@ -2365,6 +2368,91 @@ function bestDiscardFromHand(hand, exclude = []) {
 // INLINED SOLVER — generated from Solver/*.js (do not edit directly)
 // ═══════════════════════════════════════════════════════════════════════
 function _buildSolverBundle() {
+  // combo_data.js
+  /**
+   * combo_data.js — Pure data: no require() dependencies.
+   *
+   * Extracted from actions.js so that GameState.js can import these
+   * constants without triggering the actions → cards → actions circular
+   * dependency chain.
+   */
+
+  // ── Per-combo required card keys ──────────────────────────────────────────
+  const COMBO_REQUIRED_KEYS = [
+    // Ashaya-based infinite mana loops
+    ['ashaya','quirion_ranger'],
+    ['ashaya','scryb_ranger'],
+    ['ashaya','hope_tender','gaeas_cradle'],
+    ['ashaya','hope_tender','circle_of_dreams_druid'],
+    ['ashaya','hope_tender','selvala'],
+    ['ashaya','argothian_elder'],
+    ['ashaya','ley_weaver'],
+    ['ashaya','magus_of_the_candelabra'],
+    ['ashaya','hyrax_tower_scout'],
+    // Cradle / Nykthos loops
+    ['gaeas_cradle','deserted_temple'],
+    ['gaeas_cradle','wirewood_lodge'],
+    ['nykthos','deserted_temple'],
+    // Earthcraft loops
+    ['earthcraft','gaeas_cradle'],
+    ['earthcraft','quirion_ranger'],
+    // Selvala combos
+    ['selvala','temur_sabertooth'],
+    ['selvala','kogla'],
+    ['selvala','quirion_ranger'],
+    ['selvala','scryb_ranger'],
+    // Wirewood Symbiote loops
+    ['wirewood_symbiote','temur_sabertooth','circle_of_dreams_druid'],
+    ['wirewood_symbiote','selvala'],
+    // Haste enabler + big dork loops (Concordant Crossroads / Surrak)
+    ['concordant_crossroads','selvala'],
+    ['concordant_crossroads','circle_of_dreams_druid'],
+    // Argothian Elder + Wirewood Lodge (no Ashaya needed)
+    ['argothian_elder','wirewood_lodge'],
+    ['ley_weaver','wirewood_lodge'],
+    // Win condition pairs (need infinite mana already + win piece)
+    ['duskwatch_recruiter','gaeas_cradle'],
+    ['beast_whisperer','gaeas_cradle'],
+  ];
+
+  // ── Tutor target priority ─────────────────────────────────────────────────
+  const TUTOR_PRIORITY_SCORE = {
+    // Core combo pieces — highest priority
+    'gaeas_cradle': 100, 'nykthos': 95, 'yavimaya': 90,
+    'ashaya': 88, 'temur_sabertooth': 85, 'kogla': 82,
+    'hope_tender': 80, 'quirion_ranger': 78, 'scryb_ranger': 76,
+    'argothian_elder': 75, 'ley_weaver': 74, 'magus_of_the_candelabra': 73,
+    'selvala': 70, 'karametra_acolyte': 68, 'circle_of_dreams_druid': 65,
+    'priest_of_titania': 63, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
+    'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'earthcraft': 53,
+    'deserted_temple': 51, 'concordant_crossroads': 49, 'wirewood_lodge': 48,
+    // Win conditions
+    'duskwatch_recruiter': 47, 'beast_whisperer': 45,
+    'endurance': 43, 'woodland_bellower': 40, 'fierce_empath': 35,
+    // Lands for Sylvan Scrying / Crop Rotation
+    'war_room': 38, 'geier_reach': 41,
+  };
+
+  // ── Functional equivalents ────────────────────────────────────────────────
+  const FUNCTIONAL_EQUIVALENTS = [
+    new Set(['temur_sabertooth', 'kogla']),
+    new Set(['quirion_ranger', 'scryb_ranger']),
+    new Set(['argothian_elder', 'ley_weaver']),
+  ];
+
+  // ── STAX card keys ────────────────────────────────────────────────────────
+  // Cards that suppress mana abilities or tax spells. Never fetched by tutors.
+  const STAX_KEYS = new Set([
+    'collector_ouphe', 'null_rod', 'root_maze',
+    'thorn_of_amethyst', 'trinisphere', 'orb_of_dreams', 'vexing_bauble',
+  ]);
+
+  function isStax(cardKey) {
+    return STAX_KEYS.has(cardKey);
+  }
+
+  var _CDM = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, STAX_KEYS, isStax };
+
   // GameState.js
   /**
    * MTG Combo Solver — GameState
@@ -3197,14 +3285,44 @@ function _buildSolverBundle() {
         }
       }
 
-      // Eternal Witness ETB: return target card from graveyard to hand
-      // (deterministic: return last card in graveyard, if any)
+      // Eternal Witness ETB: return target card from graveyard to hand.
+      // Prefers returning a card that completes a combo (missing combo piece).
+      // Falls back to the top graveyard card if no combo piece is in graveyard.
       if (cardKey === 'eternal_witness' && s.players[0].graveyard.length > 0) {
-        const cardName = s.players[0].graveyard[0]; // top of pile
+        const gy = s.players[0].graveyard; // array of card names, index 0 = top
+
+        // Build present set (hand + battlefield) to find missing combo pieces
+        const { COMBO_REQUIRED_KEYS } = _CDM;
+        const { NAME_TO_KEY } = _ACM;
+        const present = new Set(s.hand);
+        for (const p of s.battlefield) {
+          const ck = NAME_TO_KEY[p.name];
+          if (ck) present.add(ck);
+        }
+
+        // Find the highest-priority missing combo piece in the graveyard
+        let bestIdx = -1;
+        let bestMissing = Infinity;
+        for (let i = 0; i < gy.length; i++) {
+          const ck = NAME_TO_KEY[gy[i]];
+          if (!ck) continue;
+          // Score: how many pieces does this card help complete?
+          for (const required of COMBO_REQUIRED_KEYS) {
+            if (!required.includes(ck)) continue;
+            const missing = required.filter(k => !present.has(k)).length;
+            if (missing < bestMissing) { bestMissing = missing; bestIdx = i; }
+          }
+        }
+
+        // Use the best combo piece if found, otherwise fall back to top of graveyard
+        const targetIdx = bestIdx >= 0 ? bestIdx : 0;
+        const cardName = gy[targetIdx];
         s.players[0] = s.players[0].clone();
-        s.players[0].graveyard = s.players[0].graveyard.slice(1);
-        // Find the card key for this name
-        const ck = Object.keys(cards).find(k => cards[k].name === cardName);
+        s.players[0].graveyard = [
+          ...s.players[0].graveyard.slice(0, targetIdx),
+          ...s.players[0].graveyard.slice(targetIdx + 1),
+        ];
+        const ck = NAME_TO_KEY[cardName] ?? Object.keys(cards).find(k => cards[k].name === cardName);
         if (ck) s = s.addToHand(ck);
       }
 
@@ -3212,6 +3330,105 @@ function _buildSolverBundle() {
       if (cardKey === 'regal_force') {
         const greenCreatures = s.creatures().length; // simplified: all creatures
         s = s.playerDraws(0, greenCreatures);
+      }
+
+      // Fierce Empath ETB: search library for creature with MV ≥ 6, put in hand.
+      // Targets: Woodland Bellower (MV 6), Kogla (MV 6), Regal Force (MV 7), etc.
+      if (cardKey === 'fierce_empath') {
+        const cardsModule = CARDS;
+        const { parseCost: pc } = _GSM;
+        // Pick the highest-priority MV≥6 creature in library
+        const { TUTOR_PRIORITY_SCORE } = _CDM;
+        const { NAME_TO_KEY: N2K } = _ACM;
+        let bestKey = null, bestScore = -1;
+        const present = new Set(s.hand);
+        for (const p of s.battlefield) { const k = N2K[p.name]; if (k) present.add(k); }
+        for (const ck of s.players[0].library) {
+          if (ck === 'unknown' || isStax(ck)) continue;
+          const def = cardsModule[ck];
+          if (!def?.types.includes('creature') || !def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+          if (mv < 6) continue;
+          const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+          if (score > bestScore) { bestKey = ck; bestScore = score; }
+        }
+        if (bestKey) {
+          const { state: ns, cardKey: ck } = s.searchLibraryFor(k => k === bestKey);
+          if (ck) s = ns.addToHand(ck);
+        }
+      }
+
+      // Skullwinder ETB: return a card from your graveyard to hand.
+      // Prefers missing combo pieces (same logic as Eternal Witness).
+      // Note: the opponent also returns a card — not modelled (no opponent graveyard).
+      if (cardKey === 'skullwinder' && s.players[0].graveyard.length > 0) {
+        const { COMBO_REQUIRED_KEYS } = _CDM;
+        const { NAME_TO_KEY: N2K } = _ACM;
+        const gy = s.players[0].graveyard;
+        const present = new Set(s.hand);
+        for (const p of s.battlefield) { const k = N2K[p.name]; if (k) present.add(k); }
+        let bestIdx = -1, bestMissing = Infinity;
+        for (let i = 0; i < gy.length; i++) {
+          const k = N2K[gy[i]];
+          if (!k) continue;
+          for (const req of COMBO_REQUIRED_KEYS) {
+            if (!req.includes(k)) continue;
+            const missing = req.filter(m => !present.has(m)).length;
+            if (missing < bestMissing) { bestMissing = missing; bestIdx = i; }
+          }
+        }
+        const idx = bestIdx >= 0 ? bestIdx : 0;
+        const name = gy[idx];
+        s.players[0] = s.players[0].clone();
+        s.players[0].graveyard = [...gy.slice(0, idx), ...gy.slice(idx + 1)];
+        const ck = N2K[name] ?? Object.keys(cards).find(k => cards[k].name === name);
+        if (ck) s = s.addToHand(ck);
+      }
+
+      // Disciple of Freyalise ETB: sacrifice another creature, draw X, gain X life
+      // where X = sacrificed creature's power.
+      // Strategy: sacrifice the lowest-power non-key creature to draw cards.
+      if (cardKey === 'disciple_freyalise') {
+        const KEEP = new Set(['Ashaya, Soul of the Wild', 'Temur Sabertooth', 'Kogla, the Titan Ape',
+                              'Selvala, Heart of the Wilds', 'Quirion Ranger', 'Scryb Ranger',
+                              'Hope Tender', 'Argothian Elder', 'Ley Weaver']);
+        const expendable = s.creatures().filter(c => c.id !== perm.id && !KEEP.has(c.name));
+        if (expendable.length > 0) {
+          // Sacrifice lowest-power creature to minimise loss while still drawing
+          const sac = expendable.sort((a, b) => (a.power ?? 1) - (b.power ?? 1))[0];
+          const sacPower = sac.power ?? 1;
+          s = s.removeFromBattlefield(sac.id, 'graveyard');
+          if (s) {
+            s = s.playerDraws(0, sacPower);
+            s.life += sacPower; // gain X life
+          }
+        }
+      }
+
+      // Sowing Mycospawn on-cast trigger: search library for a land → battlefield.
+      // (This is an on-cast trigger, not ETB — but enterBattlefield is the closest hook.)
+      // In practice, treating it as ETB is close enough for the solver.
+      if (cardKey === 'sowing_mycospawn') {
+        const cardsModule = CARDS;
+        const { TUTOR_PRIORITY_SCORE: TPS } = _CDM;
+        const { NAME_TO_KEY: N2K } = _ACM;
+        // Find the highest-priority land in library
+        let bestLandKey = null, bestLandScore = -1;
+        const present = new Set(s.hand);
+        for (const p of s.battlefield) { const k = N2K[p.name]; if (k) present.add(k); }
+        for (const ck of s.players[0].library) {
+          if (ck === 'unknown') continue;
+          const def = cardsModule[ck];
+          if (!def?.types.includes('land')) continue;
+          if (present.has(ck)) continue; // don't fetch duplicates of key lands
+          const score = TPS[ck] ?? 1;
+          if (score > bestLandScore) { bestLandKey = ck; bestLandScore = score; }
+        }
+        if (bestLandKey) {
+          const { state: ns, cardKey: lk } = s.searchLibraryFor(k => k === bestLandKey);
+          if (lk) s = ns.enterBattlefield(lk);
+        }
       }
 
       // Beast Whisperer: draw a card when you cast a creature — triggered in actions.js
@@ -3332,15 +3549,7 @@ function _buildSolverBundle() {
    * All cards from card_data.md plus original combo pieces.
    */
 
-  // STAX cards are never cast and never tutored — imported lazily to avoid circular deps
-  function isStax(cardKey) {
-    const STAX = new Set([
-      'collector_ouphe', 'null_rod', 'root_maze',
-      'thorn_of_amethyst', 'trinisphere', 'orb_of_dreams', 'vexing_bauble',
-    ]);
-    return STAX.has(cardKey);
-  }
-
+  // isStax imported from combo_data.js (no circular dependency)
   function devotionToGreen(state) {
     let count = 0;
     for (const p of state.battlefield) {
@@ -3365,6 +3574,60 @@ function _buildSolverBundle() {
       return [s];
     };
   }
+
+  /**
+   * Build a fetch-land ability function.
+   * Offers TWO results (solver picks the better one via heuristic):
+   *   1. Dryad Arbor (default) — Forest creature, boosts Cradle/Ashaya count,
+   *      enters with summoning sickness so can't tap immediately.
+   *   2. Basic Forest (alternative) — tappable immediately for {G}, no creature benefit.
+   *
+   * The solver's heuristic ordering will prefer Dryad Arbor in most cases
+   * because it advances more combos (Ashaya + creature count, Cradle mana,
+   * sacrifice targets). Basic Forest is preferred when a land drop for mana
+   * is urgently needed this turn.
+   */
+  function makeFetchLand(name) {
+    return {
+      name,
+      types: ['land'], subtypes: [], cost: null,
+      tapForMana(s, p) { return []; }, // fetch lands don't tap for mana
+      abilities: {
+        fetch: {
+          label: 'Fetch Forest or Dryad Arbor',
+          fn(state, perm) {
+            if (perm.tapped) return [];
+            const results = [];
+
+            // Option 1: Dryad Arbor (forest creature — best for combos)
+            {
+              let s = state.clone();
+              s.life -= 1;
+              s = s.removeFromBattlefield(perm.id, 'graveyard');
+              if (s) {
+                s = s.enterBattlefield('dryad_arbor');
+                results.push(s.log(`${name}: fetch Dryad Arbor`));
+              }
+            }
+
+            // Option 2: Basic Forest (immediately tappable for {G})
+            {
+              let s = state.clone();
+              s.life -= 1;
+              s = s.removeFromBattlefield(perm.id, 'graveyard');
+              if (s) {
+                s = s.enterBattlefield('forest');
+                results.push(s.log(`${name}: fetch Forest`));
+              }
+            }
+
+            return results;
+          },
+        },
+      },
+    };
+  }
+
 
   function bounceToUntap(label, filterFn, selfKey) {
     return {
@@ -3526,10 +3789,10 @@ function _buildSolverBundle() {
       tapForMana: simpleTap('{G}', [['G', 1]]),
     },
 
-    misty_rainforest:  { name: 'Misty Rainforest',  types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
-    verdant_catacombs: { name: 'Verdant Catacombs', types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
-    windswept_heath:   { name: 'Windswept Heath',   types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
-    wooded_foothills:  { name: 'Wooded Foothills',  types: ['land'], subtypes: [], cost: null, tapForMana(s,p){return[];}, abilities: { fetch: { label:'Fetch Forest', fn(state,perm){ if(perm.tapped) return []; let s=state.clone(); s.life-=1; s=s.removeFromBattlefield(perm.id,'graveyard'); if(!s) return []; s=s.enterBattlefield('forest'); return [s.log(`${perm.name}: fetch Forest`)]; }}}},
+    misty_rainforest:  makeFetchLand('Misty Rainforest'),
+    verdant_catacombs: makeFetchLand('Verdant Catacombs'),
+    windswept_heath:   makeFetchLand('Windswept Heath'),
+    wooded_foothills:  makeFetchLand('Wooded Foothills'),
 
     shifting_woodland:   { name: 'Shifting Woodland',          types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{G}', [['G',1]]) },
     emergence_zone:      { name: 'Emergence Zone',             types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
@@ -3741,7 +4004,51 @@ function _buildSolverBundle() {
       },
     },
     treefolk_harbinger:{ name:'Treefolk Harbinger',types:['creature'],subtypes:['Treefolk','Druid'],cost:'G',power:1,toughness:1 },
-    elvish_reclaimer:{ name:'Elvish Reclaimer',   types:['creature'], subtypes:['Elf','Warrior'], cost:'G',  power:1,toughness:1 },
+    elvish_reclaimer: {
+      name: 'Elvish Reclaimer', types: ['creature'], subtypes: ['Elf','Warrior'], cost: 'G',
+      power: 1, toughness: 1,
+      // Oracle: {2},{T}, Sacrifice a land: Search library for a land, put it onto the battlefield tapped.
+      // Key use: fetch Gaea's Cradle, Nykthos, Deserted Temple, War Room, etc.
+      abilities: {
+        fetch_land: {
+          label: '{2},{T}: Sac a land → fetch land from library',
+          fn(state, perm) {
+            if (perm.tapped || perm.summoningSick) return [];
+            const ap = state.payMana('2'); if (!ap) return [];
+            const tapped = ap.tapPermanent(perm.id); if (!tapped) return [];
+            const lands = tapped.lands().filter(l => l.id !== perm.id);
+            if (lands.length === 0) return [];
+            const { TUTOR_PRIORITY_SCORE } = _CDM;
+            const { NAME_TO_KEY } = _ACM;
+            const cards = CARDS;
+            // Sacrifice cheapest/least-valuable land
+            const KEEP_LANDS = new Set(['gaeas_cradle','nykthos','deserted_temple','ancient_tomb']);
+            const sacLand = lands.find(l => !KEEP_LANDS.has(NAME_TO_KEY[l.name])) ?? lands[0];
+            let s = tapped.removeFromBattlefield(sacLand.id, 'graveyard');
+            if (!s) return [];
+            // Fetch highest-priority land from library
+            const present = new Set(s.hand);
+            for (const p of s.battlefield) { const k = NAME_TO_KEY[p.name]; if (k) present.add(k); }
+            let bestKey = null, bestScore = -1;
+            for (const ck of s.players[0].library) {
+              if (ck === 'unknown') continue;
+              const def = cards[ck];
+              if (!def?.types.includes('land')) continue;
+              const score = TUTOR_PRIORITY_SCORE[ck] ?? 1;
+              if (score > bestScore && !present.has(ck)) { bestKey = ck; bestScore = score; }
+            }
+            if (!bestKey) return [s.log('Elvish Reclaimer: no land in library')];
+            const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
+            if (!cardKey) return [];
+            const ns2 = ns.enterBattlefield(cardKey);
+            // Fetched land enters tapped
+            const landPerm = ns2.battlefield.find(p => p.name === cards[cardKey].name && !p.tapped);
+            if (landPerm) landPerm.tapped = true;
+            return [ns2.log(`Elvish Reclaimer: sac ${sacLand.name} → fetch ${cards[cardKey].name}`)];
+          },
+        },
+      },
+    },
 
     elvish_spirit_guide: {
       name: 'Elvish Spirit Guide', types:['creature'], subtypes:['Elf','Spirit'], cost:'2G', power:2,toughness:2,
@@ -4522,7 +4829,46 @@ function _buildSolverBundle() {
         },
       },
     },
-    genesis_hydra:       { name:'Genesis Hydra',              types:['creature'],subtypes:['Plant','Hydra'],     cost:'XGG',  power:0,toughness:0 },
+    genesis_hydra: {
+      name: 'Genesis Hydra', types: ['creature'], subtypes: ['Plant','Hydra'], cost: 'XGG',
+      power: 0, toughness: 0,
+      // Oracle on-cast: reveal top X, put a nonland permanent with MV ≤ X onto battlefield.
+      // The Hydra itself enters with X +1/+1 counters.
+      // Modelled as: find the best nonland permanent in library with MV ≤ X, put it to BF.
+      // (Non-deterministic top-X reveal simplified to full library access.)
+      castFn(state) {
+        const cards = CARDS;
+        const { parseCost: pc } = _GSM;
+        const { TUTOR_PRIORITY_SCORE } = _CDM;
+        const x = state.mana.total(); // post-payment remaining = X
+        const results = [];
+        // Find best nonland permanent with MV ≤ X
+        let bestKey = null, bestScore = -1;
+        for (const ck of state.players[0].library) {
+          if (ck === 'unknown' || isStax(ck)) continue;
+          const def = cards[ck];
+          if (!def || def.types.includes('land') || !def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+          if (mv > x) continue;
+          const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+          if (score > bestScore) { bestKey = ck; bestScore = score; }
+        }
+        if (bestKey) {
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === bestKey);
+          if (cardKey) {
+            const def = cards[cardKey];
+            // Put the found permanent onto battlefield
+            let ns2 = ns.enterBattlefield(cardKey);
+            // Hydra itself enters with X counters (power/toughness X/X — simplify as body)
+            results.push(ns2.log(`Genesis Hydra X=${x} → reveal, put ${def.name} (MV ${x}) to BF`));
+            return results;
+          }
+        }
+        // No hit — Hydra still enters (just no bonus permanent)
+        return [state.log(`Genesis Hydra X=${x}: no nonland permanent found in top X`)];
+      },
+    },
     king_coldblood: {
       name: 'King of the Coldblood Curse', types: ['creature'], subtypes: ['Lizard','Villain'],
       cost: '2GG', power: 4, toughness: 4,
@@ -4720,25 +5066,345 @@ function _buildSolverBundle() {
 
     // ─── INSTANTS & SORCERIES ────────────────────────────────────────────────
 
-    chord_of_calling:       { name:'Chord of Calling',        types:['instant'],  subtypes:[], cost:'XGGG' },
-    shared_summons:         { name:'Shared Summons',           types:['instant'],  subtypes:[], cost:'3GG'  },
-    summoners_pact:         { name:"Summoner's Pact",          types:['instant'],  subtypes:[], cost:'0'    },
-    archdruid_charm:        { name:"Archdruid's Charm",        types:['instant'],  subtypes:[], cost:'GGG'  },
+    chord_of_calling: {
+      name: 'Chord of Calling', types: ['instant'], subtypes: [], cost: 'XGGG',
+      // Oracle: Convoke. Search library for creature with MV ≤ X, put onto battlefield.
+      // Convoke: each tapped creature pays {1} or one mana of its color.
+      // Solver: X = number of untapped creatures (convoke) + available generic mana.
+      // Treats Chord like GSZ (creature to battlefield) but with convoke economy.
+      castFn(state) {
+        const cards = CARDS;
+        const { parseCost: pc } = _GSM;
+        const results = [];
+        // castFn is called AFTER the dispatch pays the {G}{G}{G} base cost.
+        // X = mana remaining in the pool (identical pattern to Green Sun's Zenith).
+        // Convoke is implicitly handled: tapping creatures reduces the effective cost
+        // paid by the dispatch, leaving more mana in the pool as X.
+        const x = state.mana.total();
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature') || !def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+          if (mv > x) continue;
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          results.push(ns.enterBattlefield(cardKey)
+            .log(`Chord of Calling X=${x} → ${def.name} (MV ${mv})`));
+        }
+        return results.length ? results : [state.log(`Chord of Calling X=${x}: no eligible creature`)];
+      },
+    },
+    shared_summons: {
+      name: 'Shared Summons', types: ['instant'], subtypes: [], cost: '3GG',
+      // Oracle: Search library for up to two creature cards with different names,
+      // reveal them, put them into your hand, then shuffle.
+      // Strategy: find the two highest-priority missing combo pieces.
+      castFn(state) {
+        const cards = CARDS;
+
+        // Priority scores for combo-relevant creatures (higher = more important)
+        const PRIORITY = {
+          ashaya: 88, temur_sabertooth: 85, kogla: 82,
+          hope_tender: 80, quirion_ranger: 78, scryb_ranger: 76,
+          argothian_elder: 75, ley_weaver: 74, magus_of_the_candelabra: 73,
+          selvala: 70, karametra_acolyte: 68, circle_of_dreams_druid: 65,
+          priest_of_titania: 63, elvish_archdruid: 61, wirewood_channeler: 59,
+          wirewood_symbiote: 57, hyrax_tower_scout: 55,
+          duskwatch_recruiter: 47, beast_whisperer: 45,
+          endurance: 43, woodland_bellower: 40, fierce_empath: 35,
+        };
+
+        // Combo pieces needed (mirrors COMBO_REQUIRED_KEYS in actions.js)
+        const { COMBO_REQUIRED_KEYS: COMBOS } = _CDM;
+
+        // Collect all unique creature keys in the library
+        const seen = new Set();
+        const candidates = [];
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature')) continue;
+          candidates.push(ck);
+        }
+        if (candidates.length === 0) return [];
+
+        // Build present set (hand + battlefield)
+        const present = new Set(state.hand);
+        for (const p of state.battlefield) {
+          const k = Object.keys(cards).find(key => cards[key].name === p.name);
+          if (k) present.add(k);
+        }
+
+        // Functional equivalents: if one is already present, don't fetch the other
+        const EQUIV = [
+          new Set(['temur_sabertooth', 'kogla']),
+          new Set(['quirion_ranger', 'scryb_ranger']),
+          new Set(['argothian_elder', 'ley_weaver']),
+        ];
+        function isRedundant(ck) {
+          return EQUIV.some(g => g.has(ck) && [...g].some(m => present.has(m)));
+        }
+
+        // Mark needed combo pieces (missing from combos that are 1-2 pieces away)
+        const needed = new Set();
+        for (const required of COMBOS) {
+          const absent = required.filter(k => !present.has(k));
+          if (absent.length <= 2) absent.forEach(k => needed.add(k));
+        }
+        // Remove redundant equivalents from needed
+        for (const k of [...needed]) { if (isRedundant(k)) needed.delete(k); }
+
+        // Sort: needed combo pieces first, then by priority score; skip redundant equivalents
+        const ranked = candidates
+          .filter(ck => !isRedundant(ck))  // never fetch a redundant equivalent
+          .slice().sort((a, b) => {
+            const aNeed = needed.has(a) ? 1000 : 0;
+            const bNeed = needed.has(b) ? 1000 : 0;
+            return (bNeed + (PRIORITY[b] ?? 0)) - (aNeed + (PRIORITY[a] ?? 0));
+          });
+
+        const results = [];
+        const pick1 = ranked[0];
+        const pick2 = ranked.length >= 2 ? ranked[1] : null;
+
+        if (pick1) {
+          const { state: ns1, cardKey: ck1 } = state.searchLibraryFor(k => k === pick1);
+          if (ck1) {
+            let ns1h = ns1.addToHand(ck1);
+            if (pick2) {
+              const { state: ns2, cardKey: ck2 } = ns1h.searchLibraryFor(k => k === pick2);
+              if (ck2) {
+                results.push(ns2.addToHand(ck2).log(
+                  `Shared Summons → find ${cards[ck1].name} + ${cards[ck2].name}`
+                ));
+                return results; // single best result is enough for solver
+              }
+            }
+            results.push(ns1h.log(`Shared Summons → find ${cards[ck1].name}`));
+          }
+        }
+        return results;
+      },
+    },
+    summoners_pact: {
+      name: "Summoner's Pact", types: ['instant'], subtypes: [], cost: '0',
+      // Oracle: {0} — Search library for a green creature, put in hand.
+      // At your next upkeep, pay {2GG} or lose the game.
+      // Solver: models as free tutor to hand; ignores the upkeep trigger
+      // (with infinite mana we pay it trivially; solver always wins before then).
+      castFn(state) {
+        const cards = CARDS;
+        const results = [];
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature')) continue;
+          if (!def.cost || !def.cost.includes('G')) continue; // green creatures only
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          results.push(ns.addToHand(cardKey).log(`Summoner's Pact → find ${def.name}`));
+        }
+        return results.length ? results : [state.log("Summoner's Pact: no green creature")];
+      },
+    },
+    archdruid_charm: {
+      name: "Archdruid's Charm", types: ['instant'], subtypes: [], cost: 'GGG',
+      // Oracle mode 1: Search library for creature or land → battlefield (if land, tapped) or hand.
+      // Modes 2 (fight) and 3 (exile artifact/enchantment) not useful to model for combos.
+      // Solver: only implements mode 1 (the tutor mode).
+      castFn(state) {
+        const cards = CARDS;
+        const results = [];
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def) continue;
+          const isCreature = def.types.includes('creature');
+          const isLand = def.types.includes('land');
+          if (!isCreature && !isLand) continue;
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          if (isLand) {
+            // Land enters battlefield tapped
+            const ns2 = ns.enterBattlefield(cardKey);
+            const landPerm = ns2.battlefield.find(p => p.name === def.name && !p.tapped);
+            if (landPerm) landPerm.tapped = true;
+            results.push(ns2.log(`Archdruid's Charm → fetch land ${def.name} (tapped)`));
+          } else {
+            // Creature goes to hand
+            results.push(ns.addToHand(cardKey).log(`Archdruid's Charm → find ${def.name}`));
+          }
+        }
+        return results.length ? results : [state.log("Archdruid's Charm: nothing found")];
+      },
+    },
     force_of_vigor:         { name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
     beast_within:           { name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
-    vitalize:               { name:'Vitalize',                 types:['instant'],  subtypes:[], cost:'G'    },
-    touch_of_vitae:         { name:'Touch of Vitae',           types:['instant'],  subtypes:[], cost:'2G'   },
-    legolas_quick_reflexes: { name:"Legolas's Quick Reflexes", types:['instant'],  subtypes:[], cost:'G'    },
-    infectious_bite:        { name:'Infectious Bite',          types:['instant'],  subtypes:[], cost:'1G'   },
+    vitalize: {
+      name: 'Vitalize', types: ['instant'], subtypes: [], cost: 'G',
+      // Oracle: Untap all creatures you control.
+      // Very powerful with mana dorks — effectively doubles available mana.
+      castFn(state) {
+        let s = state.clone();
+        let untapped = 0;
+        for (const p of s.battlefield) {
+          if (p.types?.includes('creature') && p.tapped) {
+            p.tapped = false;
+            untapped++;
+          }
+        }
+        return [s.log(`Vitalize: untap ${untapped} creature${untapped !== 1 ? 's' : ''}`)];
+      },
+    },
+    touch_of_vitae: {
+      name: 'Touch of Vitae', types: ['instant'], subtypes: [], cost: '2G',
+      // Oracle: Target creature gains haste + "{0}: Untap this creature (once)."
+      // Draw a card at the beginning of next turn's upkeep.
+      // Solver: give haste to the highest-value tapped creature (removes summoning sickness).
+      // The one-shot untap is modelled as immediate untap.
+      castFn(state) {
+        const results = [];
+        const targets = state.creatures().filter(c => c.summoningSick || c.tapped);
+        if (targets.length === 0) {
+          // Still playable on any creature but minimal benefit
+          return [state.log('Touch of Vitae: no useful target')];
+        }
+        for (const target of targets) {
+          let s = state.clone();
+          const perm = s.getPermanentById(target.id);
+          if (!perm) continue;
+          perm.summoningSick = false;
+          perm.tapped = false; // immediate untap from the {0} ability
+          results.push(s.log(`Touch of Vitae → ${target.name} gains haste + untap`));
+        }
+        return results;
+      },
+    },
+    legolas_quick_reflexes: {
+      name: "Legolas's Quick Reflexes", types: ['instant'], subtypes: [], cost: 'G',
+      // Oracle: Split second. Untap target creature + hexproof until EOT.
+      // Key use: untap a key mana dork mid-combo (like Hope Tender, Selvala).
+      castFn(state) {
+        const results = [];
+        const targets = state.creatures().filter(c => c.tapped);
+        if (targets.length === 0) return [state.log("Legolas's Quick Reflexes: no tapped creature")];
+        const seen = new Set();
+        for (const target of targets) {
+          if (seen.has(target.name)) continue;
+          seen.add(target.name);
+          let s = state.clone();
+          const perm = s.getPermanentById(target.id);
+          if (!perm) continue;
+          perm.tapped = false;
+          results.push(s.log(`Legolas's Quick Reflexes → untap ${target.name}`));
+        }
+        return results;
+      },
+    },
+    infectious_bite: {
+      name: 'Infectious Bite', types: ['instant'], subtypes: [], cost: '1G',
+      // Oracle: Target creature you control deals damage to a creature you don't control.
+      // Each opponent gets a poison counter. Win with 10 poison counters.
+      // Solver: this card IS in the WIN_CONDITIONS (checkVictory detects it in hand).
+      // The castFn here just models "cast it once" — no opponent creature modelled,
+      // so we treat each cast as dealing 1 poison counter to all opponents.
+      castFn(state) {
+        // With infinite mana, casting this 10 times = 10 poison counters = win.
+        // Win condition detection handles the actual win; here we just move it to GY.
+        // Return the state unchanged (GY placement handled by dispatch).
+        return [state.log('Infectious Bite: cast (each opponent gets a poison counter)')];
+      },
+    },
     natures_claim:          { name:"Nature's Claim",           types:['instant'],  subtypes:[], cost:'G'    },
     ram_through:            { name:'Ram Through',              types:['instant'],  subtypes:[], cost:'1G'   },
     tail_swipe:             { name:'Tail Swipe',               types:['instant'],  subtypes:[], cost:'G'    },
     bouncers_beatdown:      { name:"Bouncer's Beatdown",       types:['instant'],  subtypes:[], cost:'2G'   },
     autumn_veil:            { name:"Autumn's Veil",            types:['instant'],  subtypes:[], cost:'G'    },
-    veil_of_summer:         { name:'Veil of Summer',           types:['instant'],  subtypes:[], cost:'G'    },
+    veil_of_summer: {
+      name: 'Veil of Summer', types: ['instant'], subtypes: [], cost: 'G',
+      // Oracle: Draw a card if an opponent cast a blue or black spell this turn.
+      // Spells can't be countered + hexproof from blue/black until EOT.
+      // Solver: always draw 1 card (simplification — the draw is the main value).
+      castFn(state) {
+        return [state.playerDraws(0, 1).log('Veil of Summer: draw a card')];
+      },
+    },
     warping_wail:           { name:'Warping Wail',             types:['instant'],  subtypes:[], cost:'1C'   },
-    emerald_charm:          { name:'Emerald Charm',            types:['instant'],  subtypes:[], cost:'G'    },
-    noxious_revival:        { name:'Noxious Revival',          types:['instant'],  subtypes:[], cost:'G'    },
+    emerald_charm: {
+      name: 'Emerald Charm', types: ['instant'], subtypes: [], cost: 'G',
+      // Oracle mode 1: Untap target permanent.
+      // Modes 2 (destroy enchantment) and 3 (remove flying) not useful for combos.
+      // Solver: only implements mode 1 — untap any tapped permanent.
+      castFn(state) {
+        const results = [];
+        const tapped = state.battlefield.filter(p => p.tapped);
+        if (tapped.length === 0) return [state.log('Emerald Charm: no tapped permanent')];
+        const seen = new Set();
+        for (const perm of tapped) {
+          if (seen.has(perm.name)) continue;
+          seen.add(perm.name);
+          let s = state.clone();
+          const p = s.getPermanentById(perm.id);
+          if (!p) continue;
+          p.tapped = false;
+          results.push(s.log(`Emerald Charm → untap ${perm.name}`));
+        }
+        return results;
+      },
+    },
+    noxious_revival: {
+      name: 'Noxious Revival', types: ['instant'], subtypes: [], cost: 'G',
+      // Oracle: {G/P} — Put target card from any graveyard on top of its owner's library.
+      // Cost: {G} or 2 life. Solver uses {G} (always available with mana dorks).
+      // Strategy: put the highest-priority missing combo piece from OUR graveyard on top.
+      // Sets topDecked so startNewTurn draws it deterministically next turn.
+      castFn(state) {
+        const cards = CARDS;
+        const { COMBO_REQUIRED_KEYS, NAME_TO_KEY } = _ACM;
+        const gy = state.players[0].graveyard; // array of card names
+        if (gy.length === 0) return [state.log('Noxious Revival: empty graveyard')];
+
+        // Build present set
+        const present = new Set(state.hand);
+        for (const p of state.battlefield) {
+          const ck = NAME_TO_KEY[p.name]; if (ck) present.add(ck);
+        }
+
+        // Find best combo piece in graveyard
+        let bestIdx = -1, bestMissing = Infinity;
+        for (let i = 0; i < gy.length; i++) {
+          const ck = NAME_TO_KEY[gy[i]];
+          if (!ck) continue;
+          for (const req of COMBO_REQUIRED_KEYS) {
+            if (!req.includes(ck)) continue;
+            const missing = req.filter(k => !present.has(k)).length;
+            if (missing < bestMissing) { bestMissing = missing; bestIdx = i; }
+          }
+        }
+        const targetIdx = bestIdx >= 0 ? bestIdx : 0;
+        const targetName = gy[targetIdx];
+        const targetKey = NAME_TO_KEY[targetName] ?? Object.keys(cards).find(k => cards[k].name === targetName);
+
+        let s = state.clone();
+        s.players[0] = s.players[0].clone();
+        s.players[0].graveyard = [
+          ...s.players[0].graveyard.slice(0, targetIdx),
+          ...s.players[0].graveyard.slice(targetIdx + 1),
+        ];
+        // Put on top of library — set topDecked for deterministic draw
+        if (targetKey) s.topDecked = targetKey;
+        return [s.log(`Noxious Revival → ${targetName} on top of library`)];
+      },
+    },
     worldly_tutor: {
       name: 'Worldly Tutor', types: ['instant'], subtypes: [], cost: 'G',
       // Oracle: Search library for a creature, REVEAL it, then SHUFFLE and put on TOP of library.
@@ -4823,22 +5489,74 @@ function _buildSolverBundle() {
         return results.length ? results : [state.log("Green Sun's Zenith: no eligible creature")];
       },
     },
-    finale_of_devastation:  { name:'Finale of Devastation',    types:['sorcery'],  subtypes:[], cost:'XGG'  },
+    finale_of_devastation: {
+      name: 'Finale of Devastation', types: ['sorcery'], subtypes: [], cost: 'XGG',
+      // Oracle: Search library AND/OR graveyard for creature with MV ≤ X → battlefield.
+      // If X ≥ 10: all creatures get +X/+X and haste.
+      // Solver: with infinite mana X is unbounded → fetch the best creature available.
+      // The win condition (X≥10 giving haste) is handled in checkVictory.
+      castFn(state) {
+        const cards = CARDS;
+        const { parseCost: pc } = _GSM;
+        const results = [];
+        // With infinite mana, X is effectively unlimited. Use all available mana as X proxy.
+        // In practice the solver uses this to find Duskwatch or another finisher.
+        // castFn receives state AFTER dispatch pays the base cost — remaining mana = X.
+        const x = state.mana.total();
+        // Search library
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature')) continue;
+          if (!def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+          if (mv > x) continue;
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          results.push(ns.enterBattlefield(cardKey)
+            .log(`Finale of Devastation X=${x} → ${def.name} (MV ${mv}) from library`));
+        }
+        // Search graveyard
+        for (const name of state.players[0].graveyard) {
+          const ck = Object.keys(cards).find(k => cards[k].name === name);
+          if (!ck || seen.has(ck) || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature') || !def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+          if (mv > x) continue;
+          // Return from graveyard
+          let s = state.clone();
+          s.players[0] = s.players[0].clone();
+          const gyIdx = s.players[0].graveyard.indexOf(name);
+          if (gyIdx < 0) continue;
+          s.players[0].graveyard = [...s.players[0].graveyard.slice(0,gyIdx), ...s.players[0].graveyard.slice(gyIdx+1)];
+          s = s.enterBattlefield(ck);
+          results.push(s.log(`Finale of Devastation X=${x} → ${def.name} (MV ${mv}) from graveyard`));
+        }
+        return results.length ? results : [state.log(`Finale of Devastation X=${x}: no target`)];
+      },
+    },
     natural_order: {
       name: 'Natural Order', types: ['sorcery'], subtypes: [], cost: '2GG',
       // Oracle: Sacrifice a green creature as additional cost. Search → any green creature onto BF → shuffle.
       castFn(state) {
         const cards = CARDS;
         const results = [];
-        // Must have a green creature to sacrifice
+        const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
+                              'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
         const greenCreatures = state.creatures().filter(c => {
           const ck = Object.keys(cards).find(k => cards[k].name === c.name);
           const def = ck ? cards[ck] : null;
-          return def && def.cost && def.cost.includes('G');
+          return def?.cost?.includes('G');
         });
         if (greenCreatures.length === 0) return [];
-        // Sacrifice the cheapest/least-valuable green creature
-        const sacCreature = greenCreatures[0];
+        const expendable = greenCreatures.filter(c => !KEEP.has(c.name));
+        const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
         const afterSac = state.removeFromBattlefield(sacCreature.id, 'graveyard');
         if (!afterSac) return [];
         const seen = new Set();
@@ -4847,7 +5565,7 @@ function _buildSolverBundle() {
           seen.add(ck);
           const def = cards[ck];
           if (!def || !def.types.includes('creature')) continue;
-          if (!def.cost || !def.cost.includes('G')) continue;
+          if (!def.cost?.includes('G')) continue;
           const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
           if (!cardKey) continue;
           results.push(ns.enterBattlefield(cardKey).log(`Natural Order: sac ${sacCreature.name} → fetch ${def.name}`));
@@ -4855,7 +5573,71 @@ function _buildSolverBundle() {
         return results.length ? results : [afterSac.log('Natural Order: no green creature in library')];
       },
     },
-    eldritch_evolution:     { name:'Eldritch Evolution',       types:['sorcery'],  subtypes:[], cost:'1GG'  },
+    eldritch_evolution: {
+      name: 'Eldritch Evolution', types: ['sorcery'], subtypes: [], cost: '1GG',
+      // Oracle: As an additional cost, sacrifice a creature.
+      // Search library for a creature with MV ≤ 2 + sacrificed creature's MV.
+      // Put it onto the battlefield, then shuffle. Exile Eldritch Evolution.
+      //
+      // Strategy: sacrifice the lowest-value creature available (mana dork)
+      // to maximise the target MV ceiling. A 1-drop dork (MV 1) lets us fetch
+      // MV ≤ 3. A 2-drop lets us fetch MV ≤ 4. A 3-drop lets us fetch MV ≤ 5
+      // (Ashaya, Temur Sabertooth, etc.).
+      castFn(state) {
+        const cards = CARDS;
+        const { parseCost: pc } = _GSM;
+        const results = [];
+
+        // Must have at least one creature to sacrifice
+        const creatures = state.creatures();
+        if (creatures.length === 0) return [];
+
+        // For each sacrificeable creature, generate targets reachable from that sacrifice
+        // Use NAME_TO_KEY for O(1) lookups (pre-built in actions.js)
+        const seen_sac = new Set();
+        for (const sacPerm of creatures) {
+          // Avoid duplicate sacrifice choices (e.g. two Llanowar Elves)
+          if (seen_sac.has(sacPerm.name)) continue;
+          seen_sac.add(sacPerm.name);
+
+          // Determine sacrificed creature's MV
+          const sacKey = Object.keys(cards).find(k => cards[k].name === sacPerm.name);
+          const sacDef = sacKey ? cards[sacKey] : null;
+          if (!sacDef?.cost) continue;
+          const sacParsed = pc(sacDef.cost);
+          const sacMV = sacParsed.generic + Object.values(sacParsed.colored).reduce((a, b) => a + b, 0);
+
+          // X = 2 + sacrificed MV
+          const maxMV = sacMV + 2;
+
+          // Sacrifice the creature
+          const afterSac = state.removeFromBattlefield(sacPerm.id, 'graveyard');
+          if (!afterSac) continue;
+
+          // Search library for creatures with MV ≤ maxMV
+          const seen_target = new Set();
+          for (const ck of afterSac.players[0].library) {
+            if (seen_target.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+            seen_target.add(ck);
+            const def = cards[ck];
+            if (!def || !def.types.includes('creature')) continue;
+            if (!def.cost) continue;
+            const parsed = pc(def.cost);
+            const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+            if (mv > maxMV) continue;
+            const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
+            if (!cardKey) continue;
+            // Put onto battlefield, exile Eldritch Evolution (it exiles itself per oracle)
+            let ns2 = ns.enterBattlefield(cardKey);
+            ns2 = ns2.addToGraveyard(0, 'Eldritch Evolution'); // simplify: treat as graveyard
+            results.push(ns2.log(
+              `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${mv})`
+            ));
+          }
+        }
+        return results;
+      },
+    },
     sylvan_scrying: {
       name: 'Sylvan Scrying', types: ['sorcery'], subtypes: [], cost: '1G',
       castFn(state) {
@@ -4874,8 +5656,57 @@ function _buildSolverBundle() {
         return results.length ? results : [state.log('Sylvan Scrying: no land in library')];
       },
     },
-    natures_rhythm:         { name:"Nature's Rhythm",          types:['sorcery'],  subtypes:[], cost:'XGG'  },
-    turntimber_symbiosis:   { name:'Turntimber Symbiosis',     types:['sorcery'],  subtypes:[], cost:'4GGG' },
+    natures_rhythm: {
+      name: "Nature's Rhythm", types: ['sorcery'], subtypes: [], cost: 'XGG',
+      // Oracle: Search library for creature with MV ≤ X → battlefield. Shuffle.
+      // Harmonize: recastable from graveyard (ignored for solver simplicity).
+      // Essentially a second Green Sun's Zenith — same implementation.
+      castFn(state) {
+        const cards = CARDS;
+        const { parseCost: pc } = _GSM;
+        const results = [];
+        // castFn receives state AFTER dispatch pays the base cost — remaining mana = X.
+        const x = state.mana.total();
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature') || !def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+          if (mv > x) continue;
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          results.push(ns.enterBattlefield(cardKey)
+            .log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`));
+        }
+        return results.length ? results : [state.log(`Nature's Rhythm X=${x}: no eligible creature`)];
+      },
+    },
+    turntimber_symbiosis: {
+      name: 'Turntimber Symbiosis', types: ['sorcery'], subtypes: [], cost: '4GGG',
+      // Oracle: Look at top 7 cards, put a creature onto battlefield, rest on bottom.
+      // Simplified: treat as a tutor for any creature in library (non-deterministic top-7
+      // ignored; in a 99-card deck the best creature is effectively always in top 7).
+      // Fetches the highest-priority missing combo piece.
+      castFn(state) {
+        const cards = CARDS;
+        const results = [];
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature')) continue;
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          results.push(ns.enterBattlefield(cardKey)
+            .log(`Turntimber Symbiosis → ${def.name}`));
+        }
+        return results.length ? results : [state.log('Turntimber Symbiosis: no creature found')];
+      },
+    },
     bridgeworks_battle:     { name:'Bridgeworks Battle',       types:['sorcery'],  subtypes:[], cost:'2G'   },
 
     // ─── Yeva commander ───────────────────────────────────────────────────────
@@ -4894,8 +5725,34 @@ function _buildSolverBundle() {
       name: 'Nylea, Keen-Eyed',
       types: ['enchantment', 'creature'], subtypes: ['God'],
       cost: '3G', power: 5, toughness: 6,
-      // Indestructible. Creature spells cost {1} less. {2G}: reveal top, put creature in hand.
-      // Cost reduction modelled via effectiveCost in actions.js (similar to Emerald Medallion).
+      // Indestructible. Creature spells cost {1} less (in costReductions in actions.js).
+      // {2G},{T}: Reveal top card of library. If creature, put in hand. Otherwise may put in GY.
+      // Simplified: treat as library scan for the best creature (non-deterministic top reveal).
+      abilities: {
+        reveal_top: {
+          label: '{2}{G},{T}: Reveal top card → creature to hand',
+          fn(state, perm) {
+            if (perm.tapped || perm.summoningSick) return [];
+            const ap = state.payMana('2G'); if (!ap) return [];
+            const s = ap.tapPermanent(perm.id); if (!s) return [];
+            const cards = CARDS;
+            const { TUTOR_PRIORITY_SCORE } = _CDM;
+            // Find best creature in library (simulates top reveal with library knowledge)
+            let bestKey = null, bestScore = -1;
+            for (const ck of s.players[0].library) {
+              if (ck === 'unknown' || isStax(ck)) continue;
+              const def = cards[ck];
+              if (!def?.types.includes('creature')) continue;
+              const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+              if (score > bestScore) { bestKey = ck; bestScore = score; }
+            }
+            if (!bestKey) return [s.log('Nylea: no creature in library')];
+            const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
+            if (!cardKey) return [];
+            return [ns.addToHand(cardKey).log(`Nylea → ${cards[cardKey].name} to hand`)];
+          },
+        },
+      },
     },
   };
 
@@ -5886,6 +6743,9 @@ function _buildSolverBundle() {
   var _COM = { checkCombos, checkVictory };
 
   // actions.js
+  // Shims for renamed destructuring imports stripped by rebuild_solver.py:
+  var STAX_CARDS = _CDM.STAX_KEYS;      // actions.js: const { STAX_KEYS: STAX_CARDS } = require('./combo_data')
+  var _parseCost = _GSM.parseCost;       // actions.js: const { parseCost: _parseCost } = require('./GameState')
   /**
    * MTG Combo Solver — Action Generator (v2)
    *
@@ -5916,43 +6776,6 @@ function _buildSolverBundle() {
   );
 
   // ── STAX cards — never cast, never tutored ────────────────────────────────
-  const STAX_CARDS = new Set([
-    'collector_ouphe', 'null_rod', 'root_maze',
-    'thorn_of_amethyst', 'trinisphere', 'orb_of_dreams', 'vexing_bauble',
-  ]);
-
-  // ── Per-combo required card keys ──────────────────────────────────────────
-  // For each combo, the cards that must be present (on BF or in hand) for it
-  // to fire. Used by tutors to fetch the single missing piece rather than
-  // exploring the entire library.
-  const COMBO_REQUIRED_KEYS = [
-    // Ashaya-based infinite mana loops
-    ['ashaya','quirion_ranger'],
-    ['ashaya','scryb_ranger'],
-    ['ashaya','hope_tender','gaeas_cradle'],
-    ['ashaya','argothian_elder'],
-    ['ashaya','ley_weaver'],
-    ['ashaya','magus_of_the_candelabra'],
-    ['ashaya','hyrax_tower_scout'],
-    // Cradle / Nykthos loops
-    ['gaeas_cradle','deserted_temple'],
-    ['gaeas_cradle','wirewood_lodge'],
-    ['nykthos','deserted_temple'],
-    // Earthcraft loops
-    ['earthcraft','gaeas_cradle'],
-    ['earthcraft','quirion_ranger'],
-    // Selvala / Temur Sabertooth
-    ['selvala','temur_sabertooth'],
-    ['selvala','kogla'],
-    // Win condition pairs (need infinite mana already + win piece)
-    ['duskwatch_recruiter','gaeas_cradle'],
-    ['beast_whisperer','gaeas_cradle'],
-    // Note: single-card win conditions (endurance, geier_reach) are omitted here
-    // because they only help AFTER infinite mana is established. Including them would
-    // cause tutors to fetch them even without a mana engine present. The priority
-    // fallback in missingComboCards handles them when no mana combo is in progress.
-  ];
-
   /**
    * Returns the set of card keys that would complete (or advance) any combo
    * given what is currently in hand or on the battlefield.
@@ -5976,36 +6799,33 @@ function _buildSolverBundle() {
       if (absent.length === 1) missing.add(absent[0]);
     }
 
+    // Apply functional equivalents: if one member of an equivalent group is
+    // already present (hand or battlefield), remove all other members of that
+    // group from the missing set — they are redundant.
+    for (const group of FUNCTIONAL_EQUIVALENTS) {
+      const hasOne = [...group].some(k => present.has(k));
+      if (hasOne) {
+        for (const k of group) missing.delete(k);
+      }
+    }
+
     // Strict fallback: if nothing is one card away, return only the
-    // single highest-priority target — prevents unbounded branching.
+    // single highest-priority target that is not a redundant equivalent.
     if (missing.size === 0) {
       let best = null, bestScore = -1;
-      for (const [k, score] of Object.entries(TUTOR_PRIORITY_SCORE)) {
-        if (!present.has(k) && score > bestScore) { best = k; bestScore = score; }
+      for (const [k, sc] of Object.entries(TUTOR_PRIORITY_SCORE)) {
+        if (present.has(k)) continue; // already have it
+        // Skip if another member of the same equivalent group is already present
+        const isRedundant = FUNCTIONAL_EQUIVALENTS.some(g => g.has(k) && [...g].some(m => present.has(m)));
+        if (isRedundant) continue;
+        if (sc > bestScore) { best = k; bestScore = sc; }
       }
       if (best) missing.add(best);
     }
     return missing;
   }
 
-  // ── Tutor target priority ─────────────────────────────────────────────────
-  // Numeric scores: higher = fetch this first. Used by smartTutorTarget().
-  const TUTOR_PRIORITY_SCORE = {
-    // Core combo pieces — highest priority
-    'gaeas_cradle': 100, 'nykthos': 95, 'yavimaya': 90,
-    'ashaya': 88, 'temur_sabertooth': 85, 'kogla': 82,
-    'hope_tender': 80, 'quirion_ranger': 78, 'scryb_ranger': 76,
-    'argothian_elder': 75, 'ley_weaver': 74, 'magus_of_the_candelabra': 73,
-    'selvala': 70, 'karametra_acolyte': 68, 'circle_of_dreams_druid': 65,
-    'priest_of_titania': 63, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
-    'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'earthcraft': 53,
-    'deserted_temple': 51, 'concordant_crossroads': 49,
-    // Win conditions
-    'duskwatch_recruiter': 47, 'beast_whisperer': 45,
-    'endurance': 43, 'geier_reach': 41,
-    // Support pieces
-    'wirewood_lodge': 39, 'seedborn_muse': 35,
-  };
+
 
   /**
    * Given a list of (resultState, cardKey) options from a castFn, return the
@@ -6072,15 +6892,27 @@ function _buildSolverBundle() {
    */
   function costReductions(state, def) {
     let genericReduction = 0;
+    const isGreenPermanent = def.cost?.includes('G') &&
+      (def.types.includes('creature') || def.types.includes('enchantment') ||
+       def.types.includes('artifact') || def.types.includes('planeswalker'));
+
     for (const perm of state.battlefield) {
       const permDef = CARDS[perm.cardKey];
-      if (!permDef?.costReduction) continue;
       // Emerald Medallion: green spells cost {1} less
-      if (permDef.costReduction.color === 'G') {
+      if (permDef?.costReduction?.color === 'G') {
         const cost = def.cost || '';
-        if (cost.includes('G') || def.types.includes('creature') /* heuristic for green */) {
+        if (cost.includes('G') || def.types.includes('creature')) {
           genericReduction += permDef.costReduction.amount;
         }
+      }
+      // Defiler of Vigor: green permanent spells cost {1} less (pay 2 life as additional cost)
+      // Simplified: always apply the reduction (life payment not tracked turn-by-turn)
+      if (perm.name === 'Defiler of Vigor' && isGreenPermanent) {
+        genericReduction += 1;
+      }
+      // Nylea, Keen-Eyed: creature spells cost {1} less
+      if (perm.name === 'Nylea, Keen-Eyed' && def.types.includes('creature')) {
+        genericReduction += 1;
       }
     }
     return genericReduction;
@@ -6187,6 +7019,7 @@ function _buildSolverBundle() {
           label: `Play ${def.name}`,
           priority: 10,
           apply(s) {
+            const isSecondLand = s.landDrops === 0; // already used first drop
             let ns = s.removeFromHand(cardKey);
             if (!ns) return null;
             ns = ns.clone();
@@ -6199,7 +7032,27 @@ function _buildSolverBundle() {
               if (perm.summoningSick) continue;
               if (perm.name === 'Lotus Cobra') ns = ns.addMana('G');
               if (perm.name === 'Tireless Provisioner') ns = ns.addMana('G');
-              if (perm.name === 'Nissa, Resurgent Animist') ns = ns.addMana('G');
+              if (perm.name === 'Nissa, Resurgent Animist') {
+                ns = ns.addMana('G');
+                // Second landfall this turn: find an Elf or Elemental from library
+                if (isSecondLand) {
+                  const cards = CARDS;
+                  const { TUTOR_PRIORITY_SCORE } = _CDM;
+                  let bestKey = null, bestScore = -1;
+                  for (const ck of ns.players[0].library) {
+                    if (ck === 'unknown' || isStax(ck)) continue;
+                    const d = cards[ck];
+                    if (!d?.types.includes('creature')) continue;
+                    if (!d.subtypes?.includes('Elf') && !d.subtypes?.includes('Elemental')) continue;
+                    const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+                    if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+                  }
+                  if (bestKey) {
+                    const { state: ns2, cardKey: ck } = ns.searchLibraryFor(k => k === bestKey);
+                    if (ck) ns = ns2.addToHand(ck);
+                  }
+                }
+              }
             }
 
             // Leyline of Abundance: if a creature was just tapped for mana, add {G}
@@ -6245,6 +7098,21 @@ function _buildSolverBundle() {
             if (allResults && allResults.length > 0) {
               const needed = missingComboCards(state);
 
+              // Build present set once for redundancy checks
+              const presentNow = new Set(state.hand);
+              for (const p of state.battlefield) {
+                const ck = NAME_TO_KEY[p.name];
+                if (ck) presentNow.add(ck);
+              }
+
+              // Returns true if fetching this card key is redundant because a
+              // functional equivalent is already in hand or on the battlefield.
+              function isEquivRedundant(ck) {
+                return FUNCTIONAL_EQUIVALENTS.some(
+                  g => g.has(ck) && [...g].some(m => presentNow.has(m))
+                );
+              }
+
               // Extract fetched card key from a result's last history message.
               // Fast path: check needed keys first. Slow path: full NAME_TO_KEY scan.
               function msgKey(r) {
@@ -6258,13 +7126,16 @@ function _buildSolverBundle() {
                 return null;
               }
 
-              // Filter to combo-completing targets only
+              // Filter to combo-completing targets only, excluding redundant equivalents
               const relevant = allResults.filter(r => {
                 const k = msgKey(r);
-                return k && needed.has(k);
+                return k && needed.has(k) && !isEquivRedundant(k);
               });
 
-              const pool = relevant.length > 0 ? relevant : allResults;
+              // Fallback pool: all results minus redundant equivalents
+              const fallback = allResults.filter(r => !isEquivRedundant(msgKey(r)));
+
+              const pool = relevant.length > 0 ? relevant : fallback;
               const sorted = pool.slice().sort((a, b) =>
                 (TUTOR_PRIORITY_SCORE[msgKey(b)] ?? 0) -
                 (TUTOR_PRIORITY_SCORE[msgKey(a)] ?? 0)
@@ -6277,6 +7148,7 @@ function _buildSolverBundle() {
 
               for (const resultState of sorted.slice(0, maxBranches)) {
                 const msg = resultState.history[resultState.history.length - 1]?.msg ?? `Cast ${def.name}`;
+                const spellGoesToGraveyard = def.types.includes('instant') || def.types.includes('sorcery');
                 actions.push({
                   type: 'cast_spell',
                   label: msg,
@@ -6292,7 +7164,12 @@ function _buildSolverBundle() {
                     const matched = res.find(r =>
                       (r.history[r.history.length-1]?.msg ?? '') === msg
                     );
-                    return matched ?? smartTutorTarget(s, res);
+                    let result = matched ?? smartTutorTarget(s, res);
+                    // Instants and sorceries go to graveyard after resolving
+                    if (result && spellGoesToGraveyard) {
+                      result = result.addToGraveyard(0, def.name);
+                    }
+                    return result;
                   },
                 });
               }
@@ -6384,6 +7261,11 @@ function _buildSolverBundle() {
           let ns = results[0];
           // Leyline of Abundance: whenever you tap a creature for mana, add {G}
           if (def.types.includes('creature') && ns.hasPermanent('Leyline of Abundance')) {
+            ns = ns.addMana('G');
+          }
+          // Badgermole Cub: whenever you tap a creature for mana, add {G}
+          if (def.types.includes('creature') && ns.hasPermanent('Badgermole Cub') &&
+              perm.name !== 'Badgermole Cub') {
             ns = ns.addMana('G');
           }
           return ns;
@@ -6506,6 +7388,13 @@ function _buildSolverBundle() {
           ns.isOpponentTurn = true;
           // Mana drains between phases
           ns.mana = ns.mana.constructor ? new ns.mana.constructor() : ns.mana;
+          // Seedborn Muse: untap all permanents during each other player's untap step
+          if (ns.hasPermanent('Seedborn Muse')) {
+            for (const p of ns.battlefield) {
+              p.tapped = false;
+              p.abilitiesUsed = {};
+            }
+          }
           return ns.log("Opponent's end step (Yeva flash window)");
         },
       });
@@ -7185,6 +8074,11 @@ var SolverGameState = _solverExports.GameState;
 var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
+
+
+
+
+
 
 
 
@@ -11163,7 +12057,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // Crop Rotation on T1 (no lands on board) would sacrifice the fetched Forest
         // leaving you with nothing — never recommend fetching Forest FOR Crop Rotation
         // when there's no other land on the battlefield.
-        const landsOnBoard = battlefield.filter(x => getCard(x)?.type === "land").length;
+        const landsOnBoard = battlefield.filter(x => {
+          const cd = getCard(x);
+          return cd?.type === "land" || (battlefield.includes("Ashaya, Soul of the Wild") && cd?.type === "creature");
+        }).length;
         if (c === "Crop Rotation" && landsOnBoard === 0) return false;
         const cmc = cd.cmc ?? 0;
         const pips = cd.greenPips ?? 0;
@@ -13983,7 +14880,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // Exception 1: infinite mana active — losing a land is irrelevant when you're already winning.
     // Exception 2: at least one mana dork is on the battlefield — the dork covers mana production
     //   after the land is sacrificed, so it's safe to fetch a key land like Gaea's Cradle.
-    const landsOnBoard = battlefield.filter(c => getCard(c)?.type === "land").length;
+    const landsOnBoard = battlefield.filter(c => {
+      const cd = getCard(c);
+      return cd?.type === "land" || (board.has("Ashaya, Soul of the Wild") && cd?.type === "creature");
+    }).length;
     const hasDorkOnBoard = battlefield.some(c => {
       const cd = getCard(c);
       return cd?.tags?.includes("dork") || cd?.tags?.includes("big-dork");
@@ -18051,7 +18951,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         } else {
           // Infinite mana confirmed this turn — no win outlet yet
           _category = "♾ INFINITE MANA — SOLVER";
-          _priority = 14.5; _color = "#58d68d";
+          _priority = 15.8; _color = "#58d68d";
           _headline = _solverResult.manaCombo || _solverResult.comboName;
           _detail   = _solverResult.comboDesc || _solverResult.comboName;
         }
@@ -27289,8 +28189,17 @@ function buildHandNotes(cards) {
     } else if (dorks1 === 1) {
       notes.push(`1-drop dork ✓ — ${dork1Cards[0]} T1 on ${greenLands === 1 ? "the green land" : "a green land"}`);
     } else if (enchantLandRamp >= 1) {
-      const aura = cards.find(c => getCard(c)?.tags?.includes("enchant-land"));
-      notes.push(`Enchant-land T1 ✓ — ${aura} on a Forest`);
+      // Only show T1 enchant-land note if there's actually a CMC-1 enchant-land in hand.
+      // enchantLandRamp counts all enchant-lands (incl. Elvish Guidance CMC 3) for ramp purposes,
+      // but the T1 play note must be restricted to ones actually castable on T1.
+      const t1Aura = cards.find(c => getCard(c)?.tags?.includes("enchant-land") && (getCard(c)?.cmc ?? 99) <= 1 && (c !== "Utopia Sprawl" || hasForestInHand));
+      if (t1Aura) {
+        notes.push(`Enchant-land T1 ✓ — ${t1Aura} on a Forest`);
+      } else {
+        // Enchant-land present but not T1-castable (e.g. Elvish Guidance CMC 3)
+        const slowAura = cards.find(c => getCard(c)?.tags?.includes("enchant-land"));
+        notes.push(`Enchant-land ramp — ${slowAura} (cast T${getCard(slowAura)?.cmc ?? "?"})`);
+      }
     } else if (hasGSZT1) {
       notes.push("T1 play ✓ — Green Sun's Zenith (X=0) → Dryad Arbor onto battlefield");
     } else {
@@ -28424,7 +29333,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       _detail   = solverResult.comboDesc || solverResult.comboName;
     } else {
       _category = "♾ INFINITE MANA — SOLVER";
-      _priority = 14.5; _color = "#58d68d";
+      _priority = 15.8; _color = "#58d68d";
       _headline = solverResult.manaCombo || solverResult.comboName;
       _detail   = solverResult.comboDesc || solverResult.comboName;
     }
@@ -32437,7 +33346,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* ── Deserted Temple: tap — untap target land ── */}
         {isBF && card === "Deserted Temple" && (() => {
           const cost = 1;
-          const lands = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => getCard(c)?.type === "land" && c !== "Deserted Temple");
+          const lands = battlefield.map((c,i) => ({c,i})).filter(({c,i}) => isLandOrAshayaCreature(c) && c !== "Deserted Temple");
           const canAct = !isCardTapped && (manaPool + tappedMana.total) >= cost && lands.length > 0;
           if (!canAct) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -32493,7 +33402,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Magus of the Candelabra: {X} tap — untap X target lands ── */}
         {isBF && card === "Magus of the Candelabra" && (() => {
-          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => isLandOrAshayaCreature(c));
           const maxX = Math.min(manaPool, lands.length);
           if (isCardTapped || sickCreatures.has(key) || lands.length === 0 || (manaPool + tappedMana.total) < 1) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
@@ -32531,7 +33440,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Ley Weaver: tap — untap two target lands ── */}
         {isBF && card === "Ley Weaver" && (() => {
-          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => isLandOrAshayaCreature(c));
           if (isCardTapped || sickCreatures.has(key) || lands.length === 0) return (
             <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
               ⚡ Untap 2 Lands — {isCardTapped ? "tapped" : sickCreatures.has(key) ? "summoning sickness" : "no lands"}
@@ -32996,7 +33905,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
         {/* ── Hope Tender: {1},{T} — untap a land; {1},{T},Exert — untap 2 lands ── */}
         {isBF && card === "Hope Tender" && (() => {
-          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => getCard(c)?.type === "land");
+          const lands = battlefield.map((c, i) => ({ c, i })).filter(({ c }) => isLandOrAshayaCreature(c));
           const isExerted = exertedCreatures.has(key);
           const canAct = !isCardTapped && !sickCreatures.has(key) && (manaPool + tappedMana.total) >= 1 && lands.length >= 1;
           const canExert = canAct; // can exert multiple times per turn if untapped between uses
@@ -37400,7 +38309,7 @@ function YevaAdvisor() {
       _category = "🏆 WIN NOW — SOLVER";   _priority = 16; _color = "#ff6b35";
       _headline = sr.winCondition; _detail = sr.comboDesc || sr.comboName;
     } else if (_isThisTurn && !_hasWinCon) {
-      _category = "♾ INFINITE MANA — SOLVER"; _priority = 14.5; _color = "#58d68d";
+      _category = "♾ INFINITE MANA — SOLVER"; _priority = 15.8; _color = "#58d68d";
       _headline = sr.manaCombo || sr.comboName; _detail = sr.comboDesc || sr.comboName;
     } else {
       _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
