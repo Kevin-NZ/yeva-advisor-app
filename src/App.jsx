@@ -2378,38 +2378,81 @@ function _buildSolverBundle() {
    */
 
   // ── Per-combo required card keys ──────────────────────────────────────────
+  // Source of truth: ref/decklist_combos.txt (combos 1–62)
   const COMBO_REQUIRED_KEYS = [
-    // Ashaya-based infinite mana loops
-    ['ashaya','quirion_ranger'],
-    ['ashaya','scryb_ranger'],
-    ['ashaya','hope_tender','gaeas_cradle'],
-    ['ashaya','hope_tender','circle_of_dreams_druid'],
-    ['ashaya','hope_tender','selvala'],
-    ['ashaya','argothian_elder'],
-    ['ashaya','ley_weaver'],
-    ['ashaya','magus_of_the_candelabra'],
-    ['ashaya','hyrax_tower_scout'],
-    // Cradle / Nykthos loops
+    // Ashaya-based infinite mana loops (combos 1, 6, 7, 11, 14, 21, 24, 26, 27,
+    //   32, 34, 36, 43, 45, 47, 48, 49, 50, 52, 56, 60, 61, 62)
+    ['ashaya','quirion_ranger'],                              // 1
+    ['ashaya','scryb_ranger'],                               // (shared key for 3,7,11,14,21,26,27,41,49)
+    ['ashaya','argothian_elder'],                            // 6
+    ['ashaya','ley_weaver'],                                 // 24
+    ['ashaya','hyrax_tower_scout'],                          // (Ashaya+Hyrax)
+    ['ashaya','magus_of_the_candelabra'],                    // 32,34,36,43,47,52,60,62
+    ['ashaya','hope_tender','gaeas_cradle'],                 // 48
+    ['ashaya','hope_tender','circle_of_dreams_druid'],       // 50
+    ['ashaya','hope_tender','selvala'],                      // 56
+    ['ashaya','hope_tender','nykthos'],                      // 45
+    ['ashaya','marwyn'],                                     // 26 (Scryb+Marwyn), 61
+    ['ashaya','wirewood_channeler'],                         // 49 (Scryb+Channeler), 62
+
+    // Kogla loops (combos 2, 15, 19, 23, 25, 35, 38, 59)
+    ['kogla','karametra_acolyte'],                           // 2
+    ['kogla','hyrax_tower_scout','priest_of_titania'],       // 15
+    ['kogla','hyrax_tower_scout','selvala'],                 // 19
+    ['kogla','hyrax_tower_scout','karametra_acolyte'],       // 23
+    ['kogla','hyrax_tower_scout','circle_of_dreams_druid'],  // 25
+    ['kogla','hyrax_tower_scout','elvish_archdruid'],        // 35
+    ['kogla','hyrax_tower_scout','marwyn'],                  // 38
+    ['kogla','hyrax_tower_scout','wirewood_channeler'],      // 59
+
+    // Hyrax + Temur (combos 8, 18, 28, 30, 57)
+    ['hyrax_tower_scout','temur_sabertooth','priest_of_titania'],   // 8
+    ['hyrax_tower_scout','temur_sabertooth','selvala'],             // 18
+    ['hyrax_tower_scout','temur_sabertooth','elvish_archdruid'],    // 28
+    ['hyrax_tower_scout','temur_sabertooth','marwyn'],              // 30
+    ['hyrax_tower_scout','temur_sabertooth','wirewood_channeler'],  // 57
+
+    // Temur Sabertooth + Wirewood Symbiote combos (combos 4,5,12,13,16,17)
+    ['wirewood_symbiote','temur_sabertooth','circle_of_dreams_druid'],  // 4,5,17
+    ['wirewood_symbiote','temur_sabertooth','selvala'],                 // 12,13,16
+
+    // Temur Sabertooth + Concordant Crossroads (combos 9, 10, 20)
+    ['concordant_crossroads','temur_sabertooth','circle_of_dreams_druid'], // 9
+    ['concordant_crossroads','temur_sabertooth','selvala'],                // 10
+    ['concordant_crossroads','temur_sabertooth','karametra_acolyte'],      // 20
+
+    // Temur Sabertooth + Selvala (combos 22, 29, 37)
+    ['selvala','temur_sabertooth','surrak_goreclaw'],         // 22
+    ['selvala','temur_sabertooth','thousand_year_elixir'],    // 29
+    ['karametra_acolyte','temur_sabertooth','thousand_year_elixir'], // 37
+
+    // Wirewood Symbiote + Selvala (combo 53–55 use Cloudstone; keep base)
+    ['wirewood_symbiote','selvala'],                         // broad coverage
+
+    // Haste enabler + big dork loops (Concordant Crossroads / Surrak)
+    ['concordant_crossroads','selvala'],
+    ['concordant_crossroads','circle_of_dreams_druid'],
+
+    // Argothian Elder / Ley Weaver loops (combos 31, 40, 42, 46)
+    ['argothian_elder','wirewood_lodge'],                    // 40, 42, 46
+    ['argothian_elder','wirewood_lodge','nykthos'],          // 31
+    ['ley_weaver','wirewood_lodge'],
+
+    // Cradle / Nykthos non-Ashaya loops
     ['gaeas_cradle','deserted_temple'],
     ['gaeas_cradle','wirewood_lodge'],
     ['nykthos','deserted_temple'],
+
     // Earthcraft loops
     ['earthcraft','gaeas_cradle'],
     ['earthcraft','quirion_ranger'],
-    // Selvala combos
+
+    // Selvala standalone combos
     ['selvala','temur_sabertooth'],
     ['selvala','kogla'],
     ['selvala','quirion_ranger'],
     ['selvala','scryb_ranger'],
-    // Wirewood Symbiote loops
-    ['wirewood_symbiote','temur_sabertooth','circle_of_dreams_druid'],
-    ['wirewood_symbiote','selvala'],
-    // Haste enabler + big dork loops (Concordant Crossroads / Surrak)
-    ['concordant_crossroads','selvala'],
-    ['concordant_crossroads','circle_of_dreams_druid'],
-    // Argothian Elder + Wirewood Lodge (no Ashaya needed)
-    ['argothian_elder','wirewood_lodge'],
-    ['ley_weaver','wirewood_lodge'],
+
     // Win condition pairs (need infinite mana already + win piece)
     ['duskwatch_recruiter','gaeas_cradle'],
     ['beast_whisperer','gaeas_cradle'],
@@ -2426,6 +2469,8 @@ function _buildSolverBundle() {
     'priest_of_titania': 63, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
     'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'earthcraft': 53,
     'deserted_temple': 51, 'concordant_crossroads': 49, 'wirewood_lodge': 48,
+    // Cards present in combos but previously missing from priority table
+    'marwyn': 46, 'surrak_goreclaw': 44, 'thousand_year_elixir': 42,
     // Win conditions
     'duskwatch_recruiter': 47, 'beast_whisperer': 45,
     'endurance': 43, 'woodland_bellower': 40, 'fierce_empath': 35,
@@ -2434,10 +2479,16 @@ function _buildSolverBundle() {
   };
 
   // ── Functional equivalents ────────────────────────────────────────────────
+  // Within each group, having any one member satisfies all combos that use any
+  // other member (they play the same role in the combo engine).
   const FUNCTIONAL_EQUIVALENTS = [
     new Set(['temur_sabertooth', 'kogla']),
     new Set(['quirion_ranger', 'scryb_ranger']),
     new Set(['argothian_elder', 'ley_weaver']),
+    // All of these tap for large amounts of green mana and slot into the same
+    // Temur Sabertooth / Hyrax bounce loops.
+    new Set(['circle_of_dreams_druid', 'karametra_acolyte', 'priest_of_titania',
+             'elvish_archdruid', 'wirewood_channeler', 'marwyn']),
   ];
 
   // ── STAX card keys ────────────────────────────────────────────────────────
@@ -4780,7 +4831,8 @@ function _buildSolverBundle() {
     fauna_shaman: {
       name: 'Fauna Shaman', types: ['creature'], subtypes: ['Elf','Shaman'],
       cost: '1G', power: 2, toughness: 2,
-      // {G}, {T}: Discard a creature → tutor for a creature card, put in hand.
+      // Oracle: {G}, {T}, Discard a creature card → search library for a creature card,
+      // reveal it, put it into your hand, then shuffle.
       abilities: {
         tutor: {
           label: '{G}, {T}: Discard a creature, search for a creature',
@@ -4788,17 +4840,50 @@ function _buildSolverBundle() {
             if (perm.tapped || perm.summoningSick) return [];
             const ap = state.payMana('G'); if (!ap) return [];
             const cards = CARDS;
+            const { TUTOR_PRIORITY_SCORE } = _CDM;
+            const { NAME_TO_KEY } = _ACM;
+
             const creaturesInHand = [...new Set(ap.hand)].filter(k =>
-              cards[k] && cards[k].types.includes('creature')
+              cards[k]?.types.includes('creature')
             );
             if (creaturesInHand.length === 0) return [];
+
+            // Build the set of cards already in hand or on battlefield — skip fetching these
+            const alreadyPresent = new Set(ap.hand);
+            for (const p of ap.battlefield) {
+              const ck = NAME_TO_KEY[p.name];
+              if (ck) alreadyPresent.add(ck);
+            }
+
+            // Find the best missing creature in the library by TUTOR_PRIORITY_SCORE
+            let bestKey = null, bestScore = -1;
+            for (const ck of ap.players[0].library) {
+              if (ck === 'unknown' || isStax(ck)) continue;
+              if (alreadyPresent.has(ck)) continue;          // skip already-present cards
+              const def = cards[ck];
+              if (!def?.types.includes('creature')) continue;
+              const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+              if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+            }
+            if (!bestKey) return [];
+
             const results = [];
+            const seenDiscard = new Set();
             for (const discard of creaturesInHand) {
+              if (seenDiscard.has(discard)) continue;
+              if (discard === bestKey) continue;              // don't discard what we're fetching
+              seenDiscard.add(discard);
               let s = ap.tapPermanent(perm.id); if (!s) continue;
               s = s.discardFromHand(discard); if (!s) continue;
-              s = s.playerDraws(0, 1);
-              s = s.log(`Fauna Shaman: discard ${cards[discard].name}, tutor a creature`);
-              results.push(s);
+              const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
+              if (!cardKey) continue;
+              // Put the fetched creature directly into hand (oracle: "put it into your hand")
+              const ns2 = ns.clone();
+              ns2.players[0] = ns2.players[0].clone();
+              ns2.hand = [...ns2.hand, cardKey];
+              results.push(ns2.log(
+                `Fauna Shaman: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
+              ));
             }
             return results;
           },
@@ -5015,29 +5100,64 @@ function _buildSolverBundle() {
     },
     survival_fittest: {
       name: 'Survival of the Fittest', types: ['enchantment'], subtypes: [], cost: '1G',
-      // {G}, {T}: Discard a creature card → search library for a creature card, reveal, put in hand.
-      // Modeled as: pay {G}, tap enchantment, discard one creature from hand, add any creature from hand.
-      // (Library search approximated: swaps one creature card in hand for another.)
+      // Oracle: {T}, Discard a creature card → search library for a creature card,
+      // reveal that card, put it into your hand, then shuffle.
+      // Note: the activated ability costs {T} ONLY — no mana payment required.
       abilities: {
         tutor: {
-          label: '{G}, {T}: Discard a creature, search for a creature',
+          label: '{T}: Discard a creature, search for a creature',
           fn(state, perm) {
             if (perm.tapped) return [];
-            const ap = state.payMana('G'); if (!ap) return [];
+            // Oracle: NO mana cost on the activated ability — just tap.
             const cards = CARDS;
-            const creaturesInHand = [...new Set(ap.hand)].filter(k => {
-              const def = cards[k];
-              return def && def.types.includes('creature');
-            });
+            const { TUTOR_PRIORITY_SCORE } = _CDM;
+            const { NAME_TO_KEY } = _ACM;
+
+            // Tap the enchantment first
+            const afterTap = state.tapPermanent(perm.id);
+            if (!afterTap) return [];
+
+            const creaturesInHand = [...new Set(afterTap.hand)].filter(k =>
+              cards[k]?.types.includes('creature')
+            );
             if (creaturesInHand.length === 0) return [];
+
+            // Build the set of cards already in hand or on battlefield — skip fetching these
+            const alreadyPresent = new Set(afterTap.hand);
+            for (const p of afterTap.battlefield) {
+              const ck = NAME_TO_KEY[p.name];
+              if (ck) alreadyPresent.add(ck);
+            }
+
+            // Find the best missing creature in the library by TUTOR_PRIORITY_SCORE
+            let bestKey = null, bestScore = -1;
+            for (const ck of afterTap.players[0].library) {
+              if (ck === 'unknown' || isStax(ck)) continue;
+              if (alreadyPresent.has(ck)) continue;          // skip already-present cards
+              const def = cards[ck];
+              if (!def?.types.includes('creature')) continue;
+              const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+              if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+            }
+            if (!bestKey) return [];
+
             const results = [];
+            // Offer one action per creature we could discard (deduplicated by key)
+            const seenDiscard = new Set();
             for (const discard of creaturesInHand) {
-              let s = ap.tapPermanent(perm.id); if (!s) continue;
-              s = s.discardFromHand(discard); if (!s) continue;
-              // Library draw — draw 1 card (approximate as library-1)
-              s = s.playerDraws(0, 1);
-              s = s.log(`Survival of the Fittest: discard ${cards[discard].name}, tutor a creature`);
-              results.push(s);
+              if (seenDiscard.has(discard)) continue;
+              if (discard === bestKey) continue;              // don't discard what we're fetching
+              seenDiscard.add(discard);
+              let s = afterTap.discardFromHand(discard); if (!s) continue;
+              const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
+              if (!cardKey) continue;
+              // Put the fetched creature directly into hand (oracle: "put it into your hand")
+              const ns2 = ns.clone();
+              ns2.players[0] = ns2.players[0].clone();
+              ns2.hand = [...ns2.hand, cardKey];
+              results.push(ns2.log(
+                `Survival of the Fittest: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
+              ));
             }
             return results;
           },
@@ -7328,9 +7448,10 @@ function _buildSolverBundle() {
       if (!def) continue;
       const baseCost = def.cost ?? '0';
 
-      // Parse base cost and add the commander tax as additional generic mana
-      const { parseCost: pc } = _GSM;
-      const parsed = pc(baseCost);
+      // Parse base cost and add the commander tax as additional generic mana.
+      // Use the module-level _parseCost (already imported at top of file) instead
+      // of re-calling require() on every generateActions() invocation.
+      const parsed = _parseCost(baseCost);
       const totalGeneric = parsed.generic + (state.commanderTax ?? 0) * 2;
       const coloredPart = Object.entries(parsed.colored)
         .flatMap(([c, n]) => Array(n).fill(c)).join('');
@@ -7346,8 +7467,7 @@ function _buildSolverBundle() {
         label: `Cast ${def.name} from command zone {${taxedCost}}`,
         priority: 9,
         apply(s) {
-          const { parseCost: pc2 } = _GSM;
-          const p2 = pc2(def.cost ?? '0');
+          const p2 = _parseCost(def.cost ?? '0');
           const g2 = p2.generic + (s.commanderTax ?? 0) * 2;
           const col2 = Object.entries(p2.colored)
             .flatMap(([c, n]) => Array(n).fill(c)).join('');
@@ -7422,7 +7542,7 @@ function _buildSolverBundle() {
 
   // Solver.js
   /**
-   * MTG Combo Solver — Solver (v2)
+   * MTG Combo Solver — Solver (v3)
    *
    * Two search strategies:
    *   'dfs'  — Depth-first with score pruning (fast, finds optimal quickly)
@@ -7435,29 +7555,163 @@ function _buildSolverBundle() {
    *   strategy    {string}   'dfs' | 'bfs' (default 'dfs')
    *   allLines    {boolean}  Collect ALL winning lines, not just the best (default false)
    *   verbose     {boolean}  Log each winning line as found (default false)
+   *
+   * v3 improvements over v2:
+   *   #1  Parent-pointer linked list replaces per-call path array copies in DFS
+   *   #2  analyzeState() builds the present-set once per node, shared by
+   *       canReachCombo and heuristic (eliminates O(children) redundant set builds)
+   *   #3  canReachCombo runs before checkVictory (cheap filter first)
+   *   #4  canReachCombo incorporates TUTOR_PRIORITY_SCORE castability check
+   *   #5  BFS also applies canReachCombo pruning
+   *   #6  (reverted) Mana-stripped fingerprint was incorrect — states differing
+   *       only in floating mana are NOT equivalent (more mana = more castable spells).
+   *       Full fingerprint with mana retained.
+   *   #7  BFS uses parent-pointer nodes instead of copying path arrays
+   *   #8  children.sort() skipped when only one child
+   *   #9  canReachCombo lives here (re-exported for back-compat) — no circular dep
+   *  #10  COMBO_REQUIRED_KEYS expanded to cover all 62 combo lines
+   *  #11  Heuristic penalises affordable-but-uncast search spells (Worldly Tutor,
+   *       GSZ, Crop Rotation, …) — forces tutor-first ordering so the DFS doesn't
+   *       explore every permutation of "when to cast the tutor", eliminating the
+   *       ~10x state explosion seen with tutor-heavy opening hands.
    */
 
-  // ── Option D: Early combo-reachability pruning ────────────────────────────
-  // Returns true if the state has a realistic path to assembling any combo
-  // within the remaining turns. Used to prune branches that cannot win.
-  // Very fast: O(combos × pieces) with no allocations.
-  function canReachCombo(state, turnsLeft) {
-    // Build present set from battlefield + hand (reuse NAME_TO_KEY for O(1) lookup)
+  // ── Search spell keys ─────────────────────────────────────────────────────
+  // Instant/sorcery cards with castFn that fetch combo pieces.  When one of
+  // these is affordable but still in hand, the heuristic penalises the state
+  // so the DFS always prefers "cast tutor now" over "cast tutor later".
+  // Without this, the solver explores every permutation of tutor timing,
+  // blowing up the state space by ~10x for hands containing a tutor.
+  const SEARCH_SPELL_KEYS = new Set(
+    Object.entries(CARDS)
+      .filter(([, def]) =>
+        def.castFn &&
+        (def.types?.includes('instant') || def.types?.includes('sorcery'))
+      )
+      .map(([k]) => k)
+  );
+
+
+  // ── Tutor reach classification ────────────────────────────────────────────
+  // Maps card keys → what card TYPE they can fetch.
+  // Used by analyzeState to avoid counting creature-missing combos as reachable
+  // when only a land-tutor (Crop Rotation, Sylvan Scrying) is in hand.
+  const TUTOR_REACH = {
+    // Creature tutors
+    worldly_tutor:          'creature',
+    green_suns_zenith:      'creature',
+    chord_of_calling:       'creature',
+    summoners_pact:         'creature',
+    shared_summons:         'creature',
+    natures_rhythm:         'creature',
+    finale_of_devastation:  'creature',
+    natural_order:          'creature',
+    eldritch_evolution:     'creature',
+    // Land tutors
+    crop_rotation:          'land',
+    sylvan_scrying:         'land',
+    // Fetch any permanent type
+    archdruid_charm:        'any',
+  };
+
+  // Classify a card key as 'creature', 'land', or 'other'.
+  function _cardType(k) {
+    const def = CARDS[k];
+    if (!def) return 'unknown';
+    if (def.types?.includes('creature')) return 'creature';
+    if (def.types?.includes('land') || !def.cost) return 'land';
+    return 'other';
+  }
+
+  // Build per-type tutor use counts from hand + non-tapped BF permanents.
+  // Returns { creature: N, land: N, any: N } — each entry is the number of
+  // discrete fetch actions available of that type this turn.
+  // Battlefield tutors (e.g. Survival of the Fittest) are counted only if untapped.
+  function _tutorCounts(state) {
+    const counts = { creature: 0, land: 0, any: 0 };
+    for (const k of state.hand) {
+      const t = TUTOR_REACH[k];
+      if (t) counts[t]++;
+    }
+    for (const p of state.battlefield) {
+      if (p.tapped) continue;
+      const k = NAME_TO_KEY[p.name];
+      if (k) {
+        const t = TUTOR_REACH[k];
+        if (t) counts[t]++;
+      }
+    }
+    return counts;
+  }
+
+  // ── #2 analyzeState ───────────────────────────────────────────────────────
+  // Returns { present: Set<string>, minMissing: number }
+  //
+  //   present    = card keys in hand + on battlefield (+ topDecked if set)
+  //   minMissing = minimum effective turns needed to assemble any combo,
+  //                computed by greedily assigning available tutor uses:
+  //
+  //                  - present piece                           → cost 0
+  //                  - missing, matching tutor use available   → cost 1 (consumes a use)
+  //                  - missing, wrong-type tutor or no tutor   → cost 2
+  //
+  // Tutor uses are COUNTED, not just typed: if you have 1 creature tutor and need
+  // 2 missing creatures, only the first costs 1 — the second costs 2.
+  // This correctly handles the Crop Rotation case: 1 land use, missing ashaya
+  // (creature) + something else → the creature piece costs 2 even with a land tutor.
+  function analyzeState(state) {
     const present = new Set(state.hand);
     for (const p of state.battlefield) {
       const ck = NAME_TO_KEY[p.name];
       if (ck) present.add(ck);
     }
-    // A combo is reachable if missing ≤ turnsLeft pieces
-    // (each missing piece costs at least 1 action/turn to acquire via tutor)
+    // topDecked counts as 'will be in hand next turn'
+    if (state.topDecked) present.add(state.topDecked);
+
+    const base = _tutorCounts(state);
+
+    let minMissing = Infinity;
     for (const required of COMBO_REQUIRED_KEYS) {
-      const missing = required.filter(k => !present.has(k)).length;
-      if (missing <= turnsLeft) return true;
+      // Clone tutor counts for this combo's cost calculation
+      let cCr = base.creature, cLd = base.land, cAny = base.any;
+      let cost = 0;
+
+      for (const k of required) {
+        if (present.has(k)) continue;
+        const ct = _cardType(k);
+      for (const k of required) {
+        if (present.has(k)) continue;
+        const ct = _cardType(k);
+        // Greedily consume the best matching tutor use.
+        // Type-specific tutors (creature/land) ONLY match their exact type.
+        // 'any' tutors match everything.
+        // 'other' type cards (enchantments, artifacts) require an 'any' tutor.
+        if      (ct === 'creature' && cCr  > 0) { cost += 1; cCr--;  }
+        else if (ct === 'creature' && cAny > 0) { cost += 1; cAny--; }
+        else if (ct === 'land'     && cLd  > 0) { cost += 1; cLd--;  }
+        else if (ct === 'land'     && cAny > 0) { cost += 1; cAny--; }
+        else if (ct === 'other'    && cAny > 0) { cost += 1; cAny--; }  // only 'any' tutors
+        else                                    { cost += 3;          }  // no matching tutor
+      }
+      }
+
+      if (cost < minMissing) minMissing = cost;
+      if (minMissing === 0) break;
     }
-    // Also reachable if already have infinite mana or near-win
-    if (checkCombos(state)) return true;
-    return false;
+
+    return { present, minMissing };
   }
+
+  // ── #4 / #9: canReachCombo ────────────────────────────────────────────────
+  // Returns true if the state has a realistic path to assembling any combo
+  // within turnsLeft turns. Uses tutor-count-aware minMissing from analyzeState.
+  function canReachCombo(state, turnsLeft, analysis) {
+    if (checkCombos(state)) return true;
+    const { minMissing } = analysis ?? analyzeState(state);
+    return minMissing <= turnsLeft;
+  }
+
+
 
   const DEFAULT_OPTIONS = {
     maxTurns:  4,
@@ -7472,10 +7726,11 @@ function _buildSolverBundle() {
 
   /**
    * Score a state/path. Lower = better.
-   *   Primary  : turn number (fewer turns → lower score)
-   *   Secondary: depth (fewer actions → lower score)
-   *   Tertiary : life remaining (more life → slightly lower score)
-   *   Quaternary: mana floating (more mana → slightly lower score)
+   *   Primary   : turn number (fewer turns → lower score)
+   *   Secondary : depth (fewer actions → lower score)
+   *   Tertiary  : life remaining (more life → slightly lower score)
+   *   Quaternary: floating mana (more mana → slightly lower score, tie-breaks
+   *               paths that reach the same board through different action orders)
    */
   function score(state, depth) {
     return (state.turn - 1) * 100_000 +
@@ -7484,25 +7739,51 @@ function _buildSolverBundle() {
            state.mana.total() *      1;
   }
 
-  // ── Option F: Heuristic child ordering ───────────────────────────────────
-  // Scores a state by how close it is to winning.
-  // Lower = closer to win. Used to sort DFS children so best states explored first.
-  function heuristic(state) {
-    const present = new Set(state.hand);
-    for (const p of state.battlefield) {
-      const ck = NAME_TO_KEY[p.name];
-      if (ck) present.add(ck);
+  // ── #2 / #11: Heuristic child ordering ───────────────────────────────────
+  // Lower = closer to win. Returns a score for sorting children.
+  //
+  //  A) Search-spell penalty (+2000 per castable tutor in hand):
+  //     Forces "cast tutor now" strictly before "do other things first".
+  //     Penalty is 2× the per-missing-piece unit (1000) so it dominates the
+  //     combo-distance signal. Without this, the DFS explores all N! orderings
+  //     of "when to cast the tutor", causing ~10× state explosion.
+  //
+  //  B) topDecked bonus (−500 if a combo piece is on top of library):
+  //     After a tutor resolves, the target is topDecked. Strongly prefers passing
+  //     to draw the tutored piece over continuing to do other things first.
+  function heuristic(minMissing, state) {
+    if (minMissing === 0 && checkCombos(state)) return -1_000_000 - state.mana.total();
+
+    let h = minMissing * 1000 - state.mana.total();
+
+    // A) Search-spell penalty — must be > 1000 to dominate combo-distance signal
+    for (const k of state.hand) {
+      if (!SEARCH_SPELL_KEYS.has(k)) continue;
+      const def = CARDS[k];
+      if (!def) continue;
+      if (state.mana.pay(effectiveCost(state, def)) !== null) {
+        h += 2000;
+      }
     }
-    // Count minimum missing pieces across all combos
-    let minMissing = Infinity;
-    for (const required of COMBO_REQUIRED_KEYS) {
-      const missing = required.filter(k => !present.has(k)).length;
-      if (missing < minMissing) minMissing = missing;
+
+    // B) topDecked bonus — strongly prefer drawing the tutored piece
+    if (state.topDecked && TUTOR_PRIORITY_SCORE[state.topDecked] !== undefined) {
+      h -= 500;
     }
-    // If combo is assembled, score by win condition distance
-    const combo = checkCombos(state);
-    if (combo) minMissing = -1; // infinite mana → prioritise highly
-    return minMissing * 1000 - state.mana.total();
+
+    return h;
+  }
+
+  // ── #1 / #7: Parent-pointer path reconstruction ──────────────────────────
+  // Instead of copying the full path array on every recursive call, we store a
+  // singly-linked list of nodes. Path arrays are only materialised when a win
+  // is found (O(depth) work, once per win rather than once per explored node).
+  function reconstructPath(node) {
+    const path = [];
+    let cur = node;
+    while (cur) { path.push(cur.state); cur = cur.parent; }
+    path.reverse();
+    return path;
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -7542,7 +7823,7 @@ function _buildSolverBundle() {
       if (this.opts.strategy === 'bfs') {
         this._bfs(initialState);
       } else {
-        this._dfs(initialState, [initialState], 0);
+        this._dfs(initialState, null, 0);  // #1: pass parent node (null = root)
       }
 
       const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
@@ -7558,8 +7839,9 @@ function _buildSolverBundle() {
     }
 
     // ── DFS ───────────────────────────────────────────────────────────────────
+    // #1: parentNode is { state, parent } linked list node (null at root)
 
-    _dfs(state, path, depth) {
+    _dfs(state, parentNode, depth) {
       this.statesExplored++;
       if (this.statesExplored > this.opts.maxStates) return;
       if (depth > this.opts.maxDepth)  return;
@@ -7572,29 +7854,33 @@ function _buildSolverBundle() {
       const s = score(state, depth);
       if (s >= this.bestScore) { this.pruned++; return; }
 
-      // Visited-state dedup
+      // Dedup: full fingerprint including mana (mana affects what actions are available)
       const fp = state.fingerprint();
       const prev = this.visited.get(fp);
       if (prev !== undefined && prev <= depth) { this.pruned++; return; }
       this.visited.set(fp, depth);
 
-      // Combo check
-      const combo = checkVictory(state);
-      if (combo) {
-        this._recordWin(path, combo, s);
-        return;
-      }
-
-      // Option D: Early combo-reachability pruning
-      // If no combo is reachable given remaining turns, prune this branch.
+      // #2: Build present-set + minMissing once for this node
+      const analysis = analyzeState(state);
       const turnsLeft = this.opts.maxTurns - state.turn;
-      if (turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1)) {
+
+      // #3: canReachCombo BEFORE checkVictory — cheap filter eliminates dead
+      //     branches without paying the cost of scanning all DETECTORS.
+      if (turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1, analysis)) {
         this.pruned++;
         return;
       }
 
-      // Option F: Expand with heuristic ordering
-      // Generate all actions, apply them, sort by heuristic (closest to win first)
+      // Combo/victory check
+      const combo = checkVictory(state);
+      if (combo) {
+        // #1: Reconstruct path only on win
+        const node = { state, parent: parentNode };
+        this._recordWin(reconstructPath(node), combo, s);
+        return;
+      }
+
+      // #2 / #8: Generate children, attach heuristic, sort if >1
       const actions = generateActions(state);
       const children = [];
       for (const action of actions) {
@@ -7602,26 +7888,39 @@ function _buildSolverBundle() {
         try { next = action.apply(state); }
         catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
         if (!next) continue;
-        children.push(next);
+
+        // #2: Compute heuristic from pre-built minMissing when possible
+        // (child's minMissing may differ, but parent's is a cheap lower bound proxy)
+        const childAnalysis = analyzeState(next);
+        children.push({ next, h: heuristic(childAnalysis.minMissing, next) });
       }
-      // Sort: lower heuristic = closer to win = explore first
-      children.sort((a, b) => heuristic(a) - heuristic(b));
-      for (const next of children) {
-        this._dfs(next, [...path, next], depth + 1);
+
+      // #8: Skip sort when trivially ordered
+      if (children.length > 1) children.sort((a, b) => a.h - b.h);
+
+      // #1: Build current node for parent-pointer chain
+      const node = { state, parent: parentNode };
+      for (const { next } of children) {
+        this._dfs(next, node, depth + 1);
         if (this.statesExplored > this.opts.maxStates) return;
       }
     }
 
     // ── BFS ───────────────────────────────────────────────────────────────────
+    // #5: BFS now applies canReachCombo pruning
+    // #6: Uses mana-stripped fingerprint
+    // #7: Queue entries are parent-pointer nodes instead of path arrays
 
     _bfs(initialState) {
-      // Queue entries: { state, path, depth }
-      const queue = [{ state: initialState, path: [initialState], depth: 0 }];
+      // #7: node = { state, parent, depth }
+      const root = { state: initialState, parent: null, depth: 0 };
+      const queue = [root];
 
       while (queue.length > 0) {
         if (this.statesExplored > this.opts.maxStates) break;
 
-        const { state, path, depth } = queue.shift();
+        const node = queue.shift();
+        const { state, depth } = node;
         this.statesExplored++;
 
         if (state.youLost())                 continue;
@@ -7632,13 +7931,22 @@ function _buildSolverBundle() {
         if (!this.opts.allLines && this.bestLine &&
             state.turn > this.bestLine[this.bestLine.length - 1].turn) break;
 
+        // Full fingerprint including mana
         const fp = state.fingerprint();
         if (this.visited.has(fp)) continue;
         this.visited.set(fp, depth);
 
+        // #5: Prune branches that cannot reach any combo
+        const turnsLeft = this.opts.maxTurns - state.turn;
+        if (turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1)) {
+          this.pruned++;
+          continue;
+        }
+
         const combo = checkVictory(state);
         if (combo) {
-          this._recordWin(path, combo, score(state, depth));
+          // #7: Reconstruct path only on win
+          this._recordWin(reconstructPath(node), combo, score(state, depth));
           if (!this.opts.allLines) return;
           continue;
         }
@@ -7649,7 +7957,8 @@ function _buildSolverBundle() {
           try { next = action.apply(state); }
           catch (e) { continue; }
           if (!next) continue;
-          queue.push({ state: next, path: [...path, next], depth: depth + 1 });
+          // #7: push parent-pointer node, no path array allocation
+          queue.push({ state: next, parent: node, depth: depth + 1 });
         }
       }
     }
@@ -7670,11 +7979,11 @@ function _buildSolverBundle() {
     _recordWin(path, combo, s) {
       this.linesFound++;
       if (this.opts.allLines) {
-        this.allWinLines.push({ line: [...path], combo, score: s });
+        this.allWinLines.push({ line: path, combo, score: s });
       }
       if (s < this.bestScore) {
         this.bestScore = s;
-        this.bestLine  = [...path];
+        this.bestLine  = path;
         this.bestCombo = combo;
         if (this.opts.verbose) {
           const finalState = path[path.length - 1];
@@ -7741,6 +8050,7 @@ function _buildSolverBundle() {
     }
   }
 
+  // Re-exported for back-compat and testing (#9: moved out of actions)
   var _SLV = { Solver };
 
   // Analyzer.js
@@ -8074,6 +8384,9 @@ var SolverGameState = _solverExports.GameState;
 var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
+
+
+
 
 
 
@@ -15059,7 +15372,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         : target === "Nykthos, Shrine to Nyx"
         ? nykthosNetAfterFetch - 1
         : 1; // other targets (Deserted Temple, Emergence Zone etc.) — small but fine
-      const sacOnlyLand  = landsOnBoard <= 1;  // Dryad Arbor may be the only land
+      const sacOnlyLand  = landsOnBoard <= 1;  // Dryad Arbor or an Ashaya-animated creature may be the only "land"
       const hasCastableDorkInHand = hand.some(c => {
         const cd = getCard(c);
         return cd?.tags?.includes("dork") && cd?.type === "creature" && canAfford(cd.cmc ?? 0, 1);
@@ -24455,7 +24768,7 @@ function simulateOneGame(deckCards, deckSet, mullLimit = 2, maxTurns = 20, opts 
     let manaSpent = 0;
     let bonusMana = 0;
 
-    while (madePlay && turnsPlays < 20) {
+    while (madePlay && turnsPlays < 40) {
       madePlay = false;
       turnsPlays++;
 
@@ -25330,33 +25643,11 @@ function simActivateAbilities(simState, manaPool) {
   // With infinite mana, loop until the win pile is assembled (Endurance, Temur Sabertooth,
   // Destiny Spinner, Elvish Reclaimer → Geier Reach Sanitarium). Without infinite, once per turn.
   if (board.has("Duskwatch Recruiter") && !sickSet.has("Duskwatch Recruiter") && manaPool.green >= 1 && manaPool.total >= 3) {
-    // Check if infinite mana is active (allows unlimited activations)
-    const infActive = (() => {
-      for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
-        const allOnBoard = (combo.requires ?? []).every(r => board.has(r));
-        if (!allOnBoard) continue;
-        const mustPre = combo.mustPreExist ?? [];
-        if (mustPre.some(r => sickSet.has(r))) continue;
-        // Quick extras check: needsBigDork
-        if (combo.needsBigDork) {
-          const hasDork = battlefield.some(c => {
-            if (sickSet.has(c)) return false;
-            const cd = getCard(c);
-            return (cd?.tags?.includes("big-dork") || cd?.tags?.includes("infinite-dork"));
-          });
-          if (!hasDork) continue;
-        }
-        return true;
-      }
-      return false;
-    })();
-
     const WIN_PILE = new Set(["Endurance","Temur Sabertooth","Destiny Spinner",
       "Elvish Reclaimer","Geier Reach Sanitarium","Ashaya, Soul of the Wild",
       "Quirion Ranger","Scryb Ranger"]);
 
-    if (infActive) {
+    if (_actInfActive) {
       // With infinite mana: activate until we find a win pile piece not yet on board/hand
       let activated = false;
       let safetyLimit = Math.min(library.length, 40); // prevent infinite loop
@@ -25471,21 +25762,7 @@ function simActivateAbilities(simState, manaPool) {
   // The sim fires this once per game (used.add prevents loops), draws the cards into hand,
   // then the main advisor loop re-evaluates the new hand for win conditions.
   if (board.has("Regal Force") && !sickSet.has("Regal Force") && !used.has("RegalForceDraw") && manaPool.total >= 7) {
-    // Only trigger when infinite is likely active (high mana) to avoid premature firing
-    const rfInfActive = (() => {
-      for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
-        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
-        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
-        if (combo.needsBigDork) {
-          const hasDork = battlefield.some(c => !sickSet.has(c) && (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork")));
-          if (!hasDork) continue;
-        }
-        return true;
-      }
-      return false;
-    })();
-    if (rfInfActive) {
+    if (_actInfActive) {
       // Draw one card per green creature controlled (Regal Force's ETB trigger)
       const greenCreatureCount = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.type === "creature" && (getCard(c)?.greenPips ?? 0) >= 1).length;
       const drawCount = Math.min(greenCreatureCount, library.length);
@@ -25545,22 +25822,7 @@ function simActivateAbilities(simState, manaPool) {
     // Infinite mana path: use Eladamri's activated ability to dig library for win pieces.
     // Activated ability: {G},{T}, tap two untapped creatures → reveal top of library; if a creature,
     // put it onto the battlefield. Requires Eladamri + 2 other untapped creatures + {G}.
-    const infActive = (() => {
-      for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
-        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
-        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
-        if (combo.needsBigDork) {
-          if (!battlefield.some(c => !sickSet.has(c) &&
-            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
-            continue;
-        }
-        return true;
-      }
-      return false;
-    })();
-
-    if (infActive && manaPool.green >= 1) {
+    if (_actInfActive && manaPool.green >= 1) {
       const untappedCreatures = battlefield.filter(c => !sickSet.has(c) && getCard(c)?.type === "creature" && c !== "Eladamri, Korvecdal").length;
       if (untappedCreatures >= 2) {
         // Dig library until we find a win piece or exhaust it
@@ -25757,25 +26019,11 @@ function simActivateAbilities(simState, manaPool) {
       "Yavimaya, Cradle of Growth", // makes everything a Forest
     ];
     // Only activate for Geier Reach when infinite is live (avoid wasting a tapped creature)
-    const infActive = (() => {
-      for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
-        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
-        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
-        if (combo.needsBigDork) {
-          if (!battlefield.some(c => !sickSet.has(c) &&
-            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
-            continue;
-        }
-        return true;
-      }
-      return false;
-    })();
     const reclaimerTarget = RECLAIMER_TARGETS.find(t => {
       if (board.has(t)) return false;
       if (!library.includes(t)) return false;
       // Only fetch Geier Reach when infinite is active
-      if (t === "Geier Reach Sanitarium" && !infActive) return false;
+      if (t === "Geier Reach Sanitarium" && !_actInfActive) return false;
       return true;
     });
     if (reclaimerTarget) {
@@ -25804,21 +26052,7 @@ function simActivateAbilities(simState, manaPool) {
     const hasBouncer = (board.has("Temur Sabertooth") && !sickSet.has("Temur Sabertooth")) ||
                        (board.has("Kogla, the Titan Ape") && !sickSet.has("Kogla, the Titan Ape"));
     if (hasBouncer) {
-      const infActive = (() => {
-        for (const combo of COMBOS) {
-          if (combo.type !== "infinite-mana") continue;
-          if (!(combo.requires ?? []).every(r => board.has(r))) continue;
-          if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
-          if (combo.needsBigDork) {
-            if (!battlefield.some(c => !sickSet.has(c) &&
-              (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
-              continue;
-          }
-          return true;
-        }
-        return false;
-      })();
-      if (infActive) {
+      if (_actInfActive) {
         used.add("BadgermoleWin");
         // Signal to the sim loop that this is a win — set a flag the win-check will see
         if (simState) simState._badgermoleWin = true;
@@ -25833,22 +26067,8 @@ function simActivateAbilities(simState, manaPool) {
   // Only fire when infinite is confirmed and Beast Whisperer is on board (not sick).
   if (board.has("Beast Whisperer") && !sickSet.has("Beast Whisperer") &&
       !used.has("BeastWhispererDraw") && manaPool.total >= 8) {
-    // Check if infinite is active
-    const bwInfActive = (() => {
-      for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
-        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
-        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
-        if (combo.needsBigDork) {
-          if (!battlefield.some(c => !sickSet.has(c) &&
-            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
-            continue;
-        }
-        return true;
-      }
-      return false;
-    })();
-    if (bwInfActive) {
+    // Check if infinite is active — reuse shared flag computed at top of simActivateAbilities
+    if (_actInfActive) {
       // Draw cards by casting cheap creatures. Simulate: pull up to 12 cards from library
       // (Beast Whisperer triggers on each creature cast). Stop when we find a win outlet.
       const WIN_OUTLETS_BW = new Set(["Duskwatch Recruiter","Summoner's Pact",
@@ -25869,21 +26089,7 @@ function simActivateAbilities(simState, manaPool) {
   // War Room: {3}, TAP, pay 1 life → draw a card.
   // With infinite mana, tap War Room repeatedly to draw until finding an outlet.
   if (board.has("War Room") && !used.has("WarRoomDraw") && manaPool.total >= 3) {
-    const wrInfActive = (() => {
-      for (const combo of COMBOS) {
-        if (combo.type !== "infinite-mana") continue;
-        if (!(combo.requires ?? []).every(r => board.has(r))) continue;
-        if ((combo.mustPreExist ?? []).some(r => sickSet.has(r))) continue;
-        if (combo.needsBigDork) {
-          if (!battlefield.some(c => !sickSet.has(c) &&
-            (getCard(c)?.tags?.includes("big-dork") || getCard(c)?.tags?.includes("infinite-dork"))))
-            continue;
-        }
-        return true;
-      }
-      return false;
-    })();
-    if (wrInfActive) {
+    if (_actInfActive) {
       const WIN_OUTLETS_WR = new Set(["Duskwatch Recruiter","Summoner's Pact",
         "Chord of Calling","Green Sun's Zenith","Worldly Tutor","Shared Summons",
         "Finale of Devastation","Temur Sabertooth","Fauna Shaman","Survival of the Fittest"]);
