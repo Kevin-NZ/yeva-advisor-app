@@ -35628,7 +35628,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
         {/* Watermark background — Yeva sketch */}
         <div style={{
           position: "absolute", inset: 0, zIndex: 0,
-          backgroundImage: "url('https://yeva-advisor-app.vercel.app/src/App.png')",
+          backgroundImage: "url('/src/App.png')",
           backgroundRepeat: "no-repeat",
           backgroundPosition: "center center",
           backgroundSize: "cover",
