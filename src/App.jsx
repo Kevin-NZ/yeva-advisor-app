@@ -34089,12 +34089,12 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             goldfishRemoveFromBattlefield(card, index);
             setGraveyard(prev => [...prev, "Lotus Petal"]);
             setManaPool(p => p + 1); flashMana(1);
-            addLog(`Lotus Petal: sacrificed — +1 {G}.`, COLORS.gold);
+            addLog(`Lotus Petal: sacrificed — +{G}.`, COLORS.gold);
             closeContextMenu();
           }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px" }}
             onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
             onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-            🌸 Sacrifice — +1 {G}
+            🌸 Sacrifice — +{'{G}'}
           </div>
         )}
 
