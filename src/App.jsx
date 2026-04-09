@@ -29014,7 +29014,7 @@ function GoldfishSaveLoad({
   const handleLoad = (slot) => {
     goldfishRestoreSnapshot(slot.snap);
     setShowSaveLoad(false);
-    addLog(`Loaded save: “${slot.label}”`, COLORS.gold);
+    addLog(`Restored state: “${slot.label}”`, COLORS.gold);
   };
 
   const handleDelete = async (ts) => {
