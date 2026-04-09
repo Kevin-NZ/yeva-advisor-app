@@ -619,30 +619,6 @@ const COMBOS = [
     ]
   },
 
-  // ── 10d-iii. Ashaya + Wirewood Symbiote + any big dork + 1-drop elf ───────────────────
-  // Covers Priest of Titania, Elvish Archdruid, etc. — does NOT require Circle/Karametra.
-  // With Ashaya all creatures are Forests. Symbiote bounces a 1-drop elf to untap the big dork.
-  // Recast 1-drop for {G}. Net positive when big dork produces ≥2G (Symbiote doesn't need Temur).
-  {
-    id: "ashaya_symbiote_bigdork",
-    name: "Ashaya + Wirewood Symbiote + Big Dork (≥2 mana) + 1-drop Elf",
-    onBattlefield: ["Ashaya, Soul of the Wild", "Wirewood Symbiote"],
-    description: "Infinite mana. Ashaya makes all creatures Forests. Wirewood Symbiote bounces a 1-drop elf (returning it to hand) to untap the big dork. Recast the 1-drop for {G}. Net positive when the dork taps for ≥2G. No Temur Sabertooth needed — Ashaya's Forest-making resets the bounce each loop since Symbiote can bounce any Forest-creature.",
-    requires: ["Ashaya, Soul of the Wild", "Wirewood Symbiote"],
-    needsBigDork: 2,
-    needsOneDrop: true,
-    mustPreExist: ["Wirewood Symbiote"],
-    priority: 9,
-    type: "infinite-mana",
-    lines: [
-      "Ashaya on battlefield — all nontoken creatures are now Forests.",
-      "Tap your big dork (producing ≥2 mana).",
-      "Activate Wirewood Symbiote: return a 1-drop elf to hand, untapping the big dork.",
-      "Recast the 1-drop elf for {G}. Net: at least {G} per loop.",
-      "Repeat for infinite green mana.",
-    ]
-  },
-
   // ── 10d-iii. Temur Sabertooth + Wirewood Symbiote + Karametra's Acolyte + 1-drop Elf (no Ashaya) ──
   // Parallel to circle_no_ashaya but uses Karametra's Acolyte (taps for devotion count).
   // Net positive when devotion ≥5 (same threshold as creature count for Circle).
@@ -1182,12 +1158,12 @@ const COMBOS = [
   // Wirewood Symbiote bounces any elf to untap any creature (including Magus).
   // Sabertooth bounces Symbiote to hand, resetting its once-per-turn restriction.
   {
-    id: "magus_symbiote",
+    id: "magus_symbiote_sabertooth",
     name: "Magus of the Candelabra + Wirewood Symbiote + Sabertooth + Big Land (≥5 mana)",
-    onBattlefield: ["Magus of the Candelabra", "Wirewood Symbiote"],
+    onBattlefield: ["Magus of the Candelabra", "Wirewood Symbiote", "Temur Sabertooth"],
     mustPreExist: ["Magus of the Candelabra", "Wirewood Symbiote"],
     description: "Infinite mana. Tap big land for N. Pay {1} to Magus to untap it, tap again. Symbiote bounces 1-drop elf to untap Magus. Sabertooth bounces Symbiote resetting its once-per-turn restriction. Recast both. Total cost per loop: {1}+{1}{G}+{G}+{G} = {3}{G}+{2}. Net positive when land produces ≥5.",
-    requires: ["Magus of the Candelabra", "Wirewood Symbiote"],
+    requires: ["Magus of the Candelabra", "Wirewood Symbiote", "Temur Sabertooth"],
     needsAlso: ["Gaea's Cradle", "Nykthos, Shrine to Nyx", "Itlimoc, Cradle of the Sun"],
     needsAlsoMin: 5,
     needsAuraLand: true,
