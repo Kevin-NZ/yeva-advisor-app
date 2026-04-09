@@ -19306,6 +19306,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
          r.category?.includes("WIN — COMBAT") || r.category?.includes("WIN — MILL")));
       if (!_hasSpecificWin) {
         const _isThisTurn    = _solverResult.winTurn <= 1;
+        const _isNextTurn    = _solverResult.winTurn === 2;
         const _hasWinCon     = !!_solverResult.winCondition;   // Solver found a full win
         const _hasOutlet     = winConversion?.some(p => p.missing.length === 0) || duskwatchCastable;
         // 🏆 WIN: Solver found a complete game-winning line this turn
@@ -19318,7 +19319,8 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           _headline = _hasWinCon ? _solverResult.winCondition : _solverResult.manaCombo;
           _detail   = _solverResult.comboDesc || _solverResult.comboName;
         } else if (!_isThisTurn) {
-          _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
+          const _turnLabel = _isNextTurn ? "NEXT TURN" : `IN ${_solverResult.winTurn - 1} TURNS`;
+          _category = _hasWinCon ? `🏆 WIN ${_turnLabel} — SOLVER` : `♾ INFINITE MANA — ${_turnLabel} — SOLVER`;
           _priority = _hasWinCon ? 15.9 : 14; _color = _hasWinCon ? "#ff6b35" : "#c8a800";
           _headline = _solverResult.manaCombo || _solverResult.comboName;
           _detail   = _solverResult.comboDesc || _solverResult.comboName;
@@ -29527,6 +29529,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     if (_hasSpecificWin) return analysis; // don't overlay more specific win advice
 
     const _isThisTurn = solverResult.winTurn <= 1;
+    const _isNextTurn = solverResult.winTurn === 2;
     const _hasWinCon  = !!solverResult.winCondition;
     const _hasOutlet  = winConv?.some(p => p.missing.length === 0);
     let _category, _priority, _color, _headline, _detail;
@@ -29536,7 +29539,8 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       _headline = _hasWinCon ? solverResult.winCondition : solverResult.manaCombo;
       _detail   = solverResult.comboDesc || solverResult.comboName;
     } else if (!_isThisTurn) {
-      _category = _hasWinCon ? "🏆 WIN NEXT TURN — SOLVER" : "♾ INFINITE MANA — NEXT TURN — SOLVER";
+      const _turnLabel = _isNextTurn ? "NEXT TURN" : `IN ${solverResult.winTurn - 1} TURNS`;
+      _category = _hasWinCon ? `🏆 WIN ${_turnLabel} — SOLVER` : `♾ INFINITE MANA — ${_turnLabel} — SOLVER`;
       _priority = _hasWinCon ? 15.9 : 14; _color = _hasWinCon ? "#ff6b35" : "#c8a800";
       _headline = solverResult.manaCombo || solverResult.comboName;
       _detail   = solverResult.comboDesc || solverResult.comboName;
@@ -34866,6 +34870,29 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
             → {t.charAt(0).toUpperCase() + t.slice(1)}
           </div>
         ))}
+        {/* Commander: Return to command zone — for Yeva when in graveyard, exile, or battlefield */}
+        {card === "Yeva, Nature's Herald" && (zone === "graveyard" || zone === "exile" || zone === "battlefield") && (
+          <div onClick={() => {
+            pushUndo();
+            // Remove from current zone
+            if (zone === "battlefield") {
+              goldfishRemoveFromBattlefield(card, index ?? battlefield.indexOf(card));
+              const key = cardKey(card, index ?? battlefield.indexOf(card));
+              setTapped(prev => { const next = new Set(prev); next.delete(key); return next; });
+              setCounters(prev => { const next = { ...prev }; delete next[key]; return next; });
+            } else if (zone === "graveyard") {
+              setGraveyard(prev => { const i = index !== undefined ? index : prev.indexOf(card); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
+            } else if (zone === "exile") {
+              setExile(prev => { const i = index !== undefined ? index : prev.indexOf(card); return i === -1 ? prev : [...prev.slice(0,i), ...prev.slice(i+1)]; });
+            }
+            addLog(`Yeva, Nature's Herald → returned to command zone.`, COLORS.green2);
+            closeContextMenu();
+          }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.gold, letterSpacing: "1px", borderTop: `1px solid ${COLORS.border}`, marginTop: "4px" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#1a1500"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+            ⌂ Return to command zone
+          </div>
+        )}
       </div>
     );
   };
@@ -36093,14 +36120,34 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   title={viewMode === "list" ? "Switch to card image playfield view" : "Switch to text list view"}
                   style={{ ...btnStyle(COLORS.green2), background: "#0a2a0a" }}
                 >{viewMode === "list" ? "🃏 IMAGE" : "📋 LIST"}</button>
-                <button onClick={castYeva}
-                  disabled={battlefield.includes("Yeva, Nature's Herald")}
-                  title={`Cast Yeva from command zone (${4 + yevaTax} mana)`}
-                  style={{
-                    ...btnStyle(battlefield.includes("Yeva, Nature's Herald") ? COLORS.border : COLORS.green1),
-                    background: battlefield.includes("Yeva, Nature's Herald") ? "transparent" : "#1a3a1a",
-                    opacity: battlefield.includes("Yeva, Nature's Herald") ? 0.4 : 1,
-                  }}>🌿 YEVA{yevaTax > 0 ? ` (+${yevaTax})` : ""}</button>
+                {(() => {
+                  const yevaOnBF = battlefield.includes("Yeva, Nature's Herald");
+                  const yevaCost = 4 + yevaTax;
+                  const totalMana = manaPool + tappedMana.total;
+                  const canAffordYeva = totalMana >= yevaCost;
+                  const disabled = yevaOnBF || !canAffordYeva;
+                  let title, label;
+                  if (yevaOnBF) {
+                    title = "Yeva is already on the battlefield";
+                    label = "🌿 YEVA (ON FIELD)";
+                  } else if (!canAffordYeva) {
+                    title = `Cast Yeva from command zone — need ${yevaCost} mana (have ${totalMana})`;
+                    label = `🌿 YEVA (need ${yevaCost})`;
+                  } else {
+                    title = `Cast Yeva from command zone (${yevaCost} mana)`;
+                    label = `🌿 YEVA${yevaTax > 0 ? ` (+${yevaTax})` : ""}`;
+                  }
+                  return (
+                    <button onClick={castYeva}
+                      disabled={disabled}
+                      title={title}
+                      style={{
+                        ...btnStyle(disabled ? COLORS.border : COLORS.green1),
+                        background: disabled ? "transparent" : "#1a3a1a",
+                        opacity: disabled ? 0.4 : 1,
+                      }}>{label}</button>
+                  );
+                })()}
               </div>
 
 
