@@ -3720,6 +3720,92 @@ function _buildSolverBundle() {
     };
   }
 
+  /**
+   * Shared helper for activated creature-tutor abilities (Survival of the Fittest,
+   * Fauna Shaman). Determines the best creature to fetch from the library.
+   *
+   * Priority tiers (highest wins):
+   *   0. Combo-completing creatures that IMMEDIATELY enable a combo when put on the
+   *      battlefield (simulated by enterBattlefield + checkCombos). This ensures
+   *      e.g. Argothian Elder is preferred over Quirion Ranger when Ashaya is on
+   *      the battlefield (Elder+Ashaya fires immediately; QR needs a ≥2G dork too).
+   *   1. Creatures that are one card away from completing any known combo
+   *      (missingComboCards set), ranked by TUTOR_PRIORITY_SCORE.
+   *   2. Fallback: highest TUTOR_PRIORITY_SCORE creature not already present.
+   *
+   * @param {GameState} state  State after discarding (library search happens here).
+   * @returns {string|null}    Card key of the best fetch target, or null if none found.
+   */
+  function _bestCreatureTutorTarget(state) {
+    const cards = CARDS;
+    const { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS } = _CDM;
+    const { NAME_TO_KEY } = _ACM;
+    const { checkCombos } = _COM;
+
+    // Build present set: hand + battlefield
+    const present = new Set(state.hand);
+    for (const p of state.battlefield) {
+      const ck = NAME_TO_KEY[p.name];
+      if (ck) present.add(ck);
+    }
+
+    // Step 1: creatures that complete a combo (one piece away)
+    const missingCombo = new Set();
+    for (const required of COMBO_REQUIRED_KEYS) {
+      const absent = required.filter(k => !present.has(k));
+      if (absent.length === 1) missingCombo.add(absent[0]);
+    }
+    // Remove functional-equivalent duplicates
+    for (const group of FUNCTIONAL_EQUIVALENTS) {
+      const hasOne = [...group].some(k => present.has(k));
+      if (hasOne) for (const k of group) missingCombo.delete(k);
+    }
+
+    // Collect all library creatures not already present
+    const seenLib = new Set();
+    const libCreatures = [];
+    for (const ck of state.players[0].library) {
+      if (ck === 'unknown' || isStax(ck) || seenLib.has(ck)) continue;
+      seenLib.add(ck);
+      if (present.has(ck)) continue;
+      const def = cards[ck];
+      if (!def?.types.includes('creature')) continue;
+      libCreatures.push(ck);
+    }
+
+    // Tier 0: combo-completing creatures that immediately fire a combo when put on BF
+    let tier0Key = null, tier0Score = -1;
+    for (const ck of libCreatures) {
+      if (!missingCombo.has(ck)) continue;
+      // Simulate: enter BF without summoning sickness and check for combo
+      let testState = state.enterBattlefield(ck);
+      const newPerm = testState.battlefield[testState.battlefield.length - 1];
+      if (newPerm) newPerm.summoningSick = false;
+      if (checkCombos(testState)) {
+        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (sc > tier0Score) { tier0Key = ck; tier0Score = sc; }
+      }
+    }
+    if (tier0Key) return tier0Key;
+
+    // Tier 1: any combo-completing creature, ranked by priority
+    let tier1Key = null, tier1Score = -1;
+    for (const ck of libCreatures) {
+      if (!missingCombo.has(ck)) continue;
+      const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+      if (sc > tier1Score) { tier1Key = ck; tier1Score = sc; }
+    }
+    if (tier1Key) return tier1Key;
+
+    // Tier 2: fallback — highest priority creature in library
+    let tier2Key = null, tier2Score = -1;
+    for (const ck of libCreatures) {
+      const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+      if (sc > tier2Score) { tier2Key = ck; tier2Score = sc; }
+    }
+    return tier2Key ?? null;
+  }
+
   const CARDS = {
 
     // ─── LANDS ───────────────────────────────────────────────────────────────
@@ -4840,31 +4926,14 @@ function _buildSolverBundle() {
             if (perm.tapped || perm.summoningSick) return [];
             const ap = state.payMana('G'); if (!ap) return [];
             const cards = CARDS;
-            const { TUTOR_PRIORITY_SCORE } = _CDM;
-            const { NAME_TO_KEY } = _ACM;
 
             const creaturesInHand = [...new Set(ap.hand)].filter(k =>
               cards[k]?.types.includes('creature')
             );
             if (creaturesInHand.length === 0) return [];
 
-            // Build the set of cards already in hand or on battlefield — skip fetching these
-            const alreadyPresent = new Set(ap.hand);
-            for (const p of ap.battlefield) {
-              const ck = NAME_TO_KEY[p.name];
-              if (ck) alreadyPresent.add(ck);
-            }
-
-            // Find the best missing creature in the library by TUTOR_PRIORITY_SCORE
-            let bestKey = null, bestScore = -1;
-            for (const ck of ap.players[0].library) {
-              if (ck === 'unknown' || isStax(ck)) continue;
-              if (alreadyPresent.has(ck)) continue;          // skip already-present cards
-              const def = cards[ck];
-              if (!def?.types.includes('creature')) continue;
-              const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-              if (sc > bestScore) { bestKey = ck; bestScore = sc; }
-            }
+            // Find the best combo-completing creature in the library
+            const bestKey = _bestCreatureTutorTarget(ap);
             if (!bestKey) return [];
 
             const results = [];
@@ -5110,8 +5179,6 @@ function _buildSolverBundle() {
             if (perm.tapped) return [];
             // Oracle: NO mana cost on the activated ability — just tap.
             const cards = CARDS;
-            const { TUTOR_PRIORITY_SCORE } = _CDM;
-            const { NAME_TO_KEY } = _ACM;
 
             // Tap the enchantment first
             const afterTap = state.tapPermanent(perm.id);
@@ -5122,23 +5189,8 @@ function _buildSolverBundle() {
             );
             if (creaturesInHand.length === 0) return [];
 
-            // Build the set of cards already in hand or on battlefield — skip fetching these
-            const alreadyPresent = new Set(afterTap.hand);
-            for (const p of afterTap.battlefield) {
-              const ck = NAME_TO_KEY[p.name];
-              if (ck) alreadyPresent.add(ck);
-            }
-
-            // Find the best missing creature in the library by TUTOR_PRIORITY_SCORE
-            let bestKey = null, bestScore = -1;
-            for (const ck of afterTap.players[0].library) {
-              if (ck === 'unknown' || isStax(ck)) continue;
-              if (alreadyPresent.has(ck)) continue;          // skip already-present cards
-              const def = cards[ck];
-              if (!def?.types.includes('creature')) continue;
-              const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-              if (sc > bestScore) { bestKey = ck; bestScore = sc; }
-            }
+            // Find the best combo-completing creature in the library
+            const bestKey = _bestCreatureTutorTarget(afterTap);
             if (!bestKey) return [];
 
             const results = [];
@@ -7679,9 +7731,6 @@ function _buildSolverBundle() {
       for (const k of required) {
         if (present.has(k)) continue;
         const ct = _cardType(k);
-      for (const k of required) {
-        if (present.has(k)) continue;
-        const ct = _cardType(k);
         // Greedily consume the best matching tutor use.
         // Type-specific tutors (creature/land) ONLY match their exact type.
         // 'any' tutors match everything.
@@ -7692,7 +7741,6 @@ function _buildSolverBundle() {
         else if (ct === 'land'     && cAny > 0) { cost += 1; cAny--; }
         else if (ct === 'other'    && cAny > 0) { cost += 1; cAny--; }  // only 'any' tutors
         else                                    { cost += 3;          }  // no matching tutor
-      }
       }
 
       if (cost < minMissing) minMissing = cost;
@@ -7716,7 +7764,7 @@ function _buildSolverBundle() {
   const DEFAULT_OPTIONS = {
     maxTurns:  4,
     maxDepth:  50,
-    maxStates: 500_000,
+    maxStates: 300_000,
     strategy:  'dfs',
     allLines:  false,
     verbose:   false,
@@ -8409,6 +8457,8 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -8478,7 +8528,7 @@ function runSolver(hand, battlefield, greenMana, colorlessMana, sickCreatures, i
     const solver = new YevaSolver({
       maxTurns:  4,
       maxDepth:  50,
-      maxStates: 200_000,
+      maxStates: 300_000,
       verbose:   false,
     });
     const result = solver.solve(state);
@@ -9014,14 +9064,17 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // Skip if any mustPreExist piece on board is sick — can't activate this turn
         if (sickCreatures && mustPre.some(r => board.has(r) && sickCreatures.has(r))) continue;
         let castCostFromHand = 0;
+        let greenPipsFromHand = 0; // green mana symbols required by hand pieces (colour constraint)
         const allReachable = combo.requires.every(r => {
           if (board.has(r)) return true;
           if (!inHand.has(r)) return false;
           // mustPreExist cards (summoning sick) need to be on the board unless haste is up
           if (mustPre.includes(r) && !_hasteOnBoard) return false;
           if (getCard(r)?.type === "land") return isMyTurn;
-          // Track the mana cost of pieces we need to cast from hand
-          castCostFromHand += getCard(r)?.cmc ?? 0;
+          // Track total mana cost AND green pip requirement of pieces to cast from hand
+          const cd = getCard(r);
+          castCostFromHand  += cd?.cmc       ?? 0;
+          greenPipsFromHand += cd?.greenPips ?? 0;
           return _castable;
         });
         if (!allReachable) continue;
@@ -9029,23 +9082,52 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // AND have mana remaining to activate the loop.
         // Hope Tender's exert costs {1} to activate — need at least 1 mana beyond cast cost.
         const loopActivationCost = (combo.id === "hope_tender_ashaya_dork") ? 1 : 0;
-        // hope_tender_ashaya_dork: Tender exerts to untap 2 lands mid-sequence, generating
-        // extra mana that reduces the effective setup cost.
-        // We add: (a) initial Cradle tap from hand if playable this turn,
-        //         (b) net bonus from Tender untapping 2 lands (top-2 output minus {1} cost).
-        let tenderMidBonus = 0;
+        // hope_tender_ashaya_dork: Tender exerts to untap 2 lands, but this bonus only becomes
+        // available AFTER setup pieces (Ashaya etc.) are already on the battlefield.
+        // We must therefore apply two sequential checks:
+        //   (a) Can we afford to cast all hand pieces? (total mana AND green pips)
+        //       → totalMana + tenderPreBonus >= castCostFromHand
+        //       → maxGreen  + tenderPreGreen >= greenPipsFromHand
+        //   (b) After casting, do we have enough for loop activation?
+        //       → (totalMana + tenderPreBonus - castCostFromHand) + tenderPostBonus >= loopActivationCost
+        //
+        // tenderPreBonus/tenderPreGreen = mana from Cradle tap BEFORE casting hand pieces
+        //   (uses only EXISTING board creatures — Ashaya not yet in play)
+        // tenderPostBonus = net mana from one Tender exert AFTER all pieces land (untap 2 lands, pay {1})
+        let tenderPreBonus = 0;
+        let tenderPreGreen = 0; // green mana produced pre-cast (Cradle taps for {G})
+        let tenderPostBonus = 0;
         if (combo.id === "hope_tender_ashaya_dork" && board.has("Hope Tender") && isMyTurn) {
           const _hasCradleHand = inHand.has("Gaea's Cradle") || inHand.has("Itlimoc, Cradle of the Sun");
-          const _cradleInitial = _hasCradleHand ? 1 : 0; // 1G from initial Cradle tap (Tender on board)
+          // Pre-cast: Cradle tap with only creatures already on board (Ashaya not yet cast)
+          const _existingCreatures = battlefield.filter(c => getCard(c)?.type === "creature").length;
+          // Cradle produces green mana = creature count; valid if ≥1 creature exists
+          const _cradlePreOutput = (_hasCradleHand && _existingCreatures >= 1) ? _existingCreatures : 0;
+          tenderPreBonus = _cradlePreOutput;
+          tenderPreGreen = _cradlePreOutput; // Cradle always produces {G}
+
+          // Post-cast: after Ashaya + hand pieces resolve, Tender exerts to untap 2 lands.
+          // Estimate the top-2 board land outputs (Cradle post-Ashaya ≈ 2G, Tomb = 2 etc.)
           const _landOuts = battlefield
             .filter(c => getCard(c)?.type === "land")
             .map(c => { const cd = getCard(c); return typeof cd?.tapsFor === "number" ? cd.tapsFor : 1; })
             .sort((a, b) => b - a);
-          if (_hasCradleHand) _landOuts.push(_cradleInitial); // Cradle also untappable by Tender
-          const _top2 = _landOuts.slice(0, 2).reduce((s, v) => s + v, 0);
-          tenderMidBonus = _cradleInitial + Math.max(0, _top2 - 1); // initial tap + net untap bonus
+          // Cradle with ≥2 creatures (Tender + Ashaya) = 2G conservatively
+          if (_hasCradleHand) _landOuts.push(2);
+          const _top2Post = _landOuts.slice(0, 2).reduce((s, v) => s + v, 0);
+          tenderPostBonus = Math.max(0, _top2Post - 1); // net after paying {1} exert cost
         }
-        if (castCostFromHand + loopActivationCost > totalMana + tenderMidBonus) continue;
+        // ── Colour check: do we have enough GREEN mana for the pips required? ──────
+        // tenderPreGreen provides additional green from the Cradle-tap-before-casting bonus.
+        // This must be checked SEPARATELY from the total-mana check because colorless sources
+        // (Ancient Tomb, Sol Ring) cannot satisfy green pips.
+        if (greenPipsFromHand > maxGreen + tenderPreGreen) continue;
+        // ── Sequential total-mana affordability check ────────────────────────────
+        //   Step 1: can we pay for all hand pieces in total mana?
+        //   Step 2: after casting, do we have enough to start the loop?
+        const manaAfterCasting = totalMana + tenderPreBonus - castCostFromHand;
+        if (manaAfterCasting < 0) continue; // can't afford the hand pieces
+        if (manaAfterCasting + tenderPostBonus < loopActivationCost) continue; // can't start loop
         const extras = comboExtrasSatisfied(combo, false);
         if (extras.ok) { _inf = true; _infName = combo.name; break; }
       }
@@ -29452,11 +29534,10 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setSolverLoading(true);
 
     solverTimerRef.current = setTimeout(() => {
-      const mana = calculateBattlefieldMana(untappedBattlefield, sickCreatureNames, untappedAttachments);
       const payload = {
         hand, battlefield, graveyard, library,
-        greenMana:    mana.green,
-        colorlessMana: mana.colorless,
+        greenMana:    tappedMana.green,
+        colorlessMana: tappedMana.total - tappedMana.green,
         sickCards:    [...sickCreatureNames],
         tappedCards:  [...tapped],
         life: 40,
@@ -29467,7 +29548,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       const runInline = () => {
         setTimeout(() => {
           try {
-            const sr = runSolver(hand, battlefield, mana.green, mana.colorless, sickCreatureNames, true, {
+            const sr = runSolver(hand, battlefield, tappedMana.green, tappedMana.total - tappedMana.green, sickCreatureNames, true, {
               graveyard, library, life: 40, tappedCards: tapped, landDrops: landPlayed ? 0 : 1,
             });
             setSolverResult(sr);
