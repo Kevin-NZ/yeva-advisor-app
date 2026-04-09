@@ -36384,7 +36384,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 <span style={{ flexShrink: 0 }}>ADVISOR · T{turnNumber}</span>
                 {/* Sub-tabs: Advice | Lines */}
                 <div style={{ display: "flex", gap: "2px", flex: 1 }}>
-                  {[["advice","✦ ADVICE"],["lines","⎇ LINES"],["solver"," SOLVER"]].map(([tab, label]) => {
+                  {[["advice","✦","ADVICE"],["lines","⎇","LINES"],["solver","♾","SOLVER"]].map(([tab, icon, label]) => {
                     const showSpinner = tab === "solver" && solverLoading;
                     return (
                       <button key={tab} onClick={() => setAdvisorTab(tab)} style={{
@@ -36399,7 +36399,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                             animation: "spin 1s linear infinite",
                             fontSize: "10px", lineHeight: "1",
                           }}>⏱</span>
-                        ) || (<span>♾</span>)}
+                        ) || (<span>{icon}</span>)}
                         {label}
                       </button>
                     );
