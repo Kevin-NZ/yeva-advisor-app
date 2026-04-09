@@ -8408,6 +8408,7 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -29456,7 +29457,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         hand, battlefield, graveyard, library,
         greenMana:    mana.green,
         colorlessMana: mana.colorless,
-        sickCards:    [...(sickCreatures instanceof Set ? sickCreatures : new Set())],
+        sickCards:    [...sickCreatureNames],
         tappedCards:  [...tapped],
         life: 40,
         landDrops:    landPlayed ? 0 : 1,
@@ -36357,14 +36358,26 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 <span style={{ flexShrink: 0 }}>ADVISOR · T{turnNumber}</span>
                 {/* Sub-tabs: Advice | Lines */}
                 <div style={{ display: "flex", gap: "2px", flex: 1 }}>
-                  {[["advice","✦ ADVICE"],["lines","⎇ LINES"],["solver","♾ SOLVER"]].map(([tab, label]) => (
-                    <button key={tab} onClick={() => setAdvisorTab(tab)} style={{
-                      padding: "3px 10px", border: "none", borderBottom: `2px solid ${advisorTab === tab ? COLORS.green1 : "transparent"}`,
-                      background: "none", color: advisorTab === tab ? COLORS.green2 : COLORS.textDim,
-                      fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px",
-                      cursor: "pointer",
-                    }}>{label}</button>
-                  ))}
+                  {[["advice","✦ ADVICE"],["lines","⎇ LINES"],["solver"," SOLVER"]].map(([tab, label]) => {
+                    const showSpinner = tab === "solver" && solverLoading;
+                    return (
+                      <button key={tab} onClick={() => setAdvisorTab(tab)} style={{
+                        padding: "3px 10px", border: "none", borderBottom: `2px solid ${advisorTab === tab ? COLORS.green1 : "transparent"}`,
+                        background: "none", color: advisorTab === tab ? COLORS.green2 : COLORS.textDim,
+                        fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px",
+                        cursor: "pointer", display: "flex", alignItems: "center", gap: "4px",
+                      }}>
+                        {showSpinner && (
+                          <span title="Solver running…" style={{
+                            display: "inline-block",
+                            animation: "spin 1s linear infinite",
+                            fontSize: "10px", lineHeight: "1",
+                          }}>⏱</span>
+                        ) || (<span>♾</span>)}
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
                 {analysisWithSolver?.trueInfiniteManaActive && (
                   <span style={{ color: "#c084fc", letterSpacing: "1px", fontSize: "9px", flexShrink: 0 }}>⚡ ∞</span>
