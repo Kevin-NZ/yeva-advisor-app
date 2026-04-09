@@ -8460,6 +8460,7 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -36781,6 +36782,13 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               <div style={{ fontSize: "8px", color: COLORS.textDim, letterSpacing: "1px", marginTop: "3px", fontFamily: "'Cinzel', serif", whiteSpace: "nowrap" }}>{label}</div>
             </div>
           );
+          const removeGame = (gameNum) => {
+            setGameHistory(prev => {
+              const next = prev.filter(g => g.gameNum !== gameNum);
+              storage.set(statsKey, JSON.stringify({ history: next, gameNum: gameNumRef.current })).catch(() => {});
+              return next;
+            });
+          };
           const nr = runNResults;
           // On mobile the two panels stack; on desktop they sit side-by-side
           const statsPanelRow = !isMobile;
@@ -36869,7 +36877,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                               : <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginLeft: "auto" }}>no win</span>
                             }
                           </div>
-                          {/* Row 2: combo label + replay + log toggle */}
+                          {/* Row 2: combo label + replay + log toggle + remove */}
                           {(g.winCombo || g.notes || g.replay?.length > 0 || hasLog) && (
                             <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
                               {g.winCombo && <span style={{ fontSize: "9px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.winCombo}</span>}
@@ -36880,6 +36888,21 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                               {g.replay?.length > 0 && (
                                 <button onClick={() => setReplayGame(g)} style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "1px 5px", color: COLORS.textDim, cursor: "pointer", fontSize: "9px", flexShrink: 0 }}>📼</button>
                               )}
+                              <button
+                                onClick={() => removeGame(g.gameNum)}
+                                title="Remove this game"
+                                style={{ background: "none", border: `1px solid ${COLORS.red}66`, borderRadius: "3px", padding: "1px 5px", color: COLORS.red, cursor: "pointer", fontSize: "9px", flexShrink: 0, opacity: 0.7 }}
+                              >✕</button>
+                            </div>
+                          )}
+                          {/* Remove button when there's no Row 2 content */}
+                          {!(g.winCombo || g.notes || g.replay?.length > 0 || hasLog) && (
+                            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                              <button
+                                onClick={() => removeGame(g.gameNum)}
+                                title="Remove this game"
+                                style={{ background: "none", border: `1px solid ${COLORS.red}66`, borderRadius: "3px", padding: "1px 5px", color: COLORS.red, cursor: "pointer", fontSize: "9px", opacity: 0.7 }}
+                              >✕</button>
                             </div>
                           )}
                           {/* Expandable game log */}
@@ -36934,8 +36957,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                                     <button onClick={() => setExpandedLogGame(logOpen ? null : g.gameNum)} title={logOpen ? "Hide game log" : "Show game log"} style={{ background: logOpen ? "#0d1f0d" : "none", border: `1px solid ${logOpen ? COLORS.green1 : COLORS.border}`, borderRadius: "3px", padding: "2px 5px", color: logOpen ? COLORS.green2 : COLORS.textDim, cursor: "pointer", fontSize: "10px", marginRight: "4px" }}>📋</button>
                                   )}
                                   {g.replay?.length > 0 && (
-                                    <button onClick={() => setReplayGame(g)} title="View replay" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "2px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px" }}>📼</button>
+                                    <button onClick={() => setReplayGame(g)} title="View replay" style={{ background: "none", border: `1px solid ${COLORS.border}`, borderRadius: "3px", padding: "2px 6px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px", marginRight: "4px" }}>📼</button>
                                   )}
+                                  <button
+                                    onClick={() => removeGame(g.gameNum)}
+                                    title="Remove this game from history"
+                                    style={{ background: "none", border: `1px solid transparent`, borderRadius: "3px", padding: "2px 5px", color: COLORS.textDim, cursor: "pointer", fontSize: "10px", opacity: 0.4, transition: "all 0.15s" }}
+                                    onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.red; e.currentTarget.style.color = COLORS.red; e.currentTarget.style.opacity = "1"; }}
+                                    onMouseLeave={e => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.color = COLORS.textDim; e.currentTarget.style.opacity = "0.4"; }}
+                                  >✕</button>
                                 </td>
                               </tr>
                               {logOpen && hasLog && (
