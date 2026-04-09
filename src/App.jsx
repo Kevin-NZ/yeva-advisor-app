@@ -7764,7 +7764,7 @@ function _buildSolverBundle() {
   const DEFAULT_OPTIONS = {
     maxTurns:  4,
     maxDepth:  50,
-    maxStates: 300_000,
+    maxStates: 500_000,
     strategy:  'dfs',
     allLines:  false,
     verbose:   false,
@@ -8432,6 +8432,7 @@ var SolverGameState = _solverExports.GameState;
 var YevaSolver      = _solverExports.Solver;
 var solverAnalyze   = _solverExports.analyze;
 var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
+
 
 
 
@@ -23288,51 +23289,7 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
   const [importName, setImportName]     = useState("");
   const [importError, setImportError]   = useState("");
   const [saveStatus, setSaveStatus]     = useState(""); // "" | "saving" | "saved" | "error"
-  const [backupStatus, setBackupStatus]       = useState(""); // "" | "ok" | "err"
-  const [restoreStatus, setRestoreStatus]     = useState(""); // "" | "ok" | "err"
   const [confirmDeleteDeck, setConfirmDeleteDeck] = useState(null); // deck id pending confirmation
-  const restoreInputRef = useRef(null);
-
-  function handleBackup() {
-    try {
-      const SKIP = new Set(["yeva_scryfall_data_v1"]); // skip large image cache
-      const data = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && (k.startsWith("yeva") || k.startsWith("goldfish-stats"))) {
-          if (!SKIP.has(k)) data[k] = localStorage.getItem(k);
-        }
-      }
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `yeva-backup-${new Date().toISOString().slice(0,10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setBackupStatus("ok");
-      setTimeout(() => setBackupStatus(""), 2000);
-    } catch { setBackupStatus("err"); setTimeout(() => setBackupStatus(""), 2000); }
-  }
-
-  function handleRestoreFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const data = JSON.parse(ev.target.result);
-        if (typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid format");
-        for (const [k, v] of Object.entries(data)) {
-          if (typeof v === "string") localStorage.setItem(k, v);
-        }
-        setRestoreStatus("ok");
-        setTimeout(() => { setRestoreStatus(""); window.location.reload(); }, 800);
-      } catch { setRestoreStatus("err"); setTimeout(() => setRestoreStatus(""), 2000); }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  }
   // Scryfall enrichment: deckId → "idle"|"fetching"|"done"|"partial"|"failed"
   const [enrichStatus, setEnrichStatus] = useState({});
   const [, forceEnrichUpdate] = useState(0);
@@ -23416,19 +23373,6 @@ function DeckManager({ decks, activeDeckId, onSaveDecks, onSetActive, onClose })
           {!showImport && (
             <button onClick={() => setShowImport(true)} style={{ ...btnStyle(false), marginRight: "6px" }}>+ IMPORT</button>
           )}
-          {!showImport && (<>
-            <input ref={restoreInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleRestoreFile} />
-            <button
-              onClick={handleBackup}
-              title="Download all decks, saved states, and simulator history as a JSON file"
-              style={{ ...btnStyle(false), marginRight: "6px", ...(backupStatus === "ok" ? { background: "#27ae60" } : backupStatus === "err" ? { background: "#c0392b" } : {}) }}
-            >⬇ BACKUP</button>
-            <button
-              onClick={() => restoreInputRef.current?.click()}
-              title="Restore from a previously saved backup JSON file (reloads the page)"
-              style={{ ...btnStyle(false), marginRight: "10px", ...(restoreStatus === "ok" ? { background: "#27ae60" } : restoreStatus === "err" ? { background: "#c0392b" } : {}) }}
-            >⬆ RESTORE</button>
-          </>)}
           <button onClick={onClose} style={{ background: "none", border: "none", color: COLORS.textDim, cursor: "pointer", fontSize: "18px", flexShrink: 0 }}>✕</button>
         </div>
 
@@ -29234,7 +29178,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     setContainerWidth(el.getBoundingClientRect().width || window.innerWidth);
     return () => ro.disconnect();
   }, []);
-  const isMobile = mounted && containerWidth < 700;
+  const isMobile = mounted && containerWidth < 1024;
   const [mobileTab, setMobileTab] = useState("advisor"); // "zones" | "advisor" | "log"
   const [library, setLibrary] = useState([]);
   const [hand, setHand] = useState([]);
@@ -35784,14 +35728,14 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                   style={{ background: "none", border: `1px solid ${undoStack.current.length > 0 ? COLORS.textMid : COLORS.border}`, borderRadius: "6px", padding: isMobile ? "4px 8px" : "5px 12px", color: undoStack.current.length > 0 ? COLORS.textMid : COLORS.border, cursor: undoStack.current.length > 0 ? "pointer" : "default", fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px" }}
                   onMouseEnter={e => { if (undoStack.current.length > 0) e.target.style.background = "#1a1a1a"; }}
                   onMouseLeave={e => { e.target.style.background = "transparent"; }}
-                >↩ {isMobile ? "" : "UNDO"}{isMobile && "↩"}</button>
+                >↩ {isMobile ? "" : "UNDO"}</button>
                 <button
                   onClick={() => { goldfishLoadSlots().then(() => setShowSaveLoad(true)); }}
                   title="Save or load game state (Shift+S)"
                   style={{ background: "none", border: `1px solid ${COLORS.gold}55`, borderRadius: "6px", padding: isMobile ? "4px 8px" : "5px 12px", color: `${COLORS.gold}cc`, cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px" }}
                   onMouseEnter={e => { e.target.style.background = "#1a1a0a"; e.target.style.borderColor = COLORS.gold; e.target.style.color = COLORS.gold; }}
                   onMouseLeave={e => { e.target.style.background = "transparent"; e.target.style.borderColor = `${COLORS.gold}55`; e.target.style.color = `${COLORS.gold}cc`; }}
->💾 {isMobile ? "" : "SAVE"}</button>
+>📌 {isMobile ? "" : "STATES"}</button>
                 <button onClick={exportToAdvisor} style={{
                   background: "none", border: `1px solid ${COLORS.blue}`, borderRadius: "6px",
                   padding: isMobile ? "4px 8px" : "5px 12px", color: COLORS.blue, cursor: "pointer",
@@ -38282,7 +38226,74 @@ function YevaAdvisor() {
   const [showGoldfish, setShowGoldfish]       = useState(false);
   const [goldfishSeedState, setGoldfishSeedState] = useState(null);
   const [showHelp, setShowHelp]               = useState(false);
+  const [showBackupMenu, setShowBackupMenu]   = useState(false);
+  const [backupStatus, setBackupStatus]       = useState(""); // "" | "ok" | "err"
+  const [restoreStatus, setRestoreStatus]     = useState(""); // "" | "ok" | "err"
+  const backupRestoreRef                      = useRef(null);
+  const restoreFileInputRef                   = useRef(null);
   const tour = useTour();
+
+  function handleAppBackup() {
+    try {
+      const SKIP = new Set(["yeva_scryfall_data_v1"]);
+      const data = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith("yeva") || k.startsWith("goldfish-stats"))) {
+          if (!SKIP.has(k)) data[k] = localStorage.getItem(k);
+        }
+      }
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `yeva-backup-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setBackupStatus("ok");
+      setTimeout(() => { setBackupStatus(""); setShowBackupMenu(false); }, 1500);
+    } catch { setBackupStatus("err"); setTimeout(() => setBackupStatus(""), 2000); }
+  }
+
+  function handleAppRestoreFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid format");
+        for (const [k, v] of Object.entries(data)) {
+          if (typeof v === "string") localStorage.setItem(k, v);
+        }
+        setRestoreStatus("ok");
+        setTimeout(() => { setRestoreStatus(""); setShowBackupMenu(false); window.location.reload(); }, 800);
+      } catch { setRestoreStatus("err"); setTimeout(() => setRestoreStatus(""), 2000); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  // Close backup menu when clicking outside
+  useEffect(() => {
+    if (!showBackupMenu) return;
+    const handler = (e) => {
+      if (backupRestoreRef.current && !backupRestoreRef.current.contains(e.target)) {
+        setShowBackupMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showBackupMenu]);
+
+  // ── responsive layout ──────────────────────────────────────
+  const [width, setWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const handleResize = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const isMobile = width < 1024;
 
   // Compute the active deck's card set for filtering
   const activeDeck = (activeDeckId && PRESET_DECKS.find(d => d.id === activeDeckId)) || decks?.find(d => d.id === activeDeckId) || null;
@@ -38803,7 +38814,7 @@ function YevaAdvisor() {
             }}
               onMouseEnter={e => { e.target.style.borderColor = COLORS.green1; e.target.style.color = COLORS.green1; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >📌 STATES</button>
+            >📌 {isMobile ? "" : "STATES"}</button>
             <button onClick={() => setShowSynergyMap(true)} title="Visual graph showing how cards in your deck connect to combos and each other" style={{
               background: "none", border: `1px solid ${COLORS.border}`,
               borderRadius: "6px", padding: "5px 14px",
@@ -38813,7 +38824,7 @@ function YevaAdvisor() {
             }}
               onMouseEnter={e => { e.target.style.borderColor = "#a569bd"; e.target.style.color = "#a569bd"; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >⬡ SYNERGY</button>
+            >⬡ {isMobile ? "" : "SYNERGY"}</button>
             <button onClick={(e) => {
               if (e.shiftKey) {
                 setGoldfishSeedState({ hand, battlefield, graveyard, exile, greenMana, colorlessMana, isMyTurn, attachments });
@@ -38830,7 +38841,7 @@ function YevaAdvisor() {
             }}
               onMouseEnter={e => { e.target.style.borderColor = COLORS.green2; e.target.style.color = COLORS.green2; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >🐟 GOLDFISH</button>
+            >🐟 {isMobile ? "" : "GOLDFISH"}</button>
             <button onClick={() => setShowDebug(true)} title="Dump the current application state as JSON for debugging" style={{
               background: "none", border: `1px solid ${COLORS.border}`,
               borderRadius: "6px", padding: "5px 14px",
@@ -38840,7 +38851,7 @@ function YevaAdvisor() {
             }}
               onMouseEnter={e => { e.target.style.borderColor = "#5dade2"; e.target.style.color = "#5dade2"; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >⌗ DEBUG</button>
+            >⌗ {isMobile ? "" : "DEBUG"}</button>
             {/* Deck selector */}
             <button onClick={() => setShowDeckManager(true)} data-tour="tour-deck" title="Manage your decks — create, import, edit, and switch between saved decklists" style={{
               background: activeDeck ? "#1a3a1a" : "none",
@@ -38862,7 +38873,62 @@ function YevaAdvisor() {
             }}
               onMouseEnter={e => { e.target.style.borderColor = COLORS.red; e.target.style.color = COLORS.red; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >↺ RESET</button>
+            >↺ {isMobile ? "" : "RESET"}</button>
+            {/* 💾 BACKUP menu */}
+            <div ref={backupRestoreRef} style={{ position: "relative" }}>
+              <input ref={restoreFileInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleAppRestoreFile} />
+              <button
+                onClick={() => setShowBackupMenu(v => !v)}
+                title="Backup or restore all decks, saved states, and simulator history"
+                style={{
+                  background: showBackupMenu ? "#1a2a1a" : "none",
+                  border: `1px solid ${showBackupMenu ? COLORS.green1 : COLORS.border}`,
+                  borderRadius: "6px", padding: "5px 12px",
+                  color: showBackupMenu ? COLORS.text : COLORS.textDim, cursor: "pointer",
+                  fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green2; e.currentTarget.style.color = COLORS.green2; }}
+                onMouseLeave={e => { if (!showBackupMenu) { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; } }}
+              >💾 {isMobile ? "" : "BACKUP"}</button>
+              {showBackupMenu && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 6px)", right: 0,
+                  background: COLORS.bgCard, border: `1px solid ${COLORS.border}`,
+                  borderRadius: "8px", padding: "8px", zIndex: 500,
+                  boxShadow: "0 6px 24px #000a", minWidth: "180px",
+                  display: "flex", flexDirection: "column", gap: "6px",
+                }}>
+                  <button
+                    onClick={handleAppBackup}
+                    title="Download all decks, saved states, and simulator history as a JSON file"
+                    style={{
+                      background: backupStatus === "ok" ? "#1a4a2a" : backupStatus === "err" ? "#4a1a1a" : "#0d1f0d",
+                      border: `1px solid ${backupStatus === "ok" ? COLORS.green1 : backupStatus === "err" ? COLORS.red : COLORS.border}`,
+                      borderRadius: "5px", padding: "7px 14px",
+                      color: backupStatus === "ok" ? COLORS.green2 : backupStatus === "err" ? COLORS.red : COLORS.text,
+                      cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
+                      letterSpacing: "1px", textAlign: "left", transition: "all 0.2s",
+                    }}
+                  >{backupStatus === "ok" ? "✓ DOWNLOADED" : backupStatus === "err" ? "✗ FAILED" : "⬇ BACKUP"}</button>
+                  <button
+                    onClick={() => restoreFileInputRef.current?.click()}
+                    title="Restore from a previously saved backup JSON file (reloads the page)"
+                    style={{
+                      background: restoreStatus === "ok" ? "#1a4a2a" : restoreStatus === "err" ? "#4a1a1a" : "#0d1f0d",
+                      border: `1px solid ${restoreStatus === "ok" ? COLORS.green1 : restoreStatus === "err" ? COLORS.red : COLORS.border}`,
+                      borderRadius: "5px", padding: "7px 14px",
+                      color: restoreStatus === "ok" ? COLORS.green2 : restoreStatus === "err" ? COLORS.red : COLORS.text,
+                      cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
+                      letterSpacing: "1px", textAlign: "left", transition: "all 0.2s",
+                    }}
+                  >{restoreStatus === "ok" ? "✓ RESTORED" : restoreStatus === "err" ? "✗ INVALID FILE" : "⬆ RESTORE"}</button>
+                  <div style={{ fontSize: "10px", color: COLORS.textDim, padding: "2px 4px", lineHeight: 1.4 }}>
+                    Backup saves all decks, game states, and goldfish history.
+                  </div>
+                </div>
+              )}
+            </div>
             <button onClick={() => setShowHelp(true)} title="Open manual" style={{
               background: "none", border: `1px solid ${COLORS.border}`,
               borderRadius: "6px", padding: "5px 10px",
