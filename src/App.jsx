@@ -26984,7 +26984,6 @@ function extractComboLabel(result) {
     "full_hand_inf_speaker_win":  "Speaker Infinite Win",
     // COMBOS array IDs
     "sabertooth_symbiote_karametra_no_ashaya": "Sabertooth+Symbiote Loop",
-    "ashaya_symbiote_bigdork":    "Ashaya+Symbiote Loop",
     "ashaya_scryb":               "Scryb Loop",
     "ashaya_scryb_named_dork":    "Scryb Loop",
     "ashaya_argothian":           "Argothian Loop",
