@@ -2408,6 +2408,11 @@ function _buildSolverBundle() {
 
     // Wirewood Symbiote + Selvala (combo 53–55 use Cloudstone; keep base)
     ['wirewood_symbiote','selvala'],                         // broad coverage
+    // Cloudstone Curio combos (53, 54, 55)
+    ['cloudstone_curio','selvala','wirewood_symbiote','llanowar_elves'],   // 53
+    ['cloudstone_curio','selvala','wirewood_symbiote','elvish_mystic'],    // 54
+    ['cloudstone_curio','selvala','wirewood_symbiote','fyndhorn_elves'],   // 55
+    ['cloudstone_curio','selvala','wirewood_symbiote'],                    // broad
 
     // Haste enabler + big dork loops (Concordant Crossroads / Surrak)
     ['concordant_crossroads','selvala'],
@@ -2449,6 +2454,7 @@ function _buildSolverBundle() {
     'priest_of_titania': 63, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
     'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'earthcraft': 53,
     'deserted_temple': 51, 'concordant_crossroads': 49, 'wirewood_lodge': 48,
+    'cloudstone_curio': 47,
     // Cards present in combos but previously missing from priority table
     'marwyn': 46, 'surrak_goreclaw': 44, 'thousand_year_elixir': 42,
     // Win conditions
@@ -6494,6 +6500,7 @@ function _buildSolverBundle() {
     // ══════════════════════════════════════════════════════════════════════════
 
     {
+      name: 'Infinite Mana (Earthcraft + Ashaya + Quirion Ranger + Basic Forest)  [Combo Summary #4]',
       description:
         "Earthcraft taps Quirion to untap a basic Forest. " +
         "Forest taps {G}. " +
@@ -6516,6 +6523,79 @@ function _buildSolverBundle() {
           p.name !== 'Quirion Ranger' &&
           !p.tapped
         );
+      },
+    },
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  TEMUR SABERTOOTH + WIREWOOD SYMBIOTE + SELVALA  (COMBO 12, 13, 16)
+    //
+    //  Symbiote (once-per-turn) bounces a 1-drop Elf → untaps Selvala.
+    //  Sabertooth bounces Symbiote ({1G}). Recast Symbiote ({G}) + 1-drop ({G}).
+    //  Loop cost: {1G}+{G}+{G}+{G}(Selvala activation) = {4G}+{1}.
+    //  Selvala must produce ≥5G → greatest power ≥6 (since Selvala costs {G} to activate).
+    //  PRE (canonical): all on BF, Selvala and 1-drop not sick, power ≥6.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    {
+      name: 'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]',
+      description:
+        "Symbiote bounces a 1-drop Elf → untaps Selvala. " +
+        "Sabertooth bounces Symbiote ({1G}). Recast Symbiote ({G}) + 1-drop ({G}). " +
+        "Selvala activation costs {G}. Total loop cost {4G}+{1}. " +
+        "Net positive with greatest power ≥6 (Selvala produces ≥6G, pays all costs, nets ≥1G).",
+      check(state) {
+        if (!hasPerm(state, 'Temur Sabertooth')) return false;
+        if (!hasPerm(state, 'Wirewood Symbiote')) return false;
+        const selvala = state.battlefield.find(
+          p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        );
+        if (!selvala) return false;
+        if (greatestPower(state) < 6) return false;
+        // Need a 1-drop elf to bounce (Symbiote can bounce Llanowar Elves, Elvish Mystic, Fyndhorn Elves, etc.)
+        const hasOneDrop = state.battlefield.some(p =>
+          p.subtypes && p.subtypes.includes('Elf') && !p.summoningSick &&
+          ['Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves',
+           'Allosaurus Shepherd'].includes(p.name)
+        );
+        return hasOneDrop;
+      },
+    },
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  SELVALA + CLOUDSTONE CURIO + WIREWOOD SYMBIOTE + 1-DROP ELF  (COMBO 53, 54, 55)
+    //
+    //  No Temur Sabertooth required — Cloudstone Curio takes its role.
+    //  Loop:
+    //   1. Tap 1-drop elf → {G}. Tap Selvala (pay {G}) → at least {4G} (power ≥4+).
+    //   2. Symbiote bounces 1-drop → untaps Selvala.
+    //   3. Cast 1-drop ({G}) → Cloudstone triggers: returns Symbiote to hand.
+    //   4. Cast Symbiote ({G}) → Cloudstone triggers (no useful target or Symbiote itself).
+    //   5. Repeat from step 1.
+    //  Loop cost: {G}(1-drop)+{G}(Selvala activation)+{G}(recast 1-drop)+{G}(recast Symbiote) = {4G}.
+    //  Selvala must produce ≥5G net → greatest power ≥5. PRE: power ≥4 (decklist says ≥4).
+    // ══════════════════════════════════════════════════════════════════════════
+
+    {
+      name: 'Infinite Mana (Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf)  [COMBO 53, 54, 55]',
+      description:
+        "Cloudstone Curio replaces Temur Sabertooth. " +
+        "1-drop Elf enters → Cloudstone bounces Symbiote. Symbiote enters → Cloudstone bounces 1-drop or nothing. " +
+        "Symbiote bounces 1-drop → untaps Selvala. " +
+        "Net positive with greatest power ≥4 (Selvala produces ≥4G+, loop costs {4G}).",
+      check(state) {
+        if (!hasPerm(state, 'Cloudstone Curio')) return false;
+        if (!hasPerm(state, 'Wirewood Symbiote')) return false;
+        const selvala = state.battlefield.find(
+          p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        );
+        if (!selvala) return false;
+        if (greatestPower(state) < 4) return false;
+        // Need a 1-drop elf not sick (Llanowar Elves, Elvish Mystic, or Fyndhorn Elves)
+        const hasOneDrop = state.battlefield.some(p =>
+          p.subtypes && p.subtypes.includes('Elf') && !p.summoningSick &&
+          ['Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves'].includes(p.name)
+        );
+        return hasOneDrop;
       },
     },
 
@@ -6776,6 +6856,25 @@ function _buildSolverBundle() {
         'Glademuse + pass turn draws cards from opponent spells. ' +
         'Crop Rotation → War Room (always a land to sacrifice under Ashaya).',
       check(state) {
+        // ── Library feasibility guard ─────────────────────────────────────────
+        // Tutors that search the library are only a win condition when the library
+        // actually contains a creature to fetch. If the library is entirely unknown
+        // cards we allow the win (conservative: assume the deck is intact); if we
+        // have full library information and it contains NO non-stax creature, the
+        // tutor cannot find anything and the win condition does not apply.
+        const lib = state.players?.[0]?.library ?? [];
+        const libHasCreature = (() => {
+          const CARDS_local = CARDS;
+          const hasKnown = lib.some(ck => {
+            if (ck === 'unknown') return false;
+            const def = CARDS_local[ck];
+            return def?.types.includes('creature');
+          });
+          if (hasKnown) return true;
+          // All-unknown library: we can't tell — optimistically allow the win.
+          return lib.every(ck => ck === 'unknown') && lib.length > 0;
+        })();
+
         // ── Hand tutors that find a creature ─────────────────────────────────
         const handTutors = [
           'green_suns_zenith',  // {X}{G}: green creature MV≤X → battlefield
@@ -6789,7 +6888,7 @@ function _buildSolverBundle() {
           'worldly_tutor',      // {G}: creature → top of library (drawn next turn)
           'sylvan_scrying',     // {1G}: any land → hand (War Room → draw to finisher)
         ];
-        if (state.hand) {
+        if (state.hand && libHasCreature) {
           for (const k of handTutors) {
             if (state.hand.includes(k)) return true;
           }
@@ -6813,7 +6912,9 @@ function _buildSolverBundle() {
           'Duskwatch Recruiter',       // {2G},{T} → creature → hand (wins directly!)
         ];
         for (const name of bfTutorNames) {
-          if (hasPerm(state, name)) return true;
+          // BF activated tutors that search the library also need a creature there
+          const needsLib = name !== 'Duskwatch Recruiter'; // Duskwatch searches library too
+          if (hasPerm(state, name) && (!needsLib || libHasCreature)) return true;
         }
 
         // ── ETB tutors reachable from hand ───────────────────────────────────
@@ -7285,7 +7386,10 @@ function _buildSolverBundle() {
               });
 
               // Fallback pool: all results minus redundant equivalents
-              const fallback = allResults.filter(r => !isEquivRedundant(msgKey(r)));
+              const fallback = allResults.filter(r => {
+                const k = msgKey(r);
+                return k !== null && !isEquivRedundant(k);
+              });
 
               const pool = relevant.length > 0 ? relevant : fallback;
               const sorted = pool.slice().sort((a, b) =>
@@ -7570,7 +7674,7 @@ function _buildSolverBundle() {
     return [...new Set(hand)];
   }
 
-  var _ACM = { generateActions };
+  var _ACM = { generateActions, NAME_TO_KEY, COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, STAX_CARDS, effectiveCost };
 
   // Solver.js
   /**
@@ -7748,6 +7852,10 @@ function _buildSolverBundle() {
     strategy:  'dfs',
     allLines:  false,
     verbose:   false,
+    // exhaustive: disable score pruning, canReachCombo pruning, and the
+    // search-spell heuristic penalty. The solver explores every reachable
+    // state within the turn/depth budget. Much slower but never misses a win.
+    exhaustive: false,
   };
 
   // ── Scoring ───────────────────────────────────────────────────────────────
@@ -7779,18 +7887,20 @@ function _buildSolverBundle() {
   //  B) topDecked bonus (−500 if a combo piece is on top of library):
   //     After a tutor resolves, the target is topDecked. Strongly prefers passing
   //     to draw the tutored piece over continuing to do other things first.
-  function heuristic(minMissing, state) {
+  function heuristic(minMissing, state, exhaustive = false) {
     if (minMissing === 0 && checkCombos(state)) return -1_000_000 - state.mana.total();
 
     let h = minMissing * 1000 - state.mana.total();
 
-    // A) Search-spell penalty — must be > 1000 to dominate combo-distance signal
-    for (const k of state.hand) {
-      if (!SEARCH_SPELL_KEYS.has(k)) continue;
-      const def = CARDS[k];
-      if (!def) continue;
-      if (state.mana.pay(effectiveCost(state, def)) !== null) {
-        h += 2000;
+    // A) Search-spell penalty — disabled in exhaustive mode so every ordering is explored
+    if (!exhaustive) {
+      for (const k of state.hand) {
+        if (!SEARCH_SPELL_KEYS.has(k)) continue;
+        const def = CARDS[k];
+        if (!def) continue;
+        if (state.mana.pay(effectiveCost(state, def)) !== null) {
+          h += 2000;
+        }
       }
     }
 
@@ -7875,12 +7985,12 @@ function _buildSolverBundle() {
       if (depth > this.opts.maxDepth)  return;
       if (state.turn > this.opts.maxTurns) return;
 
-      // Prune losing states immediately
+      // Prune losing states immediately (always active — losing can never win)
       if (state.youLost()) { this.pruned++; return; }
 
-      // Score pruning (DFS-only)
+      // Score pruning (DFS-only, disabled in exhaustive mode)
       const s = score(state, depth);
-      if (s >= this.bestScore) { this.pruned++; return; }
+      if (!this.opts.exhaustive && s >= this.bestScore) { this.pruned++; return; }
 
       // Dedup: full fingerprint including mana (mana affects what actions are available)
       const fp = state.fingerprint();
@@ -7892,9 +8002,8 @@ function _buildSolverBundle() {
       const analysis = analyzeState(state);
       const turnsLeft = this.opts.maxTurns - state.turn;
 
-      // #3: canReachCombo BEFORE checkVictory — cheap filter eliminates dead
-      //     branches without paying the cost of scanning all DETECTORS.
-      if (turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1, analysis)) {
+      // #3: canReachCombo BEFORE checkVictory (disabled in exhaustive mode)
+      if (!this.opts.exhaustive && turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1, analysis)) {
         this.pruned++;
         return;
       }
@@ -7917,10 +8026,8 @@ function _buildSolverBundle() {
         catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
         if (!next) continue;
 
-        // #2: Compute heuristic from pre-built minMissing when possible
-        // (child's minMissing may differ, but parent's is a cheap lower bound proxy)
         const childAnalysis = analyzeState(next);
-        children.push({ next, h: heuristic(childAnalysis.minMissing, next) });
+        children.push({ next, h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive) });
       }
 
       // #8: Skip sort when trivially ordered
@@ -7935,59 +8042,87 @@ function _buildSolverBundle() {
     }
 
     // ── BFS ───────────────────────────────────────────────────────────────────
-    // #5: BFS now applies canReachCombo pruning
-    // #6: Uses mana-stripped fingerprint
-    // #7: Queue entries are parent-pointer nodes instead of path arrays
+    // #5:  BFS applies canReachCombo pruning
+    // #7:  Parent-pointer nodes (no path array copies)
+    // #12: Turn-stratified queue + heuristic child ordering.
+    //
+    //   Root cause of BFS finding longer paths than DFS:
+    //   A plain FIFO queue orders states by total depth. A short-step turn-3 path
+    //   (depth 14) is dequeued before a long-step turn-2 path (depth 18), so BFS
+    //   reports the turn-3 solution.
+    //
+    //   Fix: maintain one queue per turn. Process the entire turn-N queue before
+    //   starting turn-(N+1). Within each turn queue, children are inserted in
+    //   heuristic order so the best action sequence is explored first and the
+    //   shortest step-count path within that turn is found early.
+    //
+    //   Result: BFS now matches DFS on turn number while still guaranteeing the
+    //   fewest steps within the winning turn.
 
     _bfs(initialState) {
-      // #7: node = { state, parent, depth }
-      const root = { state: initialState, parent: null, depth: 0 };
-      const queue = [root];
+      // queues[t] = ordered array of nodes whose state.turn === t
+      const queues = Object.create(null);
+      const enqueue = (node) => {
+        const t = node.state.turn;
+        (queues[t] ??= []).push(node);
+      };
 
-      while (queue.length > 0) {
-        if (this.statesExplored > this.opts.maxStates) break;
+      enqueue({ state: initialState, parent: null, depth: 0 });
 
-        const node = queue.shift();
-        const { state, depth } = node;
-        this.statesExplored++;
+      for (let turn = 1; turn <= this.opts.maxTurns; turn++) {
+        const q = queues[turn];
+        if (!q) continue;
 
-        if (state.youLost())                 continue;
-        if (state.turn > this.opts.maxTurns) continue;
-        if (depth > this.opts.maxDepth)      continue;
+        for (let qi = 0; qi < q.length; qi++) {
+          if (this.statesExplored > this.opts.maxStates) return;
 
-        // In BFS + allLines=false, stop once we've found a solution at this turn
-        if (!this.opts.allLines && this.bestLine &&
-            state.turn > this.bestLine[this.bestLine.length - 1].turn) break;
+          const node = q[qi];
+          const { state, depth } = node;
+          this.statesExplored++;
 
-        // Full fingerprint including mana
-        const fp = state.fingerprint();
-        if (this.visited.has(fp)) continue;
-        this.visited.set(fp, depth);
+          if (state.youLost())            continue;
+          if (depth > this.opts.maxDepth) continue;
 
-        // #5: Prune branches that cannot reach any combo
-        const turnsLeft = this.opts.maxTurns - state.turn;
-        if (turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1)) {
-          this.pruned++;
-          continue;
+          // Full fingerprint including mana
+          const fp = state.fingerprint();
+          if (this.visited.has(fp)) continue;
+          this.visited.set(fp, depth);
+
+          // #5: canReachCombo pruning (disabled in exhaustive mode)
+          const turnsLeft = this.opts.maxTurns - state.turn;
+          if (!this.opts.exhaustive && turnsLeft >= 0 && !canReachCombo(state, turnsLeft + 1)) {
+            this.pruned++;
+            continue;
+          }
+
+          const combo = checkVictory(state);
+          if (combo) {
+            this._recordWin(reconstructPath(node), combo, score(state, depth));
+            if (!this.opts.allLines) return;  // found best on this turn — done
+            continue;
+          }
+
+          // Generate and heuristic-sort children, routing each to the correct
+          // turn queue (same turn = stays here; pass turn = next turn's queue)
+          const actions = generateActions(state);
+          const children = [];
+          for (const action of actions) {
+            let next;
+            try { next = action.apply(state); }
+            catch (e) { continue; }
+            if (!next || next.turn > this.opts.maxTurns) continue;
+            const ca = analyzeState(next);
+            children.push({ next, h: heuristic(ca.minMissing, next, this.opts.exhaustive) });
+          }
+          if (children.length > 1) children.sort((a, b) => a.h - b.h);
+
+          for (const { next } of children) {
+            enqueue({ state: next, parent: node, depth: depth + 1 });
+          }
         }
 
-        const combo = checkVictory(state);
-        if (combo) {
-          // #7: Reconstruct path only on win
-          this._recordWin(reconstructPath(node), combo, score(state, depth));
-          if (!this.opts.allLines) return;
-          continue;
-        }
-
-        const actions = generateActions(state);
-        for (const action of actions) {
-          let next;
-          try { next = action.apply(state); }
-          catch (e) { continue; }
-          if (!next) continue;
-          // #7: push parent-pointer node, no path array allocation
-          queue.push({ state: next, parent: node, depth: depth + 1 });
-        }
+        // Stop as soon as we have a winning line (found on the earliest turn)
+        if (this.bestLine && !this.opts.allLines) return;
       }
     }
 
@@ -8252,14 +8387,15 @@ function _buildSolverBundle() {
    */
   function analyze(hand, options = {}) {
     const {
-      maxTurns  = 4,
-      maxDepth  = 50,
-      maxStates = 300_000,
-      whatIf    = true,
+      maxTurns   = 4,
+      maxDepth   = 50,
+      maxStates  = 300_000,
+      whatIf     = true,
+      battlefield = [],
     } = options;
 
     const mana      = analyzeMana(hand);
-    const state     = buildState(hand);
+    const state     = buildState(hand, battlefield);
     const solver    = new Solver({ maxTurns, maxDepth, maxStates, allLines: true, verbose: false });
     const result    = quietSolve(solver, state);
 
@@ -8360,9 +8496,16 @@ function _buildSolverBundle() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  function buildState(hand) {
-    const s = new GameState({ hand: [...hand], landDrops: 1, life: 40 });
+  function buildState(hand, battlefield = []) {
+    let s = new GameState({ hand: [...hand], landDrops: 1, life: 40 });
     s.history.push({ turn: 1, msg: '-- Begin Turn 1 --' });
+    for (const key of battlefield) {
+      s = s.enterBattlefield(key);
+      // Mark the most recently entered permanent as not summoning sick
+      // (it was already on the battlefield before the analysis starts)
+      const added = s.battlefield[s.battlefield.length - 1];
+      if (added) added.summoningSick = false;
+    }
     return s;
   }
 
@@ -8442,6 +8585,15 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
+
+
+
+
+
+
+
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -8469,6 +8621,8 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 // runs the search, and returns structured results.
 function runSolver(hand, battlefield, greenMana, colorlessMana, sickCreatures, isMyTurn, {
   graveyard = [], exile = [], library = null, librarySize = 99, life = 40, tappedCards = null, landDrops = 1,
+  maxTurns = 4, maxDepth = 50, maxStates = 300_000, strategy = "dfs",
+  allLines = false, exhaustive = false,
 } = {}) {
   if (!isMyTurn) return null;
   if (typeof SolverGameState === "undefined") return null;
@@ -8509,10 +8663,12 @@ function runSolver(hand, battlefield, greenMana, colorlessMana, sickCreatures, i
       } catch(e) { /* card not in Solver's card db — skip */ }
     }
     const solver = new YevaSolver({
-      maxTurns:  4,
-      maxDepth:  50,
-      maxStates: 300_000,
-      verbose:   false,
+      maxTurns,
+      maxDepth,
+      maxStates,
+      strategy,
+      allLines,
+      exhaustive,
     });
     const result = solver.solve(state);
     if (!result) return null;
@@ -8548,6 +8704,7 @@ function runSolver(hand, battlefield, greenMana, colorlessMana, sickCreatures, i
       finalHand:    lastState.hand ?? [],
       finalBf:      (lastState.battlefield ?? []).map(p => p.name ?? p),
       finalMana:    lastState.mana?.toString?.() ?? "",
+      allWinLines:  result.allLines ?? [],  // populated when allLines:true
     };
   } catch(e) {
     return null;
@@ -29209,6 +29366,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const [linesExpanded, setLinesExpanded] = useState(new Set()); // expanded combo ids in Lines tab
   const [linesFilter, setLinesFilter] = useState("all"); // "all" | "same-turn" | "next-turn"
   const [linesType, setLinesType] = useState("infinite-mana"); // combo type filter
+  // Solver parameter configuration — exposed in the Solver memo tab
+  const [solverConfig, setSolverConfig] = useState({
+    maxTurns:  4,
+    maxDepth:  50,
+    maxStates: 200000,
+    strategy:  "dfs",    // "dfs" | "bfs"
+    allLines:  false,
+    exhaustive: false,
+  });
+  const [solverConfigOpen, setSolverConfigOpen] = useState(false); // collapsible panel
   const [showLibraryTop, setShowLibraryTop] = useState(false);
   const [gameNotes, setGameNotes] = useState(""); // scratchpad for current game
   const [mulliganCount, setMulliganCount] = useState(0);
@@ -29472,6 +29639,13 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
         life: 40,
         landDrops:    landPlayed ? 0 : 1,
         librarySize:  Math.max(0, 99 - hand.length - battlefield.length - graveyard.length),
+        // Solver config params — set by the user in the Solver memo tab
+        maxTurns:   solverConfig.maxTurns,
+        maxDepth:   solverConfig.maxDepth,
+        maxStates:  solverConfig.maxStates,
+        strategy:   solverConfig.strategy,
+        allLines:   solverConfig.allLines,
+        exhaustive: solverConfig.exhaustive,
       };
 
       const runInline = () => {
@@ -29479,6 +29653,12 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
           try {
             const sr = runSolver(hand, battlefield, tappedMana.green, tappedMana.total - tappedMana.green, sickCreatureNames, true, {
               graveyard, library, life: 40, tappedCards: tapped, landDrops: landPlayed ? 0 : 1,
+              maxTurns:   solverConfig.maxTurns,
+              maxDepth:   solverConfig.maxDepth,
+              maxStates:  solverConfig.maxStates,
+              strategy:   solverConfig.strategy,
+              allLines:   solverConfig.allLines,
+              exhaustive: solverConfig.exhaustive,
             });
             setSolverResult(sr);
           } catch(_) { setSolverResult(null); }
@@ -29514,7 +29694,7 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       if (workerRef.current) { workerRef.current.terminate(); workerRef.current = null; }
       setSolverLoading(false);
     };
-  }, [hand, battlefield, graveyard, isMyTurn, tapped, sickCreatures]);
+  }, [hand, battlefield, graveyard, isMyTurn, tapped, sickCreatures, solverConfig]);
 
   // ── helpers ─────────────────────────────────────────────────
   // ── Merge solverResult into analysis.results for the advice tab ──────────
@@ -36594,23 +36774,152 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 {/* ── SOLVER TAB ── */}
                 {advisorTab === "solver" && (() => {
                   const sr = solverResult;
-                  const C2 = { dim: COLORS.textDim, head: COLORS.green2, mana: "#c084fc", step: COLORS.text, sep: COLORS.border ?? "#2a3a2a", win: "#f1c40f", inf: "#58d68d", turn: "#e09050" };
+                  const C2 = { dim: COLORS.textDim, head: COLORS.green2, mana: "#c084fc", step: COLORS.text, sep: COLORS.border ?? "#2a3a2a", win: "#f1c40f", inf: "#58d68d", turn: "#e09050", cfg: "#4a9a6a" };
                   const mono = { fontFamily: "'Courier New', monospace", fontSize: "11px" };
+                  const cfg = solverConfig;
+                  const setCfg = (patch) => setSolverConfig(prev => ({ ...prev, ...patch }));
+                  const maxStateOptions = [
+                    [50000,   "50 k — Fast"],
+                    [200000,  "200 k — Default"],
+                    [500000,  "500 k — Thorough"],
+                    [1000000, "1 M — Deep (slow)"],
+                  ];
+                  /* ── Config Panel ── */
+                  const configPanel = (
+                    <div style={{ marginBottom: "10px", border: `1px solid ${solverConfigOpen ? C2.cfg + "88" : COLORS.border}`, borderRadius: "6px", overflow: "hidden" }}>
+                      {/* Header row — always visible */}
+                      <div
+                        onClick={() => setSolverConfigOpen(v => !v)}
+                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", background: solverConfigOpen ? "#0d1a10" : "transparent", cursor: "pointer", userSelect: "none" }}
+                      >
+                        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1.5px", color: C2.cfg }}>⚙ SOLVER CONFIG</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          {/* Compact summary badges when collapsed */}
+                          {!solverConfigOpen && (
+                            <span style={{ fontSize: "9px", color: C2.dim, fontFamily: "'Courier New', monospace" }}>
+                              T{cfg.maxTurns} · {cfg.strategy.toUpperCase()} · {cfg.maxStates >= 1000000 ? "1M" : cfg.maxStates >= 500000 ? "500k" : cfg.maxStates >= 200000 ? "200k" : "50k"}
+                              {cfg.allLines ? " · ALL" : ""}
+                              {cfg.exhaustive ? " · EXH" : ""}
+                            </span>
+                          )}
+                          <span style={{ color: C2.dim, fontSize: "9px" }}>{solverConfigOpen ? "▲" : "▼"}</span>
+                        </div>
+                      </div>
+                      {/* Expanded controls */}
+                      {solverConfigOpen && (
+                        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: "10px", background: "#0a120a" }}>
+                          {/* Row 1: maxTurns slider */}
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                              <label style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: C2.dim, letterSpacing: "1px" }}>MAX TURNS</label>
+                              <span style={{ fontFamily: "'Courier New', monospace", fontSize: "10px", color: C2.cfg }}>{cfg.maxTurns}</span>
+                            </div>
+                            <input type="range" min="1" max="8" step="1" value={cfg.maxTurns}
+                              onChange={e => setCfg({ maxTurns: Number(e.target.value) })}
+                              style={{ width: "100%", accentColor: C2.cfg, cursor: "pointer" }}
+                            />
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "8px", color: C2.dim, fontFamily: "'Courier New', monospace", marginTop: "1px" }}>
+                              <span>1 (instant)</span><span>4 (default)</span><span>8 (long)</span>
+                            </div>
+                          </div>
+                          {/* Row 2: maxDepth slider */}
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                              <label style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: C2.dim, letterSpacing: "1px" }}>MAX DEPTH</label>
+                              <span style={{ fontFamily: "'Courier New', monospace", fontSize: "10px", color: C2.cfg }}>{cfg.maxDepth}</span>
+                            </div>
+                            <input type="range" min="10" max="120" step="10" value={cfg.maxDepth}
+                              onChange={e => setCfg({ maxDepth: Number(e.target.value) })}
+                              style={{ width: "100%", accentColor: C2.cfg, cursor: "pointer" }}
+                            />
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "8px", color: C2.dim, fontFamily: "'Courier New', monospace", marginTop: "1px" }}>
+                              <span>10</span><span>50 (default)</span><span>120</span>
+                            </div>
+                          </div>
+                          {/* Row 3: maxStates dropdown */}
+                          <div>
+                            <label style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: C2.dim, letterSpacing: "1px", display: "block", marginBottom: "4px" }}>STATE BUDGET</label>
+                            <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                              {maxStateOptions.map(([val, label]) => (
+                                <button key={val} onClick={() => setCfg({ maxStates: val })} style={{
+                                  padding: "3px 8px", border: `1px solid ${cfg.maxStates === val ? C2.cfg : COLORS.border}`,
+                                  borderRadius: "3px", background: cfg.maxStates === val ? "#0d2010" : "none",
+                                  color: cfg.maxStates === val ? C2.cfg : C2.dim,
+                                  fontFamily: "'Courier New', monospace", fontSize: "9px", cursor: "pointer",
+                                }}>{label}</button>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Row 4: strategy toggle */}
+                          <div>
+                            <label style={{ fontFamily: "'Cinzel', serif", fontSize: "9px", color: C2.dim, letterSpacing: "1px", display: "block", marginBottom: "4px" }}>STRATEGY</label>
+                            <div style={{ display: "flex", gap: "4px" }}>
+                              {[["dfs", "DFS — Depth-first (default, fast)"], ["bfs", "BFS — Breadth-first (optimal turn)"]].map(([val, desc]) => (
+                                <button key={val} onClick={() => setCfg({ strategy: val })} style={{
+                                  padding: "3px 10px", border: `1px solid ${cfg.strategy === val ? C2.cfg : COLORS.border}`,
+                                  borderRadius: "3px", background: cfg.strategy === val ? "#0d2010" : "none",
+                                  color: cfg.strategy === val ? C2.cfg : C2.dim,
+                                  fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "0.5px", cursor: "pointer",
+                                }} title={desc}>{val.toUpperCase()}</button>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Row 5: checkboxes */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            {[
+                              ["allLines",  "ALL LINES",  "Collect every winning line, not just the best — may be slow ⚠"],
+                              ["exhaustive","EXHAUSTIVE", "Disable score pruning — finds more paths, much slower ⚠"],
+                            ].map(([key, label, tip]) => (
+                              <label key={key} title={tip} style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", userSelect: "none" }}>
+                                <input type="checkbox" checked={cfg[key]} onChange={e => setCfg({ [key]: e.target.checked })}
+                                  style={{ accentColor: "#e09050", cursor: "pointer", width: "12px", height: "12px" }}
+                                />
+                                <span style={{
+                                  fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px",
+                                  color: cfg[key] ? "#e09050" : C2.dim,
+                                }}>{label}</span>
+                                {cfg[key] && (
+                                  <span style={{ fontSize: "9px", color: "#e09050", fontFamily: "'Crimson Text', serif" }}>— may be slow</span>
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                          {/* Reset button */}
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <button onClick={() => setSolverConfig({ maxTurns: 4, maxDepth: 50, maxStates: 200000, strategy: "dfs", allLines: false, exhaustive: false })}
+                              style={{ padding: "3px 10px", border: `1px solid ${COLORS.border}`, borderRadius: "3px", background: "none", color: C2.dim, fontFamily: "'Cinzel', serif", fontSize: "8px", letterSpacing: "1px", cursor: "pointer" }}>
+                              RESET DEFAULTS
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+
                   if (solverLoading) return (
-                    <div style={{ color: C2.inf, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center", cursor: "wait" }}>
-                      <div style={{ marginBottom: "8px", fontSize: "18px" }}>♾</div>
-                      Solving…
+                    <div>
+                      {configPanel}
+                      <div style={{ color: C2.inf, fontSize: "12px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center", cursor: "wait" }}>
+                        <div style={{ marginBottom: "8px", fontSize: "18px" }}>♾</div>
+                        Solving…
+                      </div>
                     </div>
                   );
                   if (!sr) return (
-                    <div style={{ color: C2.dim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
-                      {hand.length + battlefield.length === 0
-                        ? "No cards yet — draw an opening hand to start."
-                        : "No combo line found within search budget. Try playing more pieces."}
+                    <div>
+                      {configPanel}
+                      <div style={{ color: C2.dim, fontSize: "13px", fontFamily: "'Crimson Text', serif", padding: "20px", textAlign: "center" }}>
+                        {hand.length + battlefield.length === 0
+                          ? "No cards yet — draw an opening hand to start."
+                          : "No combo line found within search budget. Try playing more pieces or increasing the search budget above."}
+                      </div>
                     </div>
                   );
                   return (
                     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+                      {/* Config panel at the top */}
+                      {configPanel}
+
                       {/* Header */}
                       <div style={{ padding: "10px 0 6px", borderBottom: `1px solid ${C2.sep}`, marginBottom: "8px" }}>
                         {sr.manaCombo && (
@@ -36678,6 +36987,42 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           )}
                         </div>
                       )}
+
+                      {/* All winning lines (when allLines:true) — deduplicated by label */}
+                      {cfg.allLines && (sr.allWinLines ?? []).length > 0 && (() => {
+                        // Fold duplicates: key = "T{turn}|{label}", keep first occurrence, count repeats
+                        const seen = new Map();
+                        for (const line of sr.allWinLines) {
+                          const label = line.winCondition ?? line.comboName;
+                          const key   = `${line.winTurn}|${label}`;
+                          if (seen.has(key)) { seen.get(key).count++; }
+                          else               { seen.set(key, { ...line, label, count: 1 }); }
+                        }
+                        const unique = [...seen.values()];
+                        return (
+                          <div style={{ borderTop: `1px solid ${C2.sep}`, marginTop: "10px", paddingTop: "8px" }}>
+                            <div style={{ color: C2.dim, fontSize: "10px", letterSpacing: "1px", marginBottom: "6px", ...mono }}>
+                              ── WINNING LINES ({unique.length}{unique.length < sr.allWinLines.length ? ` unique / ${sr.allWinLines.length} total` : ""}) ──
+                            </div>
+                            {unique.map((line, idx) => (
+                              <div key={idx} style={{
+                                display: "flex", alignItems: "center", gap: "6px",
+                                marginBottom: "4px", padding: "4px 8px",
+                                background: "#0a140a", borderRadius: "4px",
+                                border: `1px solid ${COLORS.border}`,
+                              }}>
+                                <span style={{ color: C2.turn, fontFamily: "'Courier New', monospace", fontSize: "9px", minWidth: "20px" }}>T{line.winTurn}</span>
+                                <span style={{ color: line.winCondition ? C2.win : C2.inf, fontSize: "10px", fontFamily: "'Crimson Text', serif", flex: 1 }}>
+                                  {line.label}
+                                </span>
+                                {line.count > 1 && (
+                                  <span style={{ color: C2.dim, fontSize: "9px", fontFamily: "'Courier New', monospace" }}>×{line.count}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })()}
