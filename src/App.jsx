@@ -30544,9 +30544,11 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
     } else if (type === "instant" || type === "sorcery") {
       // GSZ: T1 (manaPool=1 after auto-tap) → auto-find Dryad Arbor; else open tutor modal
       if (card === "Green Sun's Zenith") {
-        // After deducting {1} (cmc=1 for {G}), remaining pool = manaPool - 1 = X
-        // But auto-tap already ran and we haven't deducted yet — use manaPool as total available
-        const gszX = Math.max(0, manaPool - 1); // X = mana available minus the {G}
+        // X = total mana available minus the {G} base cost.
+        // Use _poolTotal (manaPool + tappedMana.total) which was computed before auto-tap ran,
+        // or the post-auto-tap pool. Either way, the mana deduction for cmc=1 hasn't fired yet,
+        // so total available = _poolTotal - 1 (the {G} pip cost).
+        const gszX = Math.max(0, _poolTotal - 1); // X = total mana minus the {G}
         const shuffleGSZBack = () => {
           setLibrary(prev => {
             const lib = [...prev, "Green Sun's Zenith"];
