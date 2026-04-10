@@ -1362,26 +1362,30 @@ const COMBOS = [
     ]
   },
 
-  // ── Cloudstone Curio + Big Dork + Another Creature (sorcery-speed Sabertooth) ─
+  // ── Cloudstone Curio + Selvala + Wirewood Symbiote + 1-drop Elf ────────
+  // Covers Spellbook #53, 54, 55.
+  // Loop: Selvala taps for mana (based on highest power creature), Symbiote bounces the 1-drop
+  // elf to untap Selvala, Curio triggers when the 1-drop re-enters and bounces Symbiote back
+  // (resetting its once-per-turn restriction). Net positive when Selvala taps for ≥4 mana
+  // (creature with power ≥4 on board), covering Symbiote recast {G} + 1-drop recast {G}.
   {
     id: "cloudstone_curio_loop",
-    name: "Cloudstone Curio + Big Dork + Any Creature (Bounce Loop)",
-    onBattlefield: ["Cloudstone Curio"],
-    mustPreExist: ["Cloudstone Curio"],
-    description: "Cloudstone Curio: whenever a nonartifact permanent enters, its controller may return another nonartifact, nonland permanent they control to hand. With two creatures in hand and a big dork on board (≥3 mana): cast creature A → Curio triggers → return creature B to hand. Cast B → Curio triggers → return A. Each cast nets mana from the dork. Sorcery-speed Temur Sabertooth analogue. More fragile (requires two creatures to alternate) but functions without Sabertooth.",
-    requires: ["Cloudstone Curio"],
-    needsBigDork: 3,
+    name: "Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf",
+    onBattlefield: ["Cloudstone Curio", "Selvala, Heart of the Wilds", "Wirewood Symbiote"],
+    mustPreExist: ["Cloudstone Curio", "Selvala, Heart of the Wilds", "Wirewood Symbiote"],
+    description: "Infinite mana (Spellbook #53–55). Selvala taps for mana based on the highest power creature you control. Wirewood Symbiote bounces the 1-drop elf to untap Selvala. When the 1-drop re-enters, Cloudstone Curio triggers — bounce Wirewood Symbiote back to hand, resetting its once-per-turn restriction. Net positive when Selvala taps for ≥4 mana (requires a creature with power ≥4).",
+    requires: ["Selvala, Heart of the Wilds", "Cloudstone Curio", "Wirewood Symbiote"],
+    needsOneDrop: true,
+    needsBigDork: 4,
     priority: 8,
     type: "infinite-mana",
     lines: [
-      "Cloudstone Curio on battlefield. Big dork producing ≥3 mana. Two cheap creatures to alternate (e.g. any two 1-mana elves, or Eternal Witness + any creature).",
-      "Tap the big dork for {N} mana.",
-      "Cast Creature A ({1}). Cloudstone Curio triggers: return Creature B (already on battlefield) to hand.",
-      "Cast Creature B ({1}). Curio triggers: return Creature A to hand.",
-      "Each cast of a creature untaps the big dork via normal untap — or use ETB effects to generate value.",
-      "Net: N − (cost of alternating creatures) per loop. With free/1-mana creatures, nets N−2 per loop.",
-      "Repeat for infinite mana. Pivot to draw loop or win condition once established.",
-      "TIP: Eternal Witness in the loop retrieves any spell each cycle — Infectious Bite, tutors, etc.",
+      "Selvala, Heart of the Wilds + Cloudstone Curio + Wirewood Symbiote + a 1-drop elf on battlefield. You control a creature with power ≥4. Selvala and the 1-drop do NOT have summoning sickness.",
+      "Tap Selvala for mana (equal to the highest power among creatures you control, plus {G} if any creature has power ≥2 and another player drew).",
+      "Activate Wirewood Symbiote: bounce the 1-drop elf to hand, untapping Selvala.",
+      "Recast the 1-drop elf ({G}). Cloudstone Curio triggers: bounce Wirewood Symbiote back to hand (resetting its once-per-turn restriction).",
+      "Recast Wirewood Symbiote ({G}). Loop cost: {G} 1-drop + {G} Symbiote = {G}{G}.",
+      "Net positive when Selvala taps for ≥4 mana (power ≥4 creature in play). Repeat for infinite mana.",
     ]
   },
 
@@ -8437,6 +8441,7 @@ var SOLVER_NAME_MAP = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -9430,16 +9435,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // needsAnyUntapper: combo needs at least one creature-untap mechanism on board.
     // Valid untappers for Ashaya loops:
     //   • Quirion Ranger or Scryb Ranger (return themselves as Forests to untap)
-    //   • Wirewood Symbiote (bounce an elf to untap)
+    //   • Wirewood Symbiote + Temur Sabertooth (Symbiote has once-per-turn; Sabertooth resets it)
     //   • Hyrax Tower Scout + a bouncer (Temur Sabertooth or Kogla)
     //   • Argothian Elder + Wirewood Lodge (untap Elder, then untap the big dork)
     if (combo.needsAnyUntapper) {
       const hasQuirionOrScryb = board.has("Quirion Ranger") || board.has("Scryb Ranger");
-      const hasSymbiote = board.has("Wirewood Symbiote");
+      const hasSymbiote = board.has("Wirewood Symbiote") && (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape"));
       const hasHyraxLoop = board.has("Hyrax Tower Scout") && (board.has("Temur Sabertooth") || board.has("Kogla, the Titan Ape"));
       const hasElderLoop = board.has("Argothian Elder") && board.has("Wirewood Lodge");
       if (!hasQuirionOrScryb && !hasSymbiote && !hasHyraxLoop && !hasElderLoop) {
-        return { ok: false, missing: "an untapper: Quirion Ranger, Scryb Ranger, Wirewood Symbiote, or Hyrax Tower Scout + Temur Sabertooth" };
+        return { ok: false, missing: "an untapper: Quirion Ranger, Scryb Ranger, Wirewood Symbiote + Temur Sabertooth, or Hyrax Tower Scout + Temur Sabertooth" };
       }
     }
 
@@ -20459,9 +20464,11 @@ function findReachableLines(hand, battlefield, graveyard, mana, deckList, yisanC
     }
 
     // needsAnyUntapper: need at least one creature-untap mechanism
+    // Wirewood Symbiote has once-per-turn — requires Temur Sabertooth or Kogla to reset it for looping.
     if (combo.needsAnyUntapper) {
       const hasQR = pool.have.has("Quirion Ranger") || pool.have.has("Scryb Ranger");
-      const hasSym = pool.have.has("Wirewood Symbiote");
+      const hasSym = pool.have.has("Wirewood Symbiote") &&
+        (pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape"));
       const hasHyraxLoop = pool.have.has("Hyrax Tower Scout") &&
         (pool.have.has("Temur Sabertooth") || pool.have.has("Kogla, the Titan Ape"));
       const hasElderLoop = pool.have.has("Argothian Elder") && pool.have.has("Wirewood Lodge");
