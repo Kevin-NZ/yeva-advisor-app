@@ -119,6 +119,7 @@ const CARDS = {
   // Mana dorks & big dorks
   "Joraga Treespeaker":    { type:"creature", cmc:1, tags:["dork","elf","1drop","big-dork","infinite-dork"], tapsFor:"joraga", role:"dork-combo", greenPips:1, note:"{T}: Add {G}{G} at level 1-4 (after paying {1}{G} once). At level 5+: all elves tap for {G}{G}. Conservative estimate: level 1-4 = 2 mana; level 5+ = elves×2."},
   "Marwyn, the Nurturer":  { type:"creature", cmc:3, tags:["dork","elf","big-dork","infinite-dork","human"], tapsFor:"marwyn", role:"big-dork-combo", greenPips:1, note:"{T}: Add {G} equal to Marwyn's power. Gains +1/+1 counter whenever another elf enters. Power = #counters (base 1/1). In practice, power ≈ number of elves cast after Marwyn entered."},
+  "Topiary Lecturer":      { type:"creature", cmc:3, tags:["dork","elf","big-dork"], tapsFor:"topiary", role:"big-dork-combo", greenPips:1, note:"Increment — whenever you cast a spell spending more mana than this creature's power or toughness, put a +1/+1 counter on it. {T}: Add {G} equal to its power. Base 1/2; grows with each qualifying cast. Taps for 2+ after one trigger."},
   "Selvala, Heart of the Wilds": { type:"creature", cmc:3, tags:["dork","elf","big-dork","human"], tapsFor:"power", role:"big-dork-combo", greenPips:2},
   "Wirewood Channeler":    { type:"creature", cmc:4, tags:["dork","elf","big-dork","infinite-dork"], tapsFor:"elves", role:"big-dork-combo", greenPips:1},
   "Defiler of Vigor":      { type:"creature", cmc:5, tags:["combo","storm","phyrexian"], role:"storm-engine", greenPips:2},
@@ -2112,6 +2113,11 @@ function cardManaContribution(card, data, ctx, sickSet = null) {
       amt = t + (t > 0 ? badgermoleBonus : 0);
     } else if (t === "elves") {
       amt = elves + badgermoleBonus;
+    } else if (t === "topiary") {
+      // Topiary Lecturer: taps for G equal to power (base 1). Gains +1/+1 counter (Increment)
+      // whenever you cast a spell spending more mana than its current power or toughness.
+      // Estimate: after a few spells it will have 1-3 counters; use elves as a loose proxy.
+      amt = Math.max(1, Math.min(elves, 4)) + badgermoleBonus;
     } else if (t === "marwyn") {
       // Marwyn taps for power = base 1 + #elf-ETBs since entering.
       // Conservative estimate: power ≈ max(elves - 1, 1) (she doesn't count herself).
@@ -2544,7 +2550,7 @@ function _buildSolverBundle() {
     'nykthos','priest_of_titania','quirion_ranger','regal_force',
     'scryb_ranger','seedborn_muse','shared_summons','shifting_woodland',
     'sol_ring','sowing_mycospawn','summoners_pact','survival_fittest',
-    'sylvan_scrying','talon_gates','temur_sabertooth',
+    'sylvan_scrying','talon_gates','temur_sabertooth','topiary_lecturer',
     'urza_cave','utopia_sprawl','verdant_catacombs','war_room','wild_growth',
     'windswept_heath','wirewood_lodge','wirewood_symbiote','woodcaller_automaton',
     'wooded_foothills','woodland_bellower','worldly_tutor',
@@ -4285,6 +4291,21 @@ function _buildSolverBundle() {
         let s = state.tapPermanent(perm.id); if (!s) return [];
         for (let i=0;i<p;i++) s = s.addMana('G');
         return [s.log(`Tap ${perm.name} → {G}x${p}`)];
+      },
+    },
+
+    topiary_lecturer: {
+      // Increment: whenever you cast a spell spending > power or toughness, +1/+1 counter.
+      // {T}: Add {G} equal to power (base 1/2; grows with counters).
+      // The Solver engine doesn't model the Increment trigger (it fires on spell casts, not
+      // on tap activations), so tapForMana uses the current perm.power as set by the sim.
+      name: 'Topiary Lecturer', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2,
+      tapForMana(state, perm) {
+        if (perm.tapped || perm.summoningSick) return [];
+        const p = perm.power||1; if (p===0) return [];
+        let s = state.tapPermanent(perm.id); if (!s) return [];
+        for (let i=0;i<p;i++) s = s.addMana('G');
+        return [s.log(`Tap ${perm.name} → {G}x${p} (power ${p})`)];
       },
     },
 
@@ -30687,6 +30708,26 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
       setTappedManaV(v => v + 1);
       flashMana(-cmc);
     }
+
+    // ── Topiary Lecturer — Increment trigger ──────────────────────────────────
+    // Whenever you cast a spell, if mana spent > Topiary Lecturer's power OR toughness,
+    // put a +1/+1 counter on it. (power=1+counters, toughness=2+counters; trigger fires
+    // when cmc > power, i.e. cmc >= 2 at base, since power starts at 1.)
+    // Lands are not spells — skip. The card being cast is the spell being cast; skip self.
+    if (card !== "Topiary Lecturer" && type !== "land" && cmc > 0) {
+      battlefield.forEach((bf, bi) => {
+        if (bf !== "Topiary Lecturer") return;
+        const tlKey = cardKey(bf, bi);
+        const currentCounters = counters[tlKey] ?? 0;
+        const power = 1 + currentCounters; // base 1
+        if (cmc > power) {
+          setCounters(prev => ({ ...prev, [tlKey]: (prev[tlKey] ?? 0) + 1 }));
+          const newP = power + 1; const newT = (2 + currentCounters) + 1;
+          addLog(`Topiary Lecturer — Increment triggered: spent ${cmc} mana (> power ${power}) → +1/+1 counter (now ${newP}/${newT}).`, COLORS.green1);
+        }
+      });
+    }
+
     if (type === "land") {
       if (landPlayed) { addLog(`Already played a land this turn — ${card} returned to hand.`, COLORS.red); setHand(prev => [...prev, card]); return; }
       const dryadIdx = battlefield.length; // synchronous read before append
@@ -34375,6 +34416,44 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                 ⚡ Ferocious tap — +4 mana
               </div>
             )}
+          </>);
+        })()}
+
+        {/* ── Topiary Lecturer: tap — add G equal to power; Increment trigger button ── */}
+        {isBF && card === "Topiary Lecturer" && (() => {
+          const bonus = counters[key] ?? 0;
+          const power = 1 + bonus; // base 1 + +1/+1 counters
+          const toughness = 2 + bonus; // base 2 + +1/+1 counters
+          // Increment fires when mana spent on a spell > power OR > toughness (i.e. > min(p,t) = power)
+          // In practice: any spell costing ≥ power+1 triggers it. Show current stats.
+          return (<>
+            {(isCardTapped || sickCreatures.has(key)) ? (
+              <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+                ⚡ Tap ({power}/{toughness}) — {isCardTapped ? "tapped" : "summoning sickness"}
+              </div>
+            ) : (
+              <div onClick={() => {
+                pushUndo(); toggleTap(card, index);
+                setManaPool(p => p + power); flashMana(power);
+                addLog(`Topiary Lecturer: tapped — +${power} mana (power ${power}/${toughness}).`, COLORS.green2);
+                closeContextMenu();
+              }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green2, letterSpacing: "1px" }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                ⚡ Tap — +{power} mana ({power}/{toughness})
+              </div>
+            )}
+            <div onClick={() => {
+              pushUndo();
+              setCounters(prev => ({ ...prev, [key]: (prev[key] ?? 0) + 1 }));
+              const newP = power + 1; const newT = toughness + 1;
+              addLog(`Topiary Lecturer — Increment: +1/+1 counter (now ${newP}/${newT}). Trigger when mana spent on a spell > ${power}.`, COLORS.green1);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: "pointer", color: COLORS.green1, letterSpacing: "1px" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⬆ Increment — +1/+1 counter (spent &gt; {power})
+            </div>
           </>);
         })()}
 
