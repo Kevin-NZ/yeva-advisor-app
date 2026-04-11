@@ -6263,24 +6263,13 @@ function _buildSolverBundle() {
       description:
         "Tap big land. Elder: untap Lodge + big land. Lodge ({G}): untap Elder. Repeat. " +
         "Cradle needs ≥2 creatures (produces ≥2G, pay {G} Lodge, net ≥1G). " +
-        "Nykthos needs devotion ≥4 (produces ≥4G, pay {2}+{G}={3G}, net ≥1G). " +
-        "Wild Growth / Elvish Guidance on any land: enchanted land taps for ≥2G, net ≥1G after Lodge.",
+        "Nykthos needs devotion ≥4 (produces ≥4G, pay {2}+{G}={3G}, net ≥1G).",
       check(state) {
         if (!permReady(state, 'Argothian Elder')) return false;
         if (!permUntapped(state, 'Wirewood Lodge')) return false;
-        const cradleOk      = cradleUntapped(state) && creatureCount(state) >= 2;
-        const nykthosOk     = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4;
-        // Wild Growth (COMBO 42): enchanted land taps for {1} + Wild Growth trigger {G} = 2 mana.
-        // Lodge costs {G}, so net = 2 - 1 = 1G per cycle. Any land + Wild Growth works.
-        const wildGrowthOk  = hasPerm(state, 'Wild Growth') && state.lands().length >= 1;
-        // Elvish Guidance (COMBO 46): enchanted land taps for {1} + {G}×elf-count.
-        // Argothian Elder itself is an Elf (elfCount ≥ 1 always). Need ≥1 additional elf
-        // (elfCount ≥ 2) so the land taps for ≥2G, covering Lodge's {G} cost and netting ≥1G.
-        // With only Elder (elfCount=1): break-even loop (infinite storm/ETB but no net mana).
-        const elvishGuidanceOk = hasPerm(state, 'Elvish Guidance') &&
-                                 state.lands().length >= 1 &&
-                                 elfCount(state) >= 2;
-        return cradleOk || nykthosOk || wildGrowthOk || elvishGuidanceOk;
+        const cradleOk  = cradleUntapped(state) && creatureCount(state) >= 2;
+        const nykthosOk = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4;
+        return cradleOk || nykthosOk;
       },
     },
 
@@ -6419,25 +6408,17 @@ function _buildSolverBundle() {
         "Circle (≥6 creatures), Selvala (power ≥7), Karametra's Acolyte (devotion ≥7).",
       check(state) {
         if (!hasPerm(state, 'Temur Sabertooth')) return false;
-        const hasElixir = hasPerm(state, 'Thousand-Year Elixir');
         const hasHaste =
           hasPerm(state, 'Concordant Crossroads') ||
-          hasElixir ||
+          hasPerm(state, 'Thousand-Year Elixir') ||
           hasPerm(state, 'Surrak and Goreclaw');
         if (!hasHaste) return false;
         // Check each haste-loop variant
         if (permReady(state, 'Circle of Dreams Druid') && creatureCount(state) >= 6) return true;
         if (greatestPower(state) >= 7 &&
             state.battlefield.some(p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return true;
-        // Thousand-Year Elixir lets Acolyte tap even with summoning sickness —
-        // skip the SS check when Elixir is the haste enabler (Combo 37).
-        // Concordant Crossroads and Surrak and Goreclaw grant haste, which also removes
-        // the summoning sickness restriction on tapping for abilities.
-        const acolyteReady = state.battlefield.some(p =>
-          p.name === "Karametra's Acolyte" && !p.tapped &&
-          (!p.summoningSick || hasHaste)
-        );
-        if (devotionG(state) >= 7 && acolyteReady) return true;
+        if (devotionG(state) >= 7 &&
+            state.battlefield.some(p => p.name === "Karametra's Acolyte" && !p.summoningSick)) return true;
         return false;
       },
     },
@@ -6480,9 +6461,7 @@ function _buildSolverBundle() {
       name: 'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]',
       description:
         "Kogla bounces Hyrax (Human Scout, {1G}), recast from hand ({2G}), ETB untaps dork. " +
-        "Loop cost: {1G}(Kogla) + {2G}(Hyrax) = 5 mana total. Dork must produce ≥5G. " +
-        "Priest/Archdruid/Channeler: ≥5 elves. Circle: ≥5 creatures. " +
-        "Selvala: power ≥6. Marwyn: power ≥5 (Combo 38: Kogla loop cost = 5G = break-even).",
+        "Same cost structure as Sabertooth variant. Dork must produce ≥5G.",
       check(state) {
         if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
         // Hyrax can be in hand (canonical PRE) or on battlefield about to be bounced
@@ -6498,7 +6477,7 @@ function _buildSolverBundle() {
             case 'Elvish Archdruid':            return elfCount(state) >= 5;
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
-            case 'Marwyn, the Nurturer':        return (p.power || 0) >= 5; // Combo 38: break-even at 5
+            case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
             default: return false;
           }
         });
@@ -6617,125 +6596,6 @@ function _buildSolverBundle() {
           ['Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves'].includes(p.name)
         );
         return hasOneDrop;
-      },
-    },
-
-    // ══════════════════════════════════════════════════════════════════════════
-    //  VITALIZE / EMERALD CHARM + ETERNAL WITNESS LOOPS  (COMBO 33, 39, 44, 51, 58)
-    //
-    //  Vitalize {G}: Untap all creatures you control.
-    //  Emerald Charm {G}: Untap target permanent (choose this mode).
-    //  Eternal Witness {1GG}: ETB returns a card from graveyard to hand.
-    //
-    //  General loop (Temur + Marwyn, COMBO 33 / 58):
-    //   1. Tap Marwyn for G×power.
-    //   2. Cast Vitalize/Emerald Charm {G} — untap Marwyn (and all others).
-    //   3. Pay {1G}, Temur bounces Eternal Witness to hand.
-    //   4. Cast Eternal Witness {1GG} — ETB returns Vitalize/Charm from GY to hand.
-    //   5. Repeat.
-    //  Loop cost: {G}(spell) + {1G}(Temur) + {1GG}(EWit) = 4G + 2 generic = 6 total mana.
-    //  Marwyn must produce ≥7G (power ≥7) to net ≥1G per cycle.
-    //
-    //  Kogla variant replaces Temur: Kogla bounces EWit (Human) for {1G}.
-    //  Same loop cost. Same mana requirement (power ≥7 for Marwyn, ≥9 for Selvala variant).
-    //
-    //  Selvala + Temur (COMBO 39): Selvala activation costs {G}, so net must account for that.
-    //  Power ≥8 ensures Selvala produces ≥8G to cover: {G}(activation)+{G}(spell)+{1G}(Temur)+{1GG}(EWit)=7G.
-    //
-    //  Selvala + Kogla (COMBO 44): Same math, power ≥9 per canonical combo (Kogla is 7 power —
-    //  greatest power = Kogla's 7 unless another creature exceeds it).
-    // ══════════════════════════════════════════════════════════════════════════
-
-    {
-      name: 'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]',
-      description:
-        'With Marwyn (power ≥7), Eternal Witness, and Temur Sabertooth on battlefield, ' +
-        'and Vitalize or Emerald Charm in hand: ' +
-        'Tap Marwyn for ≥7G. Cast untap spell {G}. ' +
-        'Temur bounces EWit {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
-        'Loop cost 6G total. Net +≥1G at power ≥7.',
-      check(state) {
-        if (!hasPerm(state, 'Temur Sabertooth')) return false;
-        if (!hasPerm(state, 'Eternal Witness')) return false;
-        const marwyn = state.battlefield.find(
-          p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
-        );
-        if (!marwyn || (marwyn.power || 0) < 7) return false;
-        return (state.hand && (
-          state.hand.includes('vitalize') ||
-          state.hand.includes('emerald_charm')
-        ));
-      },
-    },
-
-    {
-      name: 'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]',
-      description:
-        'With Marwyn (power ≥8), Eternal Witness, and Kogla on battlefield, ' +
-        'and Vitalize or Emerald Charm in hand: ' +
-        'Tap Marwyn for ≥8G. Cast untap spell {G}. ' +
-        'Kogla bounces EWit (Human) {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
-        'Loop cost 6G total. Marwyn power ≥8 nets ≥2G per cycle (extra safety margin). ' +
-        'Actually power ≥7 works; canonical combo says ≥8.',
-      check(state) {
-        if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
-        if (!hasPerm(state, 'Eternal Witness')) return false;
-        const marwyn = state.battlefield.find(
-          p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
-        );
-        if (!marwyn || (marwyn.power || 0) < 8) return false;
-        return (state.hand && (
-          state.hand.includes('vitalize') ||
-          state.hand.includes('emerald_charm')
-        ));
-      },
-    },
-
-    {
-      name: 'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]',
-      description:
-        'With Selvala (power ≥8), Eternal Witness, and Temur Sabertooth on battlefield, ' +
-        'and Vitalize or Emerald Charm in hand: ' +
-        'Pay {G} activate Selvala for ≥8G. Cast untap spell {G}. ' +
-        'Temur bounces EWit {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
-        'Total cost: {G}(Selvala) + {G}(spell) + {1G}(Temur) + {1GG}(EWit) = 7G. ' +
-        'Net ≥1G at greatest power ≥8.',
-      check(state) {
-        if (!hasPerm(state, 'Temur Sabertooth')) return false;
-        if (!hasPerm(state, 'Eternal Witness')) return false;
-        const selvala = state.battlefield.find(
-          p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
-        );
-        if (!selvala) return false;
-        if (greatestPower(state) < 8) return false;
-        return (state.hand && (
-          state.hand.includes('vitalize') ||
-          state.hand.includes('emerald_charm')
-        ));
-      },
-    },
-
-    {
-      name: 'Infinite Mana (Selvala + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 44]',
-      description:
-        'With Selvala (power ≥9), Eternal Witness, and Kogla on battlefield, ' +
-        'and Vitalize in hand: ' +
-        'Pay {G} activate Selvala for ≥9G. Cast Vitalize {G} (untap all). ' +
-        'Kogla bounces EWit (Human) {1G}. Cast EWit {1GG} — returns Vitalize from GY. ' +
-        'Total cost: {G}(Selvala) + {G}(Vitalize) + {1G}(Kogla) + {1GG}(EWit) = 7G. ' +
-        'Canonical prerequisite: greatest power ≥9.',
-      check(state) {
-        if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
-        if (!hasPerm(state, 'Eternal Witness')) return false;
-        const selvala = state.battlefield.find(
-          p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
-        );
-        if (!selvala) return false;
-        if (greatestPower(state) < 9) return false;
-        return (state.hand && (
-          state.hand.includes('vitalize') ||
-          state.hand.includes('emerald_charm')
-        ));
       },
     },
 
@@ -8655,7 +8515,6 @@ var YevaSolver           = _solverExports.Solver;
 var solverAnalyze        = _solverExports.analyze;
 var solverSimulateLoop   = _solverExports.simulateCradleLoop;
 var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
-
 
 
 
@@ -29062,51 +28921,65 @@ const GOLDFISH_TOUR_STEPS = [
   {
     target: "gtour-header",
     title: "Welcome to Goldfish Mode",
-    body: "Goldfish mode lets you pilot the deck hand-by-hand, turn-by-turn. Cast spells, tap lands, track mana — and the live advisor watches every move and tells you when a win is available.",
+    body: "Pilot the deck hand-by-hand, turn-by-turn against an imaginary opponent. Cast spells, tap mana, assemble combos — the live advisor and the full combo solver watch every move and tell you exactly when and how to win. Switch turns freely, save mid-game states, and replay completed games to study your lines.",
     placement: "bottom",
     icon: "🐟",
   },
   {
     target: "gtour-controls",
-    title: "Turn Controls",
-    body: "▶ NEXT TURN untaps everything and draws a card. + DRAW 1 draws without advancing. ↺ UNTAP untaps without drawing. ⚡ TAP ALL taps every untapped mana source and fills your pool in one click. Keyboard shortcuts: N (next turn), D (draw), U (untap), M (tap all).",
+    title: "Turn Controls & Keyboard Shortcuts",
+    body: "▶ NEXT TURN untaps everything, draws a card, and advances the turn counter. + DRAW 1 draws without untapping (useful mid-combo). ↺ UNTAP untaps all without drawing. ⚡ TAP ALL taps every mana source and fills your pool in one click. The Turn N · Your Turn ⇄ badge toggles between your turn and opponent's turn (Yeva grants flash for opponent-turn casting). Keyboard: N = next turn, D = draw, U = untap, M = tap all, Ctrl+Z = undo.",
     placement: "bottom",
     icon: "⏱",
   },
   {
     target: "gtour-mana",
-    title: "Mana Pool",
-    body: "Your current floating mana is shown here. TAP ALL fills it automatically. You can also tap individual lands and dorks by clicking them, or use − / + to adjust manually. The number updates in real time as you tap permanents.",
+    title: "Mana Pool & Tracking",
+    body: "Floating mana accumulates here as you tap permanents. TAP ALL fills it instantly. Click individual lands or dorks on the battlefield to tap them one by one. Use − / + to adjust manually if you need to account for off-screen effects. A green flash appears when mana enters the pool. The pool drains automatically at the start of each new turn.",
     placement: "bottom",
     icon: "💎",
   },
   {
     target: "gtour-hand",
-    title: "Your Hand",
-    body: "Cards here are drawn from your shuffled library. Click a card to cast it — lands drop onto the battlefield, spells resolve with their ETB effects (draw triggers, tutor windows, mana boosts). Dimmed cards are unaffordable this turn.",
+    title: "Hand — Cast & Interact",
+    body: "Cards are drawn from your shuffled library. Click to cast: lands play to the battlefield for free (using your one land drop), creatures enter with summoning sickness, instants and sorceries resolve immediately. Dimmed cards are unaffordable right now. Right-click any card for zone-move options (move to graveyard, exile, or bottom of library). Cards with ETB effects — tutors, draw triggers, mana boosts — open interactive windows when cast.",
     placement: "right",
     icon: "🃏",
   },
   {
     target: "gtour-battlefield",
-    title: "Battlefield — Click to Tap",
-    body: "Click any permanent to tap or untap it. Right-click for activated abilities: Yisan verse counters, Nykthos devotion mana, Selvala draw, Magus untap X lands, and much more. Drag cards between zones to move them manually.",
+    title: "Battlefield — Tap, Abilities & Context Menu",
+    body: "Left-click any permanent to toggle tapped/untapped. Right-click for its activated abilities: Yisan adds verse counters and tutors by CMC, Nykthos taps for devotion mana, Selvala draws and adds mana by greatest power, Magus of the Candelabra untaps X lands, Deserted Temple untaps a land, War Room pays life to draw, Wirewood Lodge untaps an elf, and more. Summoning-sick creatures are shown with a ⏳ badge and cannot tap for mana or use tap abilities. Drag cards between zones (hand, battlefield, graveyard) to move them freely.",
     placement: "right",
     icon: "⚔️",
   },
   {
     target: "gtour-advisor",
-    title: "Live Advisor",
-    body: "The advisor re-evaluates your position after every action. 🔥 WIN NOW means a line is available right now with your current mana and board. Click any result to expand step-by-step instructions. It knows about summoning sickness, what's tapped, and your floating mana.",
+    title: "Three-Tab Advisor Panel",
+    body: "The advisor panel has three tabs. ADVICE (✦): the live heuristic engine re-evaluates your position after every action — 🔥 WIN NOW, ⚡ CAST TO WIN, 🔮 ONE PIECE AWAY, and more. Click any card to expand step-by-step instructions. LINES (⎇): all reachable combo lines from your current board, filterable by timing (same turn / next turn) and type (∞ mana, win, mill, poison, engine). SOLVER (♾): the full DFS/BFS tree-search solver runs asynchronously in a background worker and finds the optimal multi-turn win sequence with exact action steps.",
     placement: "left",
     icon: "📋",
   },
   {
+    target: "gtour-advisor",
+    title: "Solver Tab — Deep Search",
+    body: "The SOLVER tab runs a v3 parent-pointer DFS (or BFS) over the full game tree. It finds the fastest possible win line, shows every action step with mana state, and names the exact combo and win condition. Configure it with ⚙ SOLVER CONFIG: Max Turns (how many turns ahead to search), State Budget (50k fast → 1M deep), Strategy (DFS = fastest, BFS = fewest actions per turn), All Lines (collect every winning sequence), and Exhaustive (disable pruning to find rare paths). The solver runs in a Web Worker so the UI stays responsive while it thinks.",
+    placement: "left",
+    icon: "♾",
+  },
+  {
     target: "gtour-log",
-    title: "Game Log",
-    body: "Every action is recorded here — casts, ETBs, mana gained, tutor choices. Use it to trace your line or review what happened. Ctrl+Z (or the ↩ UNDO button) walks back any mistake up to 20 steps.",
+    title: "Game Log, Notes & Undo",
+    body: "Every action is timestamped by turn in the log — casts, ETBs, mana gained, tutor choices, combo triggers. Use it to trace exactly how a line played out. The NOTES scratchpad below saves with the replay so you can annotate key decisions. Ctrl+Z or ↩ UNDO walks back any mistake up to 20 steps. The 📌 STATES button (Shift+S) opens the save/load overlay — snapshot up to 5 mid-game states per deck and restore them any time.",
     placement: "left",
     icon: "📜",
+  },
+  {
+    target: "gtour-header",
+    title: "Stats, Simulation & Replay",
+    body: "Click ★ END GAME to record the current game. The STATS view tracks average win turn, infinite mana turn, first dork turn, mulligan rate, T1 dork %, and win-by-turn breakdowns across all your manual games. In the Stats panel, ▶ RUN N GAMES runs the automated batch simulator (50–500 games) and shows a win-rate histogram and turn distribution. Every completed game stores a full 📼 REPLAY — click it in the stats table to step through the game turn by turn and study your sequencing.",
+    placement: "bottom",
+    icon: "📊",
   },
 ];
 
