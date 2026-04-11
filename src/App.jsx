@@ -2550,7 +2550,7 @@ function _buildSolverBundle() {
     'nykthos','priest_of_titania','quirion_ranger','regal_force',
     'scryb_ranger','seedborn_muse','shared_summons','shifting_woodland',
     'sol_ring','sowing_mycospawn','summoners_pact','survival_fittest',
-    'sylvan_scrying','talon_gates','temur_sabertooth','topiary_lecturer',
+    'sylvan_scrying','talon_gates','temur_sabertooth',
     'urza_cave','utopia_sprawl','verdant_catacombs','war_room','wild_growth',
     'windswept_heath','wirewood_lodge','wirewood_symbiote','woodcaller_automaton',
     'wooded_foothills','woodland_bellower','worldly_tutor',
@@ -4294,21 +4294,6 @@ function _buildSolverBundle() {
       },
     },
 
-    topiary_lecturer: {
-      // Increment: whenever you cast a spell spending > power or toughness, +1/+1 counter.
-      // {T}: Add {G} equal to power (base 1/2; grows with counters).
-      // The Solver engine doesn't model the Increment trigger (it fires on spell casts, not
-      // on tap activations), so tapForMana uses the current perm.power as set by the sim.
-      name: 'Topiary Lecturer', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2,
-      tapForMana(state, perm) {
-        if (perm.tapped || perm.summoningSick) return [];
-        const p = perm.power||1; if (p===0) return [];
-        let s = state.tapPermanent(perm.id); if (!s) return [];
-        for (let i=0;i<p;i++) s = s.addMana('G');
-        return [s.log(`Tap ${perm.name} → {G}x${p} (power ${p})`)];
-      },
-    },
-
     wirewood_channeler: {
       name: 'Wirewood Channeler', types:['creature'], subtypes:['Elf','Druid'], cost:'3G', power:2,toughness:2,
       tapForMana(state, perm) {
@@ -6045,7 +6030,7 @@ function _buildSolverBundle() {
         'Dorks: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥2 creatures), ' +
         'Elvish Archdruid (≥2 elves), Wirewood Channeler (≥2 elves), ' +
         "Karametra's Acolyte (devotion ≥2), Selvala (power ≥2), " +
-        'Fanatic of Rhonas (ferocious, power ≥4), Marwyn (power ≥2), Topiary Lecturer (power ≥2).',
+        'Fanatic of Rhonas (ferocious, power ≥4), Marwyn (power ≥2).',
       check(state) {
         if (!ashayaOut(state)) return false;
         if (!hasPerm(state, 'Quirion Ranger')) return false;
@@ -6064,7 +6049,6 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 2;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 2;
-            case 'Topiary Lecturer':            return (p.power || 0) >= 2;
             default: return false;
           }
         });
@@ -6079,7 +6063,7 @@ function _buildSolverBundle() {
         'Dorks: Priest of Titania (≥3 elves), Circle of Dreams Druid (≥3 creatures), ' +
         'Elvish Archdruid (≥3 elves), Wirewood Channeler (≥3 elves), ' +
         "Karametra's Acolyte (devotion ≥3), Selvala (power ≥3), " +
-        'Fanatic of Rhonas (ferocious), Marwyn (power ≥3), Topiary Lecturer (power ≥3).',
+        'Fanatic of Rhonas (ferocious), Marwyn (power ≥3).',
       check(state) {
         if (!ashayaOut(state)) return false;
         if (!hasPerm(state, 'Scryb Ranger')) return false;
@@ -6094,7 +6078,6 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 3;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
-            case 'Topiary Lecturer':            return (p.power || 0) >= 3;
             default: return false;
           }
         });
@@ -6168,25 +6151,6 @@ function _buildSolverBundle() {
         );
         if (!marwyn) return false;
         return (marwyn.power || 0) >= 2;
-      },
-    },
-
-    {
-      // Topiary Lecturer variant of COMBO 61: Ashaya + Hope Tender + Topiary Lecturer
-      // Topiary: {T}: Add G×power. PRE: power ≥2 (base 1, needs ≥1 Increment counter).
-      name: 'Infinite Mana (Ashaya + Hope Tender + Topiary Lecturer)',
-      description:
-        "With Ashaya, Tender and Topiary Lecturer are Forest lands. " +
-        "Exert loop: Tap Topiary Lecturer for G×power. Pay {1}, exert Tender → untap Tender + Topiary. " +
-        "Net positive when Topiary's power ≥2 (i.e. has at least 1 Increment counter).",
-      check(state) {
-        if (!ashayaOut(state)) return false;
-        if (!permReady(state, 'Hope Tender')) return false;
-        const topiary = state.battlefield.find(
-          p => p.name === 'Topiary Lecturer' && !p.summoningSick
-        );
-        if (!topiary) return false;
-        return (topiary.power || 0) >= 2;
       },
     },
 
@@ -6283,7 +6247,6 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 4;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
-            case 'Topiary Lecturer':            return (p.power || 0) >= 3;
             default: return false;
           }
         });
@@ -6306,13 +6269,24 @@ function _buildSolverBundle() {
       description:
         "Tap big land. Elder: untap Lodge + big land. Lodge ({G}): untap Elder. Repeat. " +
         "Cradle needs ≥2 creatures (produces ≥2G, pay {G} Lodge, net ≥1G). " +
-        "Nykthos needs devotion ≥4 (produces ≥4G, pay {2}+{G}={3G}, net ≥1G).",
+        "Nykthos needs devotion ≥4 (produces ≥4G, pay {2}+{G}={3G}, net ≥1G). " +
+        "Wild Growth / Elvish Guidance on any land: enchanted land taps for ≥2G, net ≥1G after Lodge.",
       check(state) {
         if (!permReady(state, 'Argothian Elder')) return false;
         if (!permUntapped(state, 'Wirewood Lodge')) return false;
-        const cradleOk  = cradleUntapped(state) && creatureCount(state) >= 2;
-        const nykthosOk = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4;
-        return cradleOk || nykthosOk;
+        const cradleOk      = cradleUntapped(state) && creatureCount(state) >= 2;
+        const nykthosOk     = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4;
+        // Wild Growth (COMBO 42): enchanted land taps for {1} + Wild Growth trigger {G} = 2 mana.
+        // Lodge costs {G}, so net = 2 - 1 = 1G per cycle. Any land + Wild Growth works.
+        const wildGrowthOk  = hasPerm(state, 'Wild Growth') && state.lands().length >= 1;
+        // Elvish Guidance (COMBO 46): enchanted land taps for {1} + {G}×elf-count.
+        // Argothian Elder itself is an Elf (elfCount ≥ 1 always). Need ≥1 additional elf
+        // (elfCount ≥ 2) so the land taps for ≥2G, covering Lodge's {G} cost and netting ≥1G.
+        // With only Elder (elfCount=1): break-even loop (infinite storm/ETB but no net mana).
+        const elvishGuidanceOk = hasPerm(state, 'Elvish Guidance') &&
+                                 state.lands().length >= 1 &&
+                                 elfCount(state) >= 2;
+        return cradleOk || nykthosOk || wildGrowthOk || elvishGuidanceOk;
       },
     },
 
@@ -6451,17 +6425,25 @@ function _buildSolverBundle() {
         "Circle (≥6 creatures), Selvala (power ≥7), Karametra's Acolyte (devotion ≥7).",
       check(state) {
         if (!hasPerm(state, 'Temur Sabertooth')) return false;
+        const hasElixir = hasPerm(state, 'Thousand-Year Elixir');
         const hasHaste =
           hasPerm(state, 'Concordant Crossroads') ||
-          hasPerm(state, 'Thousand-Year Elixir') ||
+          hasElixir ||
           hasPerm(state, 'Surrak and Goreclaw');
         if (!hasHaste) return false;
         // Check each haste-loop variant
         if (permReady(state, 'Circle of Dreams Druid') && creatureCount(state) >= 6) return true;
         if (greatestPower(state) >= 7 &&
             state.battlefield.some(p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return true;
-        if (devotionG(state) >= 7 &&
-            state.battlefield.some(p => p.name === "Karametra's Acolyte" && !p.summoningSick)) return true;
+        // Thousand-Year Elixir lets Acolyte tap even with summoning sickness —
+        // skip the SS check when Elixir is the haste enabler (Combo 37).
+        // Concordant Crossroads and Surrak and Goreclaw grant haste, which also removes
+        // the summoning sickness restriction on tapping for abilities.
+        const acolyteReady = state.battlefield.some(p =>
+          p.name === "Karametra's Acolyte" && !p.tapped &&
+          (!p.summoningSick || hasHaste)
+        );
+        if (devotionG(state) >= 7 && acolyteReady) return true;
         return false;
       },
     },
@@ -6481,7 +6463,7 @@ function _buildSolverBundle() {
         "Hyrax ETB untaps the mana dork. Sabertooth bounces Hyrax ({1G}), recast ({2G}). " +
         "Total loop cost {4G}+{1}. Need dork producing ≥5G. " +
         "Priest/Archdruid/Channeler: ≥5 elves. Circle: ≥5 creatures. " +
-        "Selvala: power ≥6 (includes {G} activation). Marwyn: power ≥6. Topiary Lecturer: power ≥6.",
+        "Selvala: power ≥6 (includes {G} activation). Marwyn: power ≥6.",
       check(state) {
         if (!hasPerm(state, 'Temur Sabertooth')) return false;
         if (!hasPerm(state, 'Hyrax Tower Scout')) return false;
@@ -6494,7 +6476,6 @@ function _buildSolverBundle() {
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
-            case 'Topiary Lecturer':            return (p.power || 0) >= 6;
             default: return false;
           }
         });
@@ -6505,7 +6486,9 @@ function _buildSolverBundle() {
       name: 'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]',
       description:
         "Kogla bounces Hyrax (Human Scout, {1G}), recast from hand ({2G}), ETB untaps dork. " +
-        "Same cost structure as Sabertooth variant. Dork must produce ≥5G.",
+        "Loop cost: {1G}(Kogla) + {2G}(Hyrax) = 5 mana total. Dork must produce ≥5G. " +
+        "Priest/Archdruid/Channeler: ≥5 elves. Circle: ≥5 creatures. " +
+        "Selvala: power ≥6. Marwyn: power ≥5 (Combo 38: Kogla loop cost = 5G = break-even).",
       check(state) {
         if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
         // Hyrax can be in hand (canonical PRE) or on battlefield about to be bounced
@@ -6521,8 +6504,7 @@ function _buildSolverBundle() {
             case 'Elvish Archdruid':            return elfCount(state) >= 5;
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
-            case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
-            case 'Topiary Lecturer':            return (p.power || 0) >= 6;
+            case 'Marwyn, the Nurturer':        return (p.power || 0) >= 5; // Combo 38: break-even at 5
             default: return false;
           }
         });
@@ -6641,6 +6623,125 @@ function _buildSolverBundle() {
           ['Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves'].includes(p.name)
         );
         return hasOneDrop;
+      },
+    },
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  VITALIZE / EMERALD CHARM + ETERNAL WITNESS LOOPS  (COMBO 33, 39, 44, 51, 58)
+    //
+    //  Vitalize {G}: Untap all creatures you control.
+    //  Emerald Charm {G}: Untap target permanent (choose this mode).
+    //  Eternal Witness {1GG}: ETB returns a card from graveyard to hand.
+    //
+    //  General loop (Temur + Marwyn, COMBO 33 / 58):
+    //   1. Tap Marwyn for G×power.
+    //   2. Cast Vitalize/Emerald Charm {G} — untap Marwyn (and all others).
+    //   3. Pay {1G}, Temur bounces Eternal Witness to hand.
+    //   4. Cast Eternal Witness {1GG} — ETB returns Vitalize/Charm from GY to hand.
+    //   5. Repeat.
+    //  Loop cost: {G}(spell) + {1G}(Temur) + {1GG}(EWit) = 4G + 2 generic = 6 total mana.
+    //  Marwyn must produce ≥7G (power ≥7) to net ≥1G per cycle.
+    //
+    //  Kogla variant replaces Temur: Kogla bounces EWit (Human) for {1G}.
+    //  Same loop cost. Same mana requirement (power ≥7 for Marwyn, ≥9 for Selvala variant).
+    //
+    //  Selvala + Temur (COMBO 39): Selvala activation costs {G}, so net must account for that.
+    //  Power ≥8 ensures Selvala produces ≥8G to cover: {G}(activation)+{G}(spell)+{1G}(Temur)+{1GG}(EWit)=7G.
+    //
+    //  Selvala + Kogla (COMBO 44): Same math, power ≥9 per canonical combo (Kogla is 7 power —
+    //  greatest power = Kogla's 7 unless another creature exceeds it).
+    // ══════════════════════════════════════════════════════════════════════════
+
+    {
+      name: 'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]',
+      description:
+        'With Marwyn (power ≥7), Eternal Witness, and Temur Sabertooth on battlefield, ' +
+        'and Vitalize or Emerald Charm in hand: ' +
+        'Tap Marwyn for ≥7G. Cast untap spell {G}. ' +
+        'Temur bounces EWit {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
+        'Loop cost 6G total. Net +≥1G at power ≥7.',
+      check(state) {
+        if (!hasPerm(state, 'Temur Sabertooth')) return false;
+        if (!hasPerm(state, 'Eternal Witness')) return false;
+        const marwyn = state.battlefield.find(
+          p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
+        );
+        if (!marwyn || (marwyn.power || 0) < 7) return false;
+        return (state.hand && (
+          state.hand.includes('vitalize') ||
+          state.hand.includes('emerald_charm')
+        ));
+      },
+    },
+
+    {
+      name: 'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]',
+      description:
+        'With Marwyn (power ≥8), Eternal Witness, and Kogla on battlefield, ' +
+        'and Vitalize or Emerald Charm in hand: ' +
+        'Tap Marwyn for ≥8G. Cast untap spell {G}. ' +
+        'Kogla bounces EWit (Human) {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
+        'Loop cost 6G total. Marwyn power ≥8 nets ≥2G per cycle (extra safety margin). ' +
+        'Actually power ≥7 works; canonical combo says ≥8.',
+      check(state) {
+        if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
+        if (!hasPerm(state, 'Eternal Witness')) return false;
+        const marwyn = state.battlefield.find(
+          p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
+        );
+        if (!marwyn || (marwyn.power || 0) < 8) return false;
+        return (state.hand && (
+          state.hand.includes('vitalize') ||
+          state.hand.includes('emerald_charm')
+        ));
+      },
+    },
+
+    {
+      name: 'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]',
+      description:
+        'With Selvala (power ≥8), Eternal Witness, and Temur Sabertooth on battlefield, ' +
+        'and Vitalize or Emerald Charm in hand: ' +
+        'Pay {G} activate Selvala for ≥8G. Cast untap spell {G}. ' +
+        'Temur bounces EWit {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
+        'Total cost: {G}(Selvala) + {G}(spell) + {1G}(Temur) + {1GG}(EWit) = 7G. ' +
+        'Net ≥1G at greatest power ≥8.',
+      check(state) {
+        if (!hasPerm(state, 'Temur Sabertooth')) return false;
+        if (!hasPerm(state, 'Eternal Witness')) return false;
+        const selvala = state.battlefield.find(
+          p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        );
+        if (!selvala) return false;
+        if (greatestPower(state) < 8) return false;
+        return (state.hand && (
+          state.hand.includes('vitalize') ||
+          state.hand.includes('emerald_charm')
+        ));
+      },
+    },
+
+    {
+      name: 'Infinite Mana (Selvala + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 44]',
+      description:
+        'With Selvala (power ≥9), Eternal Witness, and Kogla on battlefield, ' +
+        'and Vitalize in hand: ' +
+        'Pay {G} activate Selvala for ≥9G. Cast Vitalize {G} (untap all). ' +
+        'Kogla bounces EWit (Human) {1G}. Cast EWit {1GG} — returns Vitalize from GY. ' +
+        'Total cost: {G}(Selvala) + {G}(Vitalize) + {1G}(Kogla) + {1GG}(EWit) = 7G. ' +
+        'Canonical prerequisite: greatest power ≥9.',
+      check(state) {
+        if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
+        if (!hasPerm(state, 'Eternal Witness')) return false;
+        const selvala = state.battlefield.find(
+          p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        );
+        if (!selvala) return false;
+        if (greatestPower(state) < 9) return false;
+        return (state.hand && (
+          state.hand.includes('vitalize') ||
+          state.hand.includes('emerald_charm')
+        ));
       },
     },
 
@@ -8208,82 +8309,6 @@ function _buildSolverBundle() {
   // Re-exported for back-compat and testing (#9: moved out of actions)
   var _SLV = { Solver };
 
-  // LoopSimulator.js
-  // Note: LoopSimulator imports GameState and generateActions; both are already in
-  // bundle scope. The unused `generateActions` import is stripped by strip_requires.
-  // No additional shims are needed.
-  /**
-   * MTG Combo Solver — Loop Simulator
-   *
-   * Given a game state where an infinite combo is assembled,
-   * simulates N iterations of the loop and shows net mana gain.
-   */
-
-  /**
-   * Simulate the Cradle + Tender + Ranger + Ashaya infinite mana loop.
-   * Returns an array of { iteration, steps, manaGained } objects.
-   *
-   * @param {GameState} state  — state with all 4 pieces untapped & ready
-   * @param {number}    reps   — how many loop iterations to simulate
-   */
-  function simulateCradleLoop(state, reps = 3) {
-    const iterations = [];
-
-    // First, untap everything and remove sickness to simulate "begin of iteration"
-    let s = state.clone();
-    for (const p of s.battlefield) {
-      p.tapped = false;
-      p.summoningSick = false;
-      p.abilitiesUsed = {};
-    }
-
-    for (let i = 0; i < reps; i++) {
-      const manaStart = s.mana.total();
-      const steps = [];
-
-      // Step 1: Tap Gaea's Cradle
-      const cradle = s.battlefield.find(p => p.name === "Gaea's Cradle" && !p.tapped);
-      if (!cradle) break;
-      const cradleCount = s.creatures().length;
-      let ns = s.tapPermanent(cradle.id);
-      for (let g = 0; g < cradleCount; g++) ns = ns.addMana('G');
-      steps.push(`Tap Gaea's Cradle (${cradleCount} creatures) → {G}x${cradleCount} | Pool: ${ns.mana}`);
-      s = ns;
-
-      // Step 2: Activate Hope Tender — pay {1}, tap, untap Cradle + Tender
-      const tender = s.battlefield.find(p => p.name === 'Hope Tender' && !p.tapped);
-      if (!tender) break;
-      ns = s.payMana('1');
-      if (!ns) break;
-      ns = ns.tapPermanent(tender.id);
-      ns = ns.untapPermanent(cradle.id);
-      ns = ns.untapPermanent(tender.id); // untap tender as one of the two lands (it's a Forest via Ashaya)
-      steps.push(`Activate Hope Tender: pay {1}, tap → untap Cradle + Tender | Pool: ${ns.mana}`);
-      s = ns;
-
-      const manaEnd = s.mana.total();
-      iterations.push({
-        iteration: i + 1,
-        steps,
-        manaStart,
-        manaEnd,
-        netGain: manaEnd - manaStart,
-      });
-
-      // Reset for next iteration
-      for (const p of s.battlefield) {
-        p.abilitiesUsed = {};
-      }
-    }
-
-    return iterations;
-  }
-
-  /**
-   * Print the loop simulation in a readable format.
-   */
-  var _LSM = { simulateCradleLoop };
-
   // Analyzer.js
   /**
    * MTG Combo Solver — Hand Analyzer
@@ -8552,14 +8577,14 @@ function _buildSolverBundle() {
     if (v && v.name) SOLVER_NAME_MAP[v.name] = k;
   }
 
-  return { GameState, ManaPool, Solver, analyze, simulateCradleLoop, SOLVER_NAME_MAP };
+  return { GameState, ManaPool, Solver, analyze, SOLVER_NAME_MAP };
 }
 var _solverExports       = _buildSolverBundle();
 var SolverGameState      = _solverExports.GameState;
 var YevaSolver           = _solverExports.Solver;
 var solverAnalyze        = _solverExports.analyze;
-var solverSimulateLoop   = _solverExports.simulateCradleLoop;
 var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
+
 
 
 
