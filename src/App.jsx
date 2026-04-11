@@ -2457,7 +2457,7 @@ function _buildSolverBundle() {
     'hope_tender': 80, 'quirion_ranger': 78, 'scryb_ranger': 76,
     'argothian_elder': 75, 'ley_weaver': 74, 'magus_of_the_candelabra': 73,
     'selvala': 70, 'karametra_acolyte': 68, 'circle_of_dreams_druid': 65,
-    'priest_of_titania': 63, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
+    'priest_of_titania': 63, 'fanatic_of_rhonas': 62, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
     'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'earthcraft': 53,
     'deserted_temple': 51, 'concordant_crossroads': 49, 'wirewood_lodge': 48,
     'cloudstone_curio': 47,
@@ -4294,6 +4294,22 @@ function _buildSolverBundle() {
       },
     },
 
+    topiary_lecturer: {
+      name: 'Topiary Lecturer', types: ['creature'], subtypes: ['Elf', 'Druid'], cost: '2G', power: 1, toughness: 2,
+      // Increment: whenever you cast a spell, if mana spent > this creature's power or toughness,
+      // put a +1/+1 counter on it. (Modelled as an on-cast hook in actions.js.)
+      // {T}: Add {G} equal to this creature's power.
+      tapForMana(state, perm) {
+        if (perm.tapped || perm.summoningSick) return [];
+        const p = perm.power || 1;
+        if (p === 0) return [];
+        let s = state.tapPermanent(perm.id);
+        if (!s) return [];
+        for (let i = 0; i < p; i++) s = s.addMana('G');
+        return [s.log(`Tap ${perm.name} → {G}x${p}`)];
+      },
+    },
+
     wirewood_channeler: {
       name: 'Wirewood Channeler', types:['creature'], subtypes:['Elf','Druid'], cost:'3G', power:2,toughness:2,
       tapForMana(state, perm) {
@@ -5723,10 +5739,14 @@ function _buildSolverBundle() {
         const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
         const afterSac = state.removeFromBattlefield(sacCreature.id, 'graveyard');
         if (!afterSac) return [];
+        // Resolve sacCreature's card key once for duplicate-fetch filtering
+        const sacCreatureKey = Object.keys(cards).find(k => cards[k].name === sacCreature.name) ?? null;
         const seen = new Set();
         for (const ck of afterSac.players[0].library) {
           if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
           seen.add(ck);
+          // Never fetch the same card that was just sacrificed — it's always a net-zero play.
+          if (sacCreatureKey && ck === sacCreatureKey) continue;
           const def = cards[ck];
           if (!def || !def.types.includes('creature')) continue;
           if (!def.cost?.includes('G')) continue;
@@ -5783,6 +5803,9 @@ function _buildSolverBundle() {
           for (const ck of afterSac.players[0].library) {
             if (seen_target.has(ck) || ck === 'unknown' || isStax(ck)) continue;
             seen_target.add(ck);
+            // Never fetch the same card that was just sacrificed — it's always a net-zero
+            // or losing play (lose one permanent, gain one identical permanent = wasted spell).
+            if (sacKey && ck === sacKey) continue;
             const def = cards[ck];
             if (!def || !def.types.includes('creature')) continue;
             if (!def.cost) continue;
@@ -6049,6 +6072,7 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 2;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 2;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 2;
             default: return false;
           }
         });
@@ -6078,6 +6102,7 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 3;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 3;
             default: return false;
           }
         });
@@ -6247,6 +6272,7 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 4;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 3;
             default: return false;
           }
         });
@@ -6476,6 +6502,7 @@ function _buildSolverBundle() {
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 6;
             default: return false;
           }
         });
@@ -6505,6 +6532,7 @@ function _buildSolverBundle() {
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 5; // Combo 38: break-even at 5
+            case 'Topiary Lecturer':            return (p.power || 0) >= 5; // same break-even logic
             default: return false;
           }
         });
@@ -7551,6 +7579,22 @@ function _buildSolverBundle() {
               for (const resultState of sorted.slice(0, maxBranches)) {
                 const msg = resultState.history[resultState.history.length - 1]?.msg ?? `Cast ${def.name}`;
                 const spellGoesToGraveyard = def.types.includes('instant') || def.types.includes('sorcery');
+
+                // ── Capture planned decisions for deterministic replay ─────────
+                // Extract the fetched card key from the planned result message.
+                const plannedTargetKey = msgKey(resultState);
+
+                // For sacrifice-based tutors (EE, Natural Order): detect which creature
+                // was sacrificed by comparing planning BF names to result BF names.
+                // IDs are not stable across independent GameState constructions, so use name.
+                const planBfNames = fromHand0.battlefield.map(p => p.name);
+                const resBfNames  = new Set(resultState.battlefield.map(p => p.name));
+                const sacName     = planBfNames.find(n => !resBfNames.has(n)) ?? null;
+                // Use deterministic fast path when: sac happened AND target enters battlefield.
+                const targetOnBf  = plannedTargetKey &&
+                  resultState.battlefield.some(p => p.cardKey === plannedTargetKey);
+                const useFastPath = sacName !== null && targetOnBf;
+
                 actions.push({
                   type: 'cast_spell',
                   label: msg,
@@ -7559,15 +7603,35 @@ function _buildSolverBundle() {
                     const ec = effectiveCost(s, def);
                     const afterPay = s.payMana(ec);
                     if (!afterPay) return null;
-                    const ns = afterPay.removeFromHand(cardKey);
+                    let ns = afterPay.removeFromHand(cardKey);
                     if (!ns) return null;
+
+                    // ── Deterministic fast path for sacrifice-BF tutors ────────
+                    // Replay the exact sacrifice + fetch without re-running castFn,
+                    // so library shuffle order cannot affect the outcome.
+                    if (useFastPath && plannedTargetKey) {
+                      const sacPerm = ns.battlefield.find(p => p.name === sacName);
+                      if (sacPerm) {
+                        ns = ns.removeFromBattlefield(sacPerm.id, 'graveyard') ?? ns;
+                      }
+                      const { state: afterSearch, cardKey: found } =
+                        ns.searchLibraryFor(k => k === plannedTargetKey);
+                      if (found) {
+                        let result = afterSearch.enterBattlefield(found);
+                        if (spellGoesToGraveyard) result = result.addToGraveyard(0, def.name);
+                        return result.log(msg);
+                      }
+                      // Target not in library — fall through to standard path
+                      ns = afterPay.removeFromHand(cardKey) ?? ns; // reset ns (before sac)
+                    }
+
+                    // ── Standard path: re-run castFn and match by message ──────
                     const res = def.castFn(ns);
                     if (!res || res.length === 0) return null;
                     const matched = res.find(r =>
                       (r.history[r.history.length-1]?.msg ?? '') === msg
                     );
                     let result = matched ?? smartTutorTarget(s, res);
-                    // Instants and sorceries go to graveyard after resolving
                     if (result && spellGoesToGraveyard) {
                       result = result.addToGraveyard(0, def.name);
                     }
@@ -7606,6 +7670,39 @@ function _buildSolverBundle() {
           if (isCreature && ns.hasPermanent('Beast Whisperer')) {
             const bw = ns.getPermanent('Beast Whisperer');
             if (!bw.summoningSick) ns = ns.playerDraws(0, 1);
+          }
+
+          // Topiary Lecturer — Increment trigger:
+          // Whenever you cast a spell, if mana spent > this creature's power or toughness,
+          // put a +1/+1 counter on it (increases both power and toughness).
+          // "Mana spent" = the effective CMC of the spell just cast.
+          // NOTE: We snapshot Lecturer IDs from the PRE-CAST state (s) so that casting
+          // Topiary Lecturer itself does NOT trigger Increment on itself — it isn't on the
+          // battlefield yet when the spell is cast (it enters during resolution).
+          {
+            const precastLecturerIds = new Set(
+              s.battlefield
+                .filter(p => p.name === 'Topiary Lecturer')
+                .map(p => p.id)
+            );
+            const lecturers = ns.battlefield.filter(p => precastLecturerIds.has(p.id));
+            if (lecturers.length > 0) {
+              const { parseCost } = _GSM;
+              const parsed   = parseCost(effectiveCost(s, def));
+              const manaSpent = parsed.generic +
+                Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+              for (const lec of lecturers) {
+                // Increment fires if mana spent > power OR > toughness.
+                // Equivalent to: mana spent > min(power, toughness).
+                // e.g. a 2/3 Lecturer triggers on CMC 3 because 3 > 2 (power).
+                const threshold = Math.min(lec.power || 1, lec.toughness || 1);
+                if (manaSpent > threshold) {
+                  lec.power     = (lec.power     || 1) + 1;
+                  lec.toughness = (lec.toughness || 1) + 1;
+                  ns = ns.log(`Topiary Lecturer Increment → ${lec.power}/${lec.toughness}`);
+                }
+              }
+            }
           }
 
           // Guardian Project: draw when unique creature enters
@@ -8360,7 +8457,7 @@ function _buildSolverBundle() {
    * Returns map of cardKey → { stillWins, turnsWithout, criticality }
    */
   function whatIfAnalysis(hand, baseResult, options = {}) {
-    const { maxTurns = 4, maxDepth = 40, maxStates = 150_000 } = options;
+    const { maxTurns = 4, maxDepth = 40, maxStates = 100_000 } = options;
     const baseTurn = baseResult
       ? baseResult.line[baseResult.line.length - 1].turn
       : Infinity;
@@ -8384,6 +8481,21 @@ function _buildSolverBundle() {
         criticality = 'accelerant';    // removing delays but doesn't break
       } else {
         criticality = 'redundant';     // hand still combos at same speed
+      }
+
+      // Early termination: if base hand already combos on turn 1 and this card
+      // is redundant, remaining cards are very unlikely to be essential — skip them.
+      if (baseTurn <= 1 && criticality === 'redundant') {
+        results[removeKey] = {
+          cardName:     CARDS[removeKey]?.name ?? removeKey,
+          stillWins:    true,
+          comboName:    result?.combo.manaCombo ?? result?.combo.name ?? null,
+          winCondition: result?.combo.winCondition ?? null,
+          turnsWithout,
+          baseTurn,
+          criticality,
+        };
+        continue; // remaining iterations still run — only the result object changes
       }
 
       results[removeKey] = {
@@ -8584,6 +8696,7 @@ var SolverGameState      = _solverExports.GameState;
 var YevaSolver           = _solverExports.Solver;
 var solverAnalyze        = _solverExports.analyze;
 var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
+
 
 
 
