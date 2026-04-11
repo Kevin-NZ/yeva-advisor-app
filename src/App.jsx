@@ -23768,6 +23768,7 @@ function HelpModal({ onClose, onStartTour }) {
       <>
         <H>WHAT IS YEVA ADVISOR?</H>
         <P>Yeva Advisor is a deck-building and play assistant for a green combo Commander deck built around Yeva, Nature's Herald. It analyses your current game state and recommends lines of play, tracks combos, and lets you golfish to test your draws.</P>
+        <P>Contact me with any feedback or bugs: https://discord.com/users/1235882860423151616</P>
         <H>MAIN PANELS</H>
         <Tip label="Input Panel (left)">Enter the cards in your hand, battlefield, and graveyard. The advisor analyses your position in real time as you type. Use the zone tabs to switch between Hand, Battlefield, and Graveyard.</Tip>
         <Tip label="Advice Panel (right)">Shows the best available lines of play ranked by priority. WIN NOW lines are always shown first. Each line lists the cards required and a step-by-step description.</Tip>
