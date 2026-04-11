@@ -1487,10 +1487,10 @@ const COMBOS = [
     id: "ashaya_scryb_named_dork",
     name: "Ashaya + Scryb Ranger + Big Dork (≥3 mana, named)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Scryb Ranger"],
-    description: "Infinite mana. Scryb Ranger returns itself to hand (as a Forest via Ashaya), untapping the big dork. Recast for {1}{G}. Net positive when dork produces ≥3. Covers: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥3 creatures), Selvala (≥3 power creature + {G} input), Karametra's Acolyte (≥4 devotion), Elvish Archdruid (≥2 elves), Marwyn (≥2 power), Fanatic of Rhonas (taps for 4), Joraga Treespeaker (levelled, taps {G}{G}), Wirewood Channeler (≥2 elves).",
+    description: "Infinite mana. Scryb Ranger returns itself to hand (as a Forest via Ashaya), untapping the big dork. Recast for {1}{G}. Net positive when dork produces ≥3. Covers: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥3 creatures), Selvala (≥3 power creature + {G} input), Karametra's Acolyte (≥4 devotion), Elvish Archdruid (≥2 elves), Marwyn (≥2 power), Topiary Lecturer (≥2 power, i.e. ≥1 Increment counter), Fanatic of Rhonas (taps for 4), Joraga Treespeaker (levelled, taps {G}{G}), Wirewood Channeler (≥2 elves).",
     requires: ["Ashaya, Soul of the Wild", "Scryb Ranger"],
     needsBigDork: 3,
-    needsNamedDork: ["Priest of Titania", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Elvish Archdruid", "Marwyn, the Nurturer", "Fanatic of Rhonas", "Joraga Treespeaker", "Wirewood Channeler"],
+    needsNamedDork: ["Priest of Titania", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Elvish Archdruid", "Marwyn, the Nurturer", "Topiary Lecturer", "Fanatic of Rhonas", "Joraga Treespeaker", "Wirewood Channeler"],
     priority: 9,
     type: "infinite-mana",
     lines: [
@@ -1510,10 +1510,10 @@ const COMBOS = [
     name: "Hyrax Tower Scout + Temur Sabertooth + Big Dork (≥6 mana, named)",
     onBattlefield: ["Temur Sabertooth"],
     mustPreExist: ["Temur Sabertooth"],
-    description: "Infinite mana. Sabertooth bounces Hyrax Tower Scout ({1}{G}), recast for {2}{G} — ETB untaps big dork. Total loop cost {3}{G}+{G} net, positive at ≥6. Covers: Priest of Titania (5+ elves), Selvala (power 7+ creature + {G}), Elvish Archdruid (5+ elves), Marwyn (6+ power), Wirewood Channeler (5+ elves).",
+    description: "Infinite mana. Sabertooth bounces Hyrax Tower Scout ({1}{G}), recast for {2}{G} — ETB untaps big dork. Total loop cost {3}{G}+{G} net, positive at ≥6. Covers: Priest of Titania (5+ elves), Selvala (power 7+ creature + {G}), Elvish Archdruid (5+ elves), Marwyn (6+ power), Topiary Lecturer (6+ power, i.e. ≥5 Increment counters), Wirewood Channeler (5+ elves).",
     requires: ["Hyrax Tower Scout", "Temur Sabertooth"],
     needsBigDork: 6,
-    needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler", "Karametra's Acolyte"],
+    needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Elvish Archdruid", "Marwyn, the Nurturer", "Topiary Lecturer", "Wirewood Channeler", "Karametra's Acolyte"],
     priority: 8,
     type: "infinite-mana",
     lines: [
@@ -1533,10 +1533,10 @@ const COMBOS = [
     name: "Kogla + Hyrax Tower Scout + Big Dork (≥6 mana, named)",
     onBattlefield: ["Kogla, the Titan Ape"],
     mustPreExist: ["Kogla, the Titan Ape"],
-    description: "Infinite mana — Kogla variant. Kogla bounces Hyrax Tower Scout (a Human) for {1}{G}; recast Scout for {2}{G} to untap the big dork. Loop cost identical to Sabertooth line. Covers: Priest of Titania (5+ elves), Selvala (power 6+ + {G}), Karametra's Acolyte (6+ devotion), Circle of Dreams Druid (5+ creatures), Elvish Archdruid (5+ elves), Marwyn (5+ power), Wirewood Channeler (5+ elves). Note: Kogla destroys an artifact or enchantment only when it ATTACKS — not triggered by bouncing or recasting Scout.",
+    description: "Infinite mana — Kogla variant. Kogla bounces Hyrax Tower Scout (a Human) for {1}{G}; recast Scout for {2}{G} to untap the big dork. Loop cost identical to Sabertooth line. Covers: Priest of Titania (5+ elves), Selvala (power 6+ + {G}), Karametra's Acolyte (6+ devotion), Circle of Dreams Druid (5+ creatures), Elvish Archdruid (5+ elves), Marwyn (5+ power), Topiary Lecturer (5+ power, i.e. ≥4 Increment counters), Wirewood Channeler (5+ elves). Note: Kogla destroys an artifact or enchantment only when it ATTACKS — not triggered by bouncing or recasting Scout.",
     requires: ["Kogla, the Titan Ape", "Hyrax Tower Scout"],
     needsBigDork: 6,
-    needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Circle of Dreams Druid", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
+    needsNamedDork: ["Priest of Titania", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Circle of Dreams Druid", "Elvish Archdruid", "Marwyn, the Nurturer", "Topiary Lecturer", "Wirewood Channeler"],
     priority: 8,
     type: "infinite-mana",
     lines: [
@@ -1556,10 +1556,10 @@ const COMBOS = [
     name: "Ashaya + Magus of the Candelabra + Big Dork (≥3 mana, named)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Magus of the Candelabra"],
     mustPreExist: ["Magus of the Candelabra"],
-    description: "Infinite mana. Magus of the Candelabra (a Forest via Ashaya) pays {X} and taps to untap X lands — targeting itself and the big dork. Pay {2}: untap both. Net positive when dork produces ≥3. Covers: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥3 creatures), Selvala (≥4 power creature + {G}), Karametra's Acolyte (≥4 devotion), Fanatic of Rhonas (taps 4), Elvish Archdruid (≥2 elves), Marwyn (≥2 power), Wirewood Channeler (≥2 elves).",
+    description: "Infinite mana. Magus of the Candelabra (a Forest via Ashaya) pays {X} and taps to untap X lands — targeting itself and the big dork. Pay {2}: untap both. Net positive when dork produces ≥3. Covers: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥3 creatures), Selvala (≥4 power creature + {G}), Karametra's Acolyte (≥4 devotion), Fanatic of Rhonas (taps 4), Elvish Archdruid (≥2 elves), Marwyn (≥2 power), Topiary Lecturer (≥2 power, i.e. ≥1 Increment counter), Wirewood Channeler (≥2 elves).",
     requires: ["Ashaya, Soul of the Wild", "Magus of the Candelabra"],
     needsBigDork: 3,
-    needsNamedDork: ["Priest of Titania", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Fanatic of Rhonas", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
+    needsNamedDork: ["Priest of Titania", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Fanatic of Rhonas", "Elvish Archdruid", "Marwyn, the Nurturer", "Topiary Lecturer", "Wirewood Channeler"],
     priority: 8,
     type: "infinite-mana",
     lines: [
@@ -1578,11 +1578,11 @@ const COMBOS = [
     name: "Haste Enabler + Temur Sabertooth + Named Big Dork (≥CMC+3)",
     onBattlefield: ["Temur Sabertooth"],
     mustPreExist: ["Temur Sabertooth"],
-    description: "Infinite mana. Haste enabler (Concordant Crossroads, Surrak and Goreclaw, Thousand-Year Elixir) lets a freshly-cast big dork tap immediately. Sabertooth bounces it for {1}{G}, recast. Net positive when dork produces ≥ its CMC+3. Covers: Circle of Dreams Druid ({G}{G}{G} CMC, needs 6+ creatures for 6+ mana), Selvala ({1}{G}{G} CMC=3, needs 7+ power creature), Karametra's Acolyte ({3}{G} CMC=4, needs 7+ devotion).",
+    description: "Infinite mana. Haste enabler (Concordant Crossroads, Surrak and Goreclaw, Thousand-Year Elixir) lets a freshly-cast big dork tap immediately. Sabertooth bounces it for {1}{G}, recast. Net positive when dork produces ≥ its CMC+3. Covers: Circle of Dreams Druid ({G}{G}{G} CMC, needs 6+ creatures for 6+ mana), Selvala ({1}{G}{G} CMC=3, needs 7+ power creature), Karametra's Acolyte ({3}{G} CMC=4, needs 7+ devotion), Topiary Lecturer ({2}{G} CMC=3, needs 6+ power i.e. ≥5 Increment counters).",
     requires: ["Temur Sabertooth"],
     needsBigDorkHasteCMC: true,
     needsHasteEnabler: true,
-    needsNamedDork: ["Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Priest of Titania", "Elvish Archdruid", "Marwyn, the Nurturer", "Wirewood Channeler"],
+    needsNamedDork: ["Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Karametra's Acolyte", "Priest of Titania", "Elvish Archdruid", "Marwyn, the Nurturer", "Topiary Lecturer", "Wirewood Channeler"],
     priority: 7,
     type: "infinite-mana",
     lines: [
@@ -1602,14 +1602,14 @@ const COMBOS = [
     name: "Ashaya + Hope Tender + Big Dork or Cradle (exert loop)",
     onBattlefield: ["Ashaya, Soul of the Wild", "Hope Tender"],
     mustPreExist: ["Hope Tender"],
-    description: "Infinite mana. Hope Tender exerts for {1} to untap itself and target land (or creature-land via Ashaya). Works with Nykthos (≥4 devotion), Gaea's Cradle (≥3 creatures), Circle of Dreams Druid (≥3 creatures via Ashaya), Selvala (power≥3), or Marwyn (power≥2). Loop cost {1} per activation; net positive when the untapped source produces ≥2.",
+    description: "Infinite mana. Hope Tender exerts for {1} to untap itself and target land (or creature-land via Ashaya). Works with Nykthos (≥4 devotion), Gaea's Cradle (≥3 creatures), Circle of Dreams Druid (≥3 creatures via Ashaya), Selvala (power≥3), Marwyn (power≥2), or Topiary Lecturer (power≥2, i.e. ≥1 Increment counter). Loop cost {1} per activation; net positive when the untapped source produces ≥2.",
     requires: ["Ashaya, Soul of the Wild", "Hope Tender"],
-    needsNamedDork: ["Nykthos, Shrine to Nyx", "Gaea's Cradle", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Marwyn, the Nurturer"],
+    needsNamedDork: ["Nykthos, Shrine to Nyx", "Gaea's Cradle", "Circle of Dreams Druid", "Selvala, Heart of the Wilds", "Marwyn, the Nurturer", "Topiary Lecturer"],
     priority: 7,
     type: "infinite-mana",
     lines: [
       "Ashaya + Hope Tender + a land or big dork producing ≥2 on battlefield, Hope Tender without summoning sickness.",
-      "Tap the land/dork for ≥2 mana (Nykthos, Cradle, Circle, Selvala, or Marwyn).",
+      "Tap the land/dork for ≥2 mana (Nykthos, Cradle, Circle, Selvala, Marwyn, or Topiary Lecturer).",
       "Pay {1}, tap and exert Hope Tender: untap Hope Tender AND the tapped source.",
       "Net: ≥+{G} per loop (≥2 produced minus {1} exert cost). Hope Tender re-readies for next activation.",
       "Repeat for infinite mana.",
@@ -6045,7 +6045,7 @@ function _buildSolverBundle() {
         'Dorks: Priest of Titania (≥2 elves), Circle of Dreams Druid (≥2 creatures), ' +
         'Elvish Archdruid (≥2 elves), Wirewood Channeler (≥2 elves), ' +
         "Karametra's Acolyte (devotion ≥2), Selvala (power ≥2), " +
-        'Fanatic of Rhonas (ferocious, power ≥4), Marwyn (power ≥2).',
+        'Fanatic of Rhonas (ferocious, power ≥4), Marwyn (power ≥2), Topiary Lecturer (power ≥2).',
       check(state) {
         if (!ashayaOut(state)) return false;
         if (!hasPerm(state, 'Quirion Ranger')) return false;
@@ -6064,6 +6064,7 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 2;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 2;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 2;
             default: return false;
           }
         });
@@ -6078,7 +6079,7 @@ function _buildSolverBundle() {
         'Dorks: Priest of Titania (≥3 elves), Circle of Dreams Druid (≥3 creatures), ' +
         'Elvish Archdruid (≥3 elves), Wirewood Channeler (≥3 elves), ' +
         "Karametra's Acolyte (devotion ≥3), Selvala (power ≥3), " +
-        'Fanatic of Rhonas (ferocious), Marwyn (power ≥3).',
+        'Fanatic of Rhonas (ferocious), Marwyn (power ≥3), Topiary Lecturer (power ≥3).',
       check(state) {
         if (!ashayaOut(state)) return false;
         if (!hasPerm(state, 'Scryb Ranger')) return false;
@@ -6093,6 +6094,7 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 3;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 3;
             default: return false;
           }
         });
@@ -6166,6 +6168,25 @@ function _buildSolverBundle() {
         );
         if (!marwyn) return false;
         return (marwyn.power || 0) >= 2;
+      },
+    },
+
+    {
+      // Topiary Lecturer variant of COMBO 61: Ashaya + Hope Tender + Topiary Lecturer
+      // Topiary: {T}: Add G×power. PRE: power ≥2 (base 1, needs ≥1 Increment counter).
+      name: 'Infinite Mana (Ashaya + Hope Tender + Topiary Lecturer)',
+      description:
+        "With Ashaya, Tender and Topiary Lecturer are Forest lands. " +
+        "Exert loop: Tap Topiary Lecturer for G×power. Pay {1}, exert Tender → untap Tender + Topiary. " +
+        "Net positive when Topiary's power ≥2 (i.e. has at least 1 Increment counter).",
+      check(state) {
+        if (!ashayaOut(state)) return false;
+        if (!permReady(state, 'Hope Tender')) return false;
+        const topiary = state.battlefield.find(
+          p => p.name === 'Topiary Lecturer' && !p.summoningSick
+        );
+        if (!topiary) return false;
+        return (topiary.power || 0) >= 2;
       },
     },
 
@@ -6262,6 +6283,7 @@ function _buildSolverBundle() {
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 4;
             case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 3;
             default: return false;
           }
         });
@@ -6459,7 +6481,7 @@ function _buildSolverBundle() {
         "Hyrax ETB untaps the mana dork. Sabertooth bounces Hyrax ({1G}), recast ({2G}). " +
         "Total loop cost {4G}+{1}. Need dork producing ≥5G. " +
         "Priest/Archdruid/Channeler: ≥5 elves. Circle: ≥5 creatures. " +
-        "Selvala: power ≥6 (includes {G} activation). Marwyn: power ≥6.",
+        "Selvala: power ≥6 (includes {G} activation). Marwyn: power ≥6. Topiary Lecturer: power ≥6.",
       check(state) {
         if (!hasPerm(state, 'Temur Sabertooth')) return false;
         if (!hasPerm(state, 'Hyrax Tower Scout')) return false;
@@ -6472,6 +6494,7 @@ function _buildSolverBundle() {
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 6;
             default: return false;
           }
         });
@@ -6499,6 +6522,7 @@ function _buildSolverBundle() {
             case 'Wirewood Channeler':          return elfCount(state) >= 5;
             case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
             case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
+            case 'Topiary Lecturer':            return (p.power || 0) >= 6;
             default: return false;
           }
         });
@@ -9000,6 +9024,16 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     if (t === "elves")    return activeElves + extraElves + badgermoleBonus; // Priest of Titania, Elvish Archdruid, Wirewood Channeler
     if (t === "creatures") return activeCreatures + extraElves + badgermoleBonus; // Circle of Dreams Druid
     if (t === "devotion") return devotionOnBoard  + badgermoleBonus; // Karametra's Acolyte
+    // Topiary Lecturer: taps for G equal to power (base 1). Gains +1/+1 counter (Increment) whenever
+    // you cast a spell spending more mana than its current power or toughness.
+    // Estimate: each spell CMC > current power triggers a counter. In a typical mid-game with
+    // several spells cast, it will have 2-4 counters. Use elves on board as a conservative proxy
+    // (each elf cast after Topiary likely triggered Increment at least once), capped at 4 to avoid
+    // overselling. Cannot be more than Marwyn in a developed board.
+    if (t === "topiary") {
+      const topiaryProxy = Math.max(1, Math.min(elvesOnBoard + extraElves, 4));
+      return topiaryProxy + badgermoleBonus;
+    }
     // Marwyn taps for power = 1 + counters, where she gains a counter per elf cast after she entered.
     // Two estimates are combined: elf-count proxy (each elf on board likely cast while she was in play)
     // and a high-CMC-creature proxy (being mid/late game means she's had time to accumulate counters).
