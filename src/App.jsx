@@ -342,7 +342,55 @@ const COMBOS = [
     ]
   },
 
-  // ── 5. Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest ──────
+  // ── 4c. Maze of Ith + Argothian Elder + Mana Land ────────────────────────
+  // Reference: decklist_combos.txt (Maze of Ith section)
+  // Maze of Ith untaps Elder for FREE (no mana cost), unlike Wirewood Lodge ({G}).
+  // Net positive with any land producing ≥1 mana. With Cradle (≥2 creatures) or Nykthos
+  // (≥3 devotion) produces infinite mana. Even a basic Forest gives +1G per loop.
+  {
+    id: "maze_elder",
+    name: "Argothian Elder + Maze of Ith + Mana Land",
+    suppressOPA: true,   // land tutor advice section handles "find Maze of Ith" when Elder is on board
+    onBattlefield: ["Argothian Elder", "Maze of Ith"],
+    mustPreExist: ["Argothian Elder"],
+    description: "Infinite mana. Elder taps to untap Maze of Ith + any other mana-producing land. Maze taps (free) to untap Elder. Net: full output of the second land per loop. Any land producing ≥1 mana is sufficient — even a basic Forest nets {G} per loop. Strictly better than Wirewood Lodge (which costs {G} to untap Elder).",
+    requires: ["Argothian Elder", "Maze of Ith"],
+    needsAnyManaLand: true,   // any land producing ≥1 mana suffices (Maze untaps Elder free)
+    priority: 6,
+    type: "infinite-mana",
+    lines: [
+      "Argothian Elder + Maze of Ith + any mana-producing land on battlefield. Elder without summoning sickness.",
+      "Tap Argothian Elder: untap two target lands — target Maze of Ith AND a mana-producing land (Cradle, Nykthos, or any Forest).",
+      "Tap the mana land for mana.",
+      "Tap Maze of Ith (free — no mana cost): untap Argothian Elder.",
+      "Net mana per loop = full output of the second land (no Lodge cost!). Repeat for infinite mana.",
+      "Best targets: Gaea's Cradle (≥2 creatures = net ≥2G/loop), Nykthos (≥3 devotion = net ≥1G/loop), any Forest (net 1G/loop).",
+    ]
+  },
+
+  // ── 4d. Maze of Ith + Ley Weaver + Mana Land ──────────────────────────
+  {
+    id: "maze_ley_weaver",
+    name: "Ley Weaver + Maze of Ith + Mana Land",
+    suppressOPA: true,   // land tutor advice handles this when Ley Weaver is on board
+    onBattlefield: ["Ley Weaver", "Maze of Ith"],
+    mustPreExist: ["Ley Weaver"],
+    description: "Identical to the Argothian Elder + Maze of Ith loop. Ley Weaver taps to untap Maze + a mana land. Maze untaps Ley Weaver for free. Net: full output of the second land per loop. Note: Ley Weaver is Human (not Elf) — Wirewood Lodge cannot untap it, but Maze of Ith can.",
+    requires: ["Ley Weaver", "Maze of Ith"],
+    needsAnyManaLand: true,   // any land producing ≥1 mana suffices (Maze untaps Weaver free)
+    priority: 6,
+    type: "infinite-mana",
+    lines: [
+      "Ley Weaver + Maze of Ith + any mana-producing land on battlefield. Ley Weaver without summoning sickness.",
+      "Tap Ley Weaver: untap two target lands — target Maze of Ith AND a mana-producing land.",
+      "Tap the mana land for mana.",
+      "Tap Maze of Ith (free): untap Ley Weaver.",
+      "Net: full output of the second land per loop. Repeat for infinite mana.",
+      "Note: Ley Weaver is Human (not Elf) — Wirewood Lodge cannot untap her, but Maze of Ith can.",
+    ]
+  },
+
+    // ── 5. Earthcraft + Ashaya + Quirion/Scryb Ranger + basic Forest ──────
   // IMPORTANT: Ashaya makes creatures Forest lands but NOT basic.
   // Yavimaya makes lands Forests but NOT basic. Neither grants the basic supertype.
   // Earthcraft requires "basic land" — only actual basic lands (Forest, Dryad Arbor) work.
@@ -8994,6 +9042,7 @@ var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -10067,6 +10116,30 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         const auraPart = combo.needsAuraLand ? " (or a Forest enchanted with Utopia Sprawl/Wild Growth)" : "";
         return { ok: false, missing: (missingParts + auraPart).trim() };
       }
+    }
+
+    // needsAnyManaLand: combo works with any land producing ≥1 mana (e.g. Maze of Ith loops).
+    // Satisfied when any land other than the combo's own named onBattlefield pieces is present.
+    // Maze of Ith untaps Elder/Weaver for free, so even a basic Forest is net +1G per loop.
+    if (combo.needsAnyManaLand) {
+      const mazeOrUntapper = new Set(combo.onBattlefield ?? []);
+      const NON_MANA_LANDS = new Set(["Maze of Ith", "Emergence Zone", "Talon Gates of Baldur's Gate"]);
+      const hasManaLand = battlefield.some(c => {
+        if (mazeOrUntapper.has(c)) return false;   // already a required combo piece
+        if (NON_MANA_LANDS.has(c)) return false;   // Maze itself doesn't tap for mana
+        const cd = getCard(c);
+        if (!cd || cd.type !== 'land') return false;
+        // Accept any land that isn't a pure utility/non-mana land.
+        // Exclusions: lands known to produce 0 mana (Maze of Ith handled above).
+        // Everything else (Forest, Cradle, Nykthos, fetches, duals, etc.) taps for mana.
+        const nonManaTags = ['untap-land', 'protection'];
+        const isNonMana = nonManaTags.every(t => cd.tags?.includes(t));  // only Maze has both
+        return !isNonMana;
+      });
+      if (!hasManaLand) return {
+        ok: false,
+        missing: 'a mana-producing land (any land that taps for mana — even a basic Forest provides +{G} per loop since Maze of Ith untaps Elder/Weaver for free)'
+      };
     }
 
     // needsRemoval: Kogla variant needs Beast Within OR Legolas's Quick Reflexes
@@ -16484,7 +16557,10 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       // already accessible (on board, or in hand AND currently castable).
       // A card in hand that can't be cast right now (0 mana, opponent's turn, no flash)
       // doesn't count as "owning" a piece — avoids noise on empty/locked boards.
-      if (combo.type !== "infinite-mana" || !infiniteManaActive) {
+      // suppressOPA: combos that should never generate OPA results (e.g. Maze of Ith loops
+      // where a dedicated land-tutor advice section already handles the recommendation).
+      if (combo.suppressOPA) { /* skip — handled by land tutor advice */ }
+      else if (combo.type !== "infinite-mana" || !infiniteManaActive) {
         const missingCard = missing[0];
         const missingData = getCard(missingCard);
         const missingCmc = missingData?.cmc ?? 0;
