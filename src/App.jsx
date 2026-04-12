@@ -2712,6 +2712,8 @@ function _buildSolverBundle() {
 
     clone() {
       // Bypass constructor — directly assign fields.
+      // Library uses copy-on-write: share the reference here; draw()/searchLibrary()
+      // copy before mutating, so siblings in the same DFS turn share one array.
       const p = Object.create(Player.prototype);
       p.name      = this.name;
       p.life      = this.life;
@@ -2722,7 +2724,7 @@ function _buildSolverBundle() {
       if (this._sizeOnly) {
         p._libSize = this._libSize;  // copy an integer — zero array allocation
       } else {
-        p.library = [...this.library];
+        p.library = this.library;    // shared reference — copied only on mutation
       }
       return p;
     }
@@ -2745,7 +2747,7 @@ function _buildSolverBundle() {
       if (p._sizeOnly) {
         p._libSize = Math.max(0, p._libSize - n);
       } else {
-        p.library.splice(0, Math.min(n, p.library.length));
+        p.library = p.library.slice(n);  // copy-on-write: create new array, drop first n
       }
       return p;
     }
@@ -2762,7 +2764,8 @@ function _buildSolverBundle() {
         p._libSize = Math.max(0, p._libSize - 1);
         cardKey = 'unknown';
       } else {
-        cardKey = p.library.shift();
+        cardKey = p.library[0];       // peek
+        p.library = p.library.slice(1); // copy-on-write
       }
       return { player: p, cardKey };
     }
@@ -2777,7 +2780,8 @@ function _buildSolverBundle() {
       const idx = this.library.findIndex(fn);
       if (idx === -1) return { player: this, cardKey: null };
       const p = this.clone();
-      const [cardKey] = p.library.splice(idx, 1);
+      const cardKey = p.library[idx];
+      p.library = [...p.library.slice(0, idx), ...p.library.slice(idx + 1)]; // copy-on-write
       return { player: p, cardKey };
     }
 
@@ -2865,7 +2869,12 @@ function _buildSolverBundle() {
     }
 
     total() { return this.W + this.U + this.B + this.R + this.G + this.C; }
-    clone() { return new ManaPool(this); }
+    clone() {
+      const p = Object.create(ManaPool.prototype);
+      p.W = this.W; p.U = this.U; p.B = this.B;
+      p.R = this.R; p.G = this.G; p.C = this.C;
+      return p;
+    }
 
     add(color, amount = 1) {
       const p = this.clone();
@@ -3080,7 +3089,6 @@ function _buildSolverBundle() {
       // Lazily computed; set to null whenever state changes (see invalidateFp).
       // Hand is stored sorted so fingerprint can skip sort().
       this._fp = null;
-      if (this.hand.length > 1) this.hand.sort();
     }
 
     /** Invalidate fingerprint cache.  Call after any in-place mutation. */
@@ -3139,27 +3147,29 @@ function _buildSolverBundle() {
     // ── Clone ─────────────────────────────────────────────────────────────────
 
     clone() {
-      const s = new GameState({
-        turn:           this.turn,
-        phase:          this.phase,
-        landDrops:      this.landDrops,
-        hand:           [...this.hand],      // already sorted — stays sorted
-        battlefield:    this.battlefield.map(p => p.clone()),
-        mana:           this.mana.clone(),
-        storm:          this.storm,
-        comboAchieved:  this.comboAchieved,
-        comboName:      this.comboName,
-        _nextId:        this._nextId,
-        history:        [...this.history],
-        players:        this.players.map(p => p.clone()),
-        commandZone:    [...this.commandZone],
-        commanderTax:   this.commanderTax,
-        isOpponentTurn: this.isOpponentTurn ?? false,
-        topDecked:      this.topDecked ?? null,
-        drawForTurn:    this.drawForTurn ?? false,
-        _hasSTAX:       this._hasSTAX ?? false,
-      });
-      s._fp = null;
+      // Bypass constructor entirely — directly assign all fields.
+      // This avoids the full constructor overhead (instanceof checks, array
+      // re-parsing, legacy player-building, etc.) on every DFS node.
+      const s = Object.create(GameState.prototype);
+      s.turn          = this.turn;
+      s.phase         = this.phase;
+      s.landDrops     = this.landDrops;
+      s.hand          = [...this.hand];
+      s.battlefield   = this.battlefield.map(p => p.clone());
+      s.mana          = this.mana.clone();
+      s.storm         = this.storm;
+      s.comboAchieved = this.comboAchieved;
+      s.comboName     = this.comboName;
+      s._nextId       = this._nextId;
+      s.history       = [...this.history];
+      s.players       = this.players.map(p => p.clone());
+      s.commandZone   = [...this.commandZone];
+      s.commanderTax  = this.commanderTax;
+      s.isOpponentTurn = this.isOpponentTurn;
+      s.topDecked     = this.topDecked;
+      s.drawForTurn   = this.drawForTurn;
+      s._hasSTAX      = this._hasSTAX;
+      s._fp           = null;
       return s;
     }
 
@@ -3241,12 +3251,13 @@ function _buildSolverBundle() {
      * @returns new GameState
      */
     playerDrawCards(n = 1) {
+      // Use Player.drawCard() for each draw — handles copy-on-write correctly.
       const s = this.clone();
       for (let i = 0; i < n; i++) {
-        if (s.players[0].library.length === 0) break;
-        const cardKey = s.players[0].library.shift();
+        const { player, cardKey } = s.players[0].drawCard();
+        s.players[0] = player;
         if (cardKey && cardKey !== 'unknown') {
-          s.hand = [...s.hand, cardKey].sort();  // maintain sorted invariant for fingerprint
+          s.hand = [...s.hand, cardKey];
         }
       }
       return s;
@@ -3258,10 +3269,11 @@ function _buildSolverBundle() {
      * If not found returns { state: this, cardKey: null }.
      */
     searchLibraryFor(fn) {
-      const idx = this.players[0].library.findIndex(fn);
-      if (idx === -1) return { state: this, cardKey: null };
+      // Delegate to Player.searchLibrary which handles copy-on-write correctly.
+      const { player, cardKey } = this.players[0].searchLibrary(fn);
+      if (!cardKey) return { state: this, cardKey: null };
       const s = this.clone();
-      const [cardKey] = s.players[0].library.splice(idx, 1);
+      s.players[0] = player;
       return { state: s, cardKey };
     }
 
@@ -3644,7 +3656,7 @@ function _buildSolverBundle() {
 
     addToHand(cardKey) {
       const s = this.clone();
-      s.hand = [...s.hand, cardKey].sort();  // maintain sorted invariant for fingerprint
+      s.hand = [...s.hand, cardKey];
       return s;
     }
 
@@ -3679,13 +3691,13 @@ function _buildSolverBundle() {
         const topCard = s.topDecked;
         s.topDecked = null;                      // consume the flag
         s.players[0] = s.players[0].draw(1);    // remove from library
-        s.hand = [...s.hand, topCard].sort();    // deliver to hand (maintain sorted invariant)
+        s.hand = [...s.hand, topCard];
       } else if (s.drawForTurn && s.players[0].library.length > 0) {
         // Mulligan mode: draw the actual top card of the (pre-shuffled) library.
         const drawnKey = s.players[0].library[0];
         s.players[0] = s.players[0].draw(1);
         if (drawnKey && drawnKey !== 'unknown') {
-          s.hand = [...s.hand, drawnKey].sort();  // maintain sorted invariant
+          s.hand = [...s.hand, drawnKey];
         }
       }
       // Opponents still draw (library size tracking only):
@@ -3704,8 +3716,8 @@ function _buildSolverBundle() {
     fingerprint() {
       if (this._fp !== null) return this._fp;
 
-      // Hand — already stored sorted, no sort() needed
-      const hand = this.hand.join(',');
+      // Hand — sort here so action-generation order is preserved in the state
+      const hand = [...this.hand].sort().join(',');
 
       // Battlefield — sort by encoded string
       const bf = this.battlefield
@@ -5281,7 +5293,7 @@ function _buildSolverBundle() {
               // Put the fetched creature directly into hand (oracle: "put it into your hand")
               const ns2 = ns.clone();
               ns2.players[0] = ns2.players[0].clone();
-              ns2.hand = [...ns2.hand, cardKey].sort();  // maintain sorted invariant
+              ns2.hand = [...ns2.hand, cardKey];
               results.push(ns2.log(
                 `Fauna Shaman: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
               ));
@@ -5538,7 +5550,7 @@ function _buildSolverBundle() {
               // Put the fetched creature directly into hand (oracle: "put it into your hand")
               const ns2 = ns.clone();
               ns2.players[0] = ns2.players[0].clone();
-              ns2.hand = [...ns2.hand, cardKey].sort();  // maintain sorted invariant
+              ns2.hand = [...ns2.hand, cardKey];
               results.push(ns2.log(
                 `Survival of the Fittest: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
               ));
@@ -9253,6 +9265,7 @@ var solverAnalyze           = _solverExports.analyze;
 var solverMulliganAnalyze   = _solverExports.mulliganAnalyze;
 var solverBuildDefaultLibrary = _solverExports.buildDefaultLibrary;
 var SOLVER_NAME_MAP         = _solverExports.SOLVER_NAME_MAP;
+
 
 
 
@@ -37227,9 +37240,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       : infinitePct >= 35 ? COLORS.gold
                       : COLORS.red;
                     const simLabel = infinitePct == null ? "SIMULATING…"
-                      : infinitePct >= 55 ? "SIM: STRONG KEEP"
-                      : infinitePct >= 35 ? "SIM: BORDERLINE"
-                      : "SIM: CONSIDER MULLIGANING";
+                      : infinitePct >= 55 ? "SOLVER: STRONG KEEP"
+                      : infinitePct >= 35 ? "SOLVER: BORDERLINE"
+                      : "SOLVER: CONSIDER MULLIGANING";
                     const progressPct = Math.round((sim.completed / sim.total) * 100);
                     return (
                       <div style={{
