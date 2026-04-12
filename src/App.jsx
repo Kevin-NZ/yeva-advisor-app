@@ -965,6 +965,7 @@ const COMBOS = [
     onBattlefield: ["Ashaya, Soul of the Wild", "Quirion Ranger", "Glademuse"],
     description: "On an opponent's turn with Yeva flash active: each Quirion Ranger cast triggers Glademuse (you cast a spell off-turn → YOU draw a card, not your opponents). The mana-neutral loop now draws your entire library. Then find Tireless Provisioner to generate Treasures each loop → infinite mana.",
     requires: ["Ashaya, Soul of the Wild", "Quirion Ranger", "Glademuse"],
+    needsOpponentTurn: true,   // Glademuse only triggers on opponents' turns — suppress on isMyTurn
     priority: 9,
     type: "win-draw",
     lines: [
@@ -2668,11 +2669,12 @@ function _buildSolverBundle() {
      * @param {object}   data
      * @param {string}   data.name
      * @param {number}   data.life
-     * @param {string[]} data.library     card keys, index 0 = top of deck
-     * @param {number}   data.librarySize fallback when library array not provided
+     * @param {string[]} data.library      card keys, index 0 = top (active player only)
+     * @param {number}   data.librarySize  size-only fallback (opponent players)
+     * @param {boolean}  data._sizeOnly    true → track library as integer, not array
      * @param {number}   data.poison
-     * @param {string[]} data.graveyard   card names, index 0 = top of pile
-     * @param {string[]} data.exile       card names
+     * @param {string[]} data.graveyard    card names, index 0 = top of pile
+     * @param {string[]} data.exile        card names
      */
     constructor(data = {}) {
       this.name      = data.name        ?? 'Player';
@@ -2681,19 +2683,24 @@ function _buildSolverBundle() {
       this.graveyard = data.graveyard   ? [...data.graveyard] : [];
       this.exile     = data.exile       ? [...data.exile]     : [];
 
-      // Library: prefer explicit array; fall back to size-only count (legacy)
-      if (data.library && Array.isArray(data.library)) {
+      // _sizeOnly: opponent players (index 1-3) track library as a plain integer.
+      // The active player (index 0) keeps a real array for searching/drawing by key.
+      this._sizeOnly = data._sizeOnly ?? false;
+      if (this._sizeOnly) {
+        this._libSize = data._libSize ?? data.librarySize
+          ?? (data.library ? data.library.length : DEFAULT_LIBRARY_SIZE);
+      } else if (data.library && Array.isArray(data.library)) {
         this.library = [...data.library];
       } else {
         const sz = data.librarySize ?? DEFAULT_LIBRARY_SIZE;
-        // Build a placeholder array of 'unknown' to represent unseen cards
         this.library = Array(sz).fill('unknown');
       }
     }
 
-    get librarySize() { return this.library.length; }
-    /** Backward-compat setter: resizes the library array to exactly N 'unknown' entries. */
+    get librarySize() { return this._sizeOnly ? this._libSize : this.library.length; }
+    /** Backward-compat setter */
     set librarySize(n) {
+      if (this._sizeOnly) { this._libSize = n; return; }
       if (n === this.library.length) return;
       if (n < this.library.length) {
         this.library = this.library.slice(0, n);
@@ -2704,14 +2711,20 @@ function _buildSolverBundle() {
     }
 
     clone() {
-      return new Player({
-        name:      this.name,
-        life:      this.life,
-        library:   [...this.library],
-        poison:    this.poison,
-        graveyard: [...this.graveyard],
-        exile:     [...this.exile],
-      });
+      // Bypass constructor — directly assign fields.
+      const p = Object.create(Player.prototype);
+      p.name      = this.name;
+      p.life      = this.life;
+      p.poison    = this.poison;
+      p.graveyard = this.graveyard.length ? [...this.graveyard] : [];
+      p.exile     = this.exile.length     ? [...this.exile]     : [];
+      p._sizeOnly = this._sizeOnly;
+      if (this._sizeOnly) {
+        p._libSize = this._libSize;  // copy an integer — zero array allocation
+      } else {
+        p.library = [...this.library];
+      }
+      return p;
     }
 
     /** Returns { lost: bool, reason?: string } */
@@ -2724,14 +2737,16 @@ function _buildSolverBundle() {
     }
 
     /**
-     * Attempt to draw N cards. Removes from top of library array.
-     * Returns drawn card keys (may be 'unknown' for opponent libraries).
+     * Attempt to draw N cards. Removes from top of library array (or decrements size).
      * librarySize is clamped to 0 — loss fires when getLosses() checks after draw.
      */
     draw(n = 1) {
       const p = this.clone();
-      const drawn = p.library.splice(0, Math.min(n, p.library.length));
-      // If we couldn't draw enough, library is empty (loss triggers on next check)
+      if (p._sizeOnly) {
+        p._libSize = Math.max(0, p._libSize - n);
+      } else {
+        p.library.splice(0, Math.min(n, p.library.length));
+      }
       return p;
     }
 
@@ -2740,18 +2755,25 @@ function _buildSolverBundle() {
      * Removes it from the library.
      */
     drawCard() {
-      if (this.library.length === 0) return { player: this, cardKey: null };
+      if (this.librarySize === 0) return { player: this, cardKey: null };
       const p = this.clone();
-      const cardKey = p.library.shift();
+      let cardKey;
+      if (p._sizeOnly) {
+        p._libSize = Math.max(0, p._libSize - 1);
+        cardKey = 'unknown';
+      } else {
+        cardKey = p.library.shift();
+      }
       return { player: p, cardKey };
     }
 
     /**
-     * Search library for a card matching predicate fn(cardKey) → bool.
+     * Search library for a card matching predicate fn(cardKey) => bool.
      * Returns { player, cardKey } — player has the card removed from library.
      * Returns { player: this, cardKey: null } if not found.
      */
     searchLibrary(fn) {
+      if (this._sizeOnly) return { player: this, cardKey: null }; // opponents never searched
       const idx = this.library.findIndex(fn);
       if (idx === -1) return { player: this, cardKey: null };
       const p = this.clone();
@@ -2762,8 +2784,12 @@ function _buildSolverBundle() {
     /** Move the top N cards of the graveyard back into the library (shuffle). */
     shuffleGraveyardIntoLibrary() {
       const p = this.clone();
-      // Append graveyard card names as 'unknown' keys (names ≠ keys, but close enough for size)
-      p.library = [...p.library, ...p.graveyard.map(() => 'unknown')];
+      const gyLen = p.graveyard.length;
+      if (p._sizeOnly) {
+        p._libSize += gyLen;
+      } else {
+        p.library = [...p.library, ...p.graveyard.map(() => 'unknown')];
+      }
       p.graveyard = [];
       return p;
     }
@@ -2925,13 +2951,25 @@ function _buildSolverBundle() {
     is(type) { return this.types.includes(type.toLowerCase()); }
 
     clone() {
-      return new Permanent({
-        ...this,
-        types:         [...this.types],
-        subtypes:      [...this.subtypes],
-        abilitiesUsed: { ...this.abilitiesUsed },
-        counters:      { ...this.counters },
-      });
+      // Bypass constructor for speed — directly assign fields without re-parsing.
+      // types/subtypes MUST be copied: Ashaya ETB and similar effects push onto
+      // them in-place, so sharing would corrupt sibling DFS branches.
+      // abilitiesUsed/counters are always replaced via spread assignment (never
+      // pushed), so they are safe to share until written.
+      const p = Object.create(Permanent.prototype);
+      p.id            = this.id;
+      p.name          = this.name;
+      p.types         = this.types.length     ? [...this.types]     : [];
+      p.subtypes      = this.subtypes.length  ? [...this.subtypes]  : [];
+      p.tapped        = this.tapped;
+      p.summoningSick = this.summoningSick;
+      p.cardKey       = this.cardKey;
+      p.isForest      = this.isForest;
+      p.abilitiesUsed = this.abilitiesUsed;   // replaced via spread on write — safe to share
+      p.counters      = this.counters;        // replaced via spread on write — safe to share
+      p.power         = this.power;
+      p.toughness     = this.toughness;
+      return p;
     }
 
     get label() {
@@ -2991,23 +3029,30 @@ function _buildSolverBundle() {
       // When set, startNewTurn draws exactly that card into hand, then clears this flag.
       // When null, no draw step occurs — keeping the solver deterministic.
       this.topDecked      = data.topDecked ?? null;
+      // drawForTurn: when true, startNewTurn draws the actual top card of the library
+      // into hand (used by mulligan_analyze Monte Carlo trials).
+      // Propagates through clones so every turn in a trial draws naturally.
+      this.drawForTurn    = data.drawForTurn ?? false;
       // _hasSTAX: true when a STAX permanent is on the battlefield.
       // Enables fast-path in effectiveCost that skips Thorn/Trinisphere checks.
       this._hasSTAX       = data._hasSTAX ?? false;
 
       // ── Players (own their zones) ────────────────────────────────────────────
       if (data.players && Array.isArray(data.players)) {
-        this.players = data.players.map((p, i) =>
-          p instanceof Player ? p : new Player({
+        this.players = data.players.map((p, i) => {
+          if (p instanceof Player) return p;
+          const isOpponent = i > 0;
+          return new Player({
             name:        p.name        ?? (i === 0 ? 'You' : `Opponent ${i}`),
             life:        p.life        ?? 40,
-            library:     p.library     ?? null,
+            library:     isOpponent ? null : (p.library ?? null),
             librarySize: p.librarySize ?? DEFAULT_LIBRARY_SIZE,
+            _sizeOnly:   isOpponent,
             poison:      p.poison      ?? 0,
             graveyard:   p.graveyard   ?? [],
             exile:       p.exile       ?? [],
-          })
-        );
+          });
+        });
       } else {
         // Legacy: build player 0 with the default decklist library
         this.players = [
@@ -3022,15 +3067,24 @@ function _buildSolverBundle() {
             graveyard: data.graveyard   ?? [],
             exile:     data.exile       ?? [],
           }),
-          new Player({ name: 'Opponent 1' }),
-          new Player({ name: 'Opponent 2' }),
-          new Player({ name: 'Opponent 3' }),
+          new Player({ name: 'Opponent 1', _sizeOnly: true }),
+          new Player({ name: 'Opponent 2', _sizeOnly: true }),
+          new Player({ name: 'Opponent 3', _sizeOnly: true }),
         ];
       }
       while (this.players.length < 4) {
-        this.players.push(new Player({ name: `Opponent ${this.players.length}` }));
+        this.players.push(new Player({ name: `Opponent ${this.players.length}`, _sizeOnly: true }));
       }
+
+      // ── Fingerprint cache ─────────────────────────────────────────────────
+      // Lazily computed; set to null whenever state changes (see invalidateFp).
+      // Hand is stored sorted so fingerprint can skip sort().
+      this._fp = null;
+      if (this.hand.length > 1) this.hand.sort();
     }
+
+    /** Invalidate fingerprint cache.  Call after any in-place mutation. */
+    invalidateFp() { this._fp = null; }
 
     // ── Convenience zone accessors for active player (players[0]) ────────────
 
@@ -3085,11 +3139,11 @@ function _buildSolverBundle() {
     // ── Clone ─────────────────────────────────────────────────────────────────
 
     clone() {
-      return new GameState({
+      const s = new GameState({
         turn:           this.turn,
         phase:          this.phase,
         landDrops:      this.landDrops,
-        hand:           [...this.hand],
+        hand:           [...this.hand],      // already sorted — stays sorted
         battlefield:    this.battlefield.map(p => p.clone()),
         mana:           this.mana.clone(),
         storm:          this.storm,
@@ -3102,8 +3156,11 @@ function _buildSolverBundle() {
         commanderTax:   this.commanderTax,
         isOpponentTurn: this.isOpponentTurn ?? false,
         topDecked:      this.topDecked ?? null,
+        drawForTurn:    this.drawForTurn ?? false,
         _hasSTAX:       this._hasSTAX ?? false,
       });
+      s._fp = null;
+      return s;
     }
 
     // ── Logging ───────────────────────────────────────────────────────────────
@@ -3189,7 +3246,7 @@ function _buildSolverBundle() {
         if (s.players[0].library.length === 0) break;
         const cardKey = s.players[0].library.shift();
         if (cardKey && cardKey !== 'unknown') {
-          s.hand = [...s.hand, cardKey];
+          s.hand = [...s.hand, cardKey].sort();  // maintain sorted invariant for fingerprint
         }
       }
       return s;
@@ -3587,7 +3644,7 @@ function _buildSolverBundle() {
 
     addToHand(cardKey) {
       const s = this.clone();
-      s.hand = [...s.hand, cardKey];
+      s.hand = [...s.hand, cardKey].sort();  // maintain sorted invariant for fingerprint
       return s;
     }
 
@@ -3613,16 +3670,24 @@ function _buildSolverBundle() {
         p.summoningSick = false;
         p.abilitiesUsed = {};
       }
-      // Draw for turn — ONLY if a tutor explicitly top-decked a card.
-      // This keeps the solver deterministic: random library draws are not modelled.
-      // When topDecked is set, the named card is guaranteed to be on top of the library.
+      // Draw for turn — ONLY if a tutor explicitly top-decked a card OR
+      // drawForTurn is enabled (mulligan Monte Carlo mode).
+      // This keeps the solver deterministic in normal mode: random library draws
+      // are not modelled. In mulligan mode each trial has a shuffled library so
+      // draws are random across trials but deterministic within one trial.
       if (s.topDecked !== null) {
         const topCard = s.topDecked;
         s.topDecked = null;                      // consume the flag
         s.players[0] = s.players[0].draw(1);    // remove from library
-        s.hand = [...s.hand, topCard];           // deliver to hand
+        s.hand = [...s.hand, topCard].sort();    // deliver to hand (maintain sorted invariant)
+      } else if (s.drawForTurn && s.players[0].library.length > 0) {
+        // Mulligan mode: draw the actual top card of the (pre-shuffled) library.
+        const drawnKey = s.players[0].library[0];
+        s.players[0] = s.players[0].draw(1);
+        if (drawnKey && drawnKey !== 'unknown') {
+          s.hand = [...s.hand, drawnKey].sort();  // maintain sorted invariant
+        }
       }
-      // If topDecked is null: no draw step — library top is unknown/random.
       // Opponents still draw (library size tracking only):
       for (let i = 1; i < s.players.length; i++) {
         s.players[i] = s.players[i].draw(1);
@@ -3637,16 +3702,34 @@ function _buildSolverBundle() {
     // ── Fingerprint ───────────────────────────────────────────────────────────
 
     fingerprint() {
-      const hand = [...this.hand].sort().join(',');
+      if (this._fp !== null) return this._fp;
+
+      // Hand — already stored sorted, no sort() needed
+      const hand = this.hand.join(',');
+
+      // Battlefield — sort by encoded string
       const bf = this.battlefield
-        .map(p => `${p.name}:${p.tapped ? 'T' : 'U'}:${p.isForest ? 'F' : ''}`)
+        .map(p => p.name + (p.tapped ? ':T' : ':U') + (p.isForest ? ':F' : ''))
         .sort().join('|');
-      const m = this.mana.toString();
-      const players = this.players
-        .map(p => `${p.life}/${p.librarySize}/${p.poison}/${p.graveyard.length}/${p.exile.length}`)
-        .join(',');
-      const cmd = `CZ:${[...this.commandZone].sort().join(',')}:tax${this.commanderTax}`;
-      return `T${this.turn}|H:${hand}|BF:${bf}|M:${m}|L:${this.landDrops}|P:${players}|${cmd}`;
+
+      // Mana — fast colon-separated digits (avoids conditional string building)
+      const mn = this.mana;
+      const m = mn.W + ':' + mn.U + ':' + mn.B + ':' + mn.R + ':' + mn.G + ':' + mn.C;
+
+      // Players — unrolled 4-player concat (avoids .map() lambda overhead)
+      const p0 = this.players[0], p1 = this.players[1],
+            p2 = this.players[2], p3 = this.players[3];
+      const players =
+        p0.life + '/' + p0.librarySize + '/' + p0.poison + '/' + p0.graveyard.length + '/' + p0.exile.length + ',' +
+        p1.life + '/' + p1.librarySize + '/' + p1.poison + '/' + p1.graveyard.length + '/' + p1.exile.length + ',' +
+        p2.life + '/' + p2.librarySize + '/' + p2.poison + '/' + p2.graveyard.length + '/' + p2.exile.length + ',' +
+        p3.life + '/' + p3.librarySize + '/' + p3.poison + '/' + p3.graveyard.length + '/' + p3.exile.length;
+
+      const cmd = [...this.commandZone].sort().join(',') + ':' + this.commanderTax;
+
+      this._fp = 'T' + this.turn + '|H:' + hand + '|BF:' + bf + '|M:' + m +
+                 '|L:' + this.landDrops + '|P:' + players + '|CZ:' + cmd;
+      return this._fp;
     }
 
     // ── Display ───────────────────────────────────────────────────────────────
@@ -3659,7 +3742,7 @@ function _buildSolverBundle() {
     }
   }
 
-  var _GSM = { GameState, ManaPool, parseCost, Player, Permanent };
+  var _GSM = { GameState, ManaPool, parseCost, Player, Permanent, buildDefaultLibrary };
 
   // cards.js
   /**
@@ -4313,7 +4396,7 @@ function _buildSolverBundle() {
             for (const bf of s.battlefield) {
               if (bf.subtypes && bf.subtypes.includes('Elf')) {
                 bf.power = 5; bf.toughness = 5;
-                if (!bf.subtypes.includes('Dinosaur')) bf.subtypes.push('Dinosaur');
+                if (!bf.subtypes.includes('Dinosaur')) bf.subtypes = [...bf.subtypes, 'Dinosaur'];
               }
             }
             return [s.log('Allosaurus Shepherd: Elves become 5/5 Dinosaurs')];
@@ -5198,7 +5281,7 @@ function _buildSolverBundle() {
               // Put the fetched creature directly into hand (oracle: "put it into your hand")
               const ns2 = ns.clone();
               ns2.players[0] = ns2.players[0].clone();
-              ns2.hand = [...ns2.hand, cardKey];
+              ns2.hand = [...ns2.hand, cardKey].sort();  // maintain sorted invariant
               results.push(ns2.log(
                 `Fauna Shaman: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
               ));
@@ -5455,7 +5538,7 @@ function _buildSolverBundle() {
               // Put the fetched creature directly into hand (oracle: "put it into your hand")
               const ns2 = ns.clone();
               ns2.players[0] = ns2.players[0].clone();
-              ns2.hand = [...ns2.hand, cardKey];
+              ns2.hand = [...ns2.hand, cardKey].sort();  // maintain sorted invariant
               results.push(ns2.log(
                 `Survival of the Fittest: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
               ));
@@ -8707,6 +8790,12 @@ function _buildSolverBundle() {
   var _SLV = { Solver };
 
   // Analyzer.js
+  // Shims for stripped requires — Analyzer needs these from earlier modules:
+  var buildDefaultLibrary = _GSM.buildDefaultLibrary; // const { GameState, buildDefaultLibrary } = require('./GameState')
+  // checkCombos, checkVictory, DETECTORS, WIN_CONDITIONS are already in scope from combos.js above
+  // GameState is already in scope from GameState.js above
+  // Solver is already in scope from Solver.js above
+  // CARDS is already in scope from cards.js above
   /**
    * MTG Combo Solver — Hand Analyzer
    *
@@ -8959,12 +9048,16 @@ function _buildSolverBundle() {
   /** Run solver silently (suppress console output) */
   function quietSolve(solver, state) {
     const log = console.log;
-    const write = process.stdout.write.bind(process.stdout);
+    const write = typeof process !== 'undefined' && process.stdout
+      ? process.stdout.write.bind(process.stdout) : null;
     console.log = () => {};
-    process.stdout.write = () => {};
+    if (write) process.stdout.write = () => {};
     let result;
     try { result = solver.solve(state); }
-    finally { console.log = log; process.stdout.write = write; }
+    finally {
+      console.log = log;
+      if (write) process.stdout.write = write;
+    }
     return result;
   }
 
@@ -8982,6 +9075,172 @@ function _buildSolverBundle() {
     return 'other';
   }
 
+  // ── Mulligan Analysis (Monte Carlo) ──────────────────────────────────────
+
+  /**
+   * Evaluate whether an opening hand should be kept or mulliganed.
+   *
+   * For each trial the solver receives a freshly shuffled library (the real
+   * remaining deck, excluding the hand). The GameState `drawForTurn` flag is
+   * set so that `startNewTurn()` draws the actual top card of that library at
+   * the start of every turn, exactly as you would in a real game.
+   *
+   * After `trials` Monte Carlo runs the function reports:
+   *   - infiniteManaPercent — % of trials where infinite mana was assembled ≤ maxTurns
+   *   - winPercent          — % of trials where a full win condition was achieved ≤ maxTurns
+   *   - trialResults        — raw array of per-trial outcome objects (for debugging)
+   *
+   * @param {string[]} hand        Opening hand (up to 7 card keys)
+   * @param {object}   options
+   * @param {number}   [options.trials=200]      Number of Monte Carlo trials
+   * @param {number}   [options.maxTurns=4]      Turn budget per trial
+   * @param {number}   [options.maxDepth=50]     DFS depth limit per trial
+   * @param {number}   [options.maxStates=150000] State budget per trial
+   * @param {string[]} [options.battlefield=[]]  Cards already on the battlefield
+   * @returns {MulliganAnalysis}
+   */
+  function mulliganAnalyze(hand, options = {}) {
+    const {
+      trials     = 200,
+      maxTurns   = 4,
+      maxDepth   = 50,
+      maxStates  = 150_000,
+      battlefield = [],
+    } = options;
+
+    let infiniteManaWins = 0;
+    let fullWins         = 0;
+    const trialResults   = [];
+
+    for (let t = 0; t < trials; t++) {
+      // Build a freshly shuffled library for this trial (excludes hand + battlefield)
+      const library = buildDefaultLibrary({ hand, battlefield });
+
+      // Construct the initial state with drawForTurn enabled
+      let state = new GameState({
+        players: [
+          { name: 'You',        life: 40, library,                  poison: 0 },
+          { name: 'Opponent 1', life: 40, librarySize: 99, poison: 0 },
+          { name: 'Opponent 2', life: 40, librarySize: 99, poison: 0 },
+          { name: 'Opponent 3', life: 40, librarySize: 99, poison: 0 },
+        ],
+        hand: [...hand],
+        landDrops:   1,
+        drawForTurn: true,   // ← enables real draws at each turn boundary
+      });
+
+      // Place battlefield cards (pre-existing permanents, e.g. commander)
+      for (const key of battlefield) {
+        state = state.enterBattlefield(key);
+        const added = state.battlefield[state.battlefield.length - 1];
+        if (added) added.summoningSick = false;
+      }
+
+      state.history.push({ turn: 1, msg: '-- Begin Turn 1 (mulligan trial) --' });
+
+      // Run a quiet solve — suppresss console output for speed
+      const solver = new Solver({
+        maxTurns,
+        maxDepth,
+        maxStates,
+        allLines: false,
+        verbose:  false,
+      });
+
+      const result = quietSolve(solver, state);
+
+      // Classify the result
+      const achievedInfiniteMana = !!result;                        // solver finds any combo line
+      const achievedFullWin      = !!(result && result.combo && result.combo.winCondition);
+
+      if (achievedInfiniteMana) infiniteManaWins++;
+      if (achievedFullWin)      fullWins++;
+
+      trialResults.push({
+        trial:              t + 1,
+        infiniteMana:       achievedInfiniteMana,
+        fullWin:            achievedFullWin,
+        comboTurn:          result ? result.line[result.line.length - 1].turn : null,
+        comboName:          result?.combo?.manaCombo ?? result?.combo?.name ?? null,
+        winCondition:       result?.combo?.winCondition ?? null,
+      });
+    }
+
+    const infiniteManaPercent = Math.round((infiniteManaWins / trials) * 1000) / 10;
+    const winPercent          = Math.round((fullWins         / trials) * 1000) / 10;
+
+    // Turn breakdown: how many trials combo'd on each specific turn
+    const infiniteManaByTurn = {};
+    const winByTurn          = {};
+    for (const r of trialResults) {
+      if (r.infiniteMana && r.comboTurn != null) {
+        infiniteManaByTurn[r.comboTurn] = (infiniteManaByTurn[r.comboTurn] || 0) + 1;
+      }
+      if (r.fullWin && r.comboTurn != null) {
+        winByTurn[r.comboTurn] = (winByTurn[r.comboTurn] || 0) + 1;
+      }
+    }
+
+    // Convert raw counts → percentages
+    for (const k of Object.keys(infiniteManaByTurn)) {
+      infiniteManaByTurn[k] = Math.round((infiniteManaByTurn[k] / trials) * 1000) / 10;
+    }
+    for (const k of Object.keys(winByTurn)) {
+      winByTurn[k] = Math.round((winByTurn[k] / trials) * 1000) / 10;
+    }
+
+    // Verdict
+    let verdict, reason;
+    if (infiniteManaPercent >= 60) {
+      verdict = 'KEEP';
+      reason  = `${infiniteManaPercent}% of trials assemble infinite mana within ${maxTurns} turns`;
+    } else if (infiniteManaPercent >= 35) {
+      verdict = 'KEEP (borderline)';
+      reason  = `${infiniteManaPercent}% of trials assemble infinite mana — marginal hand`;
+    } else {
+      verdict = 'MULLIGAN';
+      reason  = `Only ${infiniteManaPercent}% of trials assemble infinite mana within ${maxTurns} turns`;
+    }
+
+    return {
+      hand,
+      trials,
+      maxTurns,
+      infiniteManaPercent,
+      winPercent,
+      infiniteManaByTurn,
+      winByTurn,
+      verdict,
+      reason,
+      trialResults,
+    };
+  }
+
+  /**
+   * Print a formatted mulligan analysis report to console.
+   * @param {object} analysis  Result of mulliganAnalyze()
+   */
+  function printMulliganAnalysis(analysis) {
+    const W    = 68;
+    const line = '═'.repeat(W);
+    const dash = '─'.repeat(W);
+    for (const key of analysis.hand) {
+      const def = CARDS[key];
+      if (!def) continue;
+      const cost = def.cost ? `{${def.cost}}` : '(land)';
+      const role = cardRole(key);
+    }
+    const manaByTurn = Object.entries(analysis.infiniteManaByTurn).sort(([a],[b]) => +a - +b);
+    for (const [turn, pct] of manaByTurn) {
+      const bar = '█'.repeat(Math.round(pct / 2.5));
+    }
+    const winByTurn = Object.entries(analysis.winByTurn).sort(([a],[b]) => +a - +b);
+    for (const [turn, pct] of winByTurn) {
+      const bar = '█'.repeat(Math.round(pct / 2.5));
+    }
+    const icon = analysis.verdict.startsWith('KEEP') ? '✅' : '❌';
+  }
+
 
   // name→cardKey lookup
   const SOLVER_NAME_MAP = {};
@@ -8989,13 +9248,35 @@ function _buildSolverBundle() {
     if (v && v.name) SOLVER_NAME_MAP[v.name] = k;
   }
 
-  return { GameState, ManaPool, Solver, analyze, SOLVER_NAME_MAP };
+  return { GameState, ManaPool, Solver, analyze, mulliganAnalyze, buildDefaultLibrary, SOLVER_NAME_MAP };
 }
-var _solverExports       = _buildSolverBundle();
-var SolverGameState      = _solverExports.GameState;
-var YevaSolver           = _solverExports.Solver;
-var solverAnalyze        = _solverExports.analyze;
-var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
+var _solverExports          = _buildSolverBundle();
+var SolverGameState         = _solverExports.GameState;
+var YevaSolver              = _solverExports.Solver;
+var solverAnalyze           = _solverExports.analyze;
+var solverMulliganAnalyze   = _solverExports.mulliganAnalyze;
+var solverBuildDefaultLibrary = _solverExports.buildDefaultLibrary;
+var SOLVER_NAME_MAP         = _solverExports.SOLVER_NAME_MAP;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -9065,6 +9346,8 @@ var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
 
 
 
+// ── Mulligan Analyze bridge ───────────────────────────────────────────────
+// Wraps solverMulliganAnalyze: translates card names → card keys and calls
 // ── Solver bridge ─────────────────────────────────────────────────────────
 // Translates analyzeGameState's card-name arrays into Solver's GameState,
 // runs the search, and returns structured results.
@@ -16460,6 +16743,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
     // without it the loop can't repeat and the advice is misleading.
     if (combo.needsInfiniteMana && !infiniteManaActive) continue;
 
+    // Combos flagged needsOpponentTurn only work on an opponent's turn (e.g. Glademuse —
+    // "whenever a player casts a spell, if it's not their turn, that player draws a card").
+    // On your own main phase the trigger never fires, so suppress the combo entirely.
+    if (combo.needsOpponentTurn && isMyTurn) continue;
+
     // Collector Ouphe / Null Rod shut down ALL artifact activated abilities.
     // Suppress combos whose key required piece is an artifact that relies on its activated ability
     // (e.g. Thousand-Year Elixir's {1} untap, Sol Ring tap, Chrome Mox tap, etc.).
@@ -23305,6 +23593,35 @@ const PRESET_DECKS = [
     ],
   },
   {
+    id: "yeva-slow-grow",
+    name: "Slow-Grow",
+    cards: [
+      "Allosaurus Shepherd","Ancient Tomb","Arbor Elf","Archdruid's Charm",
+      "Argothian Elder","Ashaya, Soul of the Wild","Badgermole Cub","Beast Within",
+      "Beastrider Vanguard","Birds of Paradise","Bonders' Enclave","Boreal Druid",
+      "Boseiju, Who Endures","Chalice of the Void","Chomping Changeling","Chord of Calling",
+      "Chrome Mox","Circle of Dreams Druid","Collector Ouphe","Crop Rotation",
+      "Delighted Halfling","Deserted Temple","Destiny Spinner","Disciple of Freyalise",
+      "Disruptor Flute","Duskwatch Recruiter","Earthcraft","Eladamri, Korvecdal",
+      "Eldritch Evolution","Elvish Archdruid","Elvish Mystic","Elvish Reclaimer",
+      "Elvish Spirit Guide","Emerald Medallion","Emergence Zone","Endurance",
+      "Eternal Witness","Fanatic of Rhonas","Fauna Shaman","Force of Vigor",
+      "Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest",
+      "Formidable Speaker","Fyndhorn Elves","Gaea's Cradle","Geier Reach Sanitarium",
+      "Gemstone Caverns","Green Sun's Zenith","Growing Rites of Itlimoc","Heartwood Storyteller",
+      "Hope Tender","Hyrax Tower Scout","Legolas's Quick Reflexes","Ley Weaver",
+      "Llanowar Elves","Lotus Petal","Magus of the Candelabra","Manglehorn",
+      "Maze of Ith","Mikokoro, Center of the Sea","Mox Diamond","Natural Order",
+      "Nature's Rhythm","Null Rod","Nykthos, Shrine to Nyx","Priest of Titania",
+      "Quirion Ranger","Root Maze","Scryb Ranger","Seedborn Muse","Shifting Woodland",
+      "Sol Ring","Sowing Mycospawn","Summoner's Pact","Survival of the Fittest",
+      "Sylvan Scrying","Talon Gates of Madara","Temur Sabertooth","Thorn of Amethyst",
+      "Urza's Cave","Utopia Sprawl","Vexing Bauble","War Room","Wild Growth",
+      "Wirewood Lodge","Wirewood Symbiote","Woodland Bellower",
+      "Yavimaya, Cradle of Growth","Yeva, Nature's Herald",
+    ],
+  },
+  {
     id: "yeva-cedh-jan2026",
     name: "cEDH Jan 2026",
     cards: [
@@ -23332,35 +23649,6 @@ const PRESET_DECKS = [
       "Windswept Heath","Wirewood Lodge","Wirewood Symbiote","Woodcaller Automaton",
       "Wooded Foothills","Woodland Bellower","Worldly Tutor",
       "Yavimaya, Cradle of Growth","Yeva, Nature's Herald","Yisan, the Wanderer Bard",
-    ],
-  },
-  {
-    id: "yeva-slow-grow",
-    name: "Slow-Grow",
-    cards: [
-      "Allosaurus Shepherd","Ancient Tomb","Arbor Elf","Archdruid's Charm",
-      "Argothian Elder","Ashaya, Soul of the Wild","Badgermole Cub","Beast Within",
-      "Beastrider Vanguard","Birds of Paradise","Bonders' Enclave","Boreal Druid",
-      "Boseiju, Who Endures","Chalice of the Void","Chomping Changeling","Chord of Calling",
-      "Chrome Mox","Circle of Dreams Druid","Collector Ouphe","Crop Rotation",
-      "Delighted Halfling","Deserted Temple","Destiny Spinner","Disciple of Freyalise",
-      "Disruptor Flute","Duskwatch Recruiter","Earthcraft","Eladamri, Korvecdal",
-      "Eldritch Evolution","Elvish Archdruid","Elvish Mystic","Elvish Reclaimer",
-      "Elvish Spirit Guide","Emerald Medallion","Emergence Zone","Endurance",
-      "Eternal Witness","Fanatic of Rhonas","Fauna Shaman","Force of Vigor",
-      "Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest",
-      "Formidable Speaker","Fyndhorn Elves","Gaea's Cradle","Geier Reach Sanitarium",
-      "Gemstone Caverns","Green Sun's Zenith","Growing Rites of Itlimoc","Heartwood Storyteller",
-      "Hope Tender","Hyrax Tower Scout","Legolas's Quick Reflexes","Ley Weaver",
-      "Llanowar Elves","Lotus Petal","Magus of the Candelabra","Manglehorn",
-      "Maze of Ith","Mikokoro, Center of the Sea","Mox Diamond","Natural Order",
-      "Nature's Rhythm","Null Rod","Nykthos, Shrine to Nyx","Priest of Titania",
-      "Quirion Ranger","Root Maze","Scryb Ranger","Seedborn Muse","Shifting Woodland",
-      "Sol Ring","Sowing Mycospawn","Summoner's Pact","Survival of the Fittest",
-      "Sylvan Scrying","Talon Gates of Madara","Temur Sabertooth","Thorn of Amethyst",
-      "Urza's Cave","Utopia Sprawl","Vexing Bauble","War Room","Wild Growth",
-      "Wirewood Lodge","Wirewood Symbiote","Woodland Bellower",
-      "Yavimaya, Cradle of Growth","Yeva, Nature's Herald",
     ],
   },
 ];
@@ -29992,6 +30280,16 @@ function GoldfishModal({ activeDeck, onClose, onLoadState, seedState }) {
   const deckCards = activeDeck?.cards ?? [];
   const hasDeck = deckCards.length > 0;
 
+  // ── Mulligan sim grading state ──────────────────────────────────────────
+  // Runs 10 mulliganAnalyze trials (max 2 concurrent) when mulligan phase is active.
+  // Results are aggregated as they arrive and displayed in a second grade card.
+  const [mulliganSimResults, setMulliganSimResults] = useState(null);
+  // Resolve the worker URL once at mount so it's stable across re-runs
+  const mulliganWorkerUrlRef = useRef(null);
+  useEffect(() => {
+    try { mulliganWorkerUrlRef.current = new URL("./solver-worker.js", import.meta.url); } catch(_) {}
+  }, []);
+
   // Storage key scoped to deck so each deck gets its own stats
   const statsKey = `goldfish-stats:${(activeDeck?.name ?? "default").replace(/[^a-zA-Z0-9-_]/g, "_")}`;
 
@@ -35704,6 +36002,87 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     return () => window.removeEventListener("keydown", handler);
   }, [phase, phase2, hand]);
 
+  // ── Mulligan sim worker pool ─────────────────────────────────────────────
+  // Runs 10 mulliganAnalyze trials off the main thread using real Web Workers.
+  // Max 2 concurrent. If workers are unavailable the sim is silently skipped.
+  useEffect(() => {
+    if (phase !== "mulligan" || phase2 === "bottoming") {
+      setMulliganSimResults(null);
+      return;
+    }
+    if (!hand || hand.length === 0) return;
+
+    const workerUrl = mulliganWorkerUrlRef.current;
+    if (!workerUrl) return; // workers not available — skip silently
+
+    const currentHand = [...hand];
+    let cancelled = false;
+
+    setMulliganSimResults({ completed: 0, total: 10, infinitePct: null, winPct: null });
+
+    const TOTAL = 10;
+    const MAX_CONCURRENT = 2;
+    const OPTS = { trials: 5, maxTurns: 4, maxDepth: 50, maxStates: 150_000 };
+
+    let launched = 0;
+    let completed = 0;
+    let totalInfinite = 0;
+    let totalWin = 0;
+    const activeWorkers = [];
+
+    function onTrialDone(infinitePct, winPct) {
+      if (cancelled) return;
+      completed++;
+      totalInfinite += infinitePct ?? 0;
+      totalWin      += winPct      ?? 0;
+      setMulliganSimResults({
+        completed,
+        total: TOTAL,
+        infinitePct: completed > 0 ? Math.round(totalInfinite / completed) : null,
+        winPct:      completed > 0 ? Math.round(totalWin      / completed) : null,
+      });
+      if (completed < TOTAL) launchNext();
+    }
+
+    function launchNext() {
+      if (cancelled || launched >= TOTAL) return;
+      launched++;
+      const payload = { type: "mulliganAnalyze", hand: currentHand, ...OPTS };
+      try {
+        const w = new Worker(workerUrl);
+        activeWorkers.push(w);
+        w.onmessage = (e) => {
+          if (e.data?.type === 'mulliganDebug' || e.data?.type === 'mulliganDebug2') return;
+          w.terminate();
+          const idx = activeWorkers.indexOf(w);
+          if (idx !== -1) activeWorkers.splice(idx, 1);
+          // On worker error, count the trial as 0% so the pool completes
+          onTrialDone(e.data?.infiniteManaPercent ?? 0, e.data?.winPercent ?? 0);
+        };
+        w.onerror = () => {
+          w.terminate();
+          const idx = activeWorkers.indexOf(w);
+          if (idx !== -1) activeWorkers.splice(idx, 1);
+          // Count as 0% so remaining trials still launch
+          onTrialDone(0, 0);
+        };
+        w.postMessage(payload);
+      } catch (_) {
+        // Worker construction failed — count as 0% and continue
+        onTrialDone(0, 0);
+      }
+    }
+
+    for (let i = 0; i < MAX_CONCURRENT; i++) launchNext();
+
+    return () => {
+      cancelled = true;
+      activeWorkers.forEach(w => { try { w.terminate(); } catch(_) {} });
+      activeWorkers.length = 0;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, phase2, hand.join(",")]);
+
   useEffect(() => {
     if (phase !== "playing") return;
     const handler = (e) => {
@@ -36838,6 +37217,70 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       <div key={i} style={{ fontSize: "11px", color: COLORS.textMid, fontFamily: "'Crimson Text', serif", lineHeight: 1.4 }}>{n}</div>
                     ))}
                   </div>
+
+                  {/* ── Sim-based win% grading card ── */}
+                  {(() => {
+                    const sim = mulliganSimResults;
+                    if (!sim) return null;
+                    const infinitePct = sim.infinitePct;
+                    const winPct      = sim.winPct;
+                    const isDone      = sim.completed >= sim.total;
+                    // Colour based on infinitePct (primary signal)
+                    const simColor = infinitePct == null ? COLORS.textDim
+                      : infinitePct >= 55 ? COLORS.green2
+                      : infinitePct >= 35 ? COLORS.gold
+                      : COLORS.red;
+                    const simLabel = infinitePct == null ? "SIMULATING…"
+                      : infinitePct >= 55 ? "SIM: STRONG KEEP"
+                      : infinitePct >= 35 ? "SIM: BORDERLINE"
+                      : "SIM: CONSIDER MULLIGANING";
+                    const progressPct = Math.round((sim.completed / sim.total) * 100);
+                    return (
+                      <div style={{
+                        background: "#080f08", border: `1px solid ${simColor}44`,
+                        borderLeft: `3px solid ${simColor}`, borderRadius: "8px",
+                        padding: "10px 16px", position: "relative", overflow: "hidden",
+                      }}>
+                        {!isDone && (
+                          <div style={{
+                            position: "absolute", top: 0, left: 0, bottom: 0,
+                            width: `${progressPct}%`,
+                            background: `${simColor}0d`,
+                            transition: "width 0.3s ease",
+                            pointerEvents: "none",
+                          }} />
+                        )}
+                        <div style={{ position: "relative" }}>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "6px" }}>
+                            <div style={{ fontSize: "11px", color: simColor, fontFamily: "'Cinzel', serif", letterSpacing: "1.5px" }}>
+                              {isDone ? "★ " : "⟳ "}{simLabel}
+                            </div>
+                          </div>
+                          {/* Stat row: Infinite Mana % + Full Win % */}
+                          {infinitePct != null && (
+                            <div style={{ display: "flex", gap: "18px", marginBottom: "4px" }}>
+                              <div>
+                                <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "1px" }}>♾ INFINITE MANA</div>
+                                <div style={{ fontSize: "16px", color: simColor, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{infinitePct}%</div>
+                              </div>
+                              {winPct != null && (
+                                <div>
+                                  <div style={{ fontSize: "9px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", letterSpacing: "1px", marginBottom: "1px" }}>🏆 FULL WIN</div>
+                                  <div style={{ fontSize: "16px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", fontWeight: "bold" }}>{winPct}%</div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", lineHeight: 1.4 }}>
+                            {isDone
+                              ? `Monte Carlo · ${sim.total} × 5 trials · T≤4`
+                              : `Running trial ${sim.completed + 1} of ${sim.total}…`
+                            }
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
