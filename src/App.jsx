@@ -65,6 +65,8 @@ const CARDS = {
   "War Room":              { type:"land", cmc:0, tags:["land","draw","win-con","untap-synergy"] , role:"draw-win-outlet" },
   "Urza's Cave":           { type:"land", cmc:0, tags:["land","tutor"] },
   "Forest":                { type:"land", cmc:0, tags:["land","basic","forest"] },
+  "Gemstone Caverns":      { type:"land", cmc:0, tags:["land","fast-mana","opener"], note:"If in opening hand and not going first, exile a card to ETB with a luck counter: {T}: Add one mana of any color." },
+  "Maze of Ith":           { type:"land", cmc:0, tags:["land","utility","untap-land","protection"], note:"{T}: Untap target attacking creature. Prevent all combat damage dealt to/by it this combat. Combos with Argothian Elder for infinite mana." },
   // ACCELERANTS
   "Sol Ring":              { type:"artifact", cmc:1, tags:["rock","fast-mana"] , greenPips:0},
   "Chrome Mox":            { type:"artifact", cmc:0, tags:["rock","fast-mana","mox"] , greenPips:0},
@@ -190,6 +192,8 @@ const CARDS = {
   "Trinisphere":           { type:"artifact", cmc:3, tags:["stax"], role:"stax"},
   "Titania's Song":        { type:"enchantment", cmc:4, tags:["stax","hate","enchantment"], role:"stax", greenPips:1},
   "Vexing Bauble":         { type:"artifact", cmc:1, tags:["stax","hate","free"], role:"stax"},
+  "Chalice of the Void":   { type:"artifact", cmc:0, tags:["stax","hate","tax"], role:"stax", note:"ETB with X charge counters. Counter spells cast with CMC equal to the number of charge counters on Chalice."},
+  "Disruptor Flute":       { type:"artifact", cmc:2, tags:["stax","hate"], role:"stax", note:"ETB: name a nonland card type. Activated abilities of permanents of that type cost {2} more to activate."},
   "The Cabbage Merchant":  { type:"creature", cmc:3, tags:["stax","storm-hate"], role:"stax", greenPips:1},
 };
 
@@ -2429,6 +2433,15 @@ function _buildSolverBundle() {
     ['argothian_elder','wirewood_lodge','nykthos'],          // 31
     ['ley_weaver','wirewood_lodge'],
 
+    // Maze of Ith + Elder/Weaver infinite mana loops
+    // Elder taps → untaps Maze + Cradle/Nykthos; Maze taps → untaps Elder; repeat.
+    ['argothian_elder','maze_of_ith'],
+    ['argothian_elder','maze_of_ith','gaeas_cradle'],
+    ['argothian_elder','maze_of_ith','nykthos'],
+    ['ley_weaver','maze_of_ith'],
+    ['ley_weaver','maze_of_ith','gaeas_cradle'],
+    ['ley_weaver','maze_of_ith','nykthos'],
+
     // Cradle / Nykthos non-Ashaya loops
     ['gaeas_cradle','deserted_temple'],
     ['gaeas_cradle','wirewood_lodge'],
@@ -2468,6 +2481,14 @@ function _buildSolverBundle() {
     'endurance': 43, 'woodland_bellower': 40, 'fierce_empath': 35,
     // Lands for Sylvan Scrying / Crop Rotation
     'war_room': 38, 'geier_reach': 41,
+    // Maze of Ith — key untap land for Argothian Elder / Ley Weaver infinite loops
+    'maze_of_ith': 72,
+    // Gemstone Caverns — fast mana land, lower priority than key combo lands
+    'gemstone_caverns': 30,
+    // New cards — Invasion of Ikoria: non-Human creature tutor (similar role to Chord)
+    'invasion_of_ikoria': 72,
+    // Ulvenwald Oddity: haste creature, useful in loops that need immediate tap
+    'ulvenwald_oddity': 38,
   };
 
   // ── Functional equivalents ────────────────────────────────────────────────
@@ -2488,6 +2509,7 @@ function _buildSolverBundle() {
   const STAX_KEYS = new Set([
     'collector_ouphe', 'null_rod', 'root_maze',
     'thorn_of_amethyst', 'trinisphere', 'orb_of_dreams', 'vexing_bauble',
+    'chalice_of_the_void', 'disruptor_flute',
   ]);
 
   function isStax(cardKey) {
@@ -3237,7 +3259,7 @@ function _buildSolverBundle() {
       s.battlefield = [...s.battlefield, perm];
 
       // Option B: update _hasSTAX flag when a STAX card enters
-      const STAX_NAMES = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble']);
+      const STAX_NAMES = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble','Chalice of the Void','Disruptor Flute']);
       if (STAX_NAMES.has(def.name)) s._hasSTAX = true;
 
       // ── Static layer: apply existing statics to the new permanent ────────────
@@ -3318,6 +3340,11 @@ function _buildSolverBundle() {
         for (const bf of s.battlefield) {
           if (bf.is('creature') && bf.id !== perm.id) bf.summoningSick = false;
         }
+      }
+
+      // Ulvenwald Oddity ETB: has haste — remove its own summoning sickness
+      if (cardKey === 'ulvenwald_oddity') {
+        perm.summoningSick = false;
       }
 
       // Great Oak Guardian ETB: target player's creatures get +2/+2 until EOT and untap
@@ -3497,7 +3524,7 @@ function _buildSolverBundle() {
       if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
       if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
       // Option B: recalculate _hasSTAX after removal
-      const STAX_NAMES_R = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble']);
+      const STAX_NAMES_R = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble','Chalice of the Void','Disruptor Flute']);
       s._hasSTAX = s.battlefield.some(p => STAX_NAMES_R.has(p.name));
       return s;
     }
@@ -3983,9 +4010,120 @@ function _buildSolverBundle() {
     ominous_cemetery:    { name: 'Ominous Cemetery',           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
     mariposa_military:   { name: 'Mariposa Military Base',     types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
 
+    // Gemstone Caverns: If Gemstone Caverns is in your opening hand and you're
+    // not the starting player, you may begin the game with it on the battlefield
+    // with a luck counter on it. {T}: Add {C}. If Gemstone Caverns has a luck
+    // counter on it, instead add one mana of any color.
+    // In the solver, we model it as: taps for any color (the luck counter path),
+    // representing the optimal opening-hand scenario where it accelerates mana.
+    // If it enters normally (no luck counter), it taps for {C} only.
+    gemstone_caverns: {
+      name: 'Gemstone Caverns', types: ['land'], subtypes: [], cost: null,
+      tapForMana(state, perm) {
+        if (perm.tapped) return [];
+        const results = [];
+        // With luck counter (opening hand accelerant): tap for any color
+        if (perm.luckCounter) {
+          for (const color of ['G', 'C']) {
+            let s = state.tapPermanent(perm.id); if (!s) continue;
+            s = s.addMana(color);
+            results.push(s.log(`Tap Gemstone Caverns (luck counter) → {${color}}`));
+          }
+        } else {
+          // No luck counter: taps for {C}
+          let s = state.tapPermanent(perm.id); if (!s) return [];
+          s = s.addMana('C');
+          results.push(s.log('Tap Gemstone Caverns → {C}'));
+        }
+        return results;
+      },
+      abilities: {
+        // Setup ability: exile a card from hand to place a luck counter.
+        // Represents the pre-game option when not going first.
+        place_luck_counter: {
+          label: 'Exile a card: put a luck counter on Gemstone Caverns',
+          fn(state, perm) {
+            if (perm.luckCounter) return []; // already has counter
+            const { isStax: _isStax } = _CDM;
+            // Only exile non-key cards (stax or surplus hand cards)
+            const exileCandidates = [...new Set(state.hand)].filter(k => _isStax(k));
+            const results = [];
+            for (const card of exileCandidates) {
+              let s = state.discardFromHand(card); if (!s) continue;
+              // Mark perm as having a luck counter
+              s = s.clone();
+              const idx = s.battlefield.findIndex(p => p.id === perm.id);
+              if (idx < 0) continue;
+              s.battlefield = [...s.battlefield];
+              s.battlefield[idx] = { ...s.battlefield[idx], luckCounter: true };
+              results.push(s.log(`Gemstone Caverns: exile ${card} → luck counter`));
+            }
+            return results;
+          },
+        },
+      },
+    },
+
+    // Maze of Ith: {T}: Untap target attacking creature. Prevent all combat
+    // damage that would be dealt to and dealt by that creature this turn.
+    // In the solver context, the key use is its untap ability which enables
+    // the classic Maze of Ith + Argothian Elder / Ley Weaver infinite mana loop:
+    //   1. Tap Elder/Weaver to untap Maze of Ith + another land (e.g. Cradle)
+    //   2. Tap Maze to untap Elder/Weaver
+    //   3. Repeat → net mana from the other land each iteration
+    // Maze does NOT tap for mana. Its tap ability targets an attacking creature,
+    // but we model the combo use: tapping Maze to untap a creature.
+    maze_of_ith: {
+      name: 'Maze of Ith', types: ['land'], subtypes: [], cost: null,
+      // Maze does not tap for mana
+      tapForMana(state, perm) { return []; },
+      abilities: {
+        untap_creature: {
+          label: '{T}: Untap target creature (Maze of Ith)',
+          fn(state, perm) {
+            if (perm.tapped) return [];
+            const results = [];
+            // Untap any tapped creature — models the Argothian Elder / Ley Weaver loop
+            for (const c of state.creatures().filter(c => c.tapped)) {
+              let s = state.tapPermanent(perm.id); if (!s) continue;
+              s = s.untapPermanent(c.id);
+              results.push(s.log(`Maze of Ith → untap ${c.name}`));
+            }
+            return results;
+          },
+        },
+      },
+    },
+
     // ─── ARTIFACTS ───────────────────────────────────────────────────────────
 
     sol_ring: { name: 'Sol Ring', types: ['artifact'], subtypes: [], cost: '1', tapForMana: simpleTap('{C}{C}', [['C',2]]) },
+
+    lightning_greaves: {
+      name: 'Lightning Greaves', types: ['artifact'], subtypes: ['Equipment'], cost: '2',
+      // Oracle: Equipped creature has haste and shroud.
+      // Equip {0}.
+      //
+      // Key combo role: lets a just-cast creature immediately tap for mana by
+      // removing its summoning sickness. Equip cost is {0} so it's always affordable.
+      // Shroud is not modelled (no targeting in the solver).
+      // Only useful to equip onto a summoning-sick creature — skip others.
+      abilities: {
+        equip: {
+          label: 'Equip {0}: Give a creature haste (remove summoning sickness)',
+          fn(state, perm) {
+            const results = [];
+            for (const c of state.creatures().filter(c => c.summoningSick)) {
+              let s = state.clone();
+              const target = s.battlefield.find(p => p.id === c.id);
+              if (target) { target.summoningSick = false; }
+              results.push(s.log(`Lightning Greaves → equip ${c.name} (gains haste)`));
+            }
+            return results;
+          },
+        },
+      },
+    },
 
     lotus_petal: {
       name: 'Lotus Petal', types: ['artifact'], subtypes: [], cost: '0',
@@ -4067,6 +4205,24 @@ function _buildSolverBundle() {
     thorn_of_amethyst:{ name: 'Thorn of Amethyst', types: ['artifact'], subtypes: [], cost: '2' },
     trinisphere:      { name: 'Trinisphere',        types: ['artifact'], subtypes: [], cost: '3' },
     orb_of_dreams:    { name: 'Orb of Dreams',      types: ['artifact'], subtypes: [], cost: '3' },
+
+    // Chalice of the Void: Cast with X charge counters. Counters all spells with
+    // CMC equal to X. Modeled as a stax piece — the solver won't self-cast it,
+    // but recognises it as a hate piece when placed on the battlefield by tests/setup.
+    // Most impactful at X=1 (hits almost all 1-drop mana dorks, cantrips, tutors).
+    chalice_of_the_void: {
+      name: 'Chalice of the Void', types: ['artifact'], subtypes: [], cost: 'XX',
+      // chargeCounters stored on the permanent at placement time (default 1)
+      // Static effect modelled in effectiveCost / action generation (see actions.js)
+    },
+
+    // Disruptor Flute: {2}, enters naming a card. Activated abilities of permanents
+    // with that name cost {3} more. Modeled as a generic stax artifact — the solver
+    // will not cast or fetch it, but it suppresses opponent engines when placed.
+    disruptor_flute: {
+      name: 'Disruptor Flute', types: ['artifact'], subtypes: [], cost: '2',
+      // Named card tracked in perm.namedCard at placement; no active ability in solver.
+    },
     vexing_bauble: {
       name: 'Vexing Bauble', types: ['artifact'], subtypes: [], cost: '1',
       // {1}, {T}, Sacrifice: Draw a card.
@@ -4571,6 +4727,43 @@ function _buildSolverBundle() {
     },
 
     // ─── CREATURES — Other ───────────────────────────────────────────────────
+
+    ulvenwald_oddity: {
+      name: 'Ulvenwald Oddity', types: ['creature'], subtypes: ['Beast'],
+      cost: '2GG', power: 4, toughness: 4,
+      // Oracle front face: Trample, haste.
+      // {5}{G}{G}: Transform. Back face (Ulvenwald Behemoth): Trample, haste; other
+      // creatures you control get +1/+1 and have trample and haste.
+      //
+      // Haste: enters without summoning sickness — can tap for mana immediately.
+      // Transform: too expensive for typical combos; modelled as a static haste grant
+      // to all other creatures when activated (removes their summoning sickness).
+      onEnter(state, perm) {
+        // Haste — remove summoning sickness on entry
+        perm.summoningSick = false;
+        return state;
+      },
+      abilities: {
+        transform: {
+          label: '{5}{G}{G}: Transform into Ulvenwald Behemoth (all creatures gain haste)',
+          fn(state, perm) {
+            if (perm.summoningSick) return [];
+            const ap = state.payMana('5GG'); if (!ap) return [];
+            let s = ap.clone();
+            // Become the Behemoth (7/7, grants +1/+1, trample, haste to others)
+            const self = s.battlefield.find(p => p.id === perm.id);
+            if (!self) return [];
+            self.name = 'Ulvenwald Behemoth';
+            self.power = 7; self.toughness = 7;
+            // Grant haste to all other creatures (remove summoning sickness)
+            for (const c of s.creatures()) {
+              if (c.id !== self.id) c.summoningSick = false;
+            }
+            return [s.log('Ulvenwald Oddity transforms → Ulvenwald Behemoth (all creatures gain haste)')];
+          },
+        },
+      },
+    },
 
     ashaya: {
       name: 'Ashaya, Soul of the Wild', types:['creature'], subtypes:['Elemental'], cost:'3GG', power:0,toughness:0,
@@ -5243,6 +5436,45 @@ function _buildSolverBundle() {
       },
     },
     titania_song: { name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G' },
+
+    // ─── BATTLES ─────────────────────────────────────────────────────────────
+
+    invasion_of_ikoria: {
+      name: 'Invasion of Ikoria', types: ['battle'], subtypes: ['Siege'], cost: 'XGG',
+      // Oracle: When this Siege enters, search your library and/or graveyard for a
+      // non-Human creature card with mana value X or less and put it onto the battlefield.
+      // If you search your library this way, shuffle.
+      //
+      // Modelled identically to Chord of Calling / Green Sun's Zenith:
+      // castFn receives state after dispatch pays the base {G}{G} cost.
+      // Remaining mana pool total = X.
+      // Battles enter the battlefield but the solver treats them as one-shot tutors
+      // (the siege/transform back-face is not modelled — too many turns away to matter).
+      castFn(state) {
+        const cards = CARDS;
+        const { parseCost: pc } = _GSM;
+        const results = [];
+        const x = state.mana.total();
+        const seen = new Set();
+        for (const ck of state.players[0].library) {
+          if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen.add(ck);
+          const def = cards[ck];
+          if (!def?.types.includes('creature') || !def.cost) continue;
+          if (def.subtypes?.includes('Human')) continue; // non-Human only per oracle
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+          if (mv > x) continue;
+          const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          results.push(ns.enterBattlefield(cardKey)
+            .log(`Invasion of Ikoria X=${x} → ${def.name} (MV ${mv})`));
+        }
+        return results.length
+          ? results
+          : [state.log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
+      },
+    },
 
     // ─── INSTANTS & SORCERIES ────────────────────────────────────────────────
 
@@ -7305,6 +7537,21 @@ function _buildSolverBundle() {
   }
 
   /**
+   * Returns true if a Chalice of the Void on the battlefield would counter
+   * the spell being cast (CMC matches the charge counters on Chalice).
+   */
+  function chaliceBlocks(state, def) {
+    if (!state.hasPermanent('Chalice of the Void')) return false;
+    const { parseCost: _pc } = _GSM;
+    const parsed = def._parsedCost ?? _pc(def.cost);
+    const cmc = parsed.generic + Object.values(parsed.colored).reduce((a,b) => a+b, 0);
+    return state.battlefield.some(p =>
+      p.name === 'Chalice of the Void' &&
+      (p.chargeCounters ?? 1) === cmc
+    );
+  }
+
+  /**
    * Minimum total mana imposed by Trinisphere (3).
    * Returns the effective minimum cost in generic mana (0 if Trinisphere not present).
    */
@@ -7497,6 +7744,7 @@ function _buildSolverBundle() {
       if (!def || def.types.includes('land')) continue;
       if (def.cost === null || def.cost === undefined) continue;
       if (STAX_CARDS.has(cardKey)) continue;     // never cast STAX pieces
+      if (chaliceBlocks(state, def)) continue;   // Chalice of the Void counters this spell
       if (!canCastNow(def)) continue;   // respect flash/sorcery-speed restrictions
 
       const costStr = effectiveCost(state, def);
@@ -7746,6 +7994,10 @@ function _buildSolverBundle() {
       // NOT an activated ability, so it IS suppressed by summoning sickness
       // (but not by Null Rod/Collector Ouphe since it's a land ability).
       if (perm.name === 'Dryad Arbor' && perm.summoningSick) continue;
+
+      // Pre-check: skip permanents whose tapForMana produces nothing when untapped.
+      // This suppresses no-op actions (e.g. Maze of Ith, which has tapForMana: () => []).
+      if (!def.tapForMana(state, perm).length) continue;
 
       actions.push({
         type: 'tap_for_mana',
@@ -8696,6 +8948,9 @@ var SolverGameState      = _solverExports.GameState;
 var YevaSolver           = _solverExports.Solver;
 var solverAnalyze        = _solverExports.analyze;
 var SOLVER_NAME_MAP      = _solverExports.SOLVER_NAME_MAP;
+
+
+
 
 
 
@@ -16280,13 +16535,24 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
         // Determine category:
         //   WIN NEXT TURN    — missing piece enters sick this turn, lookahead confirms actual win
         //                      next turn via Speaker+Temur→Duskwatch chain
-        //   INFINITE MANA NEXT TURN — missing piece enters sick, gives infinite mana next turn
-        //                      but no confirmed win route yet
-        //   ONE PIECE AWAY   — standard case: piece can act same turn once cast
+        //   INFINITE MANA NEXT TURN — missing piece is IN HAND and castable this turn (enters
+        //                      sick now → activates next turn for infinite mana), OR we have
+        //                      a direct-to-battlefield tutor castable this turn that can fetch it
+        //   ONE PIECE AWAY   — standard case: piece must be found but can't be fetched+played this turn
         const mustPreForWin = (combo.mustPreExist ?? []).includes(missingCard);
-        const isWinNextTurn = mustPreForWin && speakerIsTutor && lookaheadBonus === 2
+        // "NEXT TURN" fires when the missing piece will enter the battlefield sick THIS turn, either:
+        //   (a) It's already in hand and can be cast now, OR
+        //   (b) We have a tutor that puts it directly onto the battlefield this turn (not "top of library").
+        //       "Top of library" / "into hand" tutors don't count — the piece won't be playable until next turn.
+        const missingInHandCastable = inHand.has(missingCard) && canCastNow;
+        const tutorPutsDirectly = tutorOptions.some(t =>
+          !t.includes("top of library") && !t.includes("next draw") && !t.includes("into your hand")
+        );
+        const missingReachableThisTurn = missingInHandCastable || (tutorOptions.length > 0 && tutorPutsDirectly);
+        const isWinNextTurn = mustPreForWin && missingReachableThisTurn && speakerIsTutor
+          && lookaheadBonus === 2
           && (board.has("Temur Sabertooth") || inHand.has("Temur Sabertooth"));
-        const isInfiniteNextTurn = mustPreForWin && !isWinNextTurn
+        const isInfiniteNextTurn = mustPreForWin && missingReachableThisTurn && !isWinNextTurn
           && combo.type === "infinite-mana";
         const opaCategory = isWinNextTurn      ? "⏭️ WIN NEXT TURN"
                           : isInfiniteNextTurn ? "⏭️ INFINITE MANA — NEXT TURN"
@@ -22992,6 +23258,35 @@ const PRESET_DECKS = [
       "Yavimaya, Cradle of Growth","Yeva, Nature's Herald","Yisan, the Wanderer Bard",
     ],
   },
+  {
+    id: "yeva-slow-grow",
+    name: "Slow-Grow",
+    cards: [
+      "Allosaurus Shepherd","Ancient Tomb","Arbor Elf","Archdruid's Charm",
+      "Argothian Elder","Ashaya, Soul of the Wild","Badgermole Cub","Beast Within",
+      "Beastrider Vanguard","Birds of Paradise","Bonders' Enclave","Boreal Druid",
+      "Boseiju, Who Endures","Chalice of the Void","Chomping Changeling","Chord of Calling",
+      "Chrome Mox","Circle of Dreams Druid","Collector Ouphe","Crop Rotation",
+      "Delighted Halfling","Deserted Temple","Destiny Spinner","Disciple of Freyalise",
+      "Disruptor Flute","Duskwatch Recruiter","Earthcraft","Eladamri, Korvecdal",
+      "Eldritch Evolution","Elvish Archdruid","Elvish Mystic","Elvish Reclaimer",
+      "Elvish Spirit Guide","Emerald Medallion","Emergence Zone","Endurance",
+      "Eternal Witness","Fanatic of Rhonas","Fauna Shaman","Force of Vigor",
+      "Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest","Forest",
+      "Formidable Speaker","Fyndhorn Elves","Gaea's Cradle","Geier Reach Sanitarium",
+      "Gemstone Caverns","Green Sun's Zenith","Growing Rites of Itlimoc","Heartwood Storyteller",
+      "Hope Tender","Hyrax Tower Scout","Legolas's Quick Reflexes","Ley Weaver",
+      "Llanowar Elves","Lotus Petal","Magus of the Candelabra","Manglehorn",
+      "Maze of Ith","Mikokoro, Center of the Sea","Mox Diamond","Natural Order",
+      "Nature's Rhythm","Null Rod","Nykthos, Shrine to Nyx","Priest of Titania",
+      "Quirion Ranger","Root Maze","Scryb Ranger","Seedborn Muse","Shifting Woodland",
+      "Sol Ring","Sowing Mycospawn","Summoner's Pact","Survival of the Fittest",
+      "Sylvan Scrying","Talon Gates of Madara","Temur Sabertooth","Thorn of Amethyst",
+      "Urza's Cave","Utopia Sprawl","Vexing Bauble","War Room","Wild Growth",
+      "Wirewood Lodge","Wirewood Symbiote","Woodland Bellower",
+      "Yavimaya, Cradle of Growth","Yeva, Nature's Herald",
+    ],
+  },
 ];
 
 // Hook: load/save deck lists from artifact storage
@@ -24068,6 +24363,11 @@ function HelpModal({ onClose, onStartTour }) {
               <br /><br />
               There will be an additional cleanup step after the current one ends, where you might have to discard again, and any new "until end of turn" effects created in the first cleanup end. This continues until a cleanup step completes with no triggers or state-based actions causing priority to be passed.
             </Note>
+          </RulingBox>
+          <RulingBox title="INFINITE DUSKWATCH RECRUITER ACTIVATIONS">
+            <P style={{ marginBottom: "14px" }}>It can be mathematically proven that if deck size is non divisible by 3, it can be stacked. In the case of it being a multiple of 3, you just need to take a creature to my hand and then stack it.</P>
+            <P style={{ marginBottom: "14px" }}>Shortcut Judgement: It's a deterministic loop, so it's fine. I recommend not taking too long to stack the deck, so you might just do the top few each time.</P>
+            <P style={{ marginBottom: "14px" }}>Ref: https://apps.magicjudges.org/forum/topic/34995/?page=1#post-219809</P>
           </RulingBox>
         </>
       );
@@ -27835,35 +28135,34 @@ function PlayfieldCardImg({ card, zone, tapped, counters, onClick, onContextMenu
 
   const POPUP_W = 200, POPUP_H = 279, GAP = 8;
 
+  // Returns viewport-fixed coordinates so the portal popup escapes all parent
+  // overflow:hidden / transform stacking contexts (fixes image mode clipping).
   function computePopupStyle() {
-    if (!cardRef.current) return {};
+    if (!cardRef.current) return null;
     const rect = cardRef.current.getBoundingClientRect();
     const vw = window.innerWidth, vh = window.innerHeight;
 
-    // Prefer above; flip below if not enough room
+    // Prefer above the card; flip below if not enough room above
     const spaceAbove = rect.top;
     const spaceBelow = vh - rect.bottom;
-    let top, bottom;
+    let top;
     if (spaceAbove >= POPUP_H + GAP) {
-      bottom = rect.height + GAP; // relative to card outer div
-      top = "auto";
+      top = rect.top - POPUP_H - GAP;
     } else if (spaceBelow >= POPUP_H + GAP) {
-      top = rect.height + GAP;
-      bottom = "auto";
+      top = rect.bottom + GAP;
     } else {
       // Best fit — whichever side has more room
-      bottom = spaceAbove > spaceBelow ? rect.height + GAP : "auto";
-      top    = spaceAbove > spaceBelow ? "auto" : rect.height + GAP;
+      top = spaceAbove > spaceBelow
+        ? rect.top - POPUP_H - GAP
+        : rect.bottom + GAP;
     }
 
-    // Horizontally: centre on card, then clamp within viewport
-    const cardCentreX = rect.left + rect.width / 2;
-    let left = cardCentreX - rect.left - POPUP_W / 2; // relative to card outer div
-    const absLeft = rect.left + left;
-    if (absLeft < 4) left += (4 - absLeft);
-    if (absLeft + POPUP_W > vw - 4) left -= (absLeft + POPUP_W - (vw - 4));
+    // Horizontally: centre on card, clamped within viewport
+    let left = rect.left + rect.width / 2 - POPUP_W / 2;
+    if (left < 4) left = 4;
+    if (left + POPUP_W > vw - 4) left = vw - POPUP_W - 4;
 
-    return { top, bottom, left, transform: "none" };
+    return { position: "fixed", top, left };
   }
 
   const W = size === "small" ? 60 : size === "hand" ? 86 : 76;
@@ -27967,19 +28266,20 @@ function PlayfieldCardImg({ card, zone, tapped, counters, onClick, onContextMenu
         )}
       </div>
 
-      {/* Hover zoom — viewport-aware, always upright */}
-      {hovered && url && url !== "error" && (
+      {/* Hover zoom — rendered as a portal into document.body with position:fixed so it
+          escapes all parent overflow:hidden / transform stacking contexts (image mode panes). */}
+      {hovered && url && url !== "error" && popupStyle && ReactDOM.createPortal(
         <div style={{
-          position: "absolute",
           ...popupStyle,
           width: POPUP_W, height: POPUP_H,
-          zIndex: 9999, pointerEvents: "none",
+          zIndex: 99999, pointerEvents: "none",
           borderRadius: "10px", overflow: "hidden",
           border: `1px solid ${COLORS.borderBright}`,
           boxShadow: "0 8px 32px rgba(0,0,0,0.9)",
         }}>
           <img src={url} alt={card} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
