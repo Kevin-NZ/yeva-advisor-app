@@ -8790,12 +8790,8 @@ function _buildSolverBundle() {
   var _SLV = { Solver };
 
   // Analyzer.js
-  // Shims for stripped requires — Analyzer needs these from earlier modules:
-  var buildDefaultLibrary = _GSM.buildDefaultLibrary; // const { GameState, buildDefaultLibrary } = require('./GameState')
-  // checkCombos, checkVictory, DETECTORS, WIN_CONDITIONS are already in scope from combos.js above
-  // GameState is already in scope from GameState.js above
-  // Solver is already in scope from Solver.js above
-  // CARDS is already in scope from cards.js above
+  // GameState, Solver, checkCombos, checkVictory, DETECTORS, WIN_CONDITIONS, CARDS, buildDefaultLibrary
+  // are all already in scope from the modules inlined above.
   /**
    * MTG Combo Solver — Hand Analyzer
    *
