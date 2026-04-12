@@ -7372,6 +7372,9 @@ function _buildSolverBundle() {
     //
     //  Hand tutors that find War Room or Geier Reach (land → draw to finisher):
     //    Sylvan Scrying → fetch War Room → pay life to draw until finisher found
+    //    Sowing Mycospawn → on-cast fetch War Room / Geier Reach → draw to finisher
+    //      (Mycospawn's land fetch is an on-cast trigger — fires even if countered;
+    //       requires War Room or Geier Reach Sanitarium to be in the library)
     //
     //  Battlefield activated/ETB tutors:
     //    Fauna Shaman, Survival of the Fittest, Yisan, Formidable Speaker
@@ -7399,7 +7402,7 @@ function _buildSolverBundle() {
         'or Infectious Bite (10 poison counters). ' +
         'Hand tutors: GSZ, Shared Summons, Chord of Calling, Summoner\'s Pact, ' +
         'Archdruid\'s Charm, Nature\'s Rhythm, Eldritch Evolution, Worldly Tutor. ' +
-        'Sylvan Scrying → War Room → draw to finisher. ' +
+        'Sylvan Scrying / Sowing Mycospawn → War Room or Geier Reach → draw to finisher. ' +
         'Activated: Fauna Shaman, Survival of the Fittest, Yisan, Formidable Speaker. ' +
         'ETB: Woodland Bellower → Duskwatch; Fierce Empath → Bellower → Duskwatch. ' +
         'Glademuse + pass turn draws cards from opponent spells. ' +
@@ -7477,6 +7480,19 @@ function _buildSolverBundle() {
 
         // ── Crop Rotation → War Room: fetch → pay life to draw → find finisher ─
         if (state.hand && state.hand.includes('crop_rotation') && state.lands().length > 0) return true;
+
+        // ── Sowing Mycospawn → War Room / Geier Reach → draw to finisher ──────
+        // Mycospawn's on-cast trigger (not ETB) searches the library for any land
+        // and puts it onto the battlefield — no sacrifice required.  With infinite
+        // mana, fetching War Room or Geier Reach Sanitarium gives unlimited card
+        // draw (War Room: {3},{T}, pay 1 life; Geier Reach: {2},{T}).  The draw
+        // land must actually be in the library for this path to exist; we do NOT
+        // count a Mycospawn already on the battlefield (its trigger already fired).
+        if (state.hand && state.hand.includes('sowing_mycospawn')) {
+          const DRAW_LANDS = new Set(['war_room', 'geier_reach']);
+          const libHasDrawLand = lib.some(ck => DRAW_LANDS.has(ck));
+          if (libHasDrawLand) return true;
+        }
 
         // NOTE: Library contents are NOT checked here. A win only fires if the
         // finisher or tutor is in hand or on the battlefield. If Duskwatch (or
@@ -9105,15 +9121,21 @@ function _buildSolverBundle() {
    * @param {number}   [options.maxDepth=50]     DFS depth limit per trial
    * @param {number}   [options.maxStates=150000] State budget per trial
    * @param {string[]} [options.battlefield=[]]  Cards already on the battlefield
+   * @param {string[]} [options.library=null]    Custom library to use for each trial.
+   *                                             Each trial shuffles a fresh copy so draws
+   *                                             remain random.  When omitted the library is
+   *                                             built from the default decklist via
+   *                                             buildDefaultLibrary (excluding hand/battlefield).
    * @returns {MulliganAnalysis}
    */
   function mulliganAnalyze(hand, options = {}) {
     const {
-      trials     = 200,
-      maxTurns   = 4,
-      maxDepth   = 50,
-      maxStates  = 150_000,
+      trials      = 200,
+      maxTurns    = 4,
+      maxDepth    = 50,
+      maxStates   = 150_000,
       battlefield = [],
+      library     = null,   // optional: caller-supplied library; null → buildDefaultLibrary
     } = options;
 
     let infiniteManaWins = 0;
@@ -9121,13 +9143,17 @@ function _buildSolverBundle() {
     const trialResults   = [];
 
     for (let t = 0; t < trials; t++) {
-      // Build a freshly shuffled library for this trial (excludes hand + battlefield)
-      const library = buildDefaultLibrary({ hand, battlefield });
+      // Build a freshly shuffled library for this trial.
+      // If the caller supplied a custom library, shuffle a fresh copy of it each
+      // trial so draws remain random.  Otherwise fall back to buildDefaultLibrary.
+      const trialLibrary = library
+        ? [...library].sort(() => Math.random() - 0.5)
+        : buildDefaultLibrary({ hand, battlefield });
 
       // Construct the initial state with drawForTurn enabled
       let state = new GameState({
         players: [
-          { name: 'You',        life: 40, library,                  poison: 0 },
+          { name: 'You',        life: 40, library: trialLibrary,    poison: 0 },
           { name: 'Opponent 1', life: 40, librarySize: 99, poison: 0 },
           { name: 'Opponent 2', life: 40, librarySize: 99, poison: 0 },
           { name: 'Opponent 3', life: 40, librarySize: 99, poison: 0 },
@@ -9265,6 +9291,7 @@ var solverAnalyze           = _solverExports.analyze;
 var solverMulliganAnalyze   = _solverExports.mulliganAnalyze;
 var solverBuildDefaultLibrary = _solverExports.buildDefaultLibrary;
 var SOLVER_NAME_MAP         = _solverExports.SOLVER_NAME_MAP;
+
 
 
 
@@ -22823,16 +22850,26 @@ function CardInput({ label, zone, cards, onAdd, onRemove, placeholder, deckCards
                 borderBottom: `1px solid ${COLORS.border}`,
                 background: si === selectedIdx ? COLORS.bgHover : "transparent",
                 transition: "background 0.1s",
+                display: "flex", alignItems: "center",
               }}
                 onMouseEnter={() => setSelectedIdx(si)}
                 onMouseLeave={() => {}}
               >
-                {s}
-                {CARDS[s] && (
-                  <span style={{ marginLeft: "8px", fontSize: "11px", color: COLORS.textDim }}>
-                    {CARDS[s].type} • CMC {CARDS[s].cmc}
-                  </span>
-                )}
+                <span style={{ flex: 1 }}>{s}</span>
+                {CARDS[s] && (() => {
+                  const d = CARDS[s];
+                  const pips = d.greenPips ?? 0;
+                  const colorless = (d.cmc ?? 0) - pips;
+                  return (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "2px", marginLeft: "10px", flexShrink: 0 }}>
+                      {colorless > 0 && <span style={{ fontSize: "10px", color: "#888", background: "#1a1a1a", borderRadius: "50%", width: "15px", height: "15px", display: "inline-flex", alignItems: "center", justifyContent: "center", fontFamily: "'Cinzel', serif" }}>{colorless}</span>}
+                      {Array.from({ length: Math.min(pips, 6) }).map((_, i) => (
+                        <span key={i} style={{ fontSize: "9px", color: "#4ade80", lineHeight: 1 }}>🌿</span>
+                      ))}
+                      <span style={{ marginLeft: "4px", fontSize: "10px", color: COLORS.textDim, fontStyle: "italic" }}>{d.type === "land" ? "land" : d.type}</span>
+                    </span>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -23506,30 +23543,75 @@ function AuraTargetModal({ auraName, lands, onConfirm, onSkip }) {
   );
 }
 
+// ── Mana pip renderer for QuickAdd suggestions ───────────────────────────────
+function ManaPips({ card }) {
+  const d = CARDS[card];
+  if (!d) return null;
+  const cmc = d.cmc ?? 0;
+  const pips = d.greenPips ?? 0;
+  const colorless = cmc - pips;
+  const parts = [];
+  if (colorless > 0) parts.push(<span key="c" style={{ color: "#aaa", fontSize: "9px", fontFamily: "'Cinzel', serif" }}>{colorless}</span>);
+  for (let i = 0; i < Math.min(pips, 5); i++) parts.push(<span key={`g${i}`} style={{ color: "#4ade80", fontSize: "8px", lineHeight: 1 }}>🌿</span>);
+  if (parts.length === 0) return null;
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: "1px", marginLeft: "4px", opacity: 0.65 }}>{parts}</span>;
+}
+
 function QuickAdd({ zone, onAdd, deckCards }) {
-  const quickCards = {
-    battlefield: ["Ashaya, Soul of the Wild","Temur Sabertooth","Priest of Titania","Quirion Ranger","Earthcraft","Gaea's Cradle","Yeva, Nature's Herald","Wirewood Lodge"],
-    hand: ["Ashaya, Soul of the Wild","Quirion Ranger","Chord of Calling","Worldly Tutor","Infectious Bite","Eternal Witness","Natural Order","Summoner's Pact"],
-    graveyard: ["Infectious Bite", "Beast Within"],
+  const freqKey = `yeva-quickadd-freq-${zone}`;
+  const [freq, setFreq] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem(freqKey) || "{}"); } catch { return {}; }
+  });
+
+  const defaultCards = {
+    battlefield: ["Ashaya, Soul of the Wild","Quirion Ranger","Priest of Titania","Temur Sabertooth","Earthcraft","Gaea's Cradle","Yeva, Nature's Herald","Wirewood Lodge","Elvish Archdruid","Circle of Dreams Druid"],
+    hand: ["Ashaya, Soul of the Wild","Quirion Ranger","Chord of Calling","Worldly Tutor","Infectious Bite","Eternal Witness","Natural Order","Summoner's Pact","Scryb Ranger","Wirewood Symbiote"],
+    graveyard: ["Infectious Bite","Beast Within","Eternal Witness","Quirion Ranger"],
+    exile: [],
   };
+
   const pool = deckCards ? new Set(deckCards) : null;
-  const cards = (quickCards[zone] || []).filter(c => !pool || pool.has(c));
+  const base = (defaultCards[zone] || []).filter(c => !pool || pool.has(c));
+  const allKnown = [...new Set([...Object.keys(freq), ...base])].filter(c => !pool || pool.has(c));
+  allKnown.sort((a, b) => (freq[b] || 0) - (freq[a] || 0));
+  const cards = allKnown.slice(0, 8).length > 0 ? allKnown.slice(0, 8) : base.slice(0, 8);
+
   if (cards.length === 0) return null;
+
+  const handleAdd = (c) => {
+    const next = { ...freq, [c]: (freq[c] || 0) + 1 };
+    setFreq(next);
+    try { localStorage.setItem(freqKey, JSON.stringify(next)); } catch {}
+    onAdd(c);
+  };
+
   return (
     <div style={{ marginBottom: "6px" }}>
-      <div style={{ fontSize: "10px", letterSpacing: "1.5px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "4px" }}>QUICK ADD</div>
+      <div style={{ fontSize: "10px", letterSpacing: "1.5px", color: COLORS.textDim, fontFamily: "'Cinzel', serif", marginBottom: "4px" }}>
+        QUICK ADD
+        {Object.keys(freq).length > 0 && (
+          <span
+            onClick={() => { setFreq({}); try { localStorage.removeItem(freqKey); } catch {} }}
+            style={{ marginLeft: "8px", fontSize: "8px", color: COLORS.textDim, cursor: "pointer", opacity: 0.5, letterSpacing: "0.5px" }}
+            title="Reset frequency tracking"
+          >↺ reset</span>
+        )}
+      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
         {cards.map(c => (
-          <button key={c} onClick={() => onAdd(c)} style={{
+          <button key={c} onClick={() => handleAdd(c)} title={`Add ${c} to ${zone}`} style={{
             background: COLORS.bgHover, border: `1px solid ${COLORS.border}`,
             borderRadius: "4px", padding: "3px 8px",
             color: COLORS.textDim, fontSize: "11px",
             fontFamily: "'Crimson Text', serif", cursor: "pointer",
-            transition: "all 0.15s",
+            transition: "all 0.15s", display: "inline-flex", alignItems: "center",
           }}
-            onMouseEnter={e => { e.target.style.borderColor = COLORS.green1; e.target.style.color = COLORS.text; }}
-            onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-          >{c}</button>
+            onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green1; e.currentTarget.style.color = COLORS.text; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; }}
+          >
+            {c}
+            <ManaPips card={c} />
+          </button>
         ))}
       </div>
     </div>
@@ -36027,11 +36109,23 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     const currentHand = [...hand];
     let cancelled = false;
 
+    // Build the trial library: deckCards minus Yeva (command zone) minus cards in hand.
+    // Sent as card names; the worker maps them to keys.
+    // One copy removed per card (multiset subtraction) to handle repeated basics correctly.
+    const handCounts = {};
+    for (const c of currentHand) handCounts[c] = (handCounts[c] ?? 0) + 1;
+    const trialLibrary = [];
+    for (const c of deckCards) {
+      if (c === "Yeva, Nature's Herald") continue; // command zone
+      if (handCounts[c] > 0) { handCounts[c]--; continue; } // in hand
+      trialLibrary.push(c);
+    }
+
     setMulliganSimResults({ completed: 0, total: 10, infinitePct: null, winPct: null });
 
     const TOTAL = 10;
-    const MAX_CONCURRENT = 2;
-    const OPTS = { trials: 5, maxTurns: 4, maxDepth: 50, maxStates: 150_000 };
+    const MAX_CONCURRENT = 3;
+    const OPTS = { trials: 5, maxTurns: 4, maxDepth: 40, maxStates: 150_000 };
 
     let launched = 0;
     let completed = 0;
@@ -36056,7 +36150,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     function launchNext() {
       if (cancelled || launched >= TOTAL) return;
       launched++;
-      const payload = { type: "mulliganAnalyze", hand: currentHand, ...OPTS };
+      const payload = { type: "mulliganAnalyze", hand: currentHand, library: trialLibrary, ...OPTS };
       try {
         const w = new Worker(workerUrl);
         activeWorkers.push(w);
@@ -37240,9 +37334,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                       : infinitePct >= 35 ? COLORS.gold
                       : COLORS.red;
                     const simLabel = infinitePct == null ? "SIMULATING…"
-                      : infinitePct >= 55 ? "SOLVER: STRONG KEEP"
-                      : infinitePct >= 35 ? "SOLVER: BORDERLINE"
-                      : "SOLVER: CONSIDER MULLIGANING";
+                      : infinitePct >= 55 ? "SIM: STRONG KEEP"
+                      : infinitePct >= 35 ? "SIM: BORDERLINE"
+                      : "SIM: CONSIDER MULLIGANING";
                     const progressPct = Math.round((sim.completed / sim.total) * 100);
                     return (
                       <div style={{
@@ -39689,6 +39783,9 @@ function YevaAdvisor() {
   const [goldfishSeedState, setGoldfishSeedState] = useState(null);
   const [showHelp, setShowHelp]               = useState(false);
   const [showBackupMenu, setShowBackupMenu]   = useState(false);
+  const [showAbout, setShowAbout]             = useState(false);
+  const [showKebab, setShowKebab]             = useState(false);
+  const kebabRef                              = useRef(null);
   const [backupStatus, setBackupStatus]       = useState(""); // "" | "ok" | "err"
   const [restoreStatus, setRestoreStatus]     = useState(""); // "" | "ok" | "err"
   const backupRestoreRef                      = useRef(null);
@@ -39747,6 +39844,14 @@ function YevaAdvisor() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showBackupMenu]);
+
+  // Kebab menu click-away
+  useEffect(() => {
+    if (!showKebab) return;
+    const handler = (e) => { if (kebabRef.current && !kebabRef.current.contains(e.target)) setShowKebab(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showKebab]);
 
   // ── responsive layout ──────────────────────────────────────
   const [width, setWidth] = useState(window.innerWidth);
@@ -40182,7 +40287,7 @@ function YevaAdvisor() {
               Yeva Draw-Grow
             </div>
             <div style={{ fontSize: "12px", color: COLORS.textDim, letterSpacing: "2px", fontFamily: "'Cinzel', serif" }}>
-              ADVISOR · <span style={{ opacity: 0.5, letterSpacing: "1px" }}>v{__APP_VERSION__}</span><span style={{ opacity: 0.35, letterSpacing: "0.5px", fontSize: "9px" }}> ({__GIT_HASH__})</span>
+              COMMANDER ADVISOR
             </div>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
@@ -40391,17 +40496,79 @@ function YevaAdvisor() {
                 </div>
               )}
             </div>
-            <button onClick={() => setShowHelp(true)} title="Open manual" style={{
-              background: "none", border: `1px solid ${COLORS.border}`,
-              borderRadius: "6px", padding: "5px 10px",
-              color: COLORS.textDim, cursor: "pointer",
-              fontFamily: "'Cinzel', serif", fontSize: "13px", letterSpacing: "0",
-              transition: "all 0.2s", lineHeight: 1,
-            }}
-              onMouseEnter={e => { e.target.style.borderColor = COLORS.green2; e.target.style.color = COLORS.green2; }}
-              onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >?</button>
+            {/* U: Kebab overflow menu */}
+            <div ref={kebabRef} style={{ position: "relative" }}>
+              <button onClick={() => setShowKebab(v => !v)} title="More options" style={{
+                background: showKebab ? "#1a2a1a" : "none",
+                border: `1px solid ${showKebab ? COLORS.green1 : COLORS.border}`,
+                borderRadius: "6px", padding: "5px 10px",
+                color: showKebab ? COLORS.green2 : COLORS.textDim, cursor: "pointer",
+                fontFamily: "'Cinzel', serif", fontSize: "16px",
+                transition: "all 0.2s", lineHeight: 1,
+              }}>⋯</button>
+              {showKebab && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 500,
+                  background: COLORS.bgCard, border: `1px solid ${COLORS.border}`,
+                  borderRadius: "8px", padding: "6px", minWidth: "180px",
+                  boxShadow: "0 8px 32px #000a",
+                  display: "flex", flexDirection: "column", gap: "2px",
+                }}>
+                  {[
+                    { icon: "?", label: "Help & Manual",   action: () => { setShowHelp(true);      setShowKebab(false); } },
+                    { icon: "⬡", label: "Synergy Map",     action: () => { setShowSynergyMap(true); setShowKebab(false); } },
+                    { icon: "⌗", label: "Debug State",     action: () => { setShowDebug(true);      setShowKebab(false); } },
+                    { icon: "ℹ", label: `About · v${__APP_VERSION__}`, action: () => { setShowAbout(true); setShowKebab(false); } },
+                  ].map(({ icon, label, action }) => (
+                    <button key={label} onClick={action} style={{
+                      background: "transparent", border: "none", borderRadius: "5px",
+                      padding: "8px 12px", color: COLORS.textMid, cursor: "pointer",
+                      fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "0.5px",
+                      textAlign: "left", display: "flex", alignItems: "center", gap: "10px",
+                      transition: "background 0.1s",
+                    }}
+                      onMouseEnter={e => e.currentTarget.style.background = COLORS.bgHover}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span style={{ opacity: 0.6, fontSize: "13px", width: "14px" }}>{icon}</span>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* X: About modal — version info lives here, not in header */}
+          {showAbout && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "#000000cc", display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={() => setShowAbout(false)}>
+              <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.green1}66`, borderRadius: "12px", padding: "28px 32px", maxWidth: "360px", width: "90%" }}
+                onClick={e => e.stopPropagation()}>
+                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "18px", color: COLORS.green3, marginBottom: "4px", letterSpacing: "1px" }}>Yeva Draw-Grow</div>
+                <div style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: COLORS.textDim, letterSpacing: "2px", marginBottom: "20px" }}>COMMANDER ADVISOR</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
+                  {[
+                    ["Version", `v${__APP_VERSION__}`],
+                    ["Build",   __GIT_HASH__],
+                    ["Engine",  "Heuristic + DFS Solver"],
+                    ["Format",  "Yeva, Nature's Herald EDH"],
+                  ].map(([k, v]) => (
+                    <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
+                      <span style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: COLORS.textDim, letterSpacing: "1px" }}>{k}</span>
+                      <span style={{ fontFamily: "'Crimson Text', serif", fontSize: "13px", color: COLORS.text }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setShowAbout(false)} style={{
+                  width: "100%", padding: "8px", background: "transparent",
+                  border: `1px solid ${COLORS.border}`, borderRadius: "6px",
+                  color: COLORS.textDim, cursor: "pointer",
+                  fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                }}>CLOSE</button>
+              </div>
+            </div>
+          )}
 
           {/* HELP MODAL */}
           {showHelp && <HelpModal onClose={() => setShowHelp(false)} onStartTour={() => { setShowHelp(false); tour.start(); }} />}
@@ -40678,34 +40845,18 @@ function YevaAdvisor() {
                   <label style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.textDim, letterSpacing: "1px", whiteSpace: "nowrap", display: "block" }}>MANA AVAILABLE</label>
                   <span style={{ fontSize: "9px", color: COLORS.textDim, opacity: 0.6, fontFamily: "'Crimson Text', serif", fontStyle: "italic" }}>auto · override manually</span>
                 </div>
-                <div style={{ display: "flex", flexDirection: "row", gap: "10px", alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                <div style={{ display: "flex", flexDirection: "row", gap: "8px", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
                     <span style={{ fontSize: "13px", lineHeight: 1, filter: "drop-shadow(0 0 3px #00bb0066)" }} title="Green mana {G}">🌿</span>
-                    <input
-                      type="number" min="0" max="999" value={greenMana}
-                      onChange={e => setGreenMana(e.target.value)}
-                      style={{
-                        width: "54px", background: "#07100788",
-                        border: `1px solid ${COLORS.green1}55`, borderRadius: "6px",
-                        padding: "5px 8px", color: COLORS.green2,
-                        fontFamily: "'Cinzel', serif", fontSize: "15px",
-                        fontWeight: 600, textAlign: "center", outline: "none",
-                      }}
-                    />
+                    <button onClick={() => setGreenMana(v => String(Math.max(0, parseInt(v||0) - 1)))} style={{ width: 20, height: 28, borderRadius: "4px 0 0 4px", border: `1px solid ${COLORS.green1}55`, borderRight: "none", background: "#07100788", color: COLORS.green2, cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                    <input type="text" min="0" max="999" value={greenMana} onChange={e => setGreenMana(e.target.value)} style={{ width: "30px", background: "#07100788", border: `1px solid ${COLORS.green1}55`, borderRadius: "0", padding: "5px 4px", color: COLORS.green2, fontFamily: "'Cinzel', serif", fontSize: "15px", fontWeight: 600, textAlign: "center", outline: "none" }} />
+                    <button onClick={() => setGreenMana(v => String(Math.min(999, parseInt(v||0) + 1)))} style={{ width: 20, height: 28, borderRadius: "0 4px 4px 0", border: `1px solid ${COLORS.green1}55`, borderLeft: "none", background: "#07100788", color: COLORS.green2, cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
                     <span style={{ fontSize: "13px", lineHeight: 1, opacity: 0.7 }} title="Colourless mana {C}">💎</span>
-                    <input
-                      type="number" min="0" max="999" value={colorlessMana}
-                      onChange={e => setColorlessMana(e.target.value)}
-                      style={{
-                        width: "54px", background: "#07100788",
-                        border: `1px solid ${COLORS.border}`, borderRadius: "6px",
-                        padding: "5px 8px", color: COLORS.textMid,
-                        fontFamily: "'Cinzel', serif", fontSize: "15px",
-                        fontWeight: 600, textAlign: "center", outline: "none",
-                      }}
-                    />
+                    <button onClick={() => setColorlessMana(v => String(Math.max(0, parseInt(v||0) - 1)))} style={{ width: 20, height: 28, borderRadius: "4px 0 0 4px", border: `1px solid ${COLORS.border}`, borderRight: "none", background: "#07100788", color: COLORS.textMid, cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                    <input type="text" min="0" max="99" value={colorlessMana} onChange={e => setColorlessMana(e.target.value)} style={{ width: "30px", background: "#07100788", border: `1px solid ${COLORS.border}`, borderRadius: "0", padding: "5px 4px", color: COLORS.textMid, fontFamily: "'Cinzel', serif", fontSize: "15px", fontWeight: 600, textAlign: "center", outline: "none" }} />
+                    <button onClick={() => setColorlessMana(v => String(Math.min(999, parseInt(v||0) + 1)))} style={{ width: 20, height: 28, borderRadius: "0 4px 4px 0", border: `1px solid ${COLORS.border}`, borderLeft: "none", background: "#07100788", color: COLORS.textMid, cursor: "pointer", fontSize: "14px", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
                   </div>
                 </div>
               </div>
@@ -40812,6 +40963,35 @@ function YevaAdvisor() {
               hand.length === 0 && battlefield.length === 0 && graveyard.length === 0 && exile.length === 0 ? (
               /* ── MULLIGAN ADVICE ── shown when no cards have been entered yet */
               <div style={{ color: COLORS.textMid, lineHeight: 1.7 }}>
+                {/* B: Quick-start scenario picker */}
+                <div style={{ marginBottom: "20px" }}>
+                  <div style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "2px", color: COLORS.textDim, marginBottom: "10px" }}>⚡ QUICK-START SCENARIO</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    {[
+                      { label: "Turn 1 — strong opener", desc: "Forest + Llanowar Elves in hand, 1 mana", color: COLORS.green1,
+                        action: () => { ["Forest"].forEach(c => addTo("battlefield")(c)); ["Llanowar Elves","Quirion Ranger","Worldly Tutor","Ashaya, Soul of the Wild"].forEach(c => addTo("hand")(c)); setGreenMana("1"); setColorlessMana("0"); } },
+                      { label: "Mid-game — dorks out, need combo", desc: "Priest + Quirion on board, 4 mana floating", color: COLORS.gold,
+                        action: () => { ["Priest of Titania","Quirion Ranger","Elvish Mystic","Forest","Forest"].forEach(c => addTo("battlefield")(c)); ["Chord of Calling","Scryb Ranger","Natural Order"].forEach(c => addTo("hand")(c)); setGreenMana("4"); setColorlessMana("0"); } },
+                      { label: "Ashaya is out — find the loop", desc: "Ashaya + big dork, need the ranger loop piece", color: "#a855f7",
+                        action: () => { ["Ashaya, Soul of the Wild","Priest of Titania","Elvish Mystic","Forest","Forest","Gaea's Cradle"].forEach(c => addTo("battlefield")(c)); ["Quirion Ranger","Chord of Calling","Eternal Witness"].forEach(c => addTo("hand")(c)); setGreenMana("5"); setColorlessMana("0"); } },
+                      { label: "∞ Mana active — pick a win-con", desc: "Infinite mana assembled, need an outlet", color: COLORS.red,
+                        action: () => { ["Ashaya, Soul of the Wild","Quirion Ranger","Priest of Titania","Elvish Mystic","Forest","Gaea's Cradle","Temur Sabertooth"].forEach(c => addTo("battlefield")(c)); ["Finale of Devastation","Regal Force","Infectious Bite"].forEach(c => addTo("hand")(c)); setGreenMana("99"); setColorlessMana("0"); } },
+                    ].map(({ label, desc, color, action }) => (
+                      <button key={label} onClick={action} style={{
+                        background: "transparent", border: `1px solid ${color}44`,
+                        borderLeft: `3px solid ${color}`, borderRadius: "6px",
+                        padding: "10px 14px", cursor: "pointer", textAlign: "left", transition: "all 0.15s",
+                      }}
+                        onMouseEnter={e => { e.currentTarget.style.background = color + "14"; e.currentTarget.style.borderColor = color + "88"; e.currentTarget.style.borderLeftColor = color; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = color + "44"; e.currentTarget.style.borderLeftColor = color; }}
+                      >
+                        <div style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color, letterSpacing: "0.5px", marginBottom: "3px" }}>{label}</div>
+                        <div style={{ fontFamily: "'Crimson Text', serif", fontSize: "12px", color: COLORS.textDim }}>{desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ height: "1px", background: COLORS.border, marginBottom: "16px", opacity: 0.5 }} />
                 <div style={{
                   fontFamily: "'Cinzel', serif", fontSize: "13px",
                   letterSpacing: "2px", color: "#27ae60", marginBottom: "16px",
@@ -40940,6 +41120,40 @@ function YevaAdvisor() {
                     }}>change</button>
                   </div>
                 )}
+                {/* L: Missing-piece callout */}
+                {(() => {
+                  const boardSet = new Set([...battlefield, ...hand]);
+                  const counts = {};
+                  COMBOS.forEach(combo => {
+                    const pieces = [...new Set([...(combo.onBattlefield||[]), ...(combo.requires||[])])];
+                    const missing = pieces.filter(p => !boardSet.has(p));
+                    if (missing.length === 1) counts[missing[0]] = (counts[missing[0]] || 0) + 1;
+                  });
+                  const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+                  if (!sorted.length || sorted[0][1] < 2) return null;
+                  const [bestCard, bestCount] = sorted[0];
+                  return (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: "7px",
+                      marginBottom: "14px", padding: "7px 12px",
+                      background: "#0d200d", border: `1px solid ${COLORS.green1}44`,
+                      borderRadius: "6px",
+                    }}>
+                      <span style={{ fontSize: "11px" }}>🔑</span>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "11px", color: COLORS.green2, letterSpacing: "1px" }}>KEY MISSING PIECE</span>
+                        <span style={{ fontSize: "11px", color: COLORS.text }}>
+                          <span style={{ color: COLORS.textDim }}> — </span>
+                          <strong style={{ color: COLORS.green2 }}>{bestCard}</strong>
+                          <span style={{ color: COLORS.textDim }}> would unlock </span>
+                          <strong style={{ color: COLORS.green2 }}>{bestCount}</strong>
+                          <span style={{ color: COLORS.textDim }}> new combo line{bestCount !== 1 ? "s" : ""}</span>
+                          {sorted.length > 1 && <span style={{ color: COLORS.textDim, fontSize: "11px" }}> · also: {sorted.slice(1,3).map(([c,n]) => `${c} (+${n})`).join(", ")}</span>}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div style={{
                   display: "flex", alignItems: "center", gap: "12px",
                   marginBottom: "20px",
