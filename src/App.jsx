@@ -23765,7 +23765,7 @@ function ManaPips({ card }) {
   const pips = d.greenPips ?? 0;
   const colorless = cmc - pips;
   const parts = [];
-  if (colorless > 0) parts.push(<span key="c" style={{ color: "#aaa", fontSize: "9px", fontFamily: "'Cinzel', serif" }}>{colorless}</span>);
+  if (colorless > 0) parts.push(<span key="c" style={{ color: "#ccc", fontSize: "10px", fontFamily: "'Cinzel', serif" }}>{colorless}</span>);
   for (let i = 0; i < Math.min(pips, 5); i++) parts.push(<span key={`g${i}`} style={{ color: "#4ade80", fontSize: "8px", lineHeight: 1 }}>🌿</span>);
   if (parts.length === 0) return null;
   return <span style={{ display: "inline-flex", alignItems: "center", gap: "1px", marginLeft: "4px", opacity: 0.65 }}>{parts}</span>;
