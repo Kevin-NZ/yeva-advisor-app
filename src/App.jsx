@@ -29582,9 +29582,9 @@ function buildHandNotes(cards) {
 }
 
 // ── Simulation-based hand grading ──────────────────────────────────────────
-// Runs N games (default 10) with max 6 turns each, using this exact opening
-// hand with different library shuffles each time. Measures both win rate AND
-// T1/T2 mana development — together these give a robust signal.
+// Runs N games (default 10) with max turns (default 20) each, using this exact
+// opening hand with different library shuffles each time. Measures both win rate
+// AND T1/T2 mana development — together these give a robust signal.
 //
 // Win rate alone is unreliable at small N (variance too high) and can be
 // dominated by combo pieces in hand rather than mana development. Combining
@@ -33057,7 +33057,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     if (typeof solverAnalyze === "function" && typeof SOLVER_NAME_MAP !== "undefined") {
       try {
         const handKeys = cards.map(n => SOLVER_NAME_MAP[n]).filter(Boolean);
-        if (handKeys.length > 0) {
+        if (handKeys.length >= 5) {
           solverHandAnalysis = solverAnalyze(handKeys, {
             maxTurns: 4, maxDepth: 50, maxStates: 200_000, whatIf: false,
           });
@@ -33068,7 +33068,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     // ── Simulation probe (10 games with this exact hand) ─────────
     // Run only when a deck is loaded so we have a real library to draw from.
     const simResult = (deckCards && deckCards.length >= 20 && handSize >= 5)
-      ? simGradeHand(cards, deckCards, 10, 20)
+      ? simGradeHand(cards, deckCards, 10, 15)
       : null;
 
     // ── Sim note builder — single definition used by gates AND the normal path ──
@@ -36078,8 +36078,28 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
     );
   };
 
-  // ── Keyboard shortcuts ───────────────────────────────────────
-  // Improvement 9: K = Keep, M = Mulligan during mulligan phase
+  // ── Mulligan grade — memoised so gradeHand + analyzeGameState only run
+  //    when hand/phase/phase2 actually change, not on every re-render
+  //    (worker progress updates, hover events, etc. all cause re-renders
+  //    but should not re-execute these expensive functions).
+  const mulliganGrade = React.useMemo(() => {
+    if (phase !== "mulligan" || phase2 === "bottoming" || !hand.length) return null;
+    let mulliganAnalysis = null;
+    try {
+      mulliganAnalysis = analyzeGameState({
+        hand, battlefield: [], graveyard: [],
+        manaAvailable: 0, isMyTurn: true,
+        deckList: activeDeck ? new Set(deckCards) : null,
+        skipSolver: true,
+      });
+    } catch (e) {}
+    return gradeHand(hand, mulliganAnalysis, hand.length, deckCards);
+  // hand.join is a stable string key — avoids re-running on array identity changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, phase2, hand.join(",")]);
+
+  // ── Mulligan Keyboard shortcuts ───────────────────────────────────────
+  // K = Keep, M = Mulligan during mulligan phase
   useEffect(() => {
     if (phase !== "mulligan") return;
     const handler = (e) => {
@@ -36095,7 +36115,7 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
 
   // ── Mulligan sim worker pool ─────────────────────────────────────────────
   // Runs 10 mulliganAnalyze trials off the main thread using real Web Workers.
-  // Max 2 concurrent. If workers are unavailable the sim is silently skipped.
+  // Max 3 concurrent. If workers are unavailable the sim is silently skipped.
   useEffect(() => {
     if (phase !== "mulligan" || phase2 === "bottoming") {
       setMulliganSimResults(null);
@@ -36121,17 +36141,16 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       trialLibrary.push(c);
     }
 
-    setMulliganSimResults({ completed: 0, total: 10, infinitePct: null, winPct: null });
-
-    const TOTAL = 10;
+    const TOTAL = 25;
     const MAX_CONCURRENT = 3;
-    const OPTS = { trials: 5, maxTurns: 4, maxDepth: 40, maxStates: 150_000 };
+    const OPTS = { trials: 2, maxTurns: 4, maxDepth: 40, maxStates: 200_000 };
 
     let launched = 0;
     let completed = 0;
     let totalInfinite = 0;
     let totalWin = 0;
     const activeWorkers = [];
+    let startTimer = null;
 
     function onTrialDone(infinitePct, winPct) {
       if (cancelled) return;
@@ -36176,10 +36195,15 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
       }
     }
 
-    for (let i = 0; i < MAX_CONCURRENT; i++) launchNext();
+    // Delay sim start by 250ms so the hand cards render before workers fire
+    startTimer = setTimeout(() => {
+      setMulliganSimResults({ completed: 0, total: TOTAL, infinitePct: null, winPct: null });
+      for (let i = 0; i < MAX_CONCURRENT; i++) launchNext();
+    }, 250);
 
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
       activeWorkers.forEach(w => { try { w.terminate(); } catch(_) {} });
       activeWorkers.length = 0;
     };
@@ -37267,18 +37291,9 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               );
             })()}
 
-            {phase2 !== "bottoming" && (() => {
-              let mulliganAnalysis = null;
-              try {
-                mulliganAnalysis = analyzeGameState({
-                  hand, battlefield: [], graveyard: [],
-                  manaAvailable: 0, isMyTurn: true,
-                  deckList: activeDeck ? new Set(deckCards) : null,
-                  skipSolver: true,
-                });
-              } catch (e) {}
-              // Improvement 7: pass hand size so grader adjusts threshold for small hands
-              const { grade, notes } = gradeHand(hand, mulliganAnalysis, hand.length, deckCards);
+            {phase2 !== "bottoming" && mulliganGrade && (() => {
+              // mulliganGrade is memoised — only recomputed when hand/phase/phase2 change
+              const { grade, notes } = mulliganGrade;
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px" }}>
                   {/* Improvement 3: action buttons on their own row, full-width, no collision */}
@@ -37376,8 +37391,8 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
                           )}
                           <div style={{ fontSize: "11px", color: COLORS.textDim, fontFamily: "'Crimson Text', serif", lineHeight: 1.4 }}>
                             {isDone
-                              ? `Monte Carlo · ${sim.total} × 5 trials · T≤4`
-                              : `Running trial ${sim.completed + 1} of ${sim.total}…`
+                              ? `Monte Carlo · ${sim.total*2} trials · T≤4`
+                              : `Running trial ${sim.completed*2 + 1} of ${sim.total*2}…`
                             }
                           </div>
                         </div>
