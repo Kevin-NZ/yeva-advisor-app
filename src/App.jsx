@@ -40382,16 +40382,6 @@ function YevaAdvisor() {
               onMouseEnter={e => { e.target.style.borderColor = COLORS.green1; e.target.style.color = COLORS.green1; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
             >📌 {isMobile ? "" : "STATES"}</button>
-            <button onClick={() => setShowSynergyMap(true)} title="Visual graph showing how cards in your deck connect to combos and each other" style={{
-              background: "none", border: `1px solid ${COLORS.border}`,
-              borderRadius: "6px", padding: "5px 14px",
-              color: COLORS.textDim, cursor: "pointer",
-              fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
-              transition: "all 0.2s",
-            }}
-              onMouseEnter={e => { e.target.style.borderColor = "#a569bd"; e.target.style.color = "#a569bd"; }}
-              onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >⬡ {isMobile ? "" : "SYNERGY"}</button>
             <button onClick={(e) => {
               if (e.shiftKey) {
                 setGoldfishSeedState({ hand, battlefield, graveyard, exile, greenMana, colorlessMana, isMyTurn, attachments });
@@ -40409,16 +40399,6 @@ function YevaAdvisor() {
               onMouseEnter={e => { e.target.style.borderColor = COLORS.green2; e.target.style.color = COLORS.green2; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
             >🐟 {isMobile ? "" : "GOLDFISH"}</button>
-            <button onClick={() => setShowDebug(true)} title="Dump the current application state as JSON for debugging" style={{
-              background: "none", border: `1px solid ${COLORS.border}`,
-              borderRadius: "6px", padding: "5px 14px",
-              color: COLORS.textDim, cursor: "pointer",
-              fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
-              transition: "all 0.2s",
-            }}
-              onMouseEnter={e => { e.target.style.borderColor = "#5dade2"; e.target.style.color = "#5dade2"; }}
-              onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
-            >⌗ {isMobile ? "" : "DEBUG"}</button>
             {/* Deck selector */}
             <button onClick={() => setShowDeckManager(true)} data-tour="tour-deck" title="Manage your decks — create, import, edit, and switch between saved decklists" style={{
               background: activeDeck ? "#1a3a1a" : "none",
@@ -40972,10 +40952,8 @@ function YevaAdvisor() {
                         action: () => { ["Forest"].forEach(c => addTo("battlefield")(c)); ["Llanowar Elves","Quirion Ranger","Worldly Tutor","Ashaya, Soul of the Wild"].forEach(c => addTo("hand")(c)); setGreenMana("1"); setColorlessMana("0"); } },
                       { label: "Mid-game — dorks out, need combo", desc: "Priest + Quirion on board, 4 mana floating", color: COLORS.gold,
                         action: () => { ["Priest of Titania","Quirion Ranger","Elvish Mystic","Forest","Forest"].forEach(c => addTo("battlefield")(c)); ["Chord of Calling","Scryb Ranger","Natural Order"].forEach(c => addTo("hand")(c)); setGreenMana("4"); setColorlessMana("0"); } },
-                      { label: "Ashaya is out — find the loop", desc: "Ashaya + big dork, need the ranger loop piece", color: "#a855f7",
-                        action: () => { ["Ashaya, Soul of the Wild","Priest of Titania","Elvish Mystic","Forest","Forest","Gaea's Cradle"].forEach(c => addTo("battlefield")(c)); ["Quirion Ranger","Chord of Calling","Eternal Witness"].forEach(c => addTo("hand")(c)); setGreenMana("5"); setColorlessMana("0"); } },
-                      { label: "∞ Mana active — pick a win-con", desc: "Infinite mana assembled, need an outlet", color: COLORS.red,
-                        action: () => { ["Ashaya, Soul of the Wild","Quirion Ranger","Priest of Titania","Elvish Mystic","Forest","Gaea's Cradle","Temur Sabertooth"].forEach(c => addTo("battlefield")(c)); ["Finale of Devastation","Regal Force","Infectious Bite"].forEach(c => addTo("hand")(c)); setGreenMana("99"); setColorlessMana("0"); } },
+                      { label: "Ultimate — T2 Infinite Mana", desc: "Infinite mana can be assembled on T2 with a 35% chance of drawing an outlet. Use SHIFT+Goldfish to then continue in Goldfish mode.", color: COLORS.red,
+                        action: () => { ["Ancient Tomb","Sol Ring","Lotus Petal","Hope Tender","Gaea's Cradle","Quirion Ranger","Ashaya, Soul of the Wild"].forEach(c => addTo("hand")(c)); setGreenMana("0"); setColorlessMana("0"); } },
                     ].map(({ label, desc, color, action }) => (
                       <button key={label} onClick={action} style={{
                         background: "transparent", border: `1px solid ${color}44`,
