@@ -156,6 +156,7 @@ const CARDS = {
   "Mariposa Military Base":{ type:"land", cmc:0, tags:["land","draw","utility"], note:"{T}: Add {C}. {5},{T}: Draw a card (costs 1 less per rad counter). ETB: may enter tapped for 2 rad counters."},
   "Mikokoro, Center of the Sea": { type:"land", cmc:0, tags:["land","utility","draw"]},
   "Ominous Cemetery":      { type:"land", cmc:0, tags:["land","removal","utility"]},
+  "Abstergo Entertainment":{ type:"land", cmc:0, tags:["land","utility","recursion","graveyard-hate","legendary"], note:"{T}: Add {C}. {1},{T}: Add one mana of any color. {3},{T}, Exile self: Return up to one historic card from your graveyard to hand, then exile all graveyards. Historic = legendary, artifact, or Saga."},
   "Turntimber Symbiosis":  { type:"land", cmc:0, tags:["land","utility","forest"], greenPips:3, note:"Land side: enters tapped as Forest. Spell side {4}{G}{G}{G} (CMC 7): look at top 7, put a creature with CMC ≤ 3 onto battlefield with 3 extra +1/+1 counters. greenPips:3 reflects spell side for Defiler cost reduction."},
   "Emerald Medallion":     { type:"artifact", cmc:2, tags:["ramp","cost-reducer"], role:"cost-reducer"},
   "Nylea, Keen-Eyed":      { type:"creature", cmc:4, tags:["combo","mana-sink","cost-reducer"], role:"storm-engine", greenPips:1},
@@ -1960,7 +1961,7 @@ const CATEGORIES = {
   "Rocks & Artifacts": ["Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal"],
   "Enchantments": ["Utopia Sprawl","Wild Growth","Survival of the Fittest","Elvish Guidance"],
   "Instants & Sorceries": ["Worldly Tutor","Chord of Calling","Summoner's Pact","Shared Summons","Green Sun's Zenith","Natural Order","Eldritch Evolution","Crop Rotation","Sylvan Scrying","Archdruid's Charm","Beast Within","Force of Vigor","Infectious Bite","Legolas's Quick Reflexes"],
-  "Key Lands": ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Yavimaya, Cradle of Growth","Wirewood Lodge","Deserted Temple","Geier Reach Sanitarium","Ancient Tomb","Emergence Zone","Boseiju, Who Endures","Shifting Woodland","Talon Gates of Madara","War Room","Urza's Cave","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills"],
+  "Key Lands": ["Gaea's Cradle","Itlimoc, Cradle of the Sun","Nykthos, Shrine to Nyx","Yavimaya, Cradle of Growth","Wirewood Lodge","Deserted Temple","Geier Reach Sanitarium","Ancient Tomb","Emergence Zone","Boseiju, Who Endures","Shifting Woodland","Talon Gates of Madara","War Room","Urza's Cave","Abstergo Entertainment","Dryad Arbor","Misty Rainforest","Verdant Catacombs","Windswept Heath","Wooded Foothills"],
   "Basic Lands": ["Forest"],
 };
 
@@ -3968,6 +3969,16 @@ function _buildSolverBundle() {
     return tier2Key ?? null;
   }
 
+  // Legendary creature keys — used by Abstergo Entertainment to identify "historic" targets.
+  // (Legendary lands track their own subtypes; legendary creatures don't carry a 'Legendary' subtype
+  // in their subtypes array, so we enumerate them explicitly here.)
+  const LEGENDARY_CREATURE_KEYS = new Set([
+    'yeva','ashaya','kogla','eladamri','selvala','yisan','marwyn',
+    'woodland_bellower','regal_force','seedborn_muse','argothian_elder',
+    'joraga_treespeaker','defiler_of_vigor','agatha_cauldron',
+    'disciple_of_freyalise','badgermole_cub','woodcaller_automaton',
+  ]);
+
   const CARDS = {
 
     // ─── LANDS ───────────────────────────────────────────────────────────────
@@ -4149,6 +4160,129 @@ function _buildSolverBundle() {
     },
     bonders_enclave:     { name: "Bonders' Enclave",           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
     mikokoro:            { name: 'Mikokoro, Center of the Sea', types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+
+    abstergo_entertainment: {
+      name: 'Abstergo Entertainment', types: ['land'], subtypes: ['Legendary'], cost: null,
+      // {T}: Add {C}.
+      // {1}, {T}: Add one mana of any color.
+      // {3}, {T}, Exile Abstergo Entertainment: Return up to one target historic card from your
+      //   graveyard to your hand, then exile all graveyards.
+      //   (Artifacts, legendaries, and Sagas are historic.)
+      tapForMana: simpleTap('{C}', [['C', 1]]),
+      abilities: {
+        tap_any_color: {
+          label: '{1}, {T}: Add one mana of any color',
+          fn(state, perm) {
+            if (perm.tapped || perm.summoningSick) return [];
+            const afterPay = state.payMana('1');
+            if (!afterPay) return [];
+            let s = afterPay.tapPermanent(perm.id);
+            if (!s) return [];
+            s = s.addMana('G'); // model as {G} for solver purposes
+            return [s.log('Abstergo Entertainment: {1},{T} → {G}')];
+          },
+        },
+        animus_recall: {
+          label: '{3}, {T}, Exile self: Return historic card from graveyard to hand, exile all graveyards',
+          fn(state, perm) {
+            if (perm.tapped || perm.summoningSick) return [];
+            const afterPay = state.payMana('3');
+            if (!afterPay) return [];
+            let s = afterPay.tapPermanent(perm.id);
+            if (!s) return [];
+
+            // Exile Abstergo Entertainment itself from the battlefield
+            s = s.removeFromBattlefield(perm.id, 'exile');
+            if (!s) return [];
+
+            const cards = CARDS;
+            const { NAME_TO_KEY } = _ACM;
+
+            // Identify "historic" cards in your graveyard:
+            // legendary supertype, artifact card type, or Saga subtype
+            const gy = s.players[0].graveyard;
+            const historicInGY = gy.filter(cardName => {
+              const ck = NAME_TO_KEY[cardName];
+              if (!ck) return false;
+              const def = cards[ck];
+              if (!def) return false;
+              const isLegendary = def.subtypes?.includes('Legendary') ||
+                // Legendary creatures have 'Legendary' in their effective type — check cost context
+                // Also check the key against known legendary creatures in this deck
+                LEGENDARY_CREATURE_KEYS.has(ck);
+              const isArtifact = def.types?.includes('artifact');
+              const isSaga = def.subtypes?.includes('Saga');
+              return isLegendary || isArtifact || isSaga;
+            });
+
+            // Helper: exile all graveyards
+            function exileAllGraveyards(gs) {
+              let ns = gs.clone();
+              for (let pi = 0; pi < ns.players.length; pi++) {
+                const p = ns.players[pi].clone();
+                for (const cardName of p.graveyard) p.exile = [...p.exile, cardName];
+                p.graveyard = [];
+                ns.players[pi] = p;
+              }
+              return ns;
+            }
+
+            const results = [];
+
+            if (historicInGY.length === 0) {
+              // No historic target — still legal; just exile all graveyards
+              let ns = exileAllGraveyards(s);
+              ns = ns.log('Abstergo Entertainment: no historic target, exile all graveyards');
+              results.push(ns);
+            } else {
+              // Generate one result per historic card we could return
+              const { COMBO_REQUIRED_KEYS } = _CDM;
+              const present = new Set(s.hand);
+              for (const p of s.battlefield) {
+                const ck = NAME_TO_KEY[p.name];
+                if (ck) present.add(ck);
+              }
+
+              // Score each candidate by how many combos it completes
+              const scored = historicInGY.map(cardName => {
+                const ck = NAME_TO_KEY[cardName];
+                let score = 0;
+                for (const required of COMBO_REQUIRED_KEYS) {
+                  if (!required.includes(ck)) continue;
+                  const missing = required.filter(k => !present.has(k)).length;
+                  if (missing <= 2) score += (3 - missing) * 10;
+                }
+                return { cardName, ck, score };
+              });
+
+              // Sort descending by score; only generate result for top candidate
+              // (avoids branching explosion while still finding best target)
+              scored.sort((a, b) => b.score - a.score);
+              const best = scored[0];
+              const ck = best.ck;
+
+              // Build state: add the card to hand first, THEN exile all graveyards
+              let ns = s.clone();
+              // Remove from graveyard
+              ns.players[0] = ns.players[0].clone();
+              const gyIdx = ns.players[0].graveyard.indexOf(best.cardName);
+              if (gyIdx !== -1) {
+                ns.players[0].graveyard = [
+                  ...ns.players[0].graveyard.slice(0, gyIdx),
+                  ...ns.players[0].graveyard.slice(gyIdx + 1),
+                ];
+              }
+              ns = ns.addToHand(ck);
+              ns = exileAllGraveyards(ns);
+              ns = ns.log(`Abstergo Entertainment: return ${best.cardName} to hand, exile all graveyards`);
+              results.push(ns);
+            }
+
+            return results;
+          },
+        },
+      },
+    },
     urza_cave:           { name: "Urza's Cave",                types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
     ominous_cemetery:    { name: 'Ominous Cemetery',           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
     mariposa_military:   { name: 'Mariposa Military Base',     types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
@@ -9361,6 +9495,8 @@ var SOLVER_NAME_MAP         = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -12223,23 +12359,45 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
       const hasFaunaWitness  = faunaCanFetchWitness();
       const hasSkullwinder   = inHand.has("Skullwinder") && canAfford(3, 1); // {2}{G}
       const hasNoxRevival    = inHand.has("Noxious Revival");
-      const hasRecoveryPath  = hasWitness || hasFaunaWitness || hasSkullwinder || hasNoxRevival;
+      // Abstergo Entertainment: {3},{T}, exile self — returns any historic card (legendary/artifact/Saga)
+      // from graveyard to hand, then exiles all graveyards. Costs {3} + tap + the land itself.
+      const HISTORIC_TYPES = new Set([
+        // Legendary combo creatures
+        "Ashaya, Soul of the Wild","Kogla, the Titan Ape","Selvala, Heart of the Wilds",
+        "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Marwyn, the Nurturer",
+        "Argothian Elder","Elvish Archdruid","Joraga Treespeaker","Regal Force",
+        "Seedborn Muse","Woodland Bellower","Disciple of Freyalise","Eladamri, Korvecdal",
+        "Karametra's Acolyte",
+        // Artifacts
+        "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+        "Thousand-Year Elixir","Cloudstone Curio","Collector Ouphe",
+      ]);
+      const abstergoOnBoard  = board.has("Abstergo Entertainment") && canAfford(3, 0) && !tappedCards?.includes("Abstergo Entertainment");
+      const abstergoInHand   = inHand.has("Abstergo Entertainment") && isMyTurn && !landPlayed;
+      const historicInGrave  = graveCombopieces.filter(c => HISTORIC_TYPES.has(c));
+      const hasAbstergoPath  = (abstergoOnBoard || abstergoInHand) && historicInGrave.length > 0;
+      const hasRecoveryPath  = hasWitness || hasFaunaWitness || hasSkullwinder || hasNoxRevival || hasAbstergoPath;
 
       if (hasRecoveryPath) {
         const target = graveCombopieces[0]; // highest priority missing piece
+        const abstergoTarget = historicInGrave[0] ?? target;
         const recoveryMethod = hasWitness
           ? `Cast Eternal Witness ({1}{G}{G}): ETB returns ${target} to hand.`
           : hasFaunaWitness
             ? `Fauna Shaman: discard a creature → find Eternal Witness → EWit ETB returns ${target}.`
             : hasSkullwinder
               ? `Cast Skullwinder ({2}{G}): ETB returns ${target} from graveyard to hand.`
-              : `Cast Noxious Revival (free, pay 2 life): put ${target} on top of library. Draw it next turn or with a draw effect.`;
-        const isThisTurn = hasWitness || hasFaunaWitness || hasSkullwinder;
+              : hasAbstergoPath
+                ? abstergoInHand
+                  ? `Play Abstergo Entertainment as your land drop, then pay {3} and tap+exile it to return ${abstergoTarget} to hand. Also exiles all graveyards — relevant bonus vs graveyard opponents.`
+                  : `Activate Abstergo Entertainment ({3}, tap, exile itself): returns ${abstergoTarget} to hand, then exiles all graveyards.`
+                : `Cast Noxious Revival (free, pay 2 life): put ${target} on top of library. Draw it next turn or with a draw effect.`;
+        const isThisTurn = hasWitness || hasFaunaWitness || hasSkullwinder || hasAbstergoPath;
         results.push({
           priority: 12,
           category: `♻️ RECOVER ${isThisTurn ? "NOW" : "NEXT TURN"}`,
-          headline: `${target} is in graveyard — recover it ${isThisTurn ? "this turn" : "via Noxious Revival"}`,
-          detail: `${target} is a key combo piece sitting in your graveyard. ${isThisTurn
+          headline: `${hasAbstergoPath && !hasWitness && !hasFaunaWitness && !hasSkullwinder ? abstergoTarget : target} is in graveyard — recover it ${isThisTurn ? "this turn" : "via Noxious Revival"}`,
+          detail: `${hasAbstergoPath && !hasWitness && !hasFaunaWitness && !hasSkullwinder ? abstergoTarget : target} is a key combo piece sitting in your graveyard. ${isThisTurn
             ? "You have a creature recursion path available this turn."
             : "Noxious Revival (free instant, pay 2 life) puts it on top of your library — draw it next turn."}${graveCombopieces.length > 1 ? ` Other graveyard pieces: ${graveCombopieces.slice(1, 3).join(", ")}.` : ""}`,
           steps: [
@@ -12255,10 +12413,11 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           priority: 3,
           category: "💀 GRAVEYARD",
           headline: `${graveCombopieces.length} combo pieces in graveyard — no recovery path`,
-          detail: `${graveCombopieces.slice(0, 3).join(", ")} are in your graveyard. No Eternal Witness, Skullwinder, or Noxious Revival available to recover them. Consider fetching Eternal Witness as your next tutor target.`,
+          detail: `${graveCombopieces.slice(0, 3).join(", ")} are in your graveyard. No Eternal Witness, Skullwinder, Noxious Revival, or Abstergo Entertainment available to recover them. Consider fetching Eternal Witness as your next tutor target.`,
           steps: [
             `Pieces in graveyard: ${graveCombopieces.join(", ")}.`,
             "Fetch Eternal Witness (CMC 3, any tutor) to recover the most critical piece.",
+            "Alternatively, Abstergo Entertainment ({3},{T}, exile self) can recover any legendary or artifact piece from the graveyard.",
           ],
           color: "#7f8c8d",
         });
@@ -15357,7 +15516,7 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
   }
 
   // ---- UTILITY LANDS (in hand / castable) ----
-  // Bonders' Enclave, Mikokoro, Mariposa Military Base — draw utility lands
+  // Bonders' Enclave, Mikokoro, Mariposa Military Base, Abstergo Entertainment — utility lands
   {
     const drawLands = [
       { name: "Bonders' Enclave", cost: 4, desc: "{4}: draw a card if you control a creature with power 4+. Repeatable draw engine with big dorks.", powerReq: 4 },
@@ -15374,6 +15533,60 @@ function analyzeGameState({ hand, battlefield, graveyard, manaAvailable, isMyTur
           detail: dl.desc,
           steps: [`Play ${dl.name} as your land drop.`, dl.desc],
           color: "#7f8c8d",
+        });
+      }
+    }
+    // Abstergo Entertainment — graveyard recursion utility land
+    if (inHand.has("Abstergo Entertainment") && isMyTurn) {
+      const HISTORIC_GY = [
+        "Ashaya, Soul of the Wild","Kogla, the Titan Ape","Selvala, Heart of the Wilds",
+        "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Argothian Elder","Regal Force",
+        "Marwyn, the Nurturer","Elvish Archdruid","Karametra's Acolyte",
+        "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+      ];
+      const historicGY = graveyard.filter(c => HISTORIC_GY.includes(c));
+      const recoveryNote = historicGY.length > 0
+        ? ` You have ${historicGY.length > 1 ? historicGY.length + " historic targets" : historicGY[0]} in your graveyard — activate immediately if you have {3} spare.`
+        : " No historic targets in your graveyard yet — holds value for future recursion or graveyard hate.";
+      results.push({
+        priority: historicGY.length > 0 ? 6 : 2,
+        category: "🏔️ UTILITY LAND",
+        requiresLandDrop: true,
+        headline: `Play Abstergo Entertainment${historicGY.length > 0 ? " — recover " + (historicGY[0]) : ""}`,
+        detail: `Legendary land. {T}: {C}. {1},{T}: any color. {3},{T}, exile itself: return up to one historic card (legendary, artifact, Saga) from your graveyard to hand, then exile all graveyards.${recoveryNote}`,
+        steps: [
+          "Play Abstergo Entertainment as your land drop.",
+          ...(historicGY.length > 0 ? [
+            `Pay {3}, tap and exile Abstergo → return ${historicGY[0]} to hand.`,
+            "All graveyards are then exiled — relevant bonus against graveyard opponents.",
+          ] : [
+            "Holds value as {C} or {G}-any producer until a historic piece hits your graveyard.",
+          ]),
+        ],
+        color: "#7f8c8d",
+      });
+    }
+    // Abstergo Entertainment on board — activation hint when historic cards are in graveyard
+    if (board.has("Abstergo Entertainment") && isMyTurn) {
+      const HISTORIC_GY = [
+        "Ashaya, Soul of the Wild","Kogla, the Titan Ape","Selvala, Heart of the Wilds",
+        "Yeva, Nature's Herald","Yisan, the Wanderer Bard","Argothian Elder","Regal Force",
+        "Marwyn, the Nurturer","Elvish Archdruid","Karametra's Acolyte",
+        "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+      ];
+      const historicGY = graveyard.filter(c => HISTORIC_GY.includes(c));
+      if (historicGY.length > 0 && (mana >= 3 || infiniteManaActive)) {
+        results.push({
+          priority: 8,
+          category: "♻️ ABSTERGO RECURSION",
+          headline: `Activate Abstergo Entertainment → recover ${historicGY[0]}`,
+          detail: `Pay {3}, tap Abstergo Entertainment, then exile it. Returns ${historicGY[0]} from your graveyard to hand, then exiles all graveyards. Abstergo is a one-shot effect — use it when recovering the piece is worth sacrificing the land.`,
+          steps: [
+            `Pay {3}, tap and exile Abstergo Entertainment.`,
+            `Return ${historicGY[0]} to hand.${historicGY.length > 1 ? ` Other historic targets available: ${historicGY.slice(1).join(", ")}.` : ""}`,
+            "All graveyards are exiled — disrupts graveyard-based opponents as a bonus.",
+          ],
+          color: "#e67e22",
         });
       }
     }
@@ -34768,6 +34981,129 @@ if (card !== "Beast Whisperer" && getCard(card)?.type === "creature" && battlefi
               ⚡ {'{1}'}Tap — untap a land
             </div>
           );
+        })()}
+
+        {/* ── Abstergo Entertainment ──────────────────────────────────────────────
+             Ability 1: {1}, {T} → Add one mana of any color (modelled as {G})
+             Ability 2: {3}, {T}, Exile self → Return up to one historic card
+                        (legendary / artifact / Saga) from graveyard to hand,
+                        then exile all graveyards.                              */}
+        {isBF && card === "Abstergo Entertainment" && (() => {
+          // --- Shared helpers ---
+          const ABSTERGO_HISTORIC = new Set([
+            // Legendary creatures in the deck
+            "Yeva, Nature's Herald","Ashaya, Soul of the Wild","Kogla, the Titan Ape",
+            "Selvala, Heart of the Wilds","Yisan, the Wanderer Bard","Marwyn, the Nurturer",
+            "Argothian Elder","Elvish Archdruid","Joraga Treespeaker","Regal Force",
+            "Seedborn Muse","Woodland Bellower","Disciple of Freyalise","Eladamri, Korvecdal",
+            "Karametra's Acolyte","Fanatic of Rhonas","Circle of Dreams Druid",
+            // Legendary lands
+            "Gaea's Cradle","Nykthos, Shrine to Nyx","Itlimoc, Cradle of the Sun",
+            "Yavimaya, Cradle of Growth","Geier Reach Sanitarium","Wirewood Lodge",
+            "Deserted Temple","Mikokoro, Center of the Sea",
+            // Artifacts
+            "Sol Ring","Chrome Mox","Mox Diamond","Lotus Petal",
+            "Thousand-Year Elixir","Cloudstone Curio","Collector Ouphe",
+          ]);
+          const historicTargets = graveyard.filter(c => ABSTERGO_HISTORIC.has(c));
+
+          // --- Ability 1: {1},{T} → add {G} ---
+          const canAny = !isCardTapped && (manaPool + tappedMana.total) >= 1;
+
+          // --- Ability 2: {3},{T}, exile self → return historic, exile all GYs ---
+          const costAnimus = 3;
+          const canAnimus = !isCardTapped && (manaPool + tappedMana.total) >= costAnimus;
+
+          if (isCardTapped) return (
+            <div style={{ padding: "5px 14px", color: COLORS.textDim, fontSize: "10px", letterSpacing: "1px" }}>
+              ⚡ Abstergo — already tapped
+            </div>
+          );
+
+          return (<>
+            {/* Ability 1: {1},{T} → any color */}
+            <div onClick={() => {
+              if (!canAny) return;
+              pushUndo();
+              toggleTap(card, index);
+              spendMana(1);
+              setManaPool(prev => prev + 1); flashMana(0); // net 0 on colorless, but adds 1 green
+              addLog("Abstergo Entertainment: paid {1}, tapped → +{G} (any color).", COLORS.green2);
+              closeContextMenu();
+            }} style={{ padding: "6px 14px", cursor: canAny ? "pointer" : "default",
+              color: canAny ? COLORS.green2 : COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { if (canAny) e.currentTarget.style.background = "#162616"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {"{1}"}{"{T}"} — Add {"{G}"} (any color){!canAny ? " (need {1})" : ""}
+            </div>
+
+            {/* Ability 2: {3},{T}, exile self → historic recursion */}
+            <div onClick={() => {
+              if (!canAnimus) return;
+              pushUndo();
+              spendMana(costAnimus);
+              // Tap and exile self — remove from battlefield, add to exile
+              const abKey = cardKey(card, index);
+              setTapped(prev => { const next = new Set(prev); next.add(abKey); return next; });
+              goldfishRemoveFromBattlefield(card, index);
+              // Snapshot graveyard now (closure value is stable within this click handler)
+              const gySnapshot = [...graveyard];
+
+              if (historicTargets.length === 0) {
+                // No targets — still legal; exile all graveyards (+ self)
+                setExile(prev => [...prev, card, ...gySnapshot]);
+                setGraveyard([]);
+                addLog("Abstergo Entertainment: paid {3}, tapped, exiled itself — no historic targets; all graveyards exiled.", COLORS.gold);
+                closeContextMenu();
+              } else if (historicTargets.length === 1) {
+                // Exactly one target — auto-resolve
+                const target = historicTargets[0];
+                const gyRest = gySnapshot.filter(c => c !== target);
+                setExile(prev => [...prev, card, ...gyRest]);
+                setGraveyard([]);
+                setHand(prev => [...prev, target]);
+                addLog(`Abstergo Entertainment: paid {3}, tapped, exiled itself → returned ${target} to hand; all graveyards exiled.`, COLORS.gold);
+                closeContextMenu();
+              } else {
+                // Multiple historic targets — let player choose
+                // Exile self now; graveyard cleared on picker resolution
+                setExile(prev => [...prev, card]);
+                closeContextMenu();
+                setPendingPicker({
+                  label: "ABSTERGO ENTERTAINMENT — RETURN A HISTORIC CARD TO HAND",
+                  color: COLORS.gold,
+                  skipLabel: "✕ No target — exile all graveyards only",
+                  items: historicTargets.map(c => ({
+                    label: c,
+                    sub: "legendary / artifact / Saga — return to hand",
+                    key: c,
+                  })),
+                  onSelect: ({ key: chosen }) => {
+                    const rest = gySnapshot.filter(c => c !== chosen);
+                    setExile(prev => [...prev, ...rest]);
+                    setGraveyard([]);
+                    setHand(prev => [...prev, chosen]);
+                    addLog(`Abstergo Entertainment: returned ${chosen} to hand; all graveyards exiled.`, COLORS.gold);
+                  },
+                  onSkip: () => {
+                    setExile(prev => [...prev, ...gySnapshot]);
+                    setGraveyard([]);
+                    addLog("Abstergo Entertainment: no target chosen; all graveyards exiled.", COLORS.gold);
+                  },
+                });
+                setPickerSelected([]);
+              }
+            }} style={{ padding: "6px 14px", cursor: canAnimus ? "pointer" : "default",
+              color: canAnimus ? COLORS.gold : COLORS.textDim, letterSpacing: "1px" }}
+              onMouseEnter={e => { if (canAnimus) e.currentTarget.style.background = "#1a1a0a"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              ⚡ {"{3}"}{"{T}"}+exile self — recover historic card
+              {historicTargets.length > 0
+                ? <span style={{ fontSize: "9px", color: COLORS.textDim, marginLeft: "6px" }}>({historicTargets.length} target{historicTargets.length !== 1 ? "s" : ""})</span>
+                : <span style={{ fontSize: "9px", color: COLORS.textDim, marginLeft: "6px" }}>(exile all GYs only)</span>}
+              {!canAnimus && <span style={{ fontSize: "9px", color: COLORS.textDim }}> — need {"{3}"}</span>}
+            </div>
+          </>);
         })()}
 
         {/* ── Nykthos, Shrine to Nyx: {2} tap — add mana equal to devotion to green ── */}
