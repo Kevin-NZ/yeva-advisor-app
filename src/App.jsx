@@ -9360,6 +9360,7 @@ var SOLVER_NAME_MAP         = _solverExports.SOLVER_NAME_MAP;
 
 
 
+
 // ── Solver Web Worker ────────────────────────────────────────────────────
 
 
@@ -24613,6 +24614,44 @@ function EscapeHandler({ onClose }) {
   return null;
 }
 
+// ── useBackupHealth ─────────────────────────────────────────────────────────────
+// Returns { status, lastTs, currentSize, deltaBytes, deltaPct, ageHours }
+// status: "ok" | "warn" | "alert" | "none"
+function useBackupHealth() {
+  const [state, setState] = useState(() => computeBackupHealth());
+
+  function computeBackupHealth() {
+    const SKIP = new Set(["yeva_scryfall_data_v1", "yeva_backup_meta"]);
+    let currentSize = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith("yeva") || k.startsWith("goldfish-stats")) && !SKIP.has(k))
+        currentSize += (localStorage.getItem(k) || "").length;
+    }
+    let meta = null;
+    try { meta = JSON.parse(localStorage.getItem("yeva_backup_meta") || "null"); } catch {}
+    const deltaBytes = meta ? currentSize - meta.sizeBytes : currentSize;
+    const deltaPct   = meta ? ((currentSize - meta.sizeBytes) / Math.max(meta.sizeBytes, 1)) * 100 : 100;
+    const ageHours   = meta ? (Date.now() - meta.ts) / 3600000 : 999;
+    let status = "none";
+    if (meta) {
+      if (deltaPct > 20 || ageHours > 168) status = "alert";
+      else if (deltaPct > 8 && ageHours > 72) status = "warn";
+      else status = "ok";
+    }
+    return { status, lastTs: meta?.ts ?? null, currentSize, deltaBytes, deltaPct, ageHours };
+  }
+
+  useEffect(() => {
+    const id = setInterval(() => setState(computeBackupHealth()), 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Allow callers to trigger a refresh (e.g. after recording backup)
+  const refresh = () => setState(computeBackupHealth());
+  return { ...state, refresh };
+}
+
 // ── HelpModal ──────────────────────────────────────────────────────────────────
 function HelpModal({ onClose, onStartTour }) {
   const [tab, setTab] = useState("overview");
@@ -39803,9 +39842,36 @@ function YevaAdvisor() {
   const kebabRef                              = useRef(null);
   const [backupStatus, setBackupStatus]       = useState(""); // "" | "ok" | "err"
   const [restoreStatus, setRestoreStatus]     = useState(""); // "" | "ok" | "err"
+  const backupHealth                          = useBackupHealth();
   const backupRestoreRef                      = useRef(null);
   const restoreFileInputRef                   = useRef(null);
   const tour = useTour();
+
+  function getYevaStateSize() {
+    const SKIP = new Set(["yeva_scryfall_data_v1", "yeva_backup_meta"]);
+    let total = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith("yeva") || k.startsWith("goldfish-stats")) && !SKIP.has(k)) {
+        total += (localStorage.getItem(k) || "").length;
+      }
+    }
+    return total;
+  }
+
+  function recordBackupMeta() {
+    try {
+      localStorage.setItem("yeva_backup_meta", JSON.stringify({ ts: Date.now(), sizeBytes: getYevaStateSize() }));
+      backupHealth.refresh();
+    } catch {}
+  }
+
+  function handleMarkBackupDone() {
+    try {
+      localStorage.setItem("yeva_backup_meta", JSON.stringify({ ts: Date.now(), sizeBytes: getYevaStateSize() }));
+      backupHealth.refresh();
+    } catch {}
+  }
 
   function handleAppBackup() {
     try {
@@ -39824,6 +39890,7 @@ function YevaAdvisor() {
       a.download = `yeva-backup-${new Date().toISOString().slice(0,10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      recordBackupMeta();
       setBackupStatus("ok");
       setTimeout(() => { setBackupStatus(""); setShowBackupMenu(false); }, 1500);
     } catch { setBackupStatus("err"); setTimeout(() => setBackupStatus(""), 2000); }
@@ -40436,60 +40503,113 @@ function YevaAdvisor() {
               onMouseEnter={e => { e.target.style.borderColor = COLORS.red; e.target.style.color = COLORS.red; }}
               onMouseLeave={e => { e.target.style.borderColor = COLORS.border; e.target.style.color = COLORS.textDim; }}
             >↺ {isMobile ? "" : "RESET"}</button>
-            {/* 💾 BACKUP menu */}
+            {/* 💾 STORAGE menu */}
             <div ref={backupRestoreRef} style={{ position: "relative" }}>
               <input ref={restoreFileInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleAppRestoreFile} />
-              <button
-                onClick={() => setShowBackupMenu(v => !v)}
-                title="Backup or restore all decks, saved states, and simulator history"
-                style={{
-                  background: showBackupMenu ? "#1a2a1a" : "none",
-                  border: `1px solid ${showBackupMenu ? COLORS.green1 : COLORS.border}`,
-                  borderRadius: "6px", padding: "5px 12px",
-                  color: showBackupMenu ? COLORS.text : COLORS.textDim, cursor: "pointer",
-                  fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
-                  transition: "all 0.2s",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green2; e.currentTarget.style.color = COLORS.green2; }}
-                onMouseLeave={e => { if (!showBackupMenu) { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; } }}
-              >💾 {isMobile ? "" : "BACKUP"}</button>
-              {showBackupMenu && (
-                <div style={{
-                  position: "absolute", top: "calc(100% + 6px)", right: 0,
-                  background: COLORS.bgCard, border: `1px solid ${COLORS.border}`,
-                  borderRadius: "8px", padding: "8px", zIndex: 500,
-                  boxShadow: "0 6px 24px #000a", minWidth: "180px",
-                  display: "flex", flexDirection: "column", gap: "6px",
-                }}>
+              {(() => {
+                const hs = backupHealth.status;
+                const alertColor  = "#ff7040";
+                const warnColor   = "#e8c840";
+                const btnBorder   = hs === "alert" ? alertColor : hs === "warn" ? warnColor : showBackupMenu ? COLORS.green1 : COLORS.border;
+                const btnColor    = hs === "alert" ? alertColor : hs === "warn" ? warnColor : showBackupMenu ? COLORS.text : COLORS.textDim;
+                const btnBg       = showBackupMenu ? "#1a2a1a" : "none";
+                return (
                   <button
-                    onClick={handleAppBackup}
-                    title="Download all decks, saved states, and simulator history as a JSON file"
+                    onClick={() => setShowBackupMenu(v => !v)}
+                    title="Backup or restore all decks, saved states, and simulator history"
                     style={{
-                      background: backupStatus === "ok" ? "#1a4a2a" : backupStatus === "err" ? "#4a1a1a" : "#0d1f0d",
-                      border: `1px solid ${backupStatus === "ok" ? COLORS.green1 : backupStatus === "err" ? COLORS.red : COLORS.border}`,
-                      borderRadius: "5px", padding: "7px 14px",
-                      color: backupStatus === "ok" ? COLORS.green2 : backupStatus === "err" ? COLORS.red : COLORS.text,
-                      cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
-                      letterSpacing: "1px", textAlign: "left", transition: "all 0.2s",
+                      background: btnBg,
+                      border: `1px solid ${btnBorder}`,
+                      borderRadius: "6px", padding: "5px 12px",
+                      color: btnColor, cursor: "pointer",
+                      fontFamily: "'Cinzel', serif", fontSize: "11px", letterSpacing: "1px",
+                      transition: "all 0.2s",
                     }}
-                  >{backupStatus === "ok" ? "✓ DOWNLOADED" : backupStatus === "err" ? "✗ FAILED" : "⬇ BACKUP"}</button>
-                  <button
-                    onClick={() => restoreFileInputRef.current?.click()}
-                    title="Restore from a previously saved backup JSON file (reloads the page)"
-                    style={{
-                      background: restoreStatus === "ok" ? "#1a4a2a" : restoreStatus === "err" ? "#4a1a1a" : "#0d1f0d",
-                      border: `1px solid ${restoreStatus === "ok" ? COLORS.green1 : restoreStatus === "err" ? COLORS.red : COLORS.border}`,
-                      borderRadius: "5px", padding: "7px 14px",
-                      color: restoreStatus === "ok" ? COLORS.green2 : restoreStatus === "err" ? COLORS.red : COLORS.text,
-                      cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
-                      letterSpacing: "1px", textAlign: "left", transition: "all 0.2s",
-                    }}
-                  >{restoreStatus === "ok" ? "✓ RESTORED" : restoreStatus === "err" ? "✗ INVALID FILE" : "⬆ RESTORE"}</button>
-                  <div style={{ fontSize: "10px", color: COLORS.textDim, padding: "2px 4px", lineHeight: 1.4 }}>
-                    Backup saves all decks, game states, and goldfish history.
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = hs === "alert" ? alertColor : hs === "warn" ? warnColor : COLORS.green2; e.currentTarget.style.color = hs === "alert" ? alertColor : hs === "warn" ? warnColor : COLORS.green2; }}
+                    onMouseLeave={e => { if (!showBackupMenu) { e.currentTarget.style.borderColor = btnBorder; e.currentTarget.style.color = btnColor; } }}
+                  >💾 {isMobile ? "" : "STORAGE"}{(hs === "alert" || hs === "warn") && " !"}</button>
+                );
+              })()}
+              {showBackupMenu && (() => {
+                const { status: hs, lastTs, currentSize, deltaBytes, deltaPct, ageHours } = backupHealth;
+                const fmt = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b/1024).toFixed(1)} KB` : `${(b/1048576).toFixed(2)} MB`;
+                const fmtAge = (ts) => { if (!ts) return "—"; const s = Math.floor((Date.now()-ts)/1000); if (s<60) return "just now"; if (s<3600) return `${Math.floor(s/60)}m ago`; if (s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; };
+                const healthLabel = { ok: "✓ BACKED UP", warn: "⚠ RECOMMENDED", alert: "⚠ OVERDUE", none: "NO RECORD" }[hs];
+                const healthColor = { ok: COLORS.green2, warn: "#e8c840", alert: "#ff7040", none: COLORS.textDim }[hs];
+                return (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 6px)", right: 0,
+                    background: COLORS.bgCard, border: `1px solid ${COLORS.border}`,
+                    borderRadius: "8px", padding: "8px", zIndex: 500,
+                    boxShadow: "0 6px 24px #000a", minWidth: "200px",
+                    display: "flex", flexDirection: "column", gap: "6px",
+                  }}>
+                    <button
+                      onClick={handleAppBackup}
+                      title="Download all decks, saved states, and simulator history as a JSON file"
+                      style={{
+                        background: backupStatus === "ok" ? "#1a4a2a" : backupStatus === "err" ? "#4a1a1a" : "#0d1f0d",
+                        border: `1px solid ${backupStatus === "ok" ? COLORS.green1 : backupStatus === "err" ? COLORS.red : COLORS.border}`,
+                        borderRadius: "5px", padding: "7px 14px",
+                        color: backupStatus === "ok" ? COLORS.green2 : backupStatus === "err" ? COLORS.red : COLORS.text,
+                        cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
+                        letterSpacing: "1px", textAlign: "left", transition: "all 0.2s",
+                      }}
+                    >{backupStatus === "ok" ? "✓ DOWNLOADED" : backupStatus === "err" ? "✗ FAILED" : "⬇ BACKUP (export)"}</button>
+                    <button
+                      onClick={() => restoreFileInputRef.current?.click()}
+                      title="Restore from a previously saved backup JSON file (reloads the page)"
+                      style={{
+                        background: restoreStatus === "ok" ? "#1a4a2a" : restoreStatus === "err" ? "#4a1a1a" : "#0d1f0d",
+                        border: `1px solid ${restoreStatus === "ok" ? COLORS.green1 : restoreStatus === "err" ? COLORS.red : COLORS.border}`,
+                        borderRadius: "5px", padding: "7px 14px",
+                        color: restoreStatus === "ok" ? COLORS.green2 : restoreStatus === "err" ? COLORS.red : COLORS.text,
+                        cursor: "pointer", fontFamily: "'Cinzel', serif", fontSize: "11px",
+                        letterSpacing: "1px", textAlign: "left", transition: "all 0.2s",
+                      }}
+                    >{restoreStatus === "ok" ? "✓ RESTORED" : restoreStatus === "err" ? "✗ INVALID FILE" : "⬆ RESTORE (import)"}</button>
+                    {/* Divider */}
+                    <div style={{ height: "1px", background: COLORS.border, margin: "2px 0" }} />
+                    {/* HEALTH panel */}
+                    <div style={{
+                      background: "#0a150a", border: `1px solid ${COLORS.border}`,
+                      borderRadius: "5px", padding: "8px 10px",
+                      display: "flex", flexDirection: "column", gap: "5px",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: COLORS.textDim, letterSpacing: "1px" }}>HEALTH</span>
+                        <span style={{ fontFamily: "'Cinzel', serif", fontSize: "10px", color: healthColor, letterSpacing: "0.5px" }}>{healthLabel}</span>
+                      </div>
+                      {[
+                        ["Last backup", fmtAge(lastTs)],
+                        ["State size",  fmt(currentSize)],
+                        lastTs ? ["Δ since backup", `${deltaBytes >= 0 ? "+" : ""}${fmt(Math.abs(deltaBytes))} (${deltaPct > 0 ? "+" : ""}${deltaPct.toFixed(0)}%)`] : null,
+                      ].filter(Boolean).map(([k, v]) => (
+                        <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                          <span style={{ fontSize: "10px", color: COLORS.textDim, fontFamily: "'Cinzel', serif" }}>{k}</span>
+                          <span style={{ fontSize: "11px", color: COLORS.text, fontFamily: "'Crimson Text', serif" }}>{v}</span>
+                        </div>
+                      ))}
+                      <button
+                        onClick={handleMarkBackupDone}
+                        title="Record current state as the new backup baseline (use if you backed up externally)"
+                        style={{
+                          marginTop: "2px", background: "transparent",
+                          border: `1px solid ${COLORS.border}`, borderRadius: "4px",
+                          padding: "4px 8px", color: COLORS.textDim, cursor: "pointer",
+                          fontFamily: "'Cinzel', serif", fontSize: "9px", letterSpacing: "1px",
+                          transition: "all 0.2s", textAlign: "center",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.green1; e.currentTarget.style.color = COLORS.green2; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textDim; }}
+                      >✓ MARK AS BACKED UP</button>
+                    </div>
+                    <div style={{ fontSize: "10px", color: COLORS.textDim, padding: "2px 4px", lineHeight: 1.4 }}>
+                      Backup saves all decks, game states, and goldfish history.
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
             {/* U: Kebab overflow menu */}
             <div ref={kebabRef} style={{ position: "relative" }}>
@@ -40535,7 +40655,7 @@ function YevaAdvisor() {
           </div>
 
           {/* X: About modal — version info lives here, not in header */}
-          {showAbout && (
+        {showAbout && (
             <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "#000000cc", display: "flex", alignItems: "center", justifyContent: "center" }}
               onClick={() => setShowAbout(false)}>
               <div style={{ background: "#0d1f0d", border: `1px solid ${COLORS.green1}66`, borderRadius: "12px", padding: "28px 32px", maxWidth: "360px", width: "90%" }}
