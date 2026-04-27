@@ -1446,7 +1446,11 @@ class GameState {
       }
       if (bestLandKey) {
         const { state: ns, cardKey: lk } = s.searchLibraryFor(k => k === bestLandKey);
-        if (lk) s = ns.enterBattlefield(lk);
+        if (lk) {
+          s = ns.enterBattlefield(lk);
+          const landName = cardsModule[lk]?.name ?? lk;
+          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield`);
+        }
       }
     }
 
@@ -10114,11 +10118,12 @@ function printVerboseLine(result, options = {}) {
   let stepInTurn  = 0;
 
   for (let i = 1; i < line.length; i++) {
-    const state    = line[i];
+    const state     = line[i];
     const prevState = line[i - 1];
-    const histEntry = state.history[state.history.length - 1];
-    if (!histEntry) continue;
-    const msg = histEntry.msg ?? '';
+    // lastEntry drives the turn-boundary check ("-- Begin Turn N --").
+    const lastEntry = state.history[state.history.length - 1];
+    if (!lastEntry) continue;
+    const msg = lastEntry.msg ?? '';
 
     // Turn boundary
     if (state.turn !== currentTurn) {
@@ -10149,11 +10154,32 @@ function printVerboseLine(result, options = {}) {
       if (msg.startsWith('--')) continue;
     }
 
-    stepInTurn++;
-    const enriched = enrichStep(msg, state, prevState);
-    if (enriched === null) continue;
+    // Collect ALL new history entries added by this action (may be >1 for
+    // on-cast triggers like Sowing Mycospawn that log both the tutor and
+    // the cast in a single action.apply() call).
+    const prevHistLen = prevState.history.length;
+    const newEntries  = state.history.slice(prevHistLen);
+    if (newEntries.length === 0) continue;
 
+    // The primary action is always the LAST entry logged (e.g. "Cast Sowing Mycospawn").
+    // Trigger/side-effect entries are logged earlier (inside enterBattlefield).
+    // Display: primary step first, then side-effects as indented sub-lines.
+    const primaryEntry = newEntries[newEntries.length - 1];
+    const primaryMsg   = primaryEntry?.msg ?? '';
+    if (primaryMsg.startsWith('--')) continue;
+
+    const primaryEnriched = enrichStep(primaryMsg, state, prevState);
+    if (primaryEnriched === null) continue;
+
+    stepInTurn++;
     const stepLabel = `  [${String(stepInTurn).padStart(2)}]`;
+    // Sub-lines: all entries before the primary (triggers, tutors, etc.)
+    for (let e = 0; e < newEntries.length - 1; e++) {
+      const subMsg = newEntries[e].msg ?? '';
+      if (subMsg && !subMsg.startsWith('--')) {
+      }
+    }
+
     if (showMana) {
       const manaStr = state.mana.toString();
       if (manaStr !== '{0}') {
@@ -10319,13 +10345,25 @@ self.onmessage = function(e) {
     const result = new Solver(solverOpts).solve(state);
     if (!result) { self.postMessage({found:false}); return; }
     const lastState = result.line[result.line.length-1];
-    // ── terse turns ──
+    // ── terse turns (mirrors printResults in Solver.js) ──
+    // Each step captures the primary action (last new history entry) plus
+    // any sub-lines (trigger/side-effect entries that preceded it).
     const turns=[]; let currentTurn=0;
     for (let i=1;i<result.line.length;i++) {
-      const st=result.line[i],h=st.history[st.history.length-1]; if(!h) continue;
+      const st=result.line[i],prev=result.line[i-1];
       if (st.turn!==currentTurn) { currentTurn=st.turn; turns.push({turn:currentTurn,steps:[]}); }
+      const newEntries=st.history.slice(prev.history.length);
+      if (!newEntries.length) continue;
+      const primaryEntry=newEntries[newEntries.length-1];
+      const primaryMsg=typeof primaryEntry==='string'?primaryEntry:(primaryEntry?.msg||'');
+      if (!primaryMsg||primaryMsg.startsWith('--')) continue;
+      const subLines=[];
+      for (let e=0;e<newEntries.length-1;e++) {
+        const sub=newEntries[e]; const sm=typeof sub==='string'?sub:(sub?.msg||'');
+        if (sm&&!sm.startsWith('--')) subLines.push(sm);
+      }
       const ms=st.mana&&st.mana.toString?st.mana.toString():'';
-      turns[turns.length-1].steps.push({msg:typeof h==='string'?h:(h.msg||String(h)),mana:(ms&&ms!=='{0}')?ms:null});
+      turns[turns.length-1].steps.push({msg:primaryMsg,subLines:subLines.length?subLines:null,mana:(ms&&ms!=='{0}')?ms:null});
     }
     // ── verbose turns ──
     function _wEnrichStep(msg) {
@@ -10340,18 +10378,28 @@ self.onmessage = function(e) {
     const verboseTurns=[]; let vTurn=0;
     for (let i=1;i<result.line.length;i++) {
       const st=result.line[i],prev=result.line[i-1];
-      const h=st.history[st.history.length-1]; if(!h) continue;
-      const rawMsg=typeof h==='string'?h:(h.msg||String(h));
       if (st.turn!==vTurn) {
         vTurn=st.turn;
         const prevBf=new Set((prev?.battlefield||[]).map(p=>p.id));
         const bfNames=(st.battlefield||[]).map(p=>prevBf.has(p.id)?p.name:('['+p.name+']*'));
         verboseTurns.push({turn:vTurn,handCount:st.hand?.length||0,libSize:st.players?.[0]?.librarySize??'?',battlefield:bfNames,steps:[]});
-        if (rawMsg.startsWith('--')) continue;
+        const firstEntry=st.history[prev.history.length];
+        const firstMsg=typeof firstEntry==='string'?firstEntry:(firstEntry?.msg||'');
+        if (firstMsg.startsWith('--')) continue;
+      }
+      const newEntries=st.history.slice(prev.history.length);
+      if (!newEntries.length) continue;
+      const primaryEntry=newEntries[newEntries.length-1];
+      const rawMsg=typeof primaryEntry==='string'?primaryEntry:(primaryEntry?.msg||'');
+      if (!rawMsg||rawMsg.startsWith('--')) continue;
+      const subLines=[];
+      for (let e=0;e<newEntries.length-1;e++) {
+        const sub=newEntries[e]; const sm=typeof sub==='string'?sub:(sub?.msg||'');
+        if (sm&&!sm.startsWith('--')) subLines.push(_wEnrichStep(sm)||sm);
       }
       const enriched=_wEnrichStep(rawMsg); if(!enriched) continue;
       const ms=st.mana&&st.mana.toString?st.mana.toString():'';
-      verboseTurns[verboseTurns.length-1].steps.push({msg:enriched,mana:(ms&&ms!=='{0}')?ms:null});
+      verboseTurns[verboseTurns.length-1].steps.push({msg:enriched,subLines:subLines.length?subLines:null,mana:(ms&&ms!=='{0}')?ms:null});
     }
     // ── loop explanation lines ──
     const loopLines=[];
