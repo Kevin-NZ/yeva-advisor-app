@@ -4703,6 +4703,33 @@ var CARDS = {
  *                                                (it IS a land under Ashaya)
  */
 
+// ── Loop type taxonomy (O-1) ──────────────────────────────────────────────
+//
+// Each detector exposes a `loopType` describing what the loop actually
+// produces in net.  Mana-positive combos generate infinite mana directly;
+// mana-neutral combos generate net zero mana per cycle but still win the game
+// through some other infinite resource (ETB triggers, draws, LTBs, storm
+// count). Used by win-condition detectors to decide when a "Draw the Library"
+// or "Storm Kill" line is achievable even without an infinite-mana detector
+// firing.
+//
+// Source of truth for which loops are mana-neutral: card_roles.md and the
+// "Combo Summary" entries at the end of decklist_combos.txt. Examples:
+//   - Earthcraft + Scryb Ranger:  net 0 mana, +1 untap per cycle  → MANA_NEUTRAL_ETB
+//   - Beast Whisperer + creature loop: net 0 mana, +1 card per cycle → MANA_NEUTRAL_DRAW
+//   - Tireless Provisioner + Ashaya + Ranger: net 0 mana, +1 ETB+landfall → MANA_NEUTRAL_ETB
+//
+// Most existing detectors are MANA_POSITIVE; that's the default if a detector
+// omits the field, so this is a non-breaking addition.
+var LOOP_TYPE = Object.freeze({
+  MANA_POSITIVE:     'mana_positive',     // generates infinite mana
+  MANA_NEUTRAL_ETB:  'mana_neutral_etb',  // infinite ETBs / landfall, no net mana
+  MANA_NEUTRAL_LTB:  'mana_neutral_ltb',  // infinite LTBs (death triggers, sac), no net mana
+  MANA_NEUTRAL_DRAW: 'mana_neutral_draw', // infinite card draw, no net mana
+  MANA_NEUTRAL_STORM:'mana_neutral_storm',// infinite storm count, no net mana
+  WIN_CONDITION:     'win_condition',     // not a loop — a discrete win-state check
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function hasPerm(state, name) {
@@ -6866,6 +6893,33 @@ DETECTORS.sort((a, b) => {
   return pa - pb;
 });
 
+// ── Loop type stamping (O-1) ──────────────────────────────────────────────
+// Every detector gets a `loopType` so downstream code (win-condition wiring,
+// loop simulator selection, advisors) can branch on what the loop actually
+// produces. Detectors that already declared a loopType keep it; the rest
+// default to MANA_POSITIVE which is correct for the vast majority.
+//
+// Special cases below that are NOT mana-positive:
+//   - "Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)"
+//       → MANA_NEUTRAL_DRAW. The loop spends and recovers the same mana per
+//         cycle (Quirion Ranger as a {G} ritual) but yields +1 card per cast,
+//         winning via deck-out or by finding a real win condition.
+//   - "Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)"
+//       → MANA_NEUTRAL_ETB. The Ranger-bounce loop is mana-neutral; the win
+//         comes from infinite Tireless Provisioner landfall triggers (Food
+//         tokens, Treasure, etc., per its current oracle).
+var _NEUTRAL_DETECTOR_TYPES = new Map([
+  ['Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)',                          LOOP_TYPE.MANA_NEUTRAL_DRAW],
+  ['Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]', LOOP_TYPE.MANA_NEUTRAL_ETB],
+]);
+for (const det of DETECTORS) {
+  if (det.loopType) continue; // detector already declared
+  det.loopType = _NEUTRAL_DETECTOR_TYPES.get(det.name) ?? LOOP_TYPE.MANA_POSITIVE;
+}
+for (const wc of WIN_CONDITIONS) {
+  if (!wc.loopType) wc.loopType = LOOP_TYPE.WIN_CONDITION;
+}
+
 var _COM = { checkCombos, checkVictory };
 // actions.js — shims for renamed destructuring imports
 var STAX_CARDS = _CDM.STAX_KEYS;
@@ -8774,7 +8828,7 @@ function assembleWin(state) {
         s = s.removeFromHand('crop_rotation');
         let ns = s.removeFromBattlefield(sacLand.id, 'graveyard');
         if (ns) {
-          const { state: ns2, cardKey: found } = nsearchFor('geier_reach');
+          const { state: ns2, cardKey: found } = searchFor('geier_reach');
           if (found) {
             s = ns2.enterBattlefield(found);
             steps.push(`Crop Rotation: sacrifice ${sacLand.name} → fetch Geier Reach Sanitarium`);
@@ -8806,7 +8860,7 @@ function assembleWin(state) {
             s = s.removeFromHand('crop_rotation');
             let ns = s.removeFromBattlefield(sacLand.id, 'graveyard');
             if (ns) {
-              const { state: ns2, cardKey: found } = nsearchFor('geier_reach');
+              const { state: ns2, cardKey: found } = searchFor('geier_reach');
               if (found) {
                 s = ns2.enterBattlefield(found);
                 steps.push(`Crop Rotation: sacrifice ${sacLand.name} → fetch Geier Reach Sanitarium`);
