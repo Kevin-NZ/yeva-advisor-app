@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yeva's Wrath — MTG Defender</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;900&family=Crimson+Pro:ital,wght@0,300;1,300&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #0a120a;
+      --bg-card:       #0f1e0f;
+      --border:        #1e3a1e;
+      --border-bright: #2d5a2d;
+      --green1:        #4a9e4a;
+      --green2:        #6abf6a;
+      --green3:        #8ed88e;
+      --text:          #c8e6c8;
+      --text-dim:      #7aad7a;
+      --gold:          #f4d03f;
+      --red:           #e74c3c;
+      --blue:          #5dade2;
+      --purple:        #a569bd;
+      --white-color:   #e8e4d0;
+      --black-color:   #2a2a3a;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Cinzel', serif;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    #game-wrapper {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+    }
+
+    #hud {
+      width: 100%;
+      max-width: 700px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10,18,10,0.9);
+      z-index: 10;
+      flex-shrink: 0;
+    }
+
+    .hud-block { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+    .hud-label { font-size: 9px; letter-spacing: 0.15em; color: var(--text-dim); }
+    .hud-value { font-size: 18px; font-weight: 600; color: var(--green2); }
+    .hud-lives { display: flex; gap: 5px; align-items: center; }
+    .life-pip {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--green2);
+      box-shadow: 0 0 4px var(--green1);
+      transition: opacity 0.2s;
+    }
+    .life-pip.dead { background: var(--border); box-shadow: none; opacity: 0.3; }
+
+    #title-hud {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--green3);
+      letter-spacing: 0.08em;
+      text-align: center;
+    }
+
+    canvas {
+      display: block;
+      max-width: 700px;
+      width: 100%;
+      flex: 1;
+      cursor: none;
+    }
+
+    /* ── OVERLAYS ── */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5,10,5,0.88);
+      z-index: 20;
+      gap: 0;
+    }
+
+    .overlay h1 {
+      font-family: 'Cinzel', serif;
+      font-size: clamp(32px, 8vw, 56px);
+      font-weight: 900;
+      color: var(--green3);
+      letter-spacing: 0.04em;
+      text-align: center;
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+
+    .overlay .subtitle {
+      font-family: 'Crimson Pro', serif;
+      font-style: italic;
+      font-size: 16px;
+      color: var(--text-dim);
+      margin-bottom: 32px;
+      text-align: center;
+      max-width: 400px;
+      line-height: 1.5;
+    }
+
+    .flavor {
+      font-family: 'Crimson Pro', serif;
+      font-style: italic;
+      font-size: 13px;
+      color: var(--text-dim);
+      opacity: 0.6;
+      margin-top: 20px;
+      text-align: center;
+      max-width: 340px;
+    }
+
+    .btn-start {
+      font-family: 'Cinzel', serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      padding: 12px 32px;
+      border: 1px solid var(--border-bright);
+      background: linear-gradient(135deg, #1a3d1a, #0f2a0f);
+      color: var(--green2);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 8px;
+    }
+    .btn-start:hover {
+      background: linear-gradient(135deg, #213f21, #152515);
+      color: var(--green3);
+      border-color: var(--green1);
+      box-shadow: 0 0 16px rgba(74,158,74,0.25);
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin: 24px 0;
+      max-width: 480px;
+      width: 100%;
+      padding: 0 16px;
+    }
+
+    .legend-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .legend-icon {
+      width: 44px;
+      height: 44px;
+    }
+
+    .wave-banner {
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      color: var(--gold);
+      background: rgba(244,208,63,0.08);
+      border: 1px solid rgba(244,208,63,0.2);
+      border-radius: 3px;
+      padding: 6px 16px;
+      margin-bottom: 16px;
+    }
+
+    .score-big {
+      font-size: clamp(40px, 10vw, 72px);
+      font-weight: 900;
+      color: var(--gold);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    .score-label {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--text-dim);
+      margin-bottom: 24px;
+    }
+
+    .controls-hint {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      opacity: 0.5;
+      margin-top: 12px;
+    }
+
+    #wave-announce {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'Cinzel', serif;
+      font-size: 28px;
+      font-weight: 900;
+      color: var(--gold);
+      letter-spacing: 0.1em;
+      text-shadow: 0 0 20px rgba(244,208,63,0.5);
+      opacity: 0;
+      z-index: 15;
+      pointer-events: none;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-block">
+      <span class="hud-label">MANA POOL</span>
+      <span class="hud-value" id="hud-score">0</span>
+    </div>
+    <div class="hud-block" style="align-items:center">
+      <span id="title-hud">YEVA'S WRATH</span>
+      <div class="hud-lives" id="hud-lives"></div>
+    </div>
+    <div class="hud-block" style="align-items:flex-end">
+      <span class="hud-label">WAVE</span>
+      <span class="hud-value" id="hud-wave">1</span>
+    </div>
+  </div>
+
+  <!-- Game Canvas -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Wave announce -->
+  <div id="wave-announce"></div>
+
+  <!-- START SCREEN -->
+  <div class="overlay" id="screen-start">
+    <h1>Yeva's Wrath</h1>
+    <p class="subtitle">The forest is under siege. Defend the green against all five colors.</p>
+    <div class="legend">
+      <div class="legend-item">
+        <svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#c0392b" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#fff">🔥</text></svg>
+        <span>RED<br/>MOUNTAINS</span>
+      </div>
+      <div class="legend-item">
+        <svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1a5276" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#fff">🌊</text></svg>
+        <span>BLUE<br/>ISLANDS</span>
+      </div>
+      <div class="legend-item">
+        <svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1c2833" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#eee">💀</text></svg>
+        <span>BLACK<br/>SWAMPS</span>
+      </div>
+      <div class="legend-item">
+        <svg class="legend-icon" viewBox="0 0 44 44">
+          <circle cx="22" cy="22" r="18" fill="#1c2a1c" opacity="0.7"/>
+          <polygon points="22,6 24.4,17.6 33.8,11.2 27.4,20.6 39,23 27.4,25.4 33.8,34.8 24.4,28.4 22,40 19.6,28.4 10.2,34.8 16.6,25.4 5,23 16.6,20.6 10.2,11.2 19.6,17.6" fill="#dde8dd" stroke="rgba(200,220,200,0.9)" stroke-width="0.8"/>
+          <circle cx="22" cy="23" r="2" fill="rgba(255,255,255,0.9)"/>
+        </svg>
+        <span>WHITE<br/>PLAINS</span>
+      </div>
+    </div>
+    <button class="btn-start" id="btn-start">CAST YOUR SPELLS →</button>
+    <p class="controls-hint">← → or A D to move &nbsp;·&nbsp; SPACE to shoot &nbsp;·&nbsp; ESC to pause</p>
+    <p class="flavor">"Nature does not ask permission."</p>
+  </div>
+
+  <!-- GAME OVER SCREEN -->
+  <div class="overlay" id="screen-gameover" style="display:none">
+    <div class="wave-banner" id="go-wave">WAVE 1</div>
+    <h1>Tapped Out</h1>
+    <p class="subtitle">Yeva could not hold the line. The colors have overrun the forest.</p>
+    <div class="score-big" id="go-score">0</div>
+    <div class="score-label">MANA EARNED</div>
+    <button class="btn-start" id="btn-restart">RESHUFFLE & RETRY →</button>
+    <p class="flavor">"Even the tallest forest falls in time."</p>
+  </div>
+
+  <!-- WIN SCREEN -->
+  <div class="overlay" id="screen-win" style="display:none">
+    <h1>Infinite Mana!</h1>
+    <p class="subtitle">The combo is complete. Yeva reigns supreme over all five colors.</p>
+    <div class="score-big" id="win-score">0</div>
+    <div class="score-label">FINAL MANA POOL</div>
+    <button class="btn-start" id="btn-win-restart">PLAY AGAIN →</button>
+    <p class="flavor">"Tap. Untap. Loop. Win."</p>
+  </div>
+
+  <!-- PAUSE SCREEN -->
+  <div class="overlay" id="screen-pause" style="display:none">
+    <h1>Phased Out</h1>
+    <p class="subtitle">The game is paused.</p>
+    <button class="btn-start" id="btn-resume">RESUME →</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+
+let W, H;
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  W = canvas.width  = Math.min(rect.width, 700) * devicePixelRatio;
+  H = canvas.height = rect.height * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  W /= devicePixelRatio;
+  H /= devicePixelRatio;
+}
+
+// ── GAME STATE ──────────────────────────────────────────────────────────────
+let state = 'start';
+let score = 0;
+let lives = 3;
+let wave  = 1;
+const MAX_WAVES = 6;
+
+let player, bullets, enemies, particles, enemyBullets, barriers;
+let keys = {};
+let mouseX = null;
+let shootCooldown = 0;
+let waveTransition = false;
+let waveTimer = 0;
+let enemyShootTimer = 0;
+let frameId;
+let lastTime = 0;
+let bgStars = [];
+let bgTrees = [];
+let groundY;
+
+// ── MTG COLOR CONFIGS ───────────────────────────────────────────────────────
+const ENEMY_TYPES = {
+  red: {
+    color: '#c0392b', glow: '#e74c3c', emoji: '🔥',
+    label: 'Mountain', points: 10, speed: 1.1,
+    shoot: true, bulletColor: '#e74c3c', health: 1,
+    symbol: 'R', symbolColor: '#ff8888'
+  },
+  blue: {
+    color: '#1a5276', glow: '#5dade2', emoji: '🌊',
+    label: 'Island', points: 15, speed: 0.7,
+    shoot: true, bulletColor: '#5dade2', health: 2,
+    symbol: 'U', symbolColor: '#88ccff'
+  },
+  black: {
+    color: '#1c2833', glow: '#7d3c98', emoji: '💀',
+    label: 'Swamp', points: 20, speed: 0.9,
+    shoot: true, bulletColor: '#a569bd', health: 1,
+    symbol: 'B', symbolColor: '#cc88ff', zigzag: true
+  },
+  white: {
+    color: '#c8c0a8', glow: '#ffffff', emoji: '⭐',
+    label: 'Plains', points: 12, speed: 0.8,
+    shoot: false, bulletColor: '#e8e4d0', health: 1,
+    symbol: 'W', symbolColor: '#555544', shield: true
+  },
+};
+
+// ── WAVE DEFINITIONS ────────────────────────────────────────────────────────
+const WAVE_CONFIGS = [
+  { rows: [['red','red','red','red','red']], speed: 1.0, label: 'WAVE 1 — RED MOUNTAINS' },
+  { rows: [['red','red','red'],['blue','blue','blue']], speed: 1.05, label: 'WAVE 2 — RED & BLUE' },
+  { rows: [['red','red'],['blue','blue'],['black','black']], speed: 1.1, label: 'WAVE 3 — THREE COLORS' },
+  { rows: [['white','white','white'],['red','red'],['black','black']], speed: 1.15, label: 'WAVE 4 — PLAINS SHIELD' },
+  { rows: [['white','white'],['blue','blue'],['black','black'],['red','red']], speed: 1.2, label: 'WAVE 5 — THE COALITION' },
+  { rows: [['white','black','blue','red','white'],['black','blue','red','black','blue'],['red','white','black','blue','red']], speed: 1.35, label: 'FINAL WAVE — ALL COLORS' },
+];
+
+// ── INIT ────────────────────────────────────────────────────────────────────
+function initGame() {
+  groundY = H - 50;
+  score = 0;
+  lives = 3;
+  wave  = 1;
+  bgStars = Array.from({length: 60}, () => ({
+    x: Math.random() * W, y: Math.random() * H * 0.7,
+    r: 0.5 + Math.random() * 1.5, twinkle: Math.random() * Math.PI * 2
+  }));
+  bgTrees = Array.from({length: 14}, (_, i) => ({
+    x: (i / 14) * W + Math.random() * (W / 14),
+    h: 60 + Math.random() * 80, w: 12 + Math.random() * 16,
+    sway: Math.random() * Math.PI * 2
+  }));
+  spawnPlayer();
+  spawnWave(wave);
+  bullets = [];
+  enemyBullets = [];
+  particles = [];
+  barriers = [];
+  spawnBarriers();
+  shootCooldown = 0;
+  enemyShootTimer = 0;
+  waveTransition = false;
+  updateHUD();
+}
+
+function spawnPlayer() {
+  player = {
+    x: W / 2, y: groundY - 30,
+    w: 32, h: 48,
+    speed: 280,
+    invincible: 0,
+    bowCharge: 0,
+  };
+}
+
+// ── FOREST BARRIERS ──────────────────────────────────────────────────────────
+// Each barrier is a grid of pixels; each pixel has health 0-3.
+// Drawn as layered tree foliage — erodes as it takes damage.
+const BARRIER_COLS = 10;
+const BARRIER_ROWS = 7;
+const BARRIER_PX   = 5; // pixel size
+const BARRIER_W    = BARRIER_COLS * BARRIER_PX;
+const BARRIER_H    = BARRIER_ROWS * BARRIER_PX;
+const NUM_BARRIERS = 4;
+
+function spawnBarriers() {
+  barriers = [];
+  const barrierY = groundY - 90;
+  const totalSpan = W * 0.78;
+  const startX = (W - totalSpan) / 2;
+  for (let b = 0; b < NUM_BARRIERS; b++) {
+    const cx = startX + (b / (NUM_BARRIERS - 1)) * totalSpan;
+    const bx = cx - BARRIER_W / 2;
+    const by = barrierY - BARRIER_H;
+    // Build pixel grid — tree silhouette shape
+    const pixels = [];
+    for (let row = 0; row < BARRIER_ROWS; row++) {
+      pixels.push([]);
+      for (let col = 0; col < BARRIER_COLS; col++) {
+        // Rounded tree-canopy mask: wider at middle rows, narrow at top/bottom
+        const normRow = row / (BARRIER_ROWS - 1);
+        const normCol = col / (BARRIER_COLS - 1);
+        const cx2 = 0.5, cy2 = 0.4;
+        // Two overlapping ellipses — canopy top + trunk zone
+        const canopy = Math.pow((normCol - cx2) / 0.48, 2) + Math.pow((normRow - cy2) / 0.55, 2) < 1;
+        const trunk  = normRow > 0.68 && Math.abs(normCol - cx2) < 0.17;
+        pixels[row].push(canopy || trunk ? 3 : 0);
+      }
+    }
+    barriers.push({ x: bx, y: by, pixels });
+  }
+}
+
+function drawBarrier(bar) {
+  const { x, y, pixels } = bar;
+  for (let row = 0; row < BARRIER_ROWS; row++) {
+    for (let col = 0; col < BARRIER_COLS; col++) {
+      const hp = pixels[row][col];
+      if (hp <= 0) continue;
+      const px = x + col * BARRIER_PX;
+      const py = y + row * BARRIER_PX;
+      const normRow = row / (BARRIER_ROWS - 1);
+      const isTrunk = normRow > 0.68 && Math.abs((col / (BARRIER_COLS - 1)) - 0.5) < 0.17;
+
+      // Color based on health and region
+      let color;
+      if (isTrunk) {
+        color = hp === 3 ? '#5a3a1a' : hp === 2 ? '#4a2e12' : '#3a220c';
+      } else {
+        color = hp === 3 ? '#2d6b2d' : hp === 2 ? '#1e4d1e' : '#143614';
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(px, py, BARRIER_PX - 1, BARRIER_PX - 1);
+
+      // Highlight fleck on healthy canopy pixels
+      if (hp === 3 && !isTrunk && row < BARRIER_ROWS * 0.5) {
+        ctx.fillStyle = 'rgba(142,216,142,0.18)';
+        ctx.fillRect(px, py, 2, 2);
+      }
+    }
+  }
+}
+
+// Damage a barrier at a world coordinate — erodes a small splash of pixels
+function damageBarrier(bar, wx, wy, radius) {
+  const col = Math.round((wx - bar.x) / BARRIER_PX);
+  const row = Math.round((wy - bar.y) / BARRIER_PX);
+  const r = Math.ceil(radius / BARRIER_PX);
+  for (let dr = -r; dr <= r; dr++) {
+    for (let dc = -r; dc <= r; dc++) {
+      if (dr * dr + dc * dc > r * r + 1) continue;
+      const rr = row + dr, cc = col + dc;
+      if (rr < 0 || rr >= BARRIER_ROWS || cc < 0 || cc >= BARRIER_COLS) continue;
+      if (bar.pixels[rr][cc] > 0) bar.pixels[rr][cc]--;
+    }
+  }
+}
+
+// Check if a point overlaps any solid pixel in a barrier
+function barrierHit(bar, wx, wy) {
+  const col = Math.floor((wx - bar.x) / BARRIER_PX);
+  const row = Math.floor((wy - bar.y) / BARRIER_PX);
+  if (row < 0 || row >= BARRIER_ROWS || col < 0 || col >= BARRIER_COLS) return false;
+  return bar.pixels[row][col] > 0;
+}
+
+function spawnWave(wNum) {
+  const cfg = WAVE_CONFIGS[Math.min(wNum - 1, WAVE_CONFIGS.length - 1)];
+  enemies = [];
+  const rows = cfg.rows;
+  const cols = Math.max(...rows.map(r => r.length));
+  const spacing = Math.min(W / (cols + 1), 90);
+  const startX = W / 2 - (spacing * (cols - 1)) / 2;
+
+  rows.forEach((row, ri) => {
+    row.forEach((type, ci) => {
+      const t = ENEMY_TYPES[type];
+      enemies.push({
+        type, x: startX + ci * spacing,
+        y: 60 + ri * 64,
+        w: 40, h: 40,
+        vx: (cfg.speed + wave * 0.05) * 40,
+        vy: 0,
+        dirX: 1, dirY: 0,
+        health: t.health,
+        maxHealth: t.health,
+        shootTimer: Math.random() * 120,
+        phase: Math.random() * Math.PI * 2,
+        shieldActive: t.shield,
+        shieldTimer: 0,
+        dead: false,
+        hitFlash: 0,
+      });
+    });
+  });
+}
+
+// ── DRAW HELPERS ────────────────────────────────────────────────────────────
+
+function drawBackground(t) {
+  // Sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#060e06');
+  sky.addColorStop(0.65, '#09150a');
+  sky.addColorStop(1, '#0b1a0b');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars / fireflies
+  bgStars.forEach(s => {
+    s.twinkle += 0.02;
+    const a = 0.3 + Math.sin(s.twinkle) * 0.3;
+    ctx.fillStyle = `rgba(142,216,142,${a})`;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Trees
+  bgTrees.forEach(tr => {
+    const sway = Math.sin(t * 0.0005 + tr.sway) * 2;
+    ctx.fillStyle = 'rgba(8,18,8,0.9)';
+    ctx.fillRect(tr.x - tr.w * 0.1, groundY - tr.h, tr.w * 0.2, tr.h);
+    ctx.fillStyle = 'rgba(12,25,12,0.85)';
+    ctx.beginPath();
+    ctx.ellipse(tr.x + sway, groundY - tr.h, tr.w * 1.4, tr.h * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Ground strip
+  const gg = ctx.createLinearGradient(0, groundY - 10, 0, H);
+  gg.addColorStop(0, '#0e200e');
+  gg.addColorStop(1, '#060e06');
+  ctx.fillStyle = gg;
+  ctx.fillRect(0, groundY - 10, W, H - groundY + 10);
+
+  // Ground line
+  ctx.strokeStyle = '#1e3a1e';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, groundY);
+  ctx.lineTo(W, groundY);
+  ctx.stroke();
+}
+
+function drawYeva(p, t) {
+  const x = Math.round(p.x), y = Math.round(p.y);
+  const blink = p.invincible > 0 && Math.floor(p.invincible / 5) % 2 === 0;
+  if (blink) return;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Cloak / body
+  ctx.fillStyle = '#1a4a1a';
+  ctx.beginPath();
+  ctx.moveTo(-14, 0);
+  ctx.quadraticCurveTo(-16, 20, -12, 40);
+  ctx.lineTo(12, 40);
+  ctx.quadraticCurveTo(16, 20, 14, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cloak highlight
+  ctx.fillStyle = '#2d6b2d';
+  ctx.beginPath();
+  ctx.moveTo(-6, 2);
+  ctx.quadraticCurveTo(-5, 18, -4, 36);
+  ctx.lineTo(0, 36);
+  ctx.quadraticCurveTo(0, 18, 0, 2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Hood/head
+  ctx.fillStyle = '#1a4a1a';
+  ctx.beginPath();
+  ctx.ellipse(0, -6, 10, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Face
+  ctx.fillStyle = '#8fbc5a';
+  ctx.beginPath();
+  ctx.ellipse(0, -4, 7, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#4a9e4a';
+  ctx.beginPath(); ctx.arc(-3, -5, 1.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(3, -5, 1.5, 0, Math.PI * 2); ctx.fill();
+
+  // Bow (left arm extended up)
+  ctx.strokeStyle = '#8b5e3c';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  // Bow limb
+  const bowX = -18;
+  ctx.beginPath();
+  ctx.arc(bowX + 5, -10, 14, -Math.PI * 0.7, Math.PI * 0.3);
+  ctx.stroke();
+  // Bowstring
+  ctx.strokeStyle = '#c8e6c8';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(bowX + 5 + 14 * Math.cos(-Math.PI * 0.7), -10 + 14 * Math.sin(-Math.PI * 0.7));
+  ctx.lineTo(bowX + 5 + 14 * Math.cos(Math.PI * 0.3), -10 + 14 * Math.sin(Math.PI * 0.3));
+  ctx.stroke();
+
+  // Arrow on bow (ready to fire)
+  ctx.strokeStyle = '#f4d03f';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(-10, -18); ctx.lineTo(-10, 4);
+  ctx.stroke();
+  // Arrowhead
+  ctx.fillStyle = '#f4d03f';
+  ctx.beginPath();
+  ctx.moveTo(-10, -20);
+  ctx.lineTo(-13, -14); ctx.lineTo(-7, -14);
+  ctx.closePath(); ctx.fill();
+
+  // Leaf accents on hood
+  ctx.fillStyle = '#4a9e4a';
+  for (let i = -1; i <= 1; i += 2) {
+    ctx.save();
+    ctx.translate(i * 9, -14);
+    ctx.rotate(i * 0.5);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 3, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function drawEnemy(e, t) {
+  if (e.dead) return;
+  const tp = ENEMY_TYPES[e.type];
+  const x = Math.round(e.x), y = Math.round(e.y);
+  const pulse = Math.sin(t * 0.003 + e.phase) * 0.08;
+  const scale = 1 + pulse;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  if (e.hitFlash > 0) {
+    ctx.filter = 'brightness(3)';
+    e.hitFlash--;
+  }
+
+  // Main body
+  const r = e.w / 2;
+  const grd = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r);
+  grd.addColorStop(0, lighten(tp.color, 30));
+  grd.addColorStop(1, tp.color);
+  ctx.fillStyle = grd;
+
+  switch (e.type) {
+    case 'red':
+      // Mountain / triangle
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 1.1);
+      ctx.lineTo(r * 1.0, r * 0.8);
+      ctx.lineTo(-r * 1.0, r * 0.8);
+      ctx.closePath();
+      ctx.fill();
+      // Snow cap
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 1.1);
+      ctx.lineTo(r * 0.35, -r * 0.2);
+      ctx.lineTo(-r * 0.35, -r * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      // Glow
+      ctx.shadowColor = tp.glow; ctx.shadowBlur = 8;
+      ctx.strokeStyle = tp.glow; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 1.1);
+      ctx.lineTo(r * 1.0, r * 0.8);
+      ctx.lineTo(-r * 1.0, r * 0.8);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      break;
+
+    case 'blue':
+      // Island / hexagon waves
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+        const rx = Math.cos(a) * r;
+        const ry = Math.sin(a) * r * 0.85;
+        i === 0 ? ctx.moveTo(rx, ry) : ctx.lineTo(rx, ry);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // Wave lines
+      ctx.strokeStyle = 'rgba(93,173,226,0.5)';
+      ctx.lineWidth = 1;
+      for (let wi = -1; wi <= 1; wi++) {
+        const wy = wi * r * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.65, wy);
+        ctx.bezierCurveTo(-r * 0.3, wy - 5, r * 0.3, wy + 5, r * 0.65, wy);
+        ctx.stroke();
+      }
+      break;
+
+    case 'black': {
+      // ── Proper skull: cranium + cheekbones + jaw + teeth + nose + eyes ──
+      const sk = r * 0.92; // scale factor
+
+      // Cranium (rounded top dome)
+      ctx.fillStyle = '#b0b8b0';
+      ctx.beginPath();
+      ctx.arc(0, -sk * 0.18, sk * 0.72, Math.PI, 0);
+      ctx.bezierCurveTo(sk * 0.72, sk * 0.28, sk * 0.52, sk * 0.52, sk * 0.38, sk * 0.52);
+      ctx.lineTo(-sk * 0.38, sk * 0.52);
+      ctx.bezierCurveTo(-sk * 0.52, sk * 0.52, -sk * 0.72, sk * 0.28, -sk * 0.72, -sk * 0.18);
+      ctx.closePath();
+      ctx.fill();
+
+      // Cranium shading (top highlight)
+      const crHighlight = ctx.createRadialGradient(-sk * 0.2, -sk * 0.55, 0, 0, -sk * 0.2, sk * 0.75);
+      crHighlight.addColorStop(0, 'rgba(255,255,255,0.35)');
+      crHighlight.addColorStop(0.5, 'rgba(200,210,200,0.1)');
+      crHighlight.addColorStop(1, 'rgba(60,80,60,0.3)');
+      ctx.fillStyle = crHighlight;
+      ctx.beginPath();
+      ctx.arc(0, -sk * 0.18, sk * 0.72, Math.PI, 0);
+      ctx.bezierCurveTo(sk * 0.72, sk * 0.28, sk * 0.52, sk * 0.52, sk * 0.38, sk * 0.52);
+      ctx.lineTo(-sk * 0.38, sk * 0.52);
+      ctx.bezierCurveTo(-sk * 0.52, sk * 0.52, -sk * 0.72, sk * 0.28, -sk * 0.72, -sk * 0.18);
+      ctx.closePath();
+      ctx.fill();
+
+      // Cheekbone bumps
+      ctx.fillStyle = '#9aaa9a';
+      ctx.beginPath(); ctx.ellipse(-sk * 0.58, sk * 0.25, sk * 0.2, sk * 0.14, -0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( sk * 0.58, sk * 0.25, sk * 0.2, sk * 0.14,  0.3, 0, Math.PI * 2); ctx.fill();
+
+      // Jaw / mandible block
+      ctx.fillStyle = '#8a9a8a';
+      ctx.beginPath();
+      ctx.moveTo(-sk * 0.38, sk * 0.50);
+      ctx.lineTo( sk * 0.38, sk * 0.50);
+      ctx.lineTo( sk * 0.32, sk * 0.88);
+      ctx.quadraticCurveTo(0, sk * 1.02, -sk * 0.32, sk * 0.88);
+      ctx.closePath();
+      ctx.fill();
+
+      // Jaw shading
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(-sk * 0.38, sk * 0.50);
+      ctx.lineTo( sk * 0.38, sk * 0.50);
+      ctx.lineTo( sk * 0.32, sk * 0.88);
+      ctx.quadraticCurveTo(0, sk * 1.02, -sk * 0.32, sk * 0.88);
+      ctx.closePath();
+      ctx.fill();
+
+      // Teeth (5 teeth on jaw)
+      ctx.fillStyle = '#e8ede8';
+      const toothW = sk * 0.115;
+      const toothH = sk * 0.2;
+      const toothY = sk * 0.52;
+      const toothOffsets = [-sk*0.26, -sk*0.13, 0, sk*0.13, sk*0.26];
+      toothOffsets.forEach(tx => {
+        ctx.beginPath();
+        ctx.moveTo(tx - toothW/2, toothY);
+        ctx.lineTo(tx + toothW/2, toothY);
+        ctx.lineTo(tx + toothW/2 - 1, toothY + toothH);
+        ctx.lineTo(tx - toothW/2 + 1, toothY + toothH);
+        ctx.closePath();
+        ctx.fill();
+        // Tooth shadow line
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(tx + toothW/2, toothY);
+        ctx.lineTo(tx + toothW/2 - 1, toothY + toothH);
+        ctx.stroke();
+      });
+
+      // Nose cavity (inverted heart / triangle)
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(0, sk * 0.08);
+      ctx.bezierCurveTo(-sk * 0.18, -sk * 0.08, -sk * 0.22, sk * 0.28, 0, sk * 0.32);
+      ctx.bezierCurveTo( sk * 0.22, sk * 0.28,  sk * 0.18, -sk * 0.08, 0, sk * 0.08);
+      ctx.closePath();
+      ctx.fill();
+
+      // Eye sockets — large hollow ovals
+      ctx.fillStyle = 'rgba(0,0,0,0.88)';
+      ctx.beginPath(); ctx.ellipse(-sk * 0.3, -sk * 0.25, sk * 0.22, sk * 0.18, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( sk * 0.3, -sk * 0.25, sk * 0.22, sk * 0.18,  0.15, 0, Math.PI * 2); ctx.fill();
+
+      // Eye socket glow (purple swamp energy)
+      ctx.fillStyle = 'rgba(140,60,200,0.45)';
+      ctx.beginPath(); ctx.ellipse(-sk * 0.3, -sk * 0.25, sk * 0.14, sk * 0.11, -0.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( sk * 0.3, -sk * 0.25, sk * 0.14, sk * 0.11,  0.15, 0, Math.PI * 2); ctx.fill();
+
+      // Bright glow pupils
+      ctx.fillStyle = 'rgba(200,120,255,0.9)';
+      ctx.beginPath(); ctx.arc(-sk * 0.3, -sk * 0.26, sk * 0.07, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc( sk * 0.3, -sk * 0.26, sk * 0.07, 0, Math.PI * 2); ctx.fill();
+
+      // Skull outline
+      ctx.strokeStyle = 'rgba(60,80,60,0.6)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(0, -sk * 0.18, sk * 0.72, Math.PI, 0);
+      ctx.bezierCurveTo(sk * 0.72, sk * 0.28, sk * 0.52, sk * 0.52, sk * 0.38, sk * 0.52);
+      ctx.lineTo(-sk * 0.38, sk * 0.52);
+      ctx.bezierCurveTo(-sk * 0.52, sk * 0.52, -sk * 0.72, sk * 0.28, -sk * 0.72, -sk * 0.18);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Purple swamp mist glow around skull
+      ctx.shadowColor = '#7d3c98';
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = 'rgba(125,60,152,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, -sk * 0.18, sk * 0.72, Math.PI, 0);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      break;
+    }
+
+    case 'white': {
+      // ── Pearl white 5-point star with silver sheen ──
+      // Outer glow halo
+      const halo = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.5);
+      halo.addColorStop(0, 'rgba(255,255,255,0.18)');
+      halo.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2); ctx.fill();
+
+      // Star body — 8-point star (16 vertices)
+      function starPath8(ctx, rad) {
+        ctx.beginPath();
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2 - Math.PI / 2;
+          const sr = i % 2 === 0 ? rad : rad * 0.42;
+          const rx = Math.cos(a) * sr, ry = Math.sin(a) * sr;
+          i === 0 ? ctx.moveTo(rx, ry) : ctx.lineTo(rx, ry);
+        }
+        ctx.closePath();
+      }
+
+      ctx.fillStyle = '#dde8dd';
+      starPath8(ctx, r);
+      ctx.fill();
+
+      // Pearl highlight gradient over star
+      const pearl = ctx.createRadialGradient(-r * 0.25, -r * 0.35, 0, 0, 0, r);
+      pearl.addColorStop(0, 'rgba(255,255,255,0.75)');
+      pearl.addColorStop(0.3, 'rgba(220,235,220,0.3)');
+      pearl.addColorStop(1, 'rgba(160,190,160,0.0)');
+      ctx.fillStyle = pearl;
+      starPath8(ctx, r);
+      ctx.fill();
+
+      // Star outline with silver sheen
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = 'rgba(200,220,200,0.9)';
+      ctx.lineWidth = 1.2;
+      starPath8(ctx, r);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Small center gem
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.14, 0, Math.PI * 2); ctx.fill();
+
+      // Shield aura when active
+      if (e.shieldActive) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 1.45, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      break;
+    }
+  }
+
+  ctx.filter = 'none';
+
+  // Health bar
+  if (e.maxHealth > 1) {
+    const bw = e.w;
+    const frac = e.health / e.maxHealth;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(-bw/2, r + 4, bw, 4);
+    ctx.fillStyle = frac > 0.5 ? '#4a9e4a' : '#e74c3c';
+    ctx.fillRect(-bw/2, r + 4, bw * frac, 4);
+  }
+
+  // Mana pip label
+  ctx.fillStyle = tp.symbolColor;
+  ctx.font = `bold 11px 'Cinzel', serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tp.symbol, 0, r * 0.25);
+
+  ctx.restore();
+}
+
+function drawBullet(b) {
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  if (b.player) {
+    // Leaf arrow
+    ctx.strokeStyle = '#f4d03f';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = '#8ed88e';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(0, 8); ctx.lineTo(0, -8);
+    ctx.stroke();
+    ctx.fillStyle = '#4a9e4a';
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(-4, -2); ctx.lineTo(4, -2);
+    ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0;
+  } else {
+    // Enemy bullet
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.arc(0, 0, b.r || 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+}
+
+function drawParticle(p) {
+  ctx.globalAlpha = p.life / p.maxLife;
+  ctx.fillStyle = p.color;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r * (p.life / p.maxLife), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawCrosshair(mx, my) {
+  if (mx === null) return;
+  ctx.strokeStyle = 'rgba(142,216,142,0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, H); ctx.stroke();
+  ctx.setLineDash([]);
+  // Aim dot
+  ctx.fillStyle = 'rgba(142,216,142,0.6)';
+  ctx.beginPath();
+  ctx.arc(mx, player ? player.y - 32 : my, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── PARTICLE SPAWN ──────────────────────────────────────────────────────────
+function spawnParticles(x, y, color, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 3;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      r: 2 + Math.random() * 4,
+      color,
+      life: 40 + Math.random() * 20,
+      maxLife: 60,
+    });
+  }
+}
+
+function spawnManaParticles(x, y, pts) {
+  // Floating score text as particles
+  particles.push({
+    x, y, vx: 0, vy: -1.5,
+    r: 0, color: '#f4d03f',
+    life: 50, maxLife: 50,
+    text: `+${pts}`,
+  });
+}
+
+// ── GAME LOGIC ──────────────────────────────────────────────────────────────
+function shoot() {
+  if (shootCooldown > 0) return;
+  bullets.push({ x: player.x, y: player.y - 20, vy: -9, player: true });
+  shootCooldown = 14;
+}
+
+function moveEnemies(dt) {
+  // Find bounds
+  let minX = Infinity, maxX = -Infinity;
+  enemies.forEach(e => { if (!e.dead) { minX = Math.min(minX, e.x - e.w/2); maxX = Math.max(maxX, e.x + e.w/2); } });
+
+  let shouldDrop = false;
+  if (maxX >= W - 10 || minX <= 10) shouldDrop = true;
+
+  enemies.forEach(e => {
+    if (e.dead) return;
+    const tp = ENEMY_TYPES[e.type];
+    // Black zigzag
+    const zigOff = tp.zigzag ? Math.sin(Date.now() * 0.004 + e.phase) * 20 : 0;
+
+    if (shouldDrop) { e.dirX *= -1; e.y += 16; }
+    e.x += e.vx * e.dirX * dt;
+    if (tp.zigzag) e.x += Math.cos(Date.now() * 0.004 + e.phase) * 0.8;
+
+    if (e.hitFlash > 0) e.hitFlash--;
+
+    // Shield timer
+    if (e.shieldActive) {
+      e.shieldTimer++;
+      if (e.shieldTimer > 180) { e.shieldActive = false; e.shieldTimer = 0; }
+    }
+
+    // Reach ground — lose a life
+    if (e.y + e.h / 2 >= groundY) {
+      e.dead = true;
+      loseLife();
+    }
+  });
+}
+
+function moveEnemyBullets(dt) {
+  enemyShootTimer--;
+  if (enemyShootTimer <= 0) {
+    enemyShootTimer = 90 - wave * 6;
+    // Pick a random shooter
+    const shooters = enemies.filter(e => !e.dead && ENEMY_TYPES[e.type].shoot);
+    if (shooters.length) {
+      const e = shooters[Math.floor(Math.random() * shooters.length)];
+      const tp = ENEMY_TYPES[e.type];
+      const count = e.type === 'black' ? 3 : 1;
+      for (let i = 0; i < count; i++) {
+        enemyBullets.push({
+          x: e.x + (i - 1) * 8,
+          y: e.y + e.h / 2,
+          vy: 4 + wave * 0.3,
+          vx: e.type === 'black' ? (i - 1) * 1.5 : 0,
+          color: tp.bulletColor,
+          r: 4,
+        });
+      }
+    }
+  }
+
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.x += b.vx;
+    b.y += b.vy;
+    if (b.y > H || b.x < 0 || b.x > W) { enemyBullets.splice(i, 1); continue; }
+
+    // Hit barrier
+    let hitBarrier = false;
+    for (const bar of barriers) {
+      if (barrierHit(bar, b.x, b.y)) {
+        damageBarrier(bar, b.x, b.y, 5);
+        hitBarrier = true;
+        break;
+      }
+    }
+    if (hitBarrier) { enemyBullets.splice(i, 1); continue; }
+
+    // Hit player
+    if (!player) continue;
+    if (player.invincible <= 0 &&
+        Math.abs(b.x - player.x) < 14 && Math.abs(b.y - player.y) < 20) {
+      enemyBullets.splice(i, 1);
+      spawnParticles(player.x, player.y, '#8ed88e', 8);
+      loseLife();
+    }
+  }
+}
+
+function moveBullets() {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.y += b.vy;
+    if (b.y < 0) { bullets.splice(i, 1); continue; }
+
+    // Hit barrier (player arrows pass through but erode slightly)
+    let hitBarrier = false;
+    for (const bar of barriers) {
+      if (barrierHit(bar, b.x, b.y)) {
+        damageBarrier(bar, b.x, b.y, 4);
+        hitBarrier = true;
+        break;
+      }
+    }
+    if (hitBarrier) { bullets.splice(i, 1); continue; }
+
+    // Hit enemy
+    let hit = false;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j];
+      if (e.dead) continue;
+      if (e.shieldActive) continue; // white shield blocks
+      if (Math.abs(b.x - e.x) < e.w * 0.6 && Math.abs(b.y - e.y) < e.h * 0.6) {
+        e.health--;
+        e.hitFlash = 6;
+        hit = true;
+        if (e.health <= 0) {
+          e.dead = true;
+          const tp = ENEMY_TYPES[e.type];
+          spawnParticles(e.x, e.y, tp.glow, 15);
+          spawnManaParticles(e.x, e.y, tp.points + wave * 2);
+          score += tp.points + wave * 2;
+          updateHUD();
+        }
+        break;
+      }
+    }
+    if (hit) { bullets.splice(i, 1); }
+  }
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx || 0; p.y += p.vy || 0;
+    if (p.vy) p.vy *= 0.95;
+    p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function loseLife() {
+  if (player) player.invincible = 90;
+  lives--;
+  updateHUD();
+  if (lives <= 0) {
+    setTimeout(() => endGame(false), 400);
+  }
+}
+
+function checkWaveClear() {
+  if (enemies.every(e => e.dead) && !waveTransition) {
+    waveTransition = true;
+    waveTimer = 120;
+    // Flash wave clear
+    const el = document.getElementById('wave-announce');
+    if (wave < MAX_WAVES) {
+      el.textContent = 'WAVE CLEAR! +50 MANA';
+      score += 50;
+    } else {
+      el.textContent = 'ALL WAVES CLEARED!';
+    }
+    el.style.opacity = '1';
+    el.style.transition = 'opacity 0.3s';
+    setTimeout(() => {
+      el.style.opacity = '0';
+    }, 1800);
+  }
+
+  if (waveTransition) {
+    waveTimer--;
+    if (waveTimer <= 0) {
+      waveTransition = false;
+      wave++;
+      if (wave > MAX_WAVES) {
+        endGame(true);
+      } else {
+        spawnWave(wave);
+        spawnBarriers();
+        bullets = [];
+        enemyBullets = [];
+        updateHUD();
+      }
+    }
+  }
+}
+
+function handleInput(dt) {
+  if (!player) return;
+  const spd = player.speed * dt;
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) player.x = Math.max(18, player.x - spd);
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) player.x = Math.min(W - 18, player.x + spd);
+  if (mouseX !== null) {
+    // Mouse aim: drift toward mouseX
+    const diff = mouseX - player.x;
+    player.x += diff * 0.12;
+    player.x = Math.max(18, Math.min(W - 18, player.x));
+  }
+  if (keys[' '] || keys['Space']) shoot();
+  if (player.invincible > 0) player.invincible--;
+  if (shootCooldown > 0) shootCooldown--;
+}
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────
+function loop(ts) {
+  if (state !== 'play') return;
+  frameId = requestAnimationFrame(loop);
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+
+  ctx.clearRect(0, 0, W, H);
+  drawBackground(ts);
+
+  // Particles
+  updateParticles();
+  particles.forEach(p => {
+    if (p.text) {
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.fillStyle = p.color;
+      ctx.font = `bold 14px 'Cinzel', serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.globalAlpha = 1;
+    } else {
+      drawParticle(p);
+    }
+  });
+
+  // Game objects
+  barriers.forEach(b => drawBarrier(b));
+  enemies.forEach(e => drawEnemy(e, ts));
+  bullets.forEach(b => drawBullet(b));
+  enemyBullets.forEach(b => drawBullet(b));
+  if (player) drawYeva(player, ts);
+  drawCrosshair(mouseX, 0);
+
+  // Logic
+  handleInput(dt);
+  moveEnemies(dt);
+  moveEnemyBullets(dt);
+  moveBullets();
+  checkWaveClear();
+}
+
+// ── UTILITIES ───────────────────────────────────────────────────────────────
+function lighten(hex, amt) {
+  const num = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, (num >> 16) + amt);
+  const g = Math.min(255, ((num >> 8) & 0xff) + amt);
+  const b = Math.min(255, (num & 0xff) + amt);
+  return `rgb(${r},${g},${b})`;
+}
+
+function updateHUD() {
+  document.getElementById('hud-score').textContent = score.toLocaleString();
+  document.getElementById('hud-wave').textContent = wave;
+  const lc = document.getElementById('hud-lives');
+  lc.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const pip = document.createElement('div');
+    pip.className = 'life-pip' + (i >= lives ? ' dead' : '');
+    lc.appendChild(pip);
+  }
+}
+
+// ── SCREENS ─────────────────────────────────────────────────────────────────
+function show(id) {
+  ['screen-start','screen-gameover','screen-win','screen-pause'].forEach(s => {
+    const el = document.getElementById(s);
+    el.style.display = s === id ? 'flex' : 'none';
+  });
+}
+
+function startGame() {
+  show(null);
+  state = 'play';
+  resize();
+  initGame();
+  lastTime = performance.now();
+  frameId = requestAnimationFrame(loop);
+}
+
+function endGame(win) {
+  state = 'end';
+  cancelAnimationFrame(frameId);
+  if (win) {
+    document.getElementById('win-score').textContent = score.toLocaleString();
+    show('screen-win');
+  } else {
+    document.getElementById('go-score').textContent = score.toLocaleString();
+    document.getElementById('go-wave').textContent = `FELL ON WAVE ${wave}`;
+    show('screen-gameover');
+  }
+}
+
+function pauseGame() {
+  if (state === 'play') {
+    state = 'pause';
+    cancelAnimationFrame(frameId);
+    show('screen-pause');
+  } else if (state === 'pause') {
+    state = 'play';
+    show(null);
+    lastTime = performance.now();
+    frameId = requestAnimationFrame(loop);
+  }
+}
+
+// ── EVENT LISTENERS ─────────────────────────────────────────────────────────
+document.getElementById('btn-start').addEventListener('click', startGame);
+document.getElementById('btn-restart').addEventListener('click', startGame);
+document.getElementById('btn-win-restart').addEventListener('click', startGame);
+document.getElementById('btn-resume').addEventListener('click', pauseGame);
+
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'Escape') pauseGame();
+  if (e.key === ' ') e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = (e.clientX - rect.left) * (W / rect.width);
+});
+canvas.addEventListener('mouseleave', () => { mouseX = null; });
+canvas.addEventListener('click', () => {
+  if (state === 'play') shoot();
+});
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  mouseX = (e.touches[0].clientX - rect.left) * (W / rect.width);
+}, { passive: false });
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state === 'play') shoot();
+}, { passive: false });
+
+window.addEventListener('resize', () => {
+  resize();
+  if (bgTrees.length) {
+    bgTrees = Array.from({length: 14}, (_, i) => ({
+      x: (i / 14) * W + Math.random() * (W / 14),
+      h: 60 + Math.random() * 80, w: 12 + Math.random() * 16,
+      sway: Math.random() * Math.PI * 2
+    }));
+    groundY = H - 50;
+    if (player) player.y = groundY - 30;
+  }
+});
+
+// ── INIT CANVAS SIZE ────────────────────────────────────────────────────────
+resize();
+show('screen-start');
+</script>
+</body>
+</html>
