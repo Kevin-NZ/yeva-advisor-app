@@ -351,6 +351,15 @@ let bgStars = [];
 let bgTrees = [];
 let groundY;
 
+// ── FORMATION CONTROLLER (classic Space Invaders step model) ─────────────────
+// The entire grid moves as one unit on a fixed tick. On wall contact it drops
+// DROP_Y pixels exactly once, then reverses. Tick interval shrinks as enemies die.
+const STEP_X  = 10;  // pixels moved per tick (horizontal)
+const DROP_Y  = 12;  // pixels dropped per wall-hit
+const TICK_BASE   = 22; // frames between steps at full grid (was 38 — faster start)
+const TICK_MIN    = 3;  // fastest tick when last enemy remains (was 4)
+let formation = { dirX: 1, tickTimer: 0, dropQueued: false };
+
 // ── MTG COLOR CONFIGS ───────────────────────────────────────────────────────
 const ENEMY_TYPES = {
   red: {
@@ -414,13 +423,14 @@ function initGame() {
   shootCooldown = 0;
   enemyShootTimer = 0;
   waveTransition = false;
+  formation = { dirX: 1, tickTimer: 0, dropQueued: false };
   updateHUD();
 }
 
 function spawnPlayer() {
   player = {
-    x: W / 2, y: groundY - 30,
-    w: 32, h: 48,
+    x: W / 2, y: groundY - 8,
+    w: 48, h: 64,
     speed: 280,
     invincible: 0,
     bowCharge: 0,
@@ -530,15 +540,12 @@ function spawnWave(wNum) {
     row.forEach((type, ci) => {
       const t = ENEMY_TYPES[type];
       enemies.push({
-        type, x: startX + ci * spacing,
+        type,
+        x: startX + ci * spacing,
         y: 60 + ri * 64,
         w: 40, h: 40,
-        vx: (cfg.speed + wave * 0.05) * 40,
-        vy: 0,
-        dirX: 1, dirY: 0,
         health: t.health,
         maxHealth: t.health,
-        shootTimer: Math.random() * 120,
         phase: Math.random() * Math.PI * 2,
         shieldActive: t.shield,
         shieldTimer: 0,
@@ -597,93 +604,54 @@ function drawBackground(t) {
   ctx.stroke();
 }
 
+// ── YEVA SVG SPRITE ─────────────────────────────────────────────────────────
+const YEVA_SVG_SRC = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" shape-rendering="geometricPrecision">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#031b12"/>
+      <stop offset="1" stop-color="#0a3d2a"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="64" cy="118" rx="14" ry="4" fill="#02110b" opacity="0.45"/>
+  <path d="M50 42 L78 42 L88 116 L40 116 Z" fill="#2e7d32"/>
+  <rect x="54" y="46" width="20" height="34" rx="4" fill="#43a047"/>
+  <path d="M52 42 Q64 26 76 42 L72 56 L56 56 Z" fill="#388e3c"/>
+  <ellipse cx="64" cy="48" rx="7" ry="9" fill="#f1c7a3"/>
+  <path d="M55 43 L59 45 L59 52 Z" fill="#f1c7a3"/>
+  <rect x="49" y="52" width="8" height="26" rx="3" transform="rotate(-25 49 52)" fill="#43a047"/>
+  <rect x="67" y="24" width="8" height="34" rx="3" fill="#43a047"/>
+  <path d="M20 34 Q64 14 108 34" fill="none" stroke="#8d6e63" stroke-width="3"/>
+  <line x1="20" y1="34" x2="108" y2="34" stroke="#d7ccc8" stroke-width="1.5"/>
+  <line x1="70" y1="16" x2="70" y2="56" stroke="#c5e1a5" stroke-width="2"/>
+  <path d="M70 12 L66 18 H74 Z" fill="#cfd8dc"/>
+  <circle cx="72" cy="56" r="2.5" fill="#f1c7a3"/>
+  <circle cx="72" cy="24" r="2.5" fill="#f1c7a3"/>
+  <rect x="46" y="68" width="8" height="20" rx="2" fill="#6d4c41"/>
+  <line x1="49" y1="64" x2="49" y2="72" stroke="#c5e1a5" stroke-width="1.5"/>
+  <line x1="52" y1="62" x2="52" y2="70" stroke="#c5e1a5" stroke-width="1.5"/>
+  <rect x="56" y="80" width="7" height="26" fill="#1b5e20"/>
+  <rect x="65" y="80" width="7" height="26" fill="#1b5e20"/>
+  <rect x="55" y="104" width="9" height="8" rx="2" fill="#4e342e"/>
+  <rect x="64" y="104" width="9" height="8" rx="2" fill="#4e342e"/>
+</svg>`)}`;
+
+const yevaImg = new Image();
+yevaImg.src = YEVA_SVG_SRC;
+
+// Sprite size on canvas — the SVG viewBox is 128×128
+const YEVA_SIZE = 64; // draw at 64×64 px (half native, crisp)
+
 function drawYeva(p, t) {
-  const x = Math.round(p.x), y = Math.round(p.y);
   const blink = p.invincible > 0 && Math.floor(p.invincible / 5) % 2 === 0;
   if (blink) return;
+  if (!yevaImg.complete) return;
+
+  const drawW = YEVA_SIZE;
+  const drawH = YEVA_SIZE;
 
   ctx.save();
-  ctx.translate(x, y);
-
-  // Cloak / body
-  ctx.fillStyle = '#1a4a1a';
-  ctx.beginPath();
-  ctx.moveTo(-14, 0);
-  ctx.quadraticCurveTo(-16, 20, -12, 40);
-  ctx.lineTo(12, 40);
-  ctx.quadraticCurveTo(16, 20, 14, 0);
-  ctx.closePath();
-  ctx.fill();
-
-  // Cloak highlight
-  ctx.fillStyle = '#2d6b2d';
-  ctx.beginPath();
-  ctx.moveTo(-6, 2);
-  ctx.quadraticCurveTo(-5, 18, -4, 36);
-  ctx.lineTo(0, 36);
-  ctx.quadraticCurveTo(0, 18, 0, 2);
-  ctx.closePath();
-  ctx.fill();
-
-  // Hood/head
-  ctx.fillStyle = '#1a4a1a';
-  ctx.beginPath();
-  ctx.ellipse(0, -6, 10, 12, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Face
-  ctx.fillStyle = '#8fbc5a';
-  ctx.beginPath();
-  ctx.ellipse(0, -4, 7, 9, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Eyes
-  ctx.fillStyle = '#4a9e4a';
-  ctx.beginPath(); ctx.arc(-3, -5, 1.5, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(3, -5, 1.5, 0, Math.PI * 2); ctx.fill();
-
-  // Bow (left arm extended up)
-  ctx.strokeStyle = '#8b5e3c';
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = 'round';
-  // Bow limb
-  const bowX = -18;
-  ctx.beginPath();
-  ctx.arc(bowX + 5, -10, 14, -Math.PI * 0.7, Math.PI * 0.3);
-  ctx.stroke();
-  // Bowstring
-  ctx.strokeStyle = '#c8e6c8';
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.moveTo(bowX + 5 + 14 * Math.cos(-Math.PI * 0.7), -10 + 14 * Math.sin(-Math.PI * 0.7));
-  ctx.lineTo(bowX + 5 + 14 * Math.cos(Math.PI * 0.3), -10 + 14 * Math.sin(Math.PI * 0.3));
-  ctx.stroke();
-
-  // Arrow on bow (ready to fire)
-  ctx.strokeStyle = '#f4d03f';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(-10, -18); ctx.lineTo(-10, 4);
-  ctx.stroke();
-  // Arrowhead
-  ctx.fillStyle = '#f4d03f';
-  ctx.beginPath();
-  ctx.moveTo(-10, -20);
-  ctx.lineTo(-13, -14); ctx.lineTo(-7, -14);
-  ctx.closePath(); ctx.fill();
-
-  // Leaf accents on hood
-  ctx.fillStyle = '#4a9e4a';
-  for (let i = -1; i <= 1; i += 2) {
-    ctx.save();
-    ctx.translate(i * 9, -14);
-    ctx.rotate(i * 0.5);
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 3, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
+  // Centre the sprite on p.x; align feet to p.y
+  ctx.drawImage(yevaImg, Math.round(p.x - drawW / 2), Math.round(p.y - drawH), drawW, drawH);
   ctx.restore();
 }
 
@@ -1052,37 +1020,55 @@ function spawnManaParticles(x, y, pts) {
 // ── GAME LOGIC ──────────────────────────────────────────────────────────────
 function shoot() {
   if (shootCooldown > 0) return;
-  bullets.push({ x: player.x, y: player.y - 20, vy: -9, player: true });
+  bullets.push({ x: player.x + 6, y: player.y - 58, vy: -9, player: true });
   shootCooldown = 14;
 }
 
 function moveEnemies(dt) {
-  // Find bounds
-  let minX = Infinity, maxX = -Infinity;
-  enemies.forEach(e => { if (!e.dead) { minX = Math.min(minX, e.x - e.w/2); maxX = Math.max(maxX, e.x + e.w/2); } });
+  const alive = enemies.filter(e => !e.dead);
+  if (alive.length === 0) return;
 
-  let shouldDrop = false;
-  if (maxX >= W - 10 || minX <= 10) shouldDrop = true;
+  // Tick interval: shrinks linearly as enemies die — classic speed-up
+  const totalSpawned = enemies.length;
+  const frac = alive.length / totalSpawned;           // 1 → 0 as grid empties
+  const tickInterval = Math.round(TICK_MIN + (TICK_BASE - TICK_MIN) * frac);
 
-  enemies.forEach(e => {
-    if (e.dead) return;
-    const tp = ENEMY_TYPES[e.type];
-    // Black zigzag
-    const zigOff = tp.zigzag ? Math.sin(Date.now() * 0.004 + e.phase) * 20 : 0;
+  formation.tickTimer--;
 
-    if (shouldDrop) { e.dirX *= -1; e.y += 16; }
-    e.x += e.vx * e.dirX * dt;
-    if (tp.zigzag) e.x += Math.cos(Date.now() * 0.004 + e.phase) * 0.8;
+  if (formation.tickTimer <= 0) {
+    formation.tickTimer = tickInterval;
 
+    if (formation.dropQueued) {
+      // Drop the whole formation one step, then reverse
+      alive.forEach(e => { e.y += DROP_Y; });
+      formation.dirX *= -1;
+      formation.dropQueued = false;
+    } else {
+      // Step the whole formation horizontally
+      alive.forEach(e => { e.x += STEP_X * formation.dirX; });
+
+      // Check if any enemy has reached a wall edge — queue a drop next tick
+      let minX = Infinity, maxX = -Infinity;
+      alive.forEach(e => {
+        minX = Math.min(minX, e.x - e.w / 2);
+        maxX = Math.max(maxX, e.x + e.w / 2);
+      });
+      if (maxX >= W - 8 || minX <= 8) {
+        formation.dropQueued = true;
+      }
+    }
+  }
+
+  // Per-enemy housekeeping (no movement logic here)
+  alive.forEach(e => {
     if (e.hitFlash > 0) e.hitFlash--;
 
-    // Shield timer
     if (e.shieldActive) {
       e.shieldTimer++;
       if (e.shieldTimer > 180) { e.shieldActive = false; e.shieldTimer = 0; }
     }
 
-    // Reach ground — lose a life
+    // Reached the ground — lose a life
     if (e.y + e.h / 2 >= groundY) {
       e.dead = true;
       loseLife();
@@ -1093,22 +1079,25 @@ function moveEnemies(dt) {
 function moveEnemyBullets(dt) {
   enemyShootTimer--;
   if (enemyShootTimer <= 0) {
-    enemyShootTimer = 90 - wave * 6;
-    // Pick a random shooter
+    enemyShootTimer = Math.max(20, 65 - wave * 7);
+    // Pick 1 or 2 shooters at once on later waves
     const shooters = enemies.filter(e => !e.dead && ENEMY_TYPES[e.type].shoot);
     if (shooters.length) {
-      const e = shooters[Math.floor(Math.random() * shooters.length)];
-      const tp = ENEMY_TYPES[e.type];
-      const count = e.type === 'black' ? 3 : 1;
-      for (let i = 0; i < count; i++) {
-        enemyBullets.push({
-          x: e.x + (i - 1) * 8,
-          y: e.y + e.h / 2,
-          vy: 4 + wave * 0.3,
-          vx: e.type === 'black' ? (i - 1) * 1.5 : 0,
-          color: tp.bulletColor,
-          r: 4,
-        });
+      const shots = wave >= 4 ? 2 : 1;
+      for (let s = 0; s < shots; s++) {
+        const e = shooters[Math.floor(Math.random() * shooters.length)];
+        const tp = ENEMY_TYPES[e.type];
+        const count = e.type === 'black' ? 3 : 1;
+        for (let i = 0; i < count; i++) {
+          enemyBullets.push({
+            x: e.x + (i - 1) * 8,
+            y: e.y + e.h / 2,
+            vy: 5.5 + wave * 0.5,
+            vx: e.type === 'black' ? (i - 1) * 2 : 0,
+            color: tp.bulletColor,
+            r: 4,
+          });
+        }
       }
     }
   }
@@ -1133,7 +1122,7 @@ function moveEnemyBullets(dt) {
     // Hit player
     if (!player) continue;
     if (player.invincible <= 0 &&
-        Math.abs(b.x - player.x) < 14 && Math.abs(b.y - player.y) < 20) {
+        Math.abs(b.x - player.x) < 18 && b.y > player.y - 56 && b.y < player.y) {
       enemyBullets.splice(i, 1);
       spawnParticles(player.x, player.y, '#8ed88e', 8);
       loseLife();
@@ -1231,6 +1220,7 @@ function checkWaveClear() {
       } else {
         spawnWave(wave);
         spawnBarriers();
+        formation = { dirX: 1, tickTimer: 0, dropQueued: false };
         bullets = [];
         enemyBullets = [];
         updateHUD();
@@ -1400,7 +1390,7 @@ window.addEventListener('resize', () => {
       sway: Math.random() * Math.PI * 2
     }));
     groundY = H - 50;
-    if (player) player.y = groundY - 30;
+    if (player) player.y = groundY - 8;
   }
 });
 
