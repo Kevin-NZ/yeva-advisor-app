@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 — Card Not Found | Yeva Advisor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;900&family=Crimson+Pro:ital,wght@0,300;0,400;1,300;1,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #0a120a;
+      --bg-card:       #0f1e0f;
+      --bg-hover:      #152615;
+      --border:        #1e3a1e;
+      --border-bright: #2d5a2d;
+      --green1:        #4a9e4a;
+      --green2:        #6abf6a;
+      --green3:        #8ed88e;
+      --text:          #c8e6c8;
+      --text-dim:      #7aad7a;
+      --text-mid:      #a0cda0;
+      --accent:        #ff6b35;
+      --gold:          #f4d03f;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Crimson Pro', Georgia, serif;
+      overflow: hidden;
+    }
+
+    /* ── CANVAS LAYER ── */
+    #bg-canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+
+    /* ── SCAN-LINE OVERLAY ── */
+    .scanlines {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0,0,0,0.08) 3px,
+        rgba(0,0,0,0.08) 4px
+      );
+    }
+
+    /* ── VIGNETTE ── */
+    .vignette {
+      position: fixed;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse 80% 80% at 50% 50%,
+        transparent 30%,
+        rgba(0,0,0,0.55) 80%,
+        rgba(0,0,0,0.85) 100%
+      );
+    }
+
+    /* ── MAIN CONTENT ── */
+    .stage {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 2rem;
+    }
+
+    /* ── CARD FRAME ── */
+    .card-frame {
+      position: relative;
+      width: min(480px, 90vw);
+      background: linear-gradient(160deg, #0d1d0d 0%, #091409 60%, #0b1a0b 100%);
+      border: 1px solid var(--border-bright);
+      border-radius: 12px;
+      padding: 0;
+      box-shadow:
+        0 0 0 1px #000,
+        0 0 0 3px var(--border),
+        0 0 30px rgba(74,158,74,0.12),
+        0 0 80px rgba(0,0,0,0.8),
+        inset 0 1px 0 rgba(142,216,142,0.06);
+      overflow: hidden;
+      animation: cardReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    @keyframes cardReveal {
+      from { opacity: 0; transform: translateY(28px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0)    scale(1); }
+    }
+
+    /* ── CARD TITLE BAR ── */
+    .card-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, rgba(74,158,74,0.08) 0%, transparent 100%);
+    }
+
+    .card-name {
+      font-family: 'Cinzel', serif;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .card-cost {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .pip {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 900;
+      font-family: 'Cinzel', serif;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    }
+
+    .pip-4 { background: radial-gradient(circle at 35% 35%, #bbb, #666); color: #222; }
+    .pip-0 { background: radial-gradient(circle at 35% 35%, #4a9e4a, #1a4a1a); color: #c8e6c8; }
+
+    /* ── ART BOX ── */
+    .card-art {
+      position: relative;
+      width: 100%;
+      height: 220px;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #art-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* ── TYPE LINE ── */
+    .card-type-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 14px;
+      font-family: 'Cinzel', serif;
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--text-dim);
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,0.2);
+    }
+
+    .set-symbol {
+      font-size: 14px;
+      opacity: 0.6;
+    }
+
+    /* ── TEXT BOX ── */
+    .card-text-box {
+      padding: 14px 16px 10px;
+      min-height: 130px;
+      position: relative;
+    }
+
+    .rule-text {
+      font-size: 14.5px;
+      line-height: 1.6;
+      color: var(--text-mid);
+      margin-bottom: 12px;
+    }
+
+    .rule-text em {
+      font-style: italic;
+      color: var(--text-dim);
+    }
+
+    .keyword {
+      color: var(--green2);
+      font-weight: 600;
+    }
+
+    .reminder {
+      font-style: italic;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .flavor-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-bright), transparent);
+      margin: 10px 0;
+    }
+
+    .flavor-text {
+      font-style: italic;
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    /* ── BOTTOM BAR ── */
+    .card-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 14px 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .card-collector {
+      font-family: 'Cinzel', serif;
+      font-size: 9px;
+      color: var(--text-dim);
+      opacity: 0.5;
+      letter-spacing: 0.1em;
+    }
+
+    /* ── CORNER ORNAMENTS ── */
+    .corner {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-color: var(--green1);
+      border-style: solid;
+      opacity: 0.4;
+    }
+    .corner-tl { top: 4px; left: 4px; border-width: 1px 0 0 1px; }
+    .corner-tr { top: 4px; right: 4px; border-width: 1px 1px 0 0; }
+    .corner-bl { bottom: 4px; left: 4px; border-width: 0 0 1px 1px; }
+    .corner-br { bottom: 4px; right: 4px; border-width: 0 1px 1px 0; }
+
+    /* ── 404 HERO ── */
+    .error-code {
+      font-family: 'Cinzel', serif;
+      font-size: clamp(60px, 16vw, 96px);
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      color: transparent;
+      background: linear-gradient(135deg, var(--green3) 0%, var(--green1) 40%, #2d6b2d 80%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      text-shadow: none;
+      margin-bottom: 0.1em;
+      animation: heroReveal 1.4s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+      position: relative;
+    }
+
+    .error-code::after {
+      content: '404';
+      position: absolute;
+      inset: 0;
+      color: transparent;
+      -webkit-text-stroke: 1px rgba(142,216,142,0.15);
+      z-index: -1;
+      transform: translate(2px, 2px);
+    }
+
+    @keyframes heroReveal {
+      from { opacity: 0; transform: scale(0.85); letter-spacing: 0.1em; }
+      to   { opacity: 1; transform: scale(1); letter-spacing: -0.02em; }
+    }
+
+    /* ── NAV LINKS ── */
+    .nav-links {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+      animation: fadeUp 1s 0.8s both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .btn {
+      font-family: 'Cinzel', serif;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 9px 20px;
+      border-radius: 4px;
+      border: 1px solid var(--border-bright);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #1a3d1a, #0f2a0f);
+      color: var(--green2);
+      box-shadow: 0 0 12px rgba(74,158,74,0.15), inset 0 1px 0 rgba(142,216,142,0.08);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #213f21, #152515);
+      color: var(--green3);
+      box-shadow: 0 0 20px rgba(74,158,74,0.3), inset 0 1px 0 rgba(142,216,142,0.15);
+      border-color: var(--green1);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-dim);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(74,158,74,0.07);
+      color: var(--text-mid);
+      border-color: var(--green1);
+    }
+
+    /* ── FLOATING PARTICLES ── */
+    .particle {
+      position: fixed;
+      pointer-events: none;
+      z-index: 3;
+      opacity: 0;
+      animation: particleDrift linear infinite;
+    }
+
+    @keyframes particleDrift {
+      0%   { opacity: 0;   transform: translateY(0) translateX(0) rotate(0deg); }
+      10%  { opacity: 0.6; }
+      90%  { opacity: 0.4; }
+      100% { opacity: 0;   transform: translateY(-100vh) translateX(var(--drift)) rotate(360deg); }
+    }
+
+    /* ── MANA SYMBOL in art ── */
+    .art-overlay-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Cinzel', serif;
+      font-size: 72px;
+      color: rgba(74,158,74,0.12);
+      font-weight: 900;
+      letter-spacing: -0.05em;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Background forest canvas -->
+<canvas id="bg-canvas"></canvas>
+<div class="scanlines"></div>
+<div class="vignette"></div>
+
+<!-- Floating leaf particles -->
+<div id="particles"></div>
+
+<!-- Main stage -->
+<div class="stage">
+
+  <div class="error-code">404</div>
+
+  <!-- MTG card frame -->
+  <div class="card-frame">
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+    <div class="card-title-bar">
+      <span class="card-name">Card Not Found</span>
+      <div class="card-cost">
+        <div class="pip pip-4">4</div>
+        <div class="pip pip-0">G</div>
+      </div>
+    </div>
+
+    <div class="card-art">
+      <canvas id="art-canvas"></canvas>
+      <div class="art-overlay-text">?</div>
+    </div>
+
+    <div class="card-type-line">
+      <span>Instant — Error</span>
+      <span class="set-symbol">🌿</span>
+    </div>
+
+    <div class="card-text-box">
+      <p class="rule-text">
+        <span class="keyword">Flash</span><br/>
+        <span class="reminder">(You may cast this spell any time you could cast an instant.)</span>
+      </p>
+      <p class="rule-text">
+        The page you're seeking has phased out, been countered, or exiled face-down.
+        <em>It cannot be targeted, returned, or fetched from any zone.</em>
+      </p>
+      <div class="flavor-divider"></div>
+      <p class="flavor-text">
+        "Even Yeva cannot flash in what was never printed."
+      </p>
+    </div>
+
+    <div class="card-bottom">
+      <span class="card-collector">404/∞ · YVA · EN · Kevin-NZ</span>
+      <span style="font-size:10px; color: var(--text-dim); opacity:0.4; font-family:'Cinzel',serif;">★</span>
+    </div>
+  </div>
+
+  <!-- Navigation -->
+  <div class="nav-links">
+    <a class="btn btn-primary" href="/">
+      <span>⟵</span> Return to Battlefield
+    </a>
+    <a class="btn btn-ghost" href="javascript:history.back()">
+      <span>↩</span> Take a Mulligan
+    </a>
+  </div>
+
+</div>
+
+<script>
+// ── BACKGROUND CANVAS: Procedural forest / goldfish table ──────────────────
+
+(function() {
+  const canvas = document.getElementById('bg-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, t = 0;
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // Tree data
+  const trees = [];
+  function initTrees() {
+    trees.length = 0;
+    const count = Math.floor(W / 55);
+    for (let i = 0; i < count; i++) {
+      trees.push({
+        x: (i / count) * W + Math.random() * (W / count),
+        h: 120 + Math.random() * 200,
+        w: 18 + Math.random() * 28,
+        sway: Math.random() * Math.PI * 2,
+        speed: 0.003 + Math.random() * 0.004,
+        layers: 2 + Math.floor(Math.random() * 3),
+        shade: 0.3 + Math.random() * 0.5,
+      });
+    }
+  }
+  initTrees();
+  window.addEventListener('resize', initTrees);
+
+  function drawTree(tree, time) {
+    const sway = Math.sin(time * tree.speed + tree.sway) * 4;
+    const x = tree.x;
+    const baseY = H;
+
+    // Trunk
+    const trunkH = tree.h * 0.3;
+    const grad = ctx.createLinearGradient(x, baseY, x, baseY - trunkH);
+    grad.addColorStop(0, `rgba(10,25,10,${tree.shade * 0.8})`);
+    grad.addColorStop(1, `rgba(18,40,18,${tree.shade * 0.4})`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x - tree.w * 0.12, baseY);
+    ctx.lineTo(x + tree.w * 0.12, baseY);
+    ctx.lineTo(x + tree.w * 0.06 + sway * 0.2, baseY - trunkH);
+    ctx.lineTo(x - tree.w * 0.06 + sway * 0.2, baseY - trunkH);
+    ctx.fill();
+
+    // Foliage layers
+    for (let l = 0; l < tree.layers; l++) {
+      const frac = l / tree.layers;
+      const layerY = baseY - trunkH - (tree.h - trunkH) * (frac * 0.6 + 0.1);
+      const layerX = x + sway * (0.4 + frac * 0.6);
+      const radius = tree.w * (1.4 - frac * 0.5);
+      const alpha = (tree.shade * (0.5 + frac * 0.3));
+
+      const cg = ctx.createRadialGradient(layerX, layerY - radius * 0.3, 0, layerX, layerY, radius);
+      cg.addColorStop(0, `rgba(35,75,35,${alpha})`);
+      cg.addColorStop(0.6, `rgba(18,50,18,${alpha * 0.8})`);
+      cg.addColorStop(1, `rgba(8,20,8,0)`);
+
+      ctx.fillStyle = cg;
+      ctx.beginPath();
+      ctx.ellipse(layerX, layerY, radius, radius * 1.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Ground mist bands
+  function drawMist(time) {
+    for (let band = 0; band < 3; band++) {
+      const yOff = band * H * 0.12;
+      const drift = Math.sin(time * 0.0007 + band * 1.2) * 30;
+      const mg = ctx.createLinearGradient(0, H * 0.55 + yOff, 0, H * 0.72 + yOff);
+      mg.addColorStop(0, 'rgba(10,28,10,0)');
+      mg.addColorStop(0.4, `rgba(12,22,12,0.18)`);
+      mg.addColorStop(1, 'rgba(5,12,5,0)');
+      ctx.fillStyle = mg;
+      ctx.beginPath();
+      ctx.ellipse(W * 0.5 + drift, H * 0.65 + yOff, W * 0.8, 60, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Distant canopy shimmer
+  function drawCanopy(time) {
+    const shimmer = 0.04 + Math.sin(time * 0.0012) * 0.02;
+    const cg = ctx.createLinearGradient(0, 0, 0, H * 0.45);
+    cg.addColorStop(0, `rgba(8,20,8,0.95)`);
+    cg.addColorStop(0.5, `rgba(12,28,12,${shimmer + 0.6})`);
+    cg.addColorStop(1, `rgba(10,18,10,0)`);
+    ctx.fillStyle = cg;
+    ctx.fillRect(0, 0, W, H * 0.5);
+  }
+
+  // Dappled light rays
+  function drawRays(time) {
+    const count = 5;
+    for (let i = 0; i < count; i++) {
+      const angle = (-0.3 + i * 0.15) + Math.sin(time * 0.0005 + i) * 0.05;
+      const x0 = W * 0.3 + i * W * 0.1;
+      const len = H * (0.5 + Math.random() * 0.1);
+      const alpha = 0.012 + Math.sin(time * 0.001 + i * 1.5) * 0.005;
+
+      const rg = ctx.createLinearGradient(x0, 0, x0 + Math.sin(angle) * len, len);
+      rg.addColorStop(0, `rgba(80,160,80,${alpha})`);
+      rg.addColorStop(1, 'rgba(80,160,80,0)');
+
+      ctx.fillStyle = rg;
+      ctx.beginPath();
+      ctx.moveTo(x0 - 15, 0);
+      ctx.lineTo(x0 + 15, 0);
+      ctx.lineTo(x0 + 15 + Math.sin(angle) * len, len);
+      ctx.lineTo(x0 - 15 + Math.sin(angle) * len, len);
+      ctx.fill();
+    }
+  }
+
+  // Ground
+  function drawGround() {
+    const gg = ctx.createLinearGradient(0, H * 0.75, 0, H);
+    gg.addColorStop(0, 'rgba(8,18,8,0)');
+    gg.addColorStop(0.3, '#070f07');
+    gg.addColorStop(1, '#050c05');
+    ctx.fillStyle = gg;
+    ctx.fillRect(0, H * 0.7, W, H * 0.3);
+  }
+
+  function render(timestamp) {
+    t = timestamp;
+    ctx.clearRect(0, 0, W, H);
+
+    // Sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#060e06');
+    sky.addColorStop(0.5, '#09150a');
+    sky.addColorStop(1, '#0b1a0b');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    drawRays(t);
+    drawCanopy(t);
+    trees.forEach(tr => drawTree(tr, t));
+    drawGround();
+    drawMist(t);
+
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+
+// ── ART CANVAS: Animated "lost card" art ──────────────────────────────────
+
+(function() {
+  const c = document.getElementById('art-canvas');
+  const ctx = c.getContext('2d');
+  let W, H, t = 0;
+
+  function resize() {
+    W = c.width  = c.offsetWidth;
+    H = c.height = c.offsetHeight;
+  }
+  resize();
+
+  // Fireflies
+  const flies = Array.from({length: 18}, () => ({
+    x: Math.random(),
+    y: Math.random(),
+    r: 0.8 + Math.random() * 1.2,
+    phase: Math.random() * Math.PI * 2,
+    speed: 0.0004 + Math.random() * 0.0006,
+    dx: (Math.random() - 0.5) * 0.0002,
+    dy: (Math.random() - 0.5) * 0.0001,
+  }));
+
+  function draw(ts) {
+    t = ts;
+    ctx.clearRect(0, 0, W, H);
+
+    // Deep forest art bg
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#071207');
+    bg.addColorStop(0.4, '#0a1a0a');
+    bg.addColorStop(1, '#060e06');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // Silhouette trees in art
+    const artTrees = [0.1, 0.25, 0.4, 0.6, 0.75, 0.88, 0.95];
+    artTrees.forEach((fx, i) => {
+      const x = fx * W;
+      const h = H * (0.55 + (i % 3) * 0.1);
+      const w = 6 + (i % 2) * 4;
+      ctx.fillStyle = 'rgba(4,10,4,0.9)';
+      ctx.fillRect(x - w/2, H - h, w, h);
+      // Canopy
+      ctx.beginPath();
+      ctx.ellipse(x, H - h, w * 2.5, h * 0.25, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(8,18,8,0.85)';
+      ctx.fill();
+    });
+
+    // Glowing moon/orb
+    const moonX = W * 0.5;
+    const moonY = H * 0.28 + Math.sin(t * 0.0004) * 3;
+    const mg = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, 35);
+    mg.addColorStop(0, 'rgba(142,216,142,0.22)');
+    mg.addColorStop(0.3, 'rgba(74,158,74,0.10)');
+    mg.addColorStop(1, 'rgba(74,158,74,0)');
+    ctx.fillStyle = mg;
+    ctx.beginPath();
+    ctx.arc(moonX, moonY, 35, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner orb
+    const ig = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, 10);
+    ig.addColorStop(0, 'rgba(200,230,200,0.25)');
+    ig.addColorStop(1, 'rgba(142,216,142,0.05)');
+    ctx.fillStyle = ig;
+    ctx.beginPath();
+    ctx.arc(moonX, moonY, 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Question mark glyph in orb
+    ctx.fillStyle = 'rgba(142,216,142,0.4)';
+    ctx.font = `bold ${Math.floor(H * 0.18)}px 'Cinzel', serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', moonX, moonY + 2);
+
+    // Ground mist
+    const mist = ctx.createLinearGradient(0, H * 0.65, 0, H);
+    mist.addColorStop(0, 'rgba(10,28,10,0)');
+    mist.addColorStop(0.4, 'rgba(12,22,10,0.35)');
+    mist.addColorStop(1, 'rgba(6,14,6,0.6)');
+    ctx.fillStyle = mist;
+    ctx.fillRect(0, H * 0.65, W, H * 0.35);
+
+    // Fireflies
+    flies.forEach(f => {
+      f.x = Math.max(0.02, Math.min(0.98, f.x + f.dx));
+      f.y = Math.max(0.1,  Math.min(0.9,  f.y + f.dy));
+      const alpha = 0.3 + Math.sin(t * f.speed * 1000 + f.phase) * 0.3;
+      const fx = f.x * W;
+      const fy = f.y * H;
+      const fg = ctx.createRadialGradient(fx, fy, 0, fx, fy, f.r * 3);
+      fg.addColorStop(0, `rgba(160,230,160,${alpha})`);
+      fg.addColorStop(1, 'rgba(74,158,74,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath();
+      ctx.arc(fx, fy, f.r * 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+
+// ── LEAF PARTICLES ────────────────────────────────────────────────────────
+
+(function() {
+  const container = document.getElementById('particles');
+  const leaves = ['🍃', '🌿', '✦', '·', '∘'];
+  const count = 18;
+
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement('div');
+    el.className = 'particle';
+    const symbol = leaves[Math.floor(Math.random() * leaves.length)];
+    el.textContent = symbol;
+    const x = Math.random() * 100;
+    const dur = 8 + Math.random() * 12;
+    const delay = Math.random() * 10;
+    const drift = (Math.random() - 0.5) * 120;
+    const size = 10 + Math.random() * 14;
+    el.style.cssText = `
+      left: ${x}vw;
+      bottom: -20px;
+      font-size: ${size}px;
+      --drift: ${drift}px;
+      color: rgba(${74 + Math.random()*60}, ${158 + Math.random()*60}, ${74 + Math.random()*60}, ${0.3 + Math.random()*0.4});
+      animation-duration: ${dur}s;
+      animation-delay: -${delay}s;
+    `;
+    container.appendChild(el);
+  }
+})();
+</script>
+</body>
+</html>
