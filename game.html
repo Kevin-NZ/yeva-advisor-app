@@ -248,6 +248,7 @@
     <div class="hud-block" style="align-items:flex-end">
       <span class="hud-label">WAVE</span>
       <span class="hud-value" id="hud-wave">1</span>
+      <span id="hud-sound" style="font-size:13px;cursor:pointer;opacity:0.7;" title="S — toggle sound" onclick="toggleMute()">🔊</span>
     </div>
   </div>
 
@@ -284,7 +285,7 @@
       </div>
     </div>
     <button class="btn-start" id="btn-start">CAST YOUR SPELLS →</button>
-    <p class="controls-hint">← → or A D to move &nbsp;·&nbsp; SPACE to shoot &nbsp;·&nbsp; ESC to pause</p>
+    <p class="controls-hint">← → or A D to move &nbsp;·&nbsp; SPACE to shoot &nbsp;·&nbsp; S to mute &nbsp;·&nbsp; ESC to pause</p>
     <p class="flavor">"Nature does not ask permission."</p>
   </div>
 
@@ -1017,11 +1018,207 @@ function spawnManaParticles(x, y, pts) {
   });
 }
 
+// ── AUDIO ENGINE ─────────────────────────────────────────────────────────────
+// AudioContext created once on first user gesture (button click).
+// All sounds are synthesized — no external files.
+let AC = null;
+let masterGain = null;
+let soundMuted = false;
+
+function initAudio() {
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = AC.createGain();
+  masterGain.gain.value = 0.5;
+  masterGain.connect(AC.destination);
+}
+
+function toggleMute() {
+  if (!masterGain) return;
+  soundMuted = !soundMuted;
+  masterGain.gain.setValueAtTime(soundMuted ? 0 : 0.5, AC.currentTime);
+  document.getElementById('hud-sound').textContent = soundMuted ? '🔇' : '🔊';
+}
+
+// Envelope: attack, sustain, release on a GainNode
+function env(g, atk, sus, rel, peak) {
+  const t = AC.currentTime;
+  g.gain.cancelScheduledValues(t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(peak, t + atk);
+  g.gain.setValueAtTime(peak, t + atk + sus);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + atk + sus + rel);
+  return t + atk + sus + rel + 0.01;
+}
+
+function sndShoot() {
+  if (!AC) return;
+  const g = AC.createGain();
+  g.connect(masterGain);
+  // Filtered noise — arrow whoosh
+  const buf = AC.createBuffer(1, Math.floor(AC.sampleRate * 0.15), AC.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource();
+  src.buffer = buf;
+  const flt = AC.createBiquadFilter();
+  flt.type = 'bandpass';
+  flt.frequency.setValueAtTime(1200, AC.currentTime);
+  flt.frequency.linearRampToValueAtTime(3000, AC.currentTime + 0.1);
+  flt.Q.value = 4;
+  src.connect(flt);
+  flt.connect(g);
+  const end = env(g, 0.001, 0.03, 0.1, 0.28);
+  src.start(AC.currentTime);
+  src.stop(end);
+}
+
+const KILL_FREQS = { red: 130, blue: 220, black: 90, white: 350 };
+function sndKill(type) {
+  if (!AC) return;
+  const freq = KILL_FREQS[type] || 150;
+  const g = AC.createGain();
+  g.connect(masterGain);
+  const o1 = AC.createOscillator();
+  const o2 = AC.createOscillator();
+  o1.type = 'square';
+  o2.type = 'sawtooth';
+  o1.frequency.setValueAtTime(freq * 2.5, AC.currentTime);
+  o1.frequency.exponentialRampToValueAtTime(freq * 0.3, AC.currentTime + 0.22);
+  o2.frequency.setValueAtTime(freq * 1.8, AC.currentTime);
+  o2.frequency.exponentialRampToValueAtTime(freq * 0.25, AC.currentTime + 0.22);
+  o1.connect(g); o2.connect(g);
+  const end = env(g, 0.003, 0.03, 0.2, 0.35);
+  o1.start(AC.currentTime); o2.start(AC.currentTime);
+  o1.stop(end); o2.stop(end);
+}
+
+function sndHit() {
+  if (!AC) return;
+  const g = AC.createGain();
+  g.connect(masterGain);
+  const o = AC.createOscillator();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(500, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(250, AC.currentTime + 0.09);
+  o.connect(g);
+  const end = env(g, 0.001, 0.01, 0.08, 0.22);
+  o.start(AC.currentTime); o.stop(end);
+}
+
+function sndPlayerHit() {
+  if (!AC) return;
+  // Low thud oscillator
+  const g1 = AC.createGain();
+  g1.connect(masterGain);
+  const o = AC.createOscillator();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(80, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(28, AC.currentTime + 0.35);
+  o.connect(g1);
+  env(g1, 0.005, 0.04, 0.3, 0.55);
+  o.start(AC.currentTime); o.stop(AC.currentTime + 0.42);
+  // Noise burst
+  const g2 = AC.createGain();
+  g2.connect(masterGain);
+  const buf = AC.createBuffer(1, Math.floor(AC.sampleRate * 0.25), AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource();
+  src.buffer = buf;
+  src.connect(g2);
+  const end2 = env(g2, 0.001, 0.02, 0.22, 0.3);
+  src.start(AC.currentTime); src.stop(end2);
+}
+
+function sndBarrier() {
+  if (!AC) return;
+  const g = AC.createGain();
+  g.connect(masterGain);
+  const o = AC.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(200, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(100, AC.currentTime + 0.07);
+  o.connect(g);
+  const end = env(g, 0.001, 0.005, 0.065, 0.15);
+  o.start(AC.currentTime); o.stop(end);
+}
+
+function sndWaveClear() {
+  if (!AC) return;
+  [261, 329, 392, 523, 659].forEach((freq, i) => {
+    const g = AC.createGain();
+    g.connect(masterGain);
+    const o = AC.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = freq;
+    o.connect(g);
+    const t = AC.currentTime + i * 0.11;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.32, t + 0.02);
+    g.gain.setValueAtTime(0.32, t + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+    o.start(t); o.stop(t + 0.34);
+  });
+}
+
+function sndGameOver() {
+  if (!AC) return;
+  [220, 185, 155, 110, 82].forEach((freq, i) => {
+    const g = AC.createGain();
+    g.connect(masterGain);
+    const o = AC.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = freq;
+    o.connect(g);
+    const t = AC.currentTime + i * 0.2;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.38, t + 0.04);
+    g.gain.setValueAtTime(0.38, t + 0.14);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    o.start(t); o.stop(t + 0.46);
+  });
+}
+
+function sndVictory() {
+  if (!AC) return;
+  [[261,0],[329,0.06],[392,0.12],[523,0.18],[659,0.24],[784,0.32]].forEach(([freq, delay]) => {
+    const g = AC.createGain();
+    g.connect(masterGain);
+    const o = AC.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = freq;
+    o.connect(g);
+    const t = AC.currentTime + delay;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.28, t + 0.03);
+    g.gain.setValueAtTime(0.28, t + 0.22);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.65);
+    o.start(t); o.stop(t + 0.68);
+  });
+}
+
+let marchPitch = 0;
+const MARCH_PITCHES = [55, 46, 41, 46];
+function sndMarch() {
+  if (!AC) return;
+  const g = AC.createGain();
+  g.connect(masterGain);
+  const o = AC.createOscillator();
+  o.type = 'square';
+  o.frequency.value = MARCH_PITCHES[marchPitch % MARCH_PITCHES.length];
+  marchPitch++;
+  o.connect(g);
+  const end = env(g, 0.002, 0.018, 0.035, 0.1);
+  o.start(AC.currentTime); o.stop(end);
+}
+
 // ── GAME LOGIC ──────────────────────────────────────────────────────────────
 function shoot() {
   if (shootCooldown > 0) return;
   bullets.push({ x: player.x + 6, y: player.y - 58, vy: -9, player: true });
   shootCooldown = 14;
+  sndShoot();
 }
 
 function moveEnemies(dt) {
@@ -1046,6 +1243,7 @@ function moveEnemies(dt) {
     } else {
       // Step the whole formation horizontally
       alive.forEach(e => { e.x += STEP_X * formation.dirX; });
+      sndMarch();
 
       // Check if any enemy has reached a wall edge — queue a drop next tick
       let minX = Infinity, maxX = -Infinity;
@@ -1117,7 +1315,7 @@ function moveEnemyBullets(dt) {
         break;
       }
     }
-    if (hitBarrier) { enemyBullets.splice(i, 1); continue; }
+    if (hitBarrier) { enemyBullets.splice(i, 1); sndBarrier(); continue; }
 
     // Hit player
     if (!player) continue;
@@ -1145,7 +1343,7 @@ function moveBullets() {
         break;
       }
     }
-    if (hitBarrier) { bullets.splice(i, 1); continue; }
+    if (hitBarrier) { bullets.splice(i, 1); sndBarrier(); continue; }
 
     // Hit enemy
     let hit = false;
@@ -1164,6 +1362,9 @@ function moveBullets() {
           spawnManaParticles(e.x, e.y, tp.points + wave * 2);
           score += tp.points + wave * 2;
           updateHUD();
+          sndKill(e.type);
+        } else {
+          sndHit();
         }
         break;
       }
@@ -1186,6 +1387,7 @@ function loseLife() {
   if (player) player.invincible = 90;
   lives--;
   updateHUD();
+  sndPlayerHit();
   if (lives <= 0) {
     setTimeout(() => endGame(false), 400);
   }
@@ -1195,6 +1397,7 @@ function checkWaveClear() {
   if (enemies.every(e => e.dead) && !waveTransition) {
     waveTransition = true;
     waveTimer = 120;
+    sndWaveClear();
     // Flash wave clear
     const el = document.getElementById('wave-announce');
     if (wave < MAX_WAVES) {
@@ -1319,6 +1522,8 @@ function startGame() {
   show(null);
   state = 'play';
   resize();
+  initAudio();
+  marchPitch = 0;
   initGame();
   lastTime = performance.now();
   frameId = requestAnimationFrame(loop);
@@ -1330,10 +1535,12 @@ function endGame(win) {
   if (win) {
     document.getElementById('win-score').textContent = score.toLocaleString();
     show('screen-win');
+    sndVictory();
   } else {
     document.getElementById('go-score').textContent = score.toLocaleString();
     document.getElementById('go-wave').textContent = `FELL ON WAVE ${wave}`;
     show('screen-gameover');
+    sndGameOver();
   }
 }
 
@@ -1359,6 +1566,7 @@ document.getElementById('btn-resume').addEventListener('click', pauseGame);
 document.addEventListener('keydown', e => {
   keys[e.key] = true;
   if (e.key === 'Escape') pauseGame();
+  if (e.key === 's' || e.key === 'S') toggleMute();
   if (e.key === ' ') e.preventDefault();
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
