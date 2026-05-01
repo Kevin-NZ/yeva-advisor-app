@@ -297,8 +297,8 @@ function initGame(){
 function initPX(){
   bgStars=Array.from({length:50},()=>({x:Math.random()*W,y:Math.random()*H*0.65,r:0.5+Math.random()*1.5,tw:Math.random()*Math.PI*2}));
   pxLayers=[
-    {trees:mkTrees(10,30,50),  spd:0.2,alpha:0.32},
-    {trees:mkTrees(12,50,80),  spd:0.5,alpha:0.58},
+    {trees:mkTrees(10,30,50),  spd:0.2,alpha:0.40},
+    {trees:mkTrees(12,50,80),  spd:0.5,alpha:0.62},
     {trees:mkTrees(8, 70,120), spd:1.0,alpha:0.82},
   ];
 }
@@ -324,7 +324,58 @@ function showWaveCard(wNum,cb){
   ax.clearRect(0,0,210,80);
   const bg=ax.createLinearGradient(0,0,0,80); bg.addColorStop(0,'#071207'); bg.addColorStop(1,'#0a1a0a');
   ax.fillStyle=bg; ax.fillRect(0,0,210,80);
-  ax.font='36px serif'; ax.textAlign='center'; ax.textBaseline='middle'; ax.fillText(c.art,105,40);
+
+  if(wNum===4){
+    // MTG Plains symbol — sun over rolling hills
+    const cx=105, cy=40;
+    // Sky gradient behind
+    const sky=ax.createLinearGradient(0,0,0,80);
+    sky.addColorStop(0,'#1a3a5c'); sky.addColorStop(1,'#0d1f30');
+    ax.fillStyle=sky; ax.fillRect(0,0,210,80);
+    // Rolling hills silhouette
+    ax.fillStyle='#c8b87a';
+    ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,52);
+    ax.bezierCurveTo(30,52,40,38,60,42);
+    ax.bezierCurveTo(80,46,90,36,105,36);
+    ax.bezierCurveTo(120,36,130,46,150,42);
+    ax.bezierCurveTo(170,38,180,52,210,52);
+    ax.lineTo(210,80); ax.closePath(); ax.fill();
+    // Hill shading
+    ax.fillStyle='rgba(180,160,80,0.35)';
+    ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,56);
+    ax.bezierCurveTo(25,56,38,46,55,48);
+    ax.bezierCurveTo(72,50,85,44,105,44);
+    ax.lineTo(105,80); ax.closePath(); ax.fill();
+    // Sun
+    const sg=ax.createRadialGradient(cx,18,2,cx,18,18);
+    sg.addColorStop(0,'#fff8c0'); sg.addColorStop(0.4,'#f4d03f'); sg.addColorStop(1,'rgba(244,208,63,0)');
+    ax.fillStyle=sg; ax.beginPath(); ax.arc(cx,18,18,0,Math.PI*2); ax.fill();
+    // Sun core
+    ax.fillStyle='#fff8c0'; ax.beginPath(); ax.arc(cx,18,7,0,Math.PI*2); ax.fill();
+    // Sun rays
+    ax.strokeStyle='rgba(244,208,63,0.6)'; ax.lineWidth=1.2;
+    for(let i=0;i<8;i++){
+      const a=(i/8)*Math.PI*2, r1=9, r2=15;
+      ax.beginPath(); ax.moveTo(cx+Math.cos(a)*r1,18+Math.sin(a)*r1); ax.lineTo(cx+Math.cos(a)*r2,18+Math.sin(a)*r2); ax.stroke();
+    }
+    // Cloud left
+    ax.fillStyle='rgba(255,255,255,0.82)';
+    ax.beginPath(); ax.ellipse(62,24,12,6,0,0,Math.PI*2); ax.fill();
+    ax.beginPath(); ax.ellipse(70,20,10,7,0,0,Math.PI*2); ax.fill();
+    ax.beginPath(); ax.ellipse(55,22,9,5,0,0,Math.PI*2); ax.fill();
+    // Cloud right
+    ax.beginPath(); ax.ellipse(152,26,11,5,0,0,Math.PI*2); ax.fill();
+    ax.beginPath(); ax.ellipse(160,22,9,6,0,0,Math.PI*2); ax.fill();
+    ax.beginPath(); ax.ellipse(145,24,8,4,0,0,Math.PI*2); ax.fill();
+    // White glow border
+    ax.shadowColor='rgba(255,248,192,0.4)'; ax.shadowBlur=8;
+    ax.strokeStyle='rgba(244,208,63,0.25)'; ax.lineWidth=1;
+    ax.strokeRect(1,1,208,78);
+    ax.shadowBlur=0;
+  } else {
+    // Default: large emoji centred
+    ax.font='36px serif'; ax.textAlign='center'; ax.textBaseline='middle'; ax.fillText(c.art,105,40);
+  }
   const el=document.getElementById('wave-card');
   el.style.opacity='1'; sndWaveClear();
 
@@ -398,7 +449,7 @@ function drawBG(ts){
     ctx.globalAlpha=layer.alpha;
     layer.trees.forEach(tr=>{
       const sw=Math.sin(ts*0.0004+tr.sw)*3*layer.spd;
-      const dark=li===2?'rgba(8,18,8,0.95)':li===1?'rgba(9,20,9,0.78)':'rgba(6,14,6,0.55)';
+      const dark=li===2?'rgba(14,36,14,0.98)':li===1?'rgba(11,28,11,0.88)':'rgba(8,20,8,0.72)';
       ctx.fillStyle=dark;ctx.fillRect(tr.x+sw-tr.w/2,groundY-tr.h,tr.w,tr.h);
       ctx.beginPath();ctx.ellipse(tr.x+sw,groundY-tr.h,tr.w*3.2,tr.h*0.26,0,0,Math.PI*2);ctx.fill();
     });
