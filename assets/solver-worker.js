@@ -1451,6 +1451,11 @@ class GameState {
     // Sowing Mycospawn on-cast trigger: search library for a land → battlefield.
     // (This is an on-cast trigger, not ETB — but enterBattlefield is the closest hook.)
     // In practice, treating it as ETB is close enough for the solver.
+    //
+    // Per oracle: the fetched land enters TAPPED. The previous version of
+    // this block didn't pass `tapped: true`, which produced an over-strong
+    // engine in the solver — Mycospawn could fetch a Cradle and tap it the
+    // same turn for {G}. Corrected in C-15.
     if (!skipETB && cardKey === 'sowing_mycospawn') {
       var cardsModule = CARDS;
       var { TUTOR_PRIORITY_SCORE: TPS } = _CDM;
@@ -1470,9 +1475,9 @@ class GameState {
       if (bestLandKey) {
         const { state: ns, cardKey: lk } = s.searchLibraryFor(k => k === bestLandKey);
         if (lk) {
-          s = ns.enterBattlefield(lk);
+          s = ns.enterBattlefield(lk, { tapped: true });
           const landName = cardsModule[lk]?.name ?? lk;
-          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield`);
+          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield tapped`);
         }
       }
     }
@@ -1802,13 +1807,19 @@ function makeFetchLand(name) {
           const results = [];
 
           // Option 1: Dryad Arbor (forest creature — best for combos)
+          // Only offer if Dryad Arbor is actually in the library (not in hand or on battlefield)
           {
-            let s = state.clone();
-            s.life -= 1;
-            s = s.removeFromBattlefield(perm.id, 'graveyard');
-            if (s) {
-              s = s.enterBattlefield('dryad_arbor');
-              results.push(s.log(`${name}: fetch Dryad Arbor`));
+            const dryadInHand = state.hand.includes('dryad_arbor');
+            const dryadOnBF   = state.battlefield.some(p => p.name === 'Dryad Arbor');
+            const dryadExiled = state.exile.includes('Dryad Arbor');
+            if (!dryadInHand && !dryadOnBF && !dryadExiled) {
+              let s = state.clone();
+              s.life -= 1;
+              s = s.removeFromBattlefield(perm.id, 'graveyard');
+              if (s) {
+                s = s.enterBattlefield('dryad_arbor');
+                results.push(s.log(`${name}: fetch Dryad Arbor`));
+              }
             }
           }
 
@@ -3622,8 +3633,19 @@ var CARDS = {
   sowing_mycospawn: {
     name: 'Sowing Mycospawn', types: ['creature'], subtypes: ['Eldrazi','Fungus'],
     cost: '3G', power: 4, toughness: 4,
-    // On cast: search library for a land, put it onto the battlefield.
-    // ETB with kicker: exile target land. Devoid (colorless).
+    // Oracle: When Sowing Mycospawn enters, search your library for a basic
+    // land card or Eldrazi land card, put it onto the battlefield TAPPED,
+    // then shuffle. Kicker {2}: ETB exiles target land (not modelled —
+    // no opponent permanents to target).
+    //
+    // The trigger is implemented in src/GameState.js inside enterBattlefield
+    // (search for "Sowing Mycospawn on-cast trigger") rather than as a
+    // def.onEnter here. This places it alongside the existing Hyrax /
+    // Woodcaller / Witness / Empath ETB triggers, ensuring it fires from
+    // every code path that ETBs Mycospawn — the cast dispatcher, the
+    // --battlefield bootstrap, and any test setup. A def.onEnter here would
+    // ONLY fire from the cast dispatcher in actions.js, leaving --battlefield
+    // and direct setup paths inconsistent.
   },
   badgermole_cub: {
     name: 'Badgermole Cub', types: ['creature'], subtypes: ['Badger','Mole'],
@@ -7559,7 +7581,20 @@ function generateActions(state, _presentHint = null) {
           if (!ns) return null;
           ns = ns.clone();
           ns.landDrops--;
-          ns = ns.enterBattlefield(cardKey);
+
+          // Shifting Woodland enters tapped unless there is already a Forest
+          // (any permanent with Forest subtype) or Ashaya on the battlefield.
+          // Ashaya makes all creatures Forests; Yavimaya gives everything Forest subtype.
+          if (cardKey === 'shifting_woodland') {
+            const hasForest = s.battlefield.some(p =>
+              p.subtypes?.includes('Forest') ||
+              p.name === 'Ashaya, Soul of the Wild' ||
+              p.name === 'Yavimaya, Cradle of Growth'
+            );
+            ns = ns.enterBattlefield(cardKey, { tapped: !hasForest });
+          } else {
+            ns = ns.enterBattlefield(cardKey);
+          }
           ns = ns.log(`Play ${def.name}`);
 
           // ── Landfall triggers ─────────────────────────────────────────────
