@@ -427,12 +427,100 @@ function drawEnemy(e,ts){
   ctx.fillStyle=grd;
 
   if(e.type==='red'){
-    ctx.beginPath();ctx.moveTo(0,-r*1.1);ctx.lineTo(r,r*0.8);ctx.lineTo(-r,r*0.8);ctx.closePath();ctx.fill();
-    ctx.fillStyle='rgba(255,255,255,0.26)';ctx.beginPath();ctx.moveTo(0,-r*1.1);ctx.lineTo(r*0.35,-r*0.2);ctx.lineTo(-r*0.35,-r*0.2);ctx.closePath();ctx.fill();
-    ctx.shadowColor=tp.glow;ctx.shadowBlur=8;ctx.strokeStyle=tp.glow;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,-r*1.1);ctx.lineTo(r,r*0.8);ctx.lineTo(-r,r*0.8);ctx.closePath();ctx.stroke();ctx.shadowBlur=0;
+    // Two-peak mountain — main tall peak left-centre, smaller peak right
+    const mgrd=ctx.createLinearGradient(0,-r*1.15,0,r*0.8);
+    mgrd.addColorStop(0,'#e8503a');mgrd.addColorStop(0.55,'#c0392b');mgrd.addColorStop(1,'#8e1f14');
+    ctx.fillStyle=mgrd;
+    ctx.beginPath();
+    ctx.moveTo(-r,      r*0.8);    // bottom-left
+    ctx.lineTo(-r*0.5,  -r*0.12);  // left shoulder
+    ctx.lineTo(-r*0.18,  r*0.04);  // saddle
+    ctx.lineTo(r*0.12,  -r*1.12);  // main peak
+    ctx.lineTo(r*0.42,  -r*0.32);  // right shoulder
+    ctx.lineTo(r*0.62,  -r*0.52);  // smaller secondary peak
+    ctx.lineTo(r*0.82,  -r*0.18);  // descent
+    ctx.lineTo(r,        r*0.8);   // bottom-right
+    ctx.closePath(); ctx.fill();
+    // Shadow face between peaks
+    ctx.fillStyle='rgba(0,0,0,0.16)';
+    ctx.beginPath();ctx.moveTo(-r*0.18,r*0.04);ctx.lineTo(r*0.12,-r*1.12);ctx.lineTo(r*0.42,-r*0.32);ctx.closePath();ctx.fill();
+    // Main snow cap
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.beginPath();ctx.moveTo(r*0.12,-r*1.12);ctx.lineTo(-r*0.08,-r*0.6);ctx.lineTo(r*0.32,-r*0.6);ctx.closePath();ctx.fill();
+    // Secondary snow cap
+    ctx.fillStyle='rgba(255,255,255,0.6)';
+    ctx.beginPath();ctx.moveTo(r*0.62,-r*0.52);ctx.lineTo(r*0.5,-r*0.28);ctx.lineTo(r*0.76,-r*0.28);ctx.closePath();ctx.fill();
+    // Glow outline
+    ctx.shadowColor=tp.glow;ctx.shadowBlur=8;ctx.strokeStyle='rgba(231,76,60,0.65)';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(-r,r*0.8);ctx.lineTo(-r*0.5,-r*0.12);ctx.lineTo(-r*0.18,r*0.04);ctx.lineTo(r*0.12,-r*1.12);ctx.lineTo(r*0.42,-r*0.32);ctx.lineTo(r*0.62,-r*0.52);ctx.lineTo(r*0.82,-r*0.18);ctx.lineTo(r,r*0.8);ctx.closePath();ctx.stroke();
+    ctx.shadowBlur=0;
+
   } else if(e.type==='blue'){
-    ctx.beginPath();for(let i=0;i<6;i++){const a=(i/6)*Math.PI*2-Math.PI/2;i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r*0.85):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r*0.85);}ctx.closePath();ctx.fill();
-    ctx.strokeStyle='rgba(93,173,226,0.42)';ctx.lineWidth=1;for(let w=-1;w<=1;w++){const wy=w*r*0.3;ctx.beginPath();ctx.moveTo(-r*0.65,wy);ctx.bezierCurveTo(-r*0.3,wy-5,r*0.3,wy+5,r*0.65,wy);ctx.stroke();}
+    // Tropical island in water
+
+    // Water pool — flat ellipse at bottom, layered blues
+    const wg=ctx.createRadialGradient(0,r*0.5,r*0.1,0,r*0.5,r*1.1);
+    wg.addColorStop(0,'#5dade2');wg.addColorStop(0.5,'#2e86c1');wg.addColorStop(1,'rgba(21,79,136,0)');
+    ctx.fillStyle=wg;
+    ctx.beginPath();ctx.ellipse(0,r*0.5,r*1.15,r*0.38,0,0,Math.PI*2);ctx.fill();
+    // Water shimmer lines
+    ctx.strokeStyle='rgba(174,214,241,0.55)';ctx.lineWidth=1;
+    [r*0.22,r*0.42,r*0.62].forEach(wy=>{
+      ctx.beginPath();ctx.moveTo(-r*0.7,wy);ctx.bezierCurveTo(-r*0.35,wy-4,r*0.35,wy+4,r*0.7,wy);ctx.stroke();
+    });
+
+    // Sandy island mound
+    const sg=ctx.createLinearGradient(0,-r*0.05,0,r*0.55);
+    sg.addColorStop(0,'#f0c44a');sg.addColorStop(0.5,'#d4a927');sg.addColorStop(1,'#b8891a');
+    ctx.fillStyle=sg;
+    ctx.beginPath();ctx.ellipse(0,r*0.18,r*0.72,r*0.38,0,0,Math.PI*2);ctx.fill();
+    // Sand shadow on right
+    ctx.fillStyle='rgba(160,100,10,0.22)';
+    ctx.beginPath();ctx.ellipse(r*0.18,r*0.22,r*0.38,r*0.28,0.3,0,Math.PI*2);ctx.fill();
+
+    // Left palm trunk
+    ctx.strokeStyle='#8B5E3C';ctx.lineWidth=2.5;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(-r*0.28,r*0.42);ctx.bezierCurveTo(-r*0.32,-r*0.05,-r*0.55,-r*0.5,-r*0.45,-r*0.78);ctx.stroke();
+    // Right palm trunk (leans right)
+    ctx.beginPath();ctx.moveTo(r*0.12,r*0.38);ctx.bezierCurveTo(r*0.18,-r*0.08,r*0.42,-r*0.42,r*0.52,-r*0.72);ctx.stroke();
+
+    // Palm fronds — left tree
+    const frondL=[[-0.45,-0.78],[-0.72,-0.55],[-0.18,-0.55],[-0.45,-0.38]];
+    ctx.fillStyle='#27ae60';
+    frondL.forEach(([fx,fy])=>{
+      ctx.beginPath();ctx.moveTo(-r*0.45,-r*0.78);
+      ctx.bezierCurveTo(-r*0.45+r*(fx+0.45)*0.4,-r*0.78+r*(fy+0.78)*0.4,r*fx*0.9,r*fy*0.9,r*fx,r*fy);
+      ctx.lineWidth=3.5;ctx.strokeStyle='#27ae60';ctx.stroke();
+    });
+    // Frond tips lighter
+    ctx.strokeStyle='#2ecc71';ctx.lineWidth=1.5;
+    frondL.forEach(([fx,fy])=>{
+      ctx.beginPath();ctx.moveTo(r*(fx*0.6+(-0.45)*0.4),r*(fy*0.6+(-0.78)*0.4));ctx.lineTo(r*fx,r*fy);ctx.stroke();
+    });
+
+    // Palm fronds — right tree
+    const frondR=[[0.52,-0.72],[0.82,-0.52],[0.28,-0.52],[0.52,-0.35]];
+    ctx.strokeStyle='#27ae60';ctx.lineWidth=3.5;
+    frondR.forEach(([fx,fy])=>{
+      ctx.beginPath();ctx.moveTo(r*0.52,-r*0.72);
+      ctx.bezierCurveTo(r*0.52+r*(fx-0.52)*0.4,-r*0.72+r*(fy+0.72)*0.4,r*fx*0.9,r*fy*0.9,r*fx,r*fy);
+      ctx.stroke();
+    });
+    ctx.strokeStyle='#2ecc71';ctx.lineWidth=1.5;
+    frondR.forEach(([fx,fy])=>{
+      ctx.beginPath();ctx.moveTo(r*(fx*0.6+0.52*0.4),r*(fy*0.6+(-0.72)*0.4));ctx.lineTo(r*fx,r*fy);ctx.stroke();
+    });
+
+    // Hammock between trunks
+    ctx.strokeStyle='#e67e22';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(-r*0.42,r*0.08);ctx.bezierCurveTo(-r*0.1,r*0.32,r*0.08,r*0.32,r*0.16,r*0.08);ctx.stroke();
+
+    // Glow ring
+    ctx.shadowColor='#5dade2';ctx.shadowBlur=8;
+    ctx.strokeStyle='rgba(93,173,226,0.35)';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.ellipse(0,r*0.5,r*1.15,r*0.38,0,0,Math.PI*2);ctx.stroke();
+    ctx.shadowBlur=0;
+
   } else if(e.type==='black'){
     const sk=r*0.92;
     ctx.fillStyle='#b0b8b0';ctx.beginPath();ctx.arc(0,-sk*0.18,sk*0.72,Math.PI,0);ctx.bezierCurveTo(sk*0.72,sk*0.28,sk*0.52,sk*0.52,sk*0.38,sk*0.52);ctx.lineTo(-sk*0.38,sk*0.52);ctx.bezierCurveTo(-sk*0.52,sk*0.52,-sk*0.72,sk*0.28,-sk*0.72,-sk*0.18);ctx.closePath();ctx.fill();
@@ -463,13 +551,56 @@ function drawEnemy(e,ts){
 
 function drawMysteryStar(ms){
   if(!ms) return;
-  const r=22,p=Math.sin(Date.now()*0.008)*0.14;
-  ctx.save();ctx.translate(ms.x,ms.y);ctx.scale(1+p,1+p);
-  ctx.shadowColor='#f4d03f';ctx.shadowBlur=18;
-  ctx.fillStyle='#f4d03f';ctx.beginPath();
-  for(let i=0;i<10;i++){const a=(i/10)*Math.PI*2-Math.PI/2,sr=i%2===0?r:r*0.44;i===0?ctx.moveTo(Math.cos(a)*sr,Math.sin(a)*sr):ctx.lineTo(Math.cos(a)*sr,Math.sin(a)*sr);}
-  ctx.closePath();ctx.fill();ctx.shadowBlur=0;
-  ctx.fillStyle='#1a3a0a';ctx.font=`bold 9px 'Cinzel',serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('?',0,1);
+  const r=22, pulse=Math.sin(Date.now()*0.006)*0.1;
+  ctx.save();
+  ctx.translate(ms.x, ms.y);
+  ctx.scale(1+pulse, 1+pulse);
+  ctx.shadowColor='#f4d03f'; ctx.shadowBlur=20;
+
+  // Eldrazi-style 4-pointed sigil — based on the reference image:
+  // Two elongated diamond lobes (top/bottom) + two wide swept lobes (left/right)
+  // plus a thin vertical spine splitting each half, rendered in gold.
+
+  const gold='#f4d03f', goldDark='#b8860b', white='rgba(255,245,180,0.9)';
+
+  // ── Top lobe (tall diamond, split by spine gap) ──
+  ctx.fillStyle=gold;
+  // Left half of top lobe
+  ctx.beginPath(); ctx.moveTo(0,-r*1.1); ctx.lineTo(-r*0.28,-r*0.38); ctx.lineTo(-r*0.04,0); ctx.lineTo(0,-r*0.05); ctx.closePath(); ctx.fill();
+  // Right half of top lobe
+  ctx.beginPath(); ctx.moveTo(0,-r*1.1); ctx.lineTo(r*0.28,-r*0.38); ctx.lineTo(r*0.04,0); ctx.lineTo(0,-r*0.05); ctx.closePath(); ctx.fill();
+
+  // ── Bottom lobe ──
+  ctx.beginPath(); ctx.moveTo(0,r*1.1); ctx.lineTo(-r*0.28,r*0.38); ctx.lineTo(-r*0.04,0); ctx.lineTo(0,r*0.05); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0,r*1.1); ctx.lineTo(r*0.28,r*0.38); ctx.lineTo(r*0.04,0); ctx.lineTo(0,r*0.05); ctx.closePath(); ctx.fill();
+
+  // ── Left lobe (wide swept wings) ──
+  // Upper-left wing
+  ctx.beginPath(); ctx.moveTo(-r*1.1,0); ctx.lineTo(-r*0.38,-r*0.22); ctx.lineTo(-r*0.05,-r*0.05); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+  // Lower-left wing
+  ctx.beginPath(); ctx.moveTo(-r*1.1,0); ctx.lineTo(-r*0.38,r*0.22); ctx.lineTo(-r*0.05,r*0.05); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+  // Inner accent lines (the fine radiating lines in the reference)
+  ctx.strokeStyle=goldDark; ctx.lineWidth=0.6;
+  ctx.beginPath(); ctx.moveTo(-r*1.1,0); ctx.lineTo(-r*0.38,-r*0.1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-r*1.1,0); ctx.lineTo(-r*0.38,r*0.1); ctx.stroke();
+
+  // ── Right lobe ──
+  ctx.fillStyle=gold;
+  ctx.beginPath(); ctx.moveTo(r*1.1,0); ctx.lineTo(r*0.38,-r*0.22); ctx.lineTo(r*0.05,-r*0.05); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(r*1.1,0); ctx.lineTo(r*0.38,r*0.22); ctx.lineTo(r*0.05,r*0.05); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle=goldDark; ctx.lineWidth=0.6;
+  ctx.beginPath(); ctx.moveTo(r*1.1,0); ctx.lineTo(r*0.38,-r*0.1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(r*1.1,0); ctx.lineTo(r*0.38,r*0.1); ctx.stroke();
+
+  // ── Vertical spine (white gap line through center) ──
+  ctx.strokeStyle=white; ctx.lineWidth=1.8;
+  ctx.beginPath(); ctx.moveTo(0,-r*1.05); ctx.lineTo(0,r*1.05); ctx.stroke();
+
+  // ── Center diamond gem ──
+  ctx.fillStyle=white;
+  ctx.beginPath(); ctx.moveTo(0,-r*0.18); ctx.lineTo(r*0.1,0); ctx.lineTo(0,r*0.18); ctx.lineTo(-r*0.1,0); ctx.closePath(); ctx.fill();
+
+  ctx.shadowBlur=0;
   ctx.restore();
 }
 
@@ -557,8 +688,9 @@ function spawnHomingMissile(x, y){
 }
 
 function drawHomingMissile(m){
-  // Trail
+  const skimAlpha = m.skimming ? Math.max(0, 1 - m.skimTimer/60) : 1;
   ctx.save();
+  ctx.globalAlpha = skimAlpha;
   m.trail.forEach((pt,i)=>{
     const a=(i/m.trail.length)*0.35;
     ctx.fillStyle=`rgba(255,255,220,${a})`;
@@ -578,6 +710,20 @@ function drawHomingMissile(m){
   ctx.restore();
 }
 
+function spawnHomingMissile(x, y){
+  homingMissiles.push({
+    x, y,
+    vx: (Math.random()-0.5)*1.5,
+    vy: 1.5,
+    speed: 2.2,
+    age: 0,
+    trail: [],
+    skimming: false,
+    skimTimer: 0,
+  });
+  sndHoming();
+}
+
 function updateHomingMissiles(){
   const now=performance.now();
   for(let i=homingMissiles.length-1;i>=0;i--){
@@ -588,22 +734,38 @@ function updateHomingMissiles(){
     m.trail.push({x:m.x, y:m.y});
     if(m.trail.length>14) m.trail.shift();
 
-    // Home toward player after a brief drop delay
-    if(player && m.age>30){
-      const dx=player.x-m.x, dy=player.y-40-m.y;
-      const dist=Math.sqrt(dx*dx+dy*dy)||1;
-      const turnRate=0.06+wave*0.008;
-      m.vx+=(dx/dist)*m.speed*turnRate;
-      m.vy+=(dy/dist)*m.speed*turnRate;
-      // Cap speed
-      const spd=Math.sqrt(m.vx*m.vx+m.vy*m.vy)||1;
-      if(spd>m.speed){m.vx=(m.vx/spd)*m.speed; m.vy=(m.vy/spd)*m.speed;}
+    if(m.skimming){
+      // Skim phase: drift at current vx only, no homing, fade and disappear
+      m.skimTimer++;
+      m.vx *= 0.97; // gradually slow down
+      m.x += m.vx;
+      // Disappear after 60 frames
+      if(m.skimTimer > 60 || m.x < -20 || m.x > W+20){
+        spawnPx(m.x, m.y, 'rgba(255,255,200,0.6)', 4);
+        homingMissiles.splice(i,1); continue;
+      }
+    } else {
+      // Normal homing — track player after brief delay
+      if(player && m.age>30){
+        const dx=player.x-m.x, dy=player.y-40-m.y;
+        const dist=Math.sqrt(dx*dx+dy*dy)||1;
+        const turnRate=0.06+wave*0.008;
+        m.vx+=(dx/dist)*m.speed*turnRate;
+        m.vy+=(dy/dist)*m.speed*turnRate;
+        const spd=Math.sqrt(m.vx*m.vx+m.vy*m.vy)||1;
+        if(spd>m.speed){m.vx=(m.vx/spd)*m.speed; m.vy=(m.vy/spd)*m.speed;}
+      }
+      m.x+=m.vx; m.y+=m.vy;
+
+      // Transition to skim when close to player level OR has levelled off horizontally
+      const skimThreshold = player ? player.y - 30 : groundY - 50;
+      if(m.y >= skimThreshold || (m.age > 60 && m.vy < 0.3)){
+        m.skimming=true; m.skimTimer=0; m.vy=0; continue;
+      }
+
+      // Off-screen sides
+      if(m.x<-20||m.x>W+20){homingMissiles.splice(i,1);continue;}
     }
-
-    m.x+=m.vx; m.y+=m.vy;
-
-    // Off-screen or reached bottom — disappear
-    if(m.x<-20||m.x>W+20||m.y>H){homingMissiles.splice(i,1);continue;}
 
     // Hit barrier
     let hitB=false;
@@ -866,6 +1028,10 @@ document.getElementById('btn-restart').addEventListener('click',startGame);
 document.getElementById('btn-win-restart').addEventListener('click',startGame);
 document.getElementById('btn-resume').addEventListener('click',pauseGame);
 document.getElementById('btn-quit').addEventListener('click',()=>{state='end';cancelAnimationFrame(frameId);show('screen-start');});
+
+// Cheat code: type "yeva" on the start screen to unlock 5 lives
+let cheatBuffer='';
+let cheatActive=false;
 document.addEventListener('keydown',e=>{
   keys[e.key]=true;
   if(e.key==='Escape')pauseGame();
@@ -873,6 +1039,20 @@ document.addEventListener('keydown',e=>{
   if((e.key==='q'||e.key==='Q')&&state==='play')useFlash();
   if((e.key==='e'||e.key==='E')&&state==='play')useBomb();
   if(e.key===' ')e.preventDefault();
+
+  // Cheat: accumulate letters on the start screen
+  if(state==='start'||state==='end'){
+    if(e.key.length===1) cheatBuffer=(cheatBuffer+e.key.toLowerCase()).slice(-4);
+    if(cheatBuffer==='yeva'&&!cheatActive){
+      cheatActive=true;
+      DIFF.easy.lives=5; DIFF.normal.lives=5; DIFF.hard.lives=5;
+      // Flash the title as confirmation
+      const t=document.getElementById('title-hud');
+      t.style.color='#f4d03f';
+      t.textContent='✦ YEVA BLESSED ✦';
+      setTimeout(()=>{t.style.color='';t.textContent="YEVA'S WRATH";},2000);
+    }
+  }
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 canvas.addEventListener('mousemove',e=>{const r=canvas.getBoundingClientRect();mouseX=(e.clientX-r.left)*(W/r.width);});
