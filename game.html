@@ -918,10 +918,15 @@ function moveEBullets(){
       const shots=wave>=4?2:1;
       for(let s=0;s<shots;s++){
         const e=shooters[Math.floor(Math.random()*shooters.length)],tp=ET[e.type];
-        const cnt=e.type==='black'?3:1;
+        const isBlack=e.type==='black';
+        const isBlue=e.type==='blue';
+        const cnt=isBlack?3:1;
         for(let i=0;i<cnt;i++){
-          const isBlack=e.type==='black';
           eBullets.push({x:e.x+(i-1)*8,y:e.y+e.h/2,vy:(isBlack?D.bSpd*0.55:D.bSpd)+wave*0.4,vx:isBlack?(i-1)*2:0,color:tp.bColor,r:4});
+        }
+        // Blue fires a second bullet close behind the first
+        if(isBlue){
+          eBullets.push({x:e.x,y:e.y+e.h/2+8,vy:(D.bSpd+wave*0.4)*0.85,vx:0,color:tp.bColor,r:4});
         }
       }
     }
