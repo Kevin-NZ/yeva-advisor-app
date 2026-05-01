@@ -145,29 +145,6 @@ var COMBO_REQUIRED_KEYS = [
   // Win condition pairs (need infinite mana already + win piece)
   ['duskwatch_recruiter','gaeas_cradle'],
   ['beast_whisperer','gaeas_cradle'],
-
-  // ── C-13 routing-gap closures (2026-04-30) ─────────────────────────────
-  // The C-13 manifest-routability test surfaced 10 combos whose cardKeys
-  // were not a superset of any existing routing tuple. Adding the smallest
-  // tuple per combo so the tutor heuristic recognises each.
-  //
-  // Eternal Witness chains (combos 33, 51, 58): Witness recurs the bounce
-  // engine card from graveyard each cycle.
-  ['marwyn','eternal_witness','temur_sabertooth'],            // 33, 58
-  ['marwyn','eternal_witness','kogla'],                       // 51
-  // Temur Sabertooth + 2-drop dork (combos 9, 10, 18, 20, 22, 57): bounce
-  // and recast the dork. Source-of-truth lists various haste enablers; the
-  // base routing tuple is just (Temur, dork) since the haste enabler can
-  // be any of Concordant Crossroads / Thousand-Year Elixir / Surrak.
-  ['temur_sabertooth','priest_of_titania'],                   // 9
-  ['temur_sabertooth','circle_of_dreams_druid'],              // 10
-  ['hyrax_tower_scout','temur_sabertooth','circle_of_dreams_druid'], // 18
-  ['temur_sabertooth','karametra_acolyte'],                   // 20
-  ['temur_sabertooth','marwyn'],                              // 22
-  ['hyrax_tower_scout','temur_sabertooth','karametra_acolyte'], // 57
-  // Magus + Cradle (combo 32): Magus untaps a land for {3}, paying its own
-  // recast cost when Cradle has ≥3 creatures.
-  ['magus_of_the_candelabra','gaeas_cradle'],                 // 32
 ];
 
 // ── Tutor target priority ─────────────────────────────────────────────────
@@ -1882,74 +1859,6 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
     },
   };
 }
-
-/**
- * Identify card keys currently in hand that were put there by a previous
- * Survival of the Fittest or Fauna Shaman activation in this game's history,
- * and have not yet been cast. These cards are "freshly tutored" — discarding
- * them to ANOTHER Survival/Fauna activation would create a self-cancelling
- * chain (each chain step burns {G} with no net change in hand composition).
- *
- * This is a stronger guard than the score-based protection (TUTOR_PRIORITY_SCORE
- * ≥ 70). The score-based one protects high-value combo pieces; this one
- * protects ANY card that just came in via a tutor activation, regardless of
- * its priority score. It catches the user-reported failure mode where DFS
- * spent its 500K state budget chaining mid-tier creatures (Duskwatch → Beast
- * Whisperer → Ashaya, only the last step doing useful work) instead of
- * exploring elegant alternative lines.
- *
- * Implementation: scan history backward for tutor-to-hand and cast messages.
- * Build a set of "tutored, not yet cast" card NAMES, then intersect with the
- * current hand to get card KEYS.
- *
- * Pattern coverage (explicit, narrow):
- *   - `Survival of the Fittest: ... → NAME to hand`  (tutored)
- *   - `Fauna Shaman: ... → NAME to hand`             (tutored)
- *   - `Cast NAME ...`                                (consumed)
- *
- * NOTE: this intentionally doesn't match every tutor wording in the codebase
- * (Worldly Tutor on top of library, Eternal Witness graveyard returns, etc.).
- * It only catches the Survival/Fauna chain pattern, which is the user-reported
- * failure mode.
- *
- * @param {GameState} state
- * @returns {Set<string>} card keys currently in hand that came from a tutor
- */
-function _freshlyTutoredKeys(state) {
-  var cards = CARDS;
-  const tutorRe = /^(?:Survival of the Fittest|Fauna Shaman): .*?→\s+(.+?)\s+to hand/;
-  const castRe  = /^Cast\s+(.+?)(?:\s+\(|\s*$)/;
-
-  // Walk history forward, maintaining a multiset of "tutored, not yet cast" names.
-  // Multiset because the same card name can be tutored, cast, then tutored again.
-  const tutoredCount = new Map();
-  for (const entry of state.history) {
-    const msg = entry.msg ?? '';
-    let m;
-    if ((m = msg.match(tutorRe))) {
-      const name = m[1].trim();
-      tutoredCount.set(name, (tutoredCount.get(name) ?? 0) + 1);
-    } else if ((m = msg.match(castRe))) {
-      const name = m[1].trim();
-      const cur = tutoredCount.get(name) ?? 0;
-      if (cur > 0) {
-        if (cur === 1) tutoredCount.delete(name);
-        else tutoredCount.set(name, cur - 1);
-      }
-    }
-  }
-
-  // Convert names → card keys, restricted to cards currently in hand.
-  const handSet = new Set(state.hand);
-  const result = new Set();
-  for (const name of tutoredCount.keys()) {
-    for (const k of handSet) {
-      if (cards[k]?.name === name) { result.add(k); break; }
-    }
-  }
-  return result;
-}
-
 
 /**
  * Shared helper for activated creature-tutor abilities (Survival of the Fittest,
@@ -3670,14 +3579,8 @@ var CARDS = {
           const bestKey = _bestCreatureTutorTarget(ap);
           if (!bestKey) return [];
 
-          // Protect high-value un-cast combo pieces in hand from being discarded.
-          // Same fix as Survival of the Fittest (C-9, 2026-04-30): keep protection
-          // unconditional. The previous "strip protection when no alternative exists"
-          // hack caused self-cancelling chains where Fauna Shaman discarded a card
-          // it had just tutored, burning {G} per step with no progress on the win line.
-          // If every creature in hand is a protected combo piece, return [] —
-          // the action falls through and the solver picks something more productive
-          // (e.g. casting the held creature, developing the board).
+          // Protect high-value un-cast combo pieces in hand from being discarded
+          // when other discard fodder is available (mirrors Survival of the Fittest logic).
           const PROTECT_THRESHOLD = 70;
           const protectedKeys = new Set(
             creaturesInHand.filter(k =>
@@ -3685,11 +3588,8 @@ var CARDS = {
               !ap.battlefield.some(p => NAME_TO_KEY[p.name] === k)
             )
           );
-          const effectiveProtected = protectedKeys;
-
-          // ALSO skip cards that were tutored to hand by a prior Survival/Fauna activation
-          // and never cast (sibling fix to the Survival guard, 2026-04-30 user report).
-          const freshlyTutored = _freshlyTutoredKeys(ap);
+          const hasAltDiscard = creaturesInHand.some(k => k !== bestKey && !protectedKeys.has(k));
+          const effectiveProtected = hasAltDiscard ? protectedKeys : new Set();
 
           const results = [];
           const seenDiscard = new Set();
@@ -3697,7 +3597,6 @@ var CARDS = {
             if (seenDiscard.has(discard)) continue;
             if (discard === bestKey) continue;              // don't discard what we're fetching
             if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
-            if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
             seenDiscard.add(discard);
             let s = ap.tapPermanent(perm.id); if (!s) continue;
             s = s.discardFromHand(discard); if (!s) continue;
@@ -3965,10 +3864,8 @@ var CARDS = {
           if (!bestKey) return [];
 
           // Identify creatures in hand that are key combo pieces not yet on the battlefield.
-          // Discarding e.g. Ashaya to fetch a dork loses the very piece we need to cast — and
-          // worse, doing so in the middle of a Survival CHAIN (discard X→fetch Y, then discard
-          // Y→fetch Z) just burns mana with no net change to hand composition. The protection
-          // below blocks high-value combo pieces from being discarded.
+          // We avoid offering these as discard choices when cheaper alternatives exist,
+          // since discarding e.g. Ashaya to fetch a dork loses the key piece we need to cast.
           const PROTECT_THRESHOLD = 70; // score ≥ this = high-value combo piece
           const protectedKeys = new Set(
             creaturesInHand.filter(k =>
@@ -3978,23 +3875,11 @@ var CARDS = {
               })
             )
           );
-          // PRIOR BEHAVIOUR: when no unprotected discard option existed, the protection was
-          // STRIPPED so the activation could fire anyway. This caused chain bugs: the solver
-          // would discard a creature it had just tutored (because that was now the only thing
-          // in hand), spending {G} per chain step with no progress on the win line. See user
-          // report 2026-04-30.
-          //
-          // CURRENT BEHAVIOUR: keep protection unconditionally. If every hand creature is a
-          // protected combo piece, return [] — the activation is genuinely not worth firing.
-          // The detector tests in section 46 don't go through this fn (they have their own
-          // discard-fodder check), so this is safe.
-          const effectiveProtected = protectedKeys;
-
-          // ALSO skip cards that were tutored to hand by a prior Survival/Fauna activation
-          // and never cast. Discarding them to another activation produces a self-cancelling
-          // chain (the user-reported chain bug, 2026-04-30). The score-based protection above
-          // only covers high-value pieces (≥70); this catches mid-tier chains too.
-          const freshlyTutored = _freshlyTutoredKeys(afterPay);
+          // Only suppress protected cards if there's another creature to discard instead
+          const hasAlternativeDiscard = creaturesInHand.some(k =>
+            k !== bestKey && !protectedKeys.has(k)
+          );
+          const effectiveProtected = hasAlternativeDiscard ? protectedKeys : new Set();
 
           const results = [];
           // Offer one action per creature we could discard (deduplicated by key)
@@ -4003,7 +3888,6 @@ var CARDS = {
             if (seenDiscard.has(discard)) continue;
             if (discard === bestKey) continue;              // don't discard what we're fetching
             if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
-            if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
             seenDiscard.add(discard);
             let s = afterPay.discardFromHand(discard); if (!s) continue;
             const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
@@ -4608,72 +4492,57 @@ var CARDS = {
     // to maximise the target MV ceiling. A 1-drop dork (MV 1) lets us fetch
     // MV ≤ 3. A 2-drop lets us fetch MV ≤ 4. A 3-drop lets us fetch MV ≤ 5
     // (Ashaya, Temur Sabertooth, etc.).
-    //
-    // PERF NOTE (2026-04-30): the inner loop previously called
-    // `afterSac.searchLibraryFor(k => k === ck)` per eligible target, doing a
-    // redundant state.clone every iteration. With 7 creatures on bf and ~30
-    // eligible targets that's 7 × 30 = 210 redundant clones per call. The
-    // optimisation: do `enterBattlefield(ck)` (which clones internally) then
-    // patch the library on that clone via copy-on-write. Same story as
-    // Nature's Rhythm above. Empirically halves the per-call cost.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
       const results = [];
 
+      // Must have at least one creature to sacrifice
       const creatures = state.creatures();
       if (creatures.length === 0) return [];
 
-      // Pre-build a NAME → key map so the inner loop doesn't re-scan CARDS
-      // for every sacrifice candidate. This was previously O(creatures × |CARDS|)
-      // via `Object.keys(cards).find(...)`; now O(|CARDS|) once.
-      const nameToKey = new Map();
-      for (const k of Object.keys(cards)) {
-        const d = cards[k];
-        if (d?.name) nameToKey.set(d.name, k);
-      }
-
+      // For each sacrificeable creature, generate targets reachable from that sacrifice
+      // Use NAME_TO_KEY for O(1) lookups (pre-built in actions.js)
       const seen_sac = new Set();
       for (const sacPerm of creatures) {
+        // Avoid duplicate sacrifice choices (e.g. two Llanowar Elves)
         if (seen_sac.has(sacPerm.name)) continue;
         seen_sac.add(sacPerm.name);
 
-        const sacKey = nameToKey.get(sacPerm.name);
+        // Determine sacrificed creature's MV
+        const sacKey = Object.keys(cards).find(k => cards[k].name === sacPerm.name);
         const sacDef = sacKey ? cards[sacKey] : null;
         if (!sacDef?.cost) continue;
         const sacParsed = pc(sacDef.cost);
         const sacMV = sacParsed.generic + Object.values(sacParsed.colored).reduce((a, b) => a + b, 0);
+
+        // X = 2 + sacrificed MV
         const maxMV = sacMV + 2;
 
+        // Sacrifice the creature
         const afterSac = state.removeFromBattlefield(sacPerm.id, 'graveyard');
         if (!afterSac) continue;
 
+        // Search library for creatures with MV ≤ maxMV
         const seen_target = new Set();
         for (const ck of afterSac.players[0].library) {
           if (seen_target.has(ck) || ck === 'unknown' || isStax(ck)) continue;
           seen_target.add(ck);
+          // Never fetch the same card that was just sacrificed — it's always a net-zero
+          // or losing play (lose one permanent, gain one identical permanent = wasted spell).
           if (sacKey && ck === sacKey) continue;
           const def = cards[ck];
-          if (!def || !def.types.includes('creature') || !def.cost) continue;
+          if (!def || !def.types.includes('creature')) continue;
+          if (!def.cost) continue;
           const parsed = pc(def.cost);
           const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
           if (mv > maxMV) continue;
-
-          // ETB the fetched creature on the post-sac state, then patch the
-          // library and add Eldritch Evolution to graveyard. enterBattlefield
-          // clones once; we mutate library and graveyard on that clone.
-          let ns = afterSac.enterBattlefield(ck);
-          ns._ensurePlayers();
-          ns.players[0] = ns.players[0].clone();
-          const idx = ns.players[0].library.indexOf(ck);
-          if (idx !== -1) {
-            ns.players[0].library = [
-              ...ns.players[0].library.slice(0, idx),
-              ...ns.players[0].library.slice(idx + 1),
-            ];
-          }
-          ns.players[0].graveyard = [...ns.players[0].graveyard, 'Eldritch Evolution'];
-          results.push(ns.log(
+          const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          // Put onto battlefield, exile Eldritch Evolution (it exiles itself per oracle)
+          let ns2 = ns.enterBattlefield(cardKey);
+          ns2 = ns2.addToGraveyard(0, 'Eldritch Evolution'); // simplify: treat as graveyard
+          results.push(ns2.log(
             `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${mv})`
           ));
         }
@@ -4704,21 +4573,11 @@ var CARDS = {
     // Oracle: Search library for creature with MV ≤ X → battlefield. Shuffle.
     // Harmonize: recastable from graveyard (ignored for solver simplicity).
     // Essentially a second Green Sun's Zenith — same implementation.
-    //
-    // PERF NOTE (2026-04-30): the original implementation called
-    // `state.searchLibraryFor(k => k === ck)` per eligible creature, which
-    // performs a full `state.clone()` per result. With ~30 eligible creatures
-    // in the library, that's 30 redundant clones — `enterBattlefield` already
-    // clones internally, so the searchLibraryFor clone is wasted work. The
-    // version below does direct library mutation on the post-ETB state via
-    // copy-on-write, eliminating the 30 redundant clones. Empirically this
-    // cuts castFn cost by ~40% (6.0ms → 3.5ms per call on the 7-creature
-    // user-reported state), which directly bounds the BFS hang reported on
-    // the sowing_mycospawn,natures_rhythm,boseiju,eldritch_evolution hand.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
       const results = [];
+      // castFn receives state AFTER dispatch pays the base cost — remaining mana = X.
       const x = state.mana.total();
       const seen = new Set();
       for (const ck of state.players[0].library) {
@@ -4729,19 +4588,10 @@ var CARDS = {
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        // Drain mana then ETB the fetched creature. enterBattlefield does a
-        // full state.clone; we then patch the library on that clone in place.
-        let ns = drainMana(state).enterBattlefield(ck);
-        ns._ensurePlayers();
-        ns.players[0] = ns.players[0].clone();
-        const idx = ns.players[0].library.indexOf(ck);
-        if (idx !== -1) {
-          ns.players[0].library = [
-            ...ns.players[0].library.slice(0, idx),
-            ...ns.players[0].library.slice(idx + 1),
-          ];
-        }
-        results.push(ns.log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`));
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(drainMana(ns).enterBattlefield(cardKey)
+          .log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`));
       }
       return results.length ? results : [drainMana(state).log(`Nature's Rhythm X=${x}: no eligible creature`)];
     },
@@ -4852,33 +4702,6 @@ var CARDS = {
  *   {1},{T},Exert: Untap two target lands.    ← second ability; can target itself
  *                                                (it IS a land under Ashaya)
  */
-
-// ── Loop type taxonomy (O-1) ──────────────────────────────────────────────
-//
-// Each detector exposes a `loopType` describing what the loop actually
-// produces in net.  Mana-positive combos generate infinite mana directly;
-// mana-neutral combos generate net zero mana per cycle but still win the game
-// through some other infinite resource (ETB triggers, draws, LTBs, storm
-// count). Used by win-condition detectors to decide when a "Draw the Library"
-// or "Storm Kill" line is achievable even without an infinite-mana detector
-// firing.
-//
-// Source of truth for which loops are mana-neutral: card_roles.md and the
-// "Combo Summary" entries at the end of decklist_combos.txt. Examples:
-//   - Earthcraft + Scryb Ranger:  net 0 mana, +1 untap per cycle  → MANA_NEUTRAL_ETB
-//   - Beast Whisperer + creature loop: net 0 mana, +1 card per cycle → MANA_NEUTRAL_DRAW
-//   - Tireless Provisioner + Ashaya + Ranger: net 0 mana, +1 ETB+landfall → MANA_NEUTRAL_ETB
-//
-// Most existing detectors are MANA_POSITIVE; that's the default if a detector
-// omits the field, so this is a non-breaking addition.
-var LOOP_TYPE = Object.freeze({
-  MANA_POSITIVE:     'mana_positive',     // generates infinite mana
-  MANA_NEUTRAL_ETB:  'mana_neutral_etb',  // infinite ETBs / landfall, no net mana
-  MANA_NEUTRAL_LTB:  'mana_neutral_ltb',  // infinite LTBs (death triggers, sac), no net mana
-  MANA_NEUTRAL_DRAW: 'mana_neutral_draw', // infinite card draw, no net mana
-  MANA_NEUTRAL_STORM:'mana_neutral_storm',// infinite storm count, no net mana
-  WIN_CONDITION:     'win_condition',     // not a loop — a discrete win-state check
-});
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -5002,35 +4825,6 @@ function ashayaOut(state) {
   return hasPerm(state, 'Ashaya, Soul of the Wild');
 }
 
-// True if some non-Ranger nontoken creature on the battlefield can tap to add
-// at least 1 green mana right now (untapped, no summoning sickness, and
-// `tapForMana` produces a state with at least 1 more green pip in the pool).
-//
-// Used by the mana-neutral Ashaya+Ranger detector (combos 1 & 41): the
-// Ranger-bounce loop is mana-neutral on its own, but it requires *some*
-// other creature able to tap for {G} per cycle to fund the Ranger recast.
-// If no such creature exists, the loop cannot iterate even once.
-//
-// Implementation note: cards.js's `tapForMana(state, perm)` returns an array
-// of successor states (each representing one option for the tap); we
-// compare the green count in each successor's mana pool to the original
-// state's pool. If any option produces ≥1 net green, the creature qualifies.
-function hasGreenTapper(state) {
-  const beforeG = state.mana?.G ?? 0;
-  return state.creatures().some(c => {
-    if (c.tapped || c.summoningSick) return false;
-    if (c.name === 'Quirion Ranger' || c.name === 'Scryb Ranger') return false;
-    const def = CARDS[c.cardKey];
-    if (!def?.tapForMana) return false;
-    let successors;
-    try { successors = def.tapForMana(state, c) || []; } catch { return false; }
-    for (const s2 of successors) {
-      if (((s2.mana?.G ?? 0) - beforeG) >= 1) return true;
-    }
-    return false;
-  });
-}
-
 // ── Detector list ─────────────────────────────────────────────────────────
 
 var DETECTORS = [
@@ -5078,7 +4872,7 @@ var DETECTORS = [
   },
 
   {
-    name: 'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]',
+    name: 'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)',
     description:
       'With Ashaya, Scryb Ranger is a Forest and bounces itself to untap the mana dork. ' +
       'Recast Scryb Ranger for {1G}. Net +{G}/cycle with dork producing ≥3G. ' +
@@ -5104,43 +4898,6 @@ var DETECTORS = [
           default: return false;
         }
       });
-    },
-  },
-
-  // ══════════════════════════════════════════════════════════════════════════
-  //  ASHAYA + RANGER (Quirion or Scryb) — MANA-NEUTRAL ETB LOOP  (COMBO 1, 41)
-  //
-  //  When the available mana dork only produces 1G (e.g. Llanowar Elves), the
-  //  Ranger-bounce loop produces zero net mana but generates infinite ETB,
-  //  landfall (each Forest-Ranger entry), LTB, and storm count. This is
-  //  exactly what decklist_combos.txt #1 and #41 describe under "Results:".
-  //
-  //  Why two detectors? The mana-POSITIVE variants above fire when the dork
-  //  is large enough to fund the Ranger's recast cost ({G} for Quirion,
-  //  {1G} for Scryb). When the dork is small, the loop is still meaningful
-  //  for win conditions that consume ETBs (Beast Whisperer cascade, Lotus
-  //  Cobra landfall mana, Tireless Provisioner tokens, etc.) — it just
-  //  doesn't make infinite raw mana on its own.
-  //
-  //  Strict superset relationship: every state where a positive Ashaya+
-  //  Ranger detector fires ALSO satisfies this neutral one. The detector
-  //  priority order in DETECTORS.sort() ensures the positive variants run
-  //  first, so this neutral detector only "wins" the priority race when
-  //  no positive variant qualifies — which is precisely when we want it.
-  // ══════════════════════════════════════════════════════════════════════════
-  {
-    name: 'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]',
-    loopType: LOOP_TYPE.MANA_NEUTRAL_ETB,
-    description:
-      'With Ashaya, Quirion or Scryb Ranger is a Forest and bounces itself to ' +
-      'untap any creature. Recast costs {G}/{1G}; if the available green tapper ' +
-      'produces only {G}, the loop is mana-neutral but generates infinite ETB / ' +
-      'landfall / LTB / storm. Combo 1 (Quirion) and combo 41 (Scryb + Joraga) ' +
-      'both reduce to this base form.',
-    check(state) {
-      if (!ashayaOut(state)) return false;
-      if (!quirionAvailable(state) && !scrybAvailable(state)) return false;
-      return hasGreenTapper(state);
     },
   },
 
@@ -5568,7 +5325,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]',
+    name: 'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22]',
     description:
       "With a haste enabler, bounced creatures re-enter with haste and can tap immediately. " +
       "Enablers: Concordant Crossroads, Thousand-Year Elixir, Surrak and Goreclaw. " +
@@ -5608,7 +5365,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]',
+    name: 'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 57]',
     description:
       "Hyrax ETB untaps the mana dork. Sabertooth bounces Hyrax ({1G}), recast ({2G}). " +
       "Total loop cost {4G}+{1}. Need dork producing ≥5G. " +
@@ -6954,11 +6711,7 @@ var WIN_CONDITIONS = [
 
 /**
  * Check whether an infinite-mana combo is assembled.
- * Returns { achieved, name, description, loopType } or null.
- *
- * `loopType` is one of LOOP_TYPE.* values describing what the loop produces
- * (mana-positive, mana-neutral ETB/draw/LTB/storm). Used by checkVictory to
- * select win conditions whose prerequisites match the loop output.
+ * Returns { achieved, name, description } or null.
  */
 function checkCombos(state) {
   for (const detector of DETECTORS) {
@@ -6967,7 +6720,6 @@ function checkCombos(state) {
         achieved:    true,
         name:        detector.name,
         description: detector.description,
-        loopType:    detector.loopType,  // O-1 wiring: forwarded to checkVictory
       };
     }
   }
@@ -6980,37 +6732,17 @@ function checkCombos(state) {
  *
  * The solver should call this instead of checkCombos so that it only declares
  * victory when the board can actually end the game, not merely loop forever.
- *
- * O-1 wiring: each WIN_CONDITION may declare `requiresLoopType` — an array of
- * LOOP_TYPE values it accepts. Default is [MANA_POSITIVE] (matches today's
- * behaviour: virtually every finisher needs infinite mana to pay activation
- * costs). The Draw Library win additionally accepts MANA_NEUTRAL_DRAW because
- * the loop itself draws the deck without needing extra mana.
- *
- * If a detector fires with loopType that no win condition accepts, checkVictory
- * returns the "infinite mana assembled but no win" sentinel — same as before,
- * preserving existing behaviour for unused loop types.
  */
 function checkVictory(state, _infiniteMana) {
   // [E3] Accept pre-computed checkCombos result to avoid redundant call in hot path.
   const infiniteMana = _infiniteMana !== undefined ? _infiniteMana : checkCombos(state);
   if (!infiniteMana) return null;
 
-  // Loop type from the firing detector. If undefined (e.g. caller passed in a
-  // pre-computed result from older code), default to MANA_POSITIVE so the
-  // existing behaviour is preserved.
-  const detectorLoopType = infiniteMana.loopType ?? LOOP_TYPE.MANA_POSITIVE;
-
   // Two-pass: prefer fully-deployed wins (stop the search) over
   // undeployed wins (pieces in hand, need setup steps).
   let bestUndeployed = null;
 
   for (const wc of WIN_CONDITIONS) {
-    // O-1 wiring: skip win conditions whose prerequisites don't match the
-    // loop type that fired. Default = [MANA_POSITIVE] (today's behaviour).
-    // We use the cached `_acceptedLoopTypes` Set stamped at module load.
-    if (!wc._acceptedLoopTypes.has(detectorLoopType)) continue;
-
     if (!wc.check(state)) continue;
 
     const deployed = typeof wc.deployed === 'function' ? wc.deployed(state) : true;
@@ -7065,7 +6797,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Green Mana (Ashaya + Quirion Ranger + Badgermole Cub + Creature Dork)':['ashaya','quirion_ranger','badgermole_cub'],
   'Infinite Green Mana (Survival/Fauna Shaman → Ashaya + Ranger + Big Dork)':     ['survival_fittest','ashaya','quirion_ranger'],
   'Infinite Green Mana (Ashaya + Quirion Ranger + Mana Dork ≥2G)':               ['ashaya','quirion_ranger'],
-  'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]':                 ['ashaya','scryb_ranger'],
+  'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)':                 ['ashaya','scryb_ranger'],
   "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":            ['ashaya','hope_tender','gaeas_cradle'],
   'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':   ['ashaya','hope_tender','circle_of_dreams_druid'],
   'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':                   ['ashaya','hope_tender','marwyn'],
@@ -7127,71 +6859,12 @@ var _DETECTOR_PRIORITY = new Map([
   ['Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Enchanted Land)',                                   2],
   ['Infinite Mana (Ashaya + Magus of the Candelabra + Source ≥3G)  [COMBO 32, 34, 36, 43, 47, 52, 60, 62]',     3],
   ['Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)',                                                  4],
-  // The mana-neutral Ashaya+Ranger detector is a STRICT SUPERSET of every
-  // more-specific Ashaya+Ranger detector (mana-positive variants, Earthcraft,
-  // Lotus Cobra, Tireless Provisioner). It must run last so the more
-  // informative classification wins the priority race. We use a priority
-  // higher than the unlisted-detector default (999) so this runs after every
-  // detector that doesn't have an explicit priority entry.
-  ['Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]',                               9999],
 ]);
 DETECTORS.sort((a, b) => {
   const pa = _DETECTOR_PRIORITY.get(a.name) ?? 999;
   const pb = _DETECTOR_PRIORITY.get(b.name) ?? 999;
   return pa - pb;
 });
-
-// ── Loop type stamping (O-1) ──────────────────────────────────────────────
-// Every detector gets a `loopType` so downstream code (win-condition wiring,
-// loop simulator selection, advisors) can branch on what the loop actually
-// produces. Detectors that already declared a loopType keep it; the rest
-// default to MANA_POSITIVE which is correct for the vast majority.
-//
-// Special cases below that are NOT mana-positive:
-//   - "Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)"
-//       → MANA_NEUTRAL_DRAW. The loop spends and recovers the same mana per
-//         cycle (Quirion Ranger as a {G} ritual) but yields +1 card per cast,
-//         winning via deck-out or by finding a real win condition.
-//   - "Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)"
-//       → MANA_NEUTRAL_ETB. The Ranger-bounce loop is mana-neutral; the win
-//         comes from infinite Tireless Provisioner landfall triggers (Food
-//         tokens, Treasure, etc., per its current oracle).
-var _NEUTRAL_DETECTOR_TYPES = new Map([
-  ['Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)',                          LOOP_TYPE.MANA_NEUTRAL_DRAW],
-  ['Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]', LOOP_TYPE.MANA_NEUTRAL_ETB],
-]);
-for (const det of DETECTORS) {
-  if (det.loopType) continue; // detector already declared
-  det.loopType = _NEUTRAL_DETECTOR_TYPES.get(det.name) ?? LOOP_TYPE.MANA_POSITIVE;
-}
-
-// ── Win-condition acceptance stamping (O-1 wiring) ────────────────────────
-// Each win condition declares which detector loopType(s) satisfy its
-// prerequisites. Default = MANA_POSITIVE only — virtually every finisher
-// (Hitzel's, Duskwatch, Finale, Mikokoro, etc.) needs infinite mana to pay
-// per-iteration costs. The Draw Library win additionally accepts
-// MANA_NEUTRAL_DRAW because the loop itself draws the deck (Beast Whisperer
-// triggers on creature casts paid for with the same {G} the loop recovers).
-//
-// To opt a future win condition in to a non-default loop type, declare
-// `requiresLoopType: ['mana_positive', 'mana_neutral_etb']` on the win
-// condition object — the array is normalized to a Set here.
-var _DEFAULT_WC_REQUIRES = [LOOP_TYPE.MANA_POSITIVE];
-var _WIN_CONDITION_LOOP_TYPES = new Map([
-  ['Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)',
-   [LOOP_TYPE.MANA_POSITIVE, LOOP_TYPE.MANA_NEUTRAL_DRAW]],
-]);
-for (const wc of WIN_CONDITIONS) {
-  if (!wc.loopType) wc.loopType = LOOP_TYPE.WIN_CONDITION;
-  // Author can override via `requiresLoopType` on the object literal; otherwise
-  // fall back to the override map, otherwise MANA_POSITIVE.
-  const requires =
-    wc.requiresLoopType ??
-    _WIN_CONDITION_LOOP_TYPES.get(wc.name) ??
-    _DEFAULT_WC_REQUIRES;
-  wc.requiresLoopType = Array.isArray(requires) ? requires : [requires];
-  wc._acceptedLoopTypes = new Set(wc.requiresLoopType); // cached for the hot path
-}
 
 var _COM = { checkCombos, checkVictory };
 // actions.js — shims for renamed destructuring imports
@@ -8655,8 +8328,6 @@ class Solver {
     };
 
     enqueue({ state: initialState, parent: null, depth: 0 });
-    // [E10] Mark the root as visited so children cannot dedupe back to it.
-    this.visited.set(initialState.fingerprint(), 0);
 
     for (let turn = 1; turn <= this.opts.maxTurns; turn++) {
       const q = queues[turn];
@@ -8673,13 +8344,10 @@ class Solver {
         if (state.youLost())            continue;
         if (depth > this.opts.maxDepth) continue;
 
-        // [E10] Note: the visited check used to live HERE (before child
-        // generation). It is now done at enqueue time below — that's the
-        // only correct place to dedupe in BFS, because dequeue-time dedup
-        // wastes budget on each duplicate before discarding it. Fingerprints
-        // are stable between enqueue and dequeue (the state object is not
-        // mutated while sitting in the queue), so a single check at enqueue
-        // is sufficient.
+        // Full fingerprint including mana
+        const fp = state.fingerprint();
+        if (this.visited.has(fp)) continue;
+        this.visited.set(fp, depth);
 
         // [E3] Compute checkCombos once per BFS node, reuse in checkVictory + children
         const infiniteMana = checkCombos(state);
@@ -8717,27 +8385,6 @@ class Solver {
             this.pruned++;
             continue;
           }
-          // [E10] Duplicate-state pruning at enqueue time, not dequeue time.
-          // Without this, two siblings whose action-orderings reach the same
-          // state both get enqueued, then both get dequeued (each costing a
-          // budget tick), then the second one gets discarded. Empirically on
-          // the user-reported BFS hang (sowing_mycospawn,natures_rhythm,
-          // boseiju,eldritch_evolution + 7-creature board) this halved the
-          // budget waste — 50% of dequeued states were duplicates.
-          //
-          // The previous version of this check lived at dequeue time. Moving
-          // it to enqueue time is correct because state fingerprints are
-          // stable between enqueue and dequeue: the state object is not
-          // mutated while sitting in the queue (state.clone is the only way
-          // to derive a new state, and clone always produces a fresh
-          // identity). The root is added to `visited` once at the top of
-          // _bfs so its children cannot dedupe back to it.
-          const childFp = next.fingerprint();
-          if (this.visited.has(childFp)) {
-            this.pruned++;
-            continue;
-          }
-          this.visited.set(childFp, depth + 1);
           children.push({ next, h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana) });
         }
         if (children.length > 1) children.sort((a, b) => a.h - b.h);
@@ -9127,7 +8774,7 @@ function assembleWin(state) {
         s = s.removeFromHand('crop_rotation');
         let ns = s.removeFromBattlefield(sacLand.id, 'graveyard');
         if (ns) {
-          const { state: ns2, cardKey: found } = searchFor('geier_reach');
+          const { state: ns2, cardKey: found } = nsearchFor('geier_reach');
           if (found) {
             s = ns2.enterBattlefield(found);
             steps.push(`Crop Rotation: sacrifice ${sacLand.name} → fetch Geier Reach Sanitarium`);
@@ -9159,7 +8806,7 @@ function assembleWin(state) {
             s = s.removeFromHand('crop_rotation');
             let ns = s.removeFromBattlefield(sacLand.id, 'graveyard');
             if (ns) {
-              const { state: ns2, cardKey: found } = searchFor('geier_reach');
+              const { state: ns2, cardKey: found } = nsearchFor('geier_reach');
               if (found) {
                 s = ns2.enterBattlefield(found);
                 steps.push(`Crop Rotation: sacrifice ${sacLand.name} → fetch Geier Reach Sanitarium`);
