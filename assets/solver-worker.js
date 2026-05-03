@@ -1145,15 +1145,6 @@ class GameState {
     const p = s.getPermanentById(id);
     if (!p) return null;
     p.tapped = false;
-    // When a permanent is untapped mid-turn (e.g. by Quirion Ranger bouncing itself
-    // to untap Hope Tender), once-per-tap ability flags should reset so the creature
-    // can activate again. The exert flag (exert_two_lands) is preserved — exert
-    // persists until the creature's NEXT untap step, not cleared by mid-turn untaps.
-    if (p.abilitiesUsed && Object.keys(p.abilitiesUsed).length > 0) {
-      const preserved = {};
-      if (p.abilitiesUsed.exert_two_lands) preserved.exert_two_lands = true;
-      p.abilitiesUsed = preserved;
-    }
     return s;
   }
 
@@ -1186,23 +1177,6 @@ class GameState {
 
     // ── Static layer: apply existing statics to the new permanent ────────────
 
-    // Orb of Dreams / Root Maze: all permanents enter tapped.
-    // Orb of Dreams: "Permanents enter the battlefield tapped."
-    // Root Maze: "Lands and artifacts enter the battlefield tapped."
-    // Applied after the perm is pushed so we can check its types.
-    if (s.hasPermanent('Orb of Dreams')) {
-      perm.tapped = true;
-      perm.summoningSick = true;  // creatures also can't untap until next turn
-    } else if (s.hasPermanent('Root Maze')) {
-      if (perm.is('land') || perm.is('artifact')) perm.tapped = true;
-    }
-
-    // Castle Garenbrig: enters tapped unless you control a Forest.
-    if (cardKey === 'castle_garenbrig') {
-      const hasForest = s.battlefield.some(p => p.isForest && p.cardKey !== 'castle_garenbrig');
-      if (!hasForest) perm.tapped = true;
-    }
-
     // Ashaya: new creatures become Forest lands
     if (s.hasPermanent('Ashaya, Soul of the Wild') && perm.is('creature')) {
       if (perm._cow) perm._ensureOwnTypes();
@@ -1230,8 +1204,7 @@ class GameState {
 
     // ── ETB triggers: card-specific effects on entry ──────────────────────────
 
-    // Ashaya ETB: all existing non-token creatures become Forest lands.
-    // Also set Ashaya's own power/toughness = current land count (she's a land herself).
+    // Ashaya ETB: all existing non-token creatures become Forest lands
     if (cardKey === 'ashaya') {
       for (const bf of s.battlefield) {
         if (bf.is('creature')) {
@@ -1240,14 +1213,6 @@ class GameState {
           if (!bf.types.includes('land')) bf.types.push('land');
           if (!bf.subtypes.includes('Forest')) bf.subtypes.push('Forest');
         }
-      }
-      // Ashaya's P/T = number of lands she controls (herself included, since the loop above
-      // just added her to the land pool)
-      const ashayaPerm = s.battlefield.find(p => p.cardKey === 'ashaya');
-      if (ashayaPerm) {
-        const landCount = s.lands().length;
-        ashayaPerm.power     = landCount;
-        ashayaPerm.toughness = landCount;
       }
     }
 
@@ -1599,15 +1564,7 @@ class GameState {
     s.flashThisTurn  = false;
     s._ensureBF();  // untap loop mutates permanents
     for (const p of s.battlefield) {
-      // Exerted creatures don't untap on your next untap step.
-      // The exert_two_lands flag is set by Hope Tender's exert ability.
-      // We clear the flag here (it's consumed) but keep the creature tapped.
-      if (p.abilitiesUsed?.exert_two_lands) {
-        p.abilitiesUsed = {};  // clear all ability flags (exert consumed)
-        // p.tapped stays true — exerted creatures don't untap
-      } else {
-        p.tapped = false;
-      }
+      p.tapped = false;
       p.summoningSick = false;
       p.abilitiesUsed = {};
     }
@@ -2275,68 +2232,9 @@ var CARDS = {
       },
     },
   },
-  boseiju: {
-    name: 'Boseiju, Who Endures', types: ['land'], subtypes: ['Legendary'], cost: null,
-    tapForMana: simpleTap('{G}', [['G',1]]),
-    // Channel — {1}{G}, Discard this card: Destroy target artifact, enchantment, or
-    // nonbasic land. This spell can't be countered. Cost reduced by {1} for each
-    // legendary creature you control.
-    // Modelled as a handAbility (discard from hand).
-    handAbilities: {
-      channel: {
-        label: 'Channel {1}{G}: Discard Boseiju → destroy artifact/enchantment/nonbasic land',
-        fn(state, cardKey) {
-          // Count legendary creatures for cost reduction ({1} per legend)
-          const legendCount = state.battlefield.filter(p =>
-            p.is('creature') && (p.types.includes('legendary') || p.name.includes(','))
-          ).length;
-          const reducedCost = Math.max(0, 1 - legendCount); // {1}{G} base, {1} off per legend
-          const costStr = reducedCost === 0 ? 'G' : '1G';
-          const ap = state.payMana(costStr); if (!ap) return [];
-          // Remove Boseiju from hand as the discard cost
-          const s0 = ap.removeFromHand(cardKey); if (!s0) return [];
-          // Find valid targets: artifacts, enchantments, nonbasic lands on the battlefield
-          const targets = s0.battlefield.filter(p =>
-            p.is('artifact') || p.is('enchantment') ||
-            (p.is('land') && !p.subtypes?.includes('Basic'))
-          );
-          if (targets.length === 0) return [];
-          return targets.map(target => {
-            const s = s0.removeFromBattlefield(target.id, 'graveyard');
-            return s ? s.log(`Boseiju channel: → destroy ${target.name}`) : null;
-          }).filter(Boolean);
-        },
-      },
-    },
-  },
-
-  war_room: {
-    name: 'War Room', types: ['land'], subtypes: [], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {3}, {T}, Pay 1 life per color in commander's color identity: Draw a card.
-    // Yeva is mono-green, so cost = {3}, {T}, pay 1 life. Only activatable if
-    // you control a creature with power 4 or greater.
-    abilities: {
-      draw: {
-        label: '{3}, {T}, Pay 1 life: Draw a card (requires creature with power ≥ 4)',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          // Requires a creature with power 4 or greater
-          const hasPower4 = state.battlefield.some(p =>
-            p.is('creature') && (p.power ?? 0) >= 4
-          );
-          if (!hasPower4) return [];
-          const ap = state.payMana('3'); if (!ap) return [];
-          let s = ap.tapPermanent(perm.id); if (!s) return [];
-          if (s.life <= 1) return []; // would die from the life payment
-          s = s.clone(); s.life -= 1;
-          s = s.playerDraws(0, 1);
-          return [s.log('War Room: {3}, tap, pay 1 life → draw a card')];
-        },
-      },
-    },
-  },
+  boseiju:             { name: 'Boseiju, Who Endures',       types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{G}', [['G',1]]) },
   talon_gates:         { name: 'Talon Gates of Madara',      types: ['land'], subtypes: ['Gate'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  war_room:            { name: 'War Room',                   types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
   geier_reach: {
     name: 'Geier Reach Sanitarium', types: ['land'], subtypes: ['Legendary'], cost: null,
     tapForMana: simpleTap('{C}', [['C', 1]]),
@@ -2387,25 +2285,7 @@ var CARDS = {
     },
   },
   bonders_enclave:     { name: "Bonders' Enclave",           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
-  mikokoro: {
-    name: 'Mikokoro, Center of the Sea', types:['land'], subtypes:['Legendary'], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {2}, {T}: Each player draws a card.
-    // In the Hitzel mill loop this is activated repeatedly (opponents mill via Endurance shuffle).
-    // In the solver we model it as: pay {2}, tap → you draw a card (opponents drawing is not tracked).
-    abilities: {
-      group_draw: {
-        label: '{2}, {T}: Each player draws a card',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          const ap = state.payMana('2'); if (!ap) return [];
-          const at = ap.tapPermanent(perm.id); if (!at) return [];
-          const s = at.playerDraws(0, 1);
-          return [s.log('Mikokoro: {2}, tap → draw a card (each player draws)')];
-        },
-      },
-    },
-  },
+  mikokoro:            { name: 'Mikokoro, Center of the Sea', types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
 
   abstergo_entertainment: {
     name: 'Abstergo Entertainment', types: ['land'], subtypes: ['Legendary'], cost: null,
@@ -2953,40 +2833,7 @@ var CARDS = {
       },
     },
   },
-  treefolk_harbinger: {
-    name: 'Treefolk Harbinger', types:['creature'], subtypes:['Treefolk','Druid'], cost:'G', power:1,toughness:1,
-    // ETB: search library for a Treefolk or Forest card, reveal it, put on top of library.
-    // In this deck the relevant targets are: Forest (basic land), Yavimaya, Dryad Arbor
-    // (Forest subtype land), Ashaya (Elemental, not Treefolk — not a valid target),
-    // Woodland Bellower (Beast, not Treefolk — not valid).
-    // Valid Treefolk: Treefolk Harbinger itself, Lignify aura has Treefolk subtype.
-    // Modeled as: on ETB, generate one branch per unique matching card in the library;
-    // put the found card on top (topDecked) so it's drawn next turn.
-    onEnter(state) {
-      var cards = CARDS;
-      const library = state.players[0].library;
-      // Collect unique matching keys (Forest-subtype land OR Treefolk creature)
-      const matchKeys = [...new Set(library)].filter(k => {
-        const def = cards[k];
-        if (!def) return false;
-        if (def.subtypes?.includes('Forest')) return true;   // Forest land
-        if (def.subtypes?.includes('Treefolk')) return true; // Treefolk creature
-        return false;
-      });
-      if (matchKeys.length === 0) return state; // nothing to find — return unchanged state
-      const results = [];
-      for (const targetKey of matchKeys) {
-        const { state: ns, cardKey: found } = state.searchLibraryFor(k => k === targetKey);
-        if (!found) continue;
-        const s = ns.clone();
-        s.topDecked = found;
-        const cardName = cards[found]?.name ?? found;
-        results.push(s.log(`Treefolk Harbinger ETB: put ${cardName} on top of library`));
-      }
-      // Return array of branches, or single state if only one option
-      return results.length === 1 ? results[0] : results.length > 1 ? results : state;
-    },
-  },
+  treefolk_harbinger:{ name:'Treefolk Harbinger',types:['creature'],subtypes:['Treefolk','Druid'],cost:'G',power:1,toughness:1 },
   elvish_reclaimer: {
     name: 'Elvish Reclaimer', types: ['creature'], subtypes: ['Elf','Warrior'], cost: 'G',
     power: 1, toughness: 1,
@@ -3228,16 +3075,11 @@ var CARDS = {
         label: '{1}, {T}: Untap target land',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
-          if (perm.abilitiesUsed?.untap_one_land) return [];
-          // Note: exert_two_lands does NOT block single-untap — an exerted
-          // Hope Tender can still use {1},{T} after being untapped mid-turn.
           const ap = state.payMana('1'); if (!ap) return [];
           const at = ap.tapPermanent(perm.id); if (!at) return [];
           const results = [];
-          for (const land of at.lands().filter(l => l.tapped)) {
-            let s = at.untapPermanent(land.id);
-            s = s.markAbilityUsed(perm.id, 'untap_one_land');
-            results.push(s.log(`Hope Tender: {1}, tap → untap ${land.name}`));
+          for (const land of at.lands().filter(l=>l.tapped)) {
+            results.push(at.untapPermanent(land.id).log(`Hope Tender: {1}, tap → untap ${land.name}`));
           }
           return results;
         },
@@ -3246,25 +3088,14 @@ var CARDS = {
         label: '{1}, {T}, Exert: Untap two target lands',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
-          // Exert cost: this creature won't untap during your NEXT untap step.
-          // This is modelled by preserving exert_two_lands through untapPermanent()
-          // and skipping the untap in startNewTurn. It does NOT prevent re-exerting
-          // mid-turn if something else (Quirion Ranger, Scryb Ranger, etc.) untaps
-          // Hope Tender — perm.tapped is the only gate needed.
           const ap = state.payMana('1'); if (!ap) return [];
-          let at = ap.tapPermanent(perm.id); if (!at) return [];
-          // Mark exerted — startNewTurn will skip the untap for this permanent.
-          at = at.markAbilityUsed(perm.id, 'exert_two_lands');
-          const tl = at.lands().filter(l => l.tapped);
-          if (tl.length === 0) return [];
-          // Build all pairs (or single if only 1 tapped land)
-          const pairs = tl.length === 1
-            ? [[tl[0]]]
-            : tl.flatMap((a, i) => tl.slice(i + 1).map(b => [a, b]));
+          const at = ap.tapPermanent(perm.id); if (!at) return [];
+          const tl = at.lands().filter(l=>l.tapped); if (tl.length===0) return [];
+          const pairs = tl.length===1 ? [[tl[0]]] : tl.flatMap((a,i)=>tl.slice(i+1).map(b=>[a,b]));
           return pairs.map(pair => {
             let s = at;
             for (const land of pair) s = s.untapPermanent(land.id);
-            return s.log(`Hope Tender (exert): {1}, tap → untap ${pair.map(p => p.name).join(' + ')}`);
+            return s.log(`Activate Hope Tender: pay {1}, tap → untap [${pair.map(p=>p.name).join(' + ')}]`);
           });
         },
       },
@@ -3480,22 +3311,7 @@ var CARDS = {
 
   ashaya: {
     name: 'Ashaya, Soul of the Wild', types:['creature'], subtypes:['Elemental'], cost:'3GG', power:0,toughness:0,
-    // Power/toughness = number of lands you control (including herself, since she is a Forest land).
-    // GameState.enterBattlefield already sets isForest=true, adds 'land'/'Forest' types on the
-    // Ashaya ETB block (the loop at cardKey==='ashaya' iterates all creatures including herself).
-    // tapForMana: because she's a Forest land, she taps for {G} (driven by isForest check in actions.js).
-    tapForMana(state, perm) {
-      // Only tap if isForest was applied (by GameState ETB logic)
-      if (!perm.isForest) return [];
-      if (perm.tapped || perm.summoningSick) return [];
-      const s = state.tapPermanent(perm.id); if (!s) return [];
-      return [s.addMana('G').log(`Tap Ashaya, Soul of the Wild → {G}`)];
-    },
-    onEnter(state, perm) {
-      // Power/toughness and isForest/land-type marking are all handled by the
-      // ETB block in GameState.enterBattlefield. Nothing extra needed here.
-      return state;
-    },
+    onEnter(state, perm) { return state; },
   },
 
   eternal_witness: {
@@ -3542,9 +3358,8 @@ var CARDS = {
     name: 'Seedborn Muse', types: ['creature'], subtypes: ['Spirit'],
     cost: '3GG', power: 2, toughness: 4,
     // Static: untap all your permanents during each other player's untap step.
-    // Implemented in actions.js: the 'opponent_turn' action untaps all permanents
-    // when Seedborn Muse is on the battlefield. Exerted creatures are correctly
-    // excluded from this untap (they wait for your own next untap step).
+    // Modeled as: each call to startNewTurn() checks for Muse and untaps extra.
+    // (Multiple turns = extra untap opportunities — tracked in Solver's turn loop.)
   },
   beast_whisperer: {
     name: 'Beast Whisperer', types: ['creature'], subtypes: ['Elf','Druid'],
@@ -3680,82 +3495,38 @@ var CARDS = {
   skyshroud_poacher: {
     name: 'Skyshroud Poacher', types: ['creature'], subtypes: ['Human','Rebel'],
     cost: '2GG', power: 2, toughness: 4,
-    // {3}, {T}: Search your library for an Elf permanent card, put it onto the battlefield.
+    // {3}, {T}: Search library for an Elf permanent card, put it onto the battlefield.
     abilities: {
       tutor_elf: {
         label: '{3}, {T}: Search library for an Elf, put onto battlefield',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('3'); if (!ap) return [];
-          const s0 = ap.tapPermanent(perm.id); if (!s0) return [];
+          let s = ap.tapPermanent(perm.id); if (!s) return [];
           var cards = CARDS;
-          const results = [];
-
-          // Search the actual library first
-          const elfLibKeys = [...new Set(s0.players[0].library)].filter(k =>
+          // Find Elves in hand that could be tutored
+          const elfKeys = [...new Set(state.hand)].filter(k =>
             cards[k] && cards[k].subtypes && cards[k].subtypes.includes('Elf')
           );
-          for (const k of elfLibKeys) {
-            const { state: ns, cardKey: found } = s0.searchLibraryFor(lk => lk === k);
-            if (!found) continue;
-            const after = ns.enterBattlefield(found);
-            results.push(after.log(`Skyshroud Poacher: put ${cards[k].name} onto battlefield`));
+          const results = [];
+          if (elfKeys.length > 0) {
+            for (const k of elfKeys) {
+              let ns = s.removeFromHand(k);
+              if (!ns) continue;
+              ns = ns.enterBattlefield(k);
+              results.push(ns.log(`Skyshroud Poacher: put ${cards[k].name} onto battlefield`));
+            }
+          } else {
+            // Approximate as card draw from library
+            s = s.playerDraws(0, 1);
+            results.push(s.log('Skyshroud Poacher: search library for an Elf'));
           }
-
-          // Also check hand (approximation for unknown library contents)
-          const elfHandKeys = [...new Set(s0.hand)].filter(k =>
-            cards[k] && cards[k].subtypes && cards[k].subtypes.includes('Elf') &&
-            !elfLibKeys.includes(k)
-          );
-          for (const k of elfHandKeys) {
-            let ns = s0.removeFromHand(k); if (!ns) continue;
-            ns = ns.enterBattlefield(k);
-            results.push(ns.log(`Skyshroud Poacher: put ${cards[k].name} onto battlefield`));
-          }
-
           return results;
         },
       },
     },
   },
-  fierce_empath: {
-    name: 'Fierce Empath', types:['creature'], subtypes:['Elf'], cost:'2G', power:1,toughness:1,
-    // ETB: you may search your library for a creature card with mana value 6 or greater,
-    // reveal it, and put it into your hand. Shuffle.
-    // Key targets in this deck: Woodland Bellower (6), Regal Force (7), Kogla (7),
-    // Temur Sabertooth (4 — NOT a valid target, MV too low),
-    // Selvala (4 — NOT valid), Seedborn Muse (5 — NOT valid).
-    // Valid: Woodland Bellower (6), Regal Force (7), Kogla the Titan Ape (7).
-    onEnter(state) {
-      var cards = CARDS;
-      // Parse MV from cost string: count all mana symbols
-      function mv(cost) {
-        if (!cost) return 0;
-        let total = 0;
-        for (const ch of cost) {
-          if (ch >= '1' && ch <= '9') total += parseInt(ch);
-          else if (ch === 'G' || ch === 'W' || ch === 'U' || ch === 'R' || ch === 'B' ||
-                   ch === 'C') total += 1;
-          else if (ch === 'X') continue; // X spells: treat X=0 for MV calculation
-        }
-        return total;
-      }
-
-      const results = [];
-      const seen = new Set();
-      for (const k of state.players[0].library) {
-        if (seen.has(k)) continue; seen.add(k);
-        const def = cards[k];
-        if (!def || !def.types.includes('creature')) continue;
-        if (mv(def.cost) < 6) continue;
-        const { state: ns, cardKey: found } = state.searchLibraryFor(lk => lk === k);
-        if (!found) continue;
-        results.push(ns.addToHand(found).log(`Fierce Empath ETB: search → ${def.name} to hand`));
-      }
-      // Also check: if no target exists, Fierce Empath still ETBs (just doesn't search)
-      return results.length === 1 ? results[0] : results.length > 1 ? results : state;
-    },
-  },
+  fierce_empath:       { name:'Fierce Empath',              types:['creature'],subtypes:['Elf'],               cost:'2G',   power:1,toughness:1 },
   reclamation_sage: {
     name: 'Reclamation Sage', types: ['creature'], subtypes: ['Elf','Shaman'],
     cost: '2G', power: 2, toughness: 1,
@@ -3802,22 +3573,9 @@ var CARDS = {
   defiler_of_vigor: {
     name: 'Defiler of Vigor', types: ['creature'], subtypes: ['Phyrexian','Wurm'],
     cost: '3GG', power: 6, toughness: 6,
-    // (1) Cost reduction: green permanent spells cost {G} less if you pay 2 life.
-    //     Implemented in actions.js costReductions() — always applies the {1} generic
-    //     reduction and the 2-life payment is deducted here via onCast.
-    // (2) Trigger: whenever you cast a green permanent, put +1/+1 on EACH creature.
-    //     Implemented in actions.js cast_spell section (checks for Defiler on battlefield).
-    //
-    // The 2-life additional cost is tracked here so it actually deducts life.
-    // actions.js costReductions() reduces the generic cost by 1; this onCast deducts 2 life.
-    // Net result: you save {G} and spend 2 life — exactly as Oracle text describes.
-    onCast(state) {
-      // Called when THIS card (Defiler) is cast — not when other permanents are cast.
-      // The 2-life cost for casting Defiler itself is just paying 2 life for {G} reduction.
-      // But this hook only fires on Defiler's own cast; for other green permanents
-      // the life deduction is applied in actions.js's cast_spell block.
-      return state;
-    },
+    // Additional cost: may pay 2 life instead of {G} when casting green permanents.
+    // Static: whenever you cast a green permanent, put +1/+1 on each creature you control.
+    // These are passive effects tracked by the engine context.
   },
   glademuse: {
     name: 'Glademuse', types: ['creature'], subtypes: ['Beast'], cost: '2G',
@@ -3846,46 +3604,7 @@ var CARDS = {
     // Not modeled in the solver (triggers on opponent actions).
   },
   heartwood_storyteller:{ name:'Heartwood Storyteller',     types:['creature'],subtypes:['Treefolk'],          cost:'1GG',  power:2,toughness:3 },
-  destiny_spinner: {
-    name: 'Destiny Spinner', types:['creature','enchantment'], subtypes:['Human'], cost:'1G', power:2,toughness:2,
-    // Static 1: creature and enchantment spells can't be countered (not enforced — single-player).
-    // Static 2: {3}{G}: Target land you control becomes an X/X Elemental with trample and haste
-    //           until end of turn, where X = number of enchantments you control. It's still a land.
-    //
-    // This is the key ability for giving Elvish Reclaimer haste after Ashaya makes
-    // the land a creature (Reclaimer is already a creature; the land becomes one here
-    // to act as a sacrifice target and to gain haste via Destiny Spinner).
-    // More importantly: after Ashaya, nontoken creatures ARE lands, so targeting
-    // Elvish Reclaimer (which is a land under Ashaya) grants it haste.
-    abilities: {
-      animate_land: {
-        label: '{3}{G}: Give target land creature haste until EOT (X/X where X = enchantments)',
-        fn(state, perm) {
-          if (perm.summoningSick) return [];
-          const ap = state.payMana('3G'); if (!ap) return [];
-          // Count enchantments you control for the X/X size
-          const x = state.battlefield.filter(p => p.types.includes('enchantment')).length;
-          if (x === 0) return []; // 0/0 lands die immediately — no value
-          const results = [];
-          // Target any land (or any creature that is also a land under Ashaya)
-          const targets = ap.battlefield.filter(p => p.is('land') && !p.summoningSick);
-          for (const target of targets) {
-            let s = ap;
-            // Animate: add creature type, set haste (no summoning sickness)
-            const tgt = s.battlefield.find(p => p.id === target.id);
-            if (!tgt) continue;
-            tgt._ensureOwnTypes?.();
-            if (!tgt.types.includes('creature')) tgt.types = [...(tgt.types || []), 'creature'];
-            tgt.summoningSick = false;
-            tgt.power     = x;
-            tgt.toughness = x;
-            results.push(s.log(`Destiny Spinner: animate ${target.name} → ${x}/${x} Elemental with haste`));
-          }
-          return results;
-        },
-      },
-    },
-  },
+  destiny_spinner:     { name:'Destiny Spinner',            types:['creature','enchantment'],subtypes:['Human'],cost:'1G',  power:2,toughness:2 },
   chomping_changeling: { name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
   lotus_cobra: {
     name: 'Lotus Cobra', types: ['creature'], subtypes: ['Snake'], cost: '1G',
@@ -3894,22 +3613,7 @@ var CARDS = {
     // This is applied in actions.js: after play_land, check for Cobra and add {G}.
     // Modeled as a pseudo-ability that the action generator fires automatically.
   },
-  nissa_animist: {
-    name: 'Nissa, Resurgent Animist', types:['creature'], subtypes:['Elf','Scout'], cost:'2G', power:2,toughness:3,
-    // Landfall — Whenever a land enters the battlefield under your control:
-    //   • Add one mana of any color.
-    //   • If this is the second time a land entered this turn, you may look at the
-    //     top five cards, put an Elf or Elemental creature card into your hand, shuffle.
-    //
-    // The landfall mana trigger is modeled in actions.js (same location as Lotus Cobra).
-    // The tutor trigger is modeled there too: state.landfallCount tracks how many lands
-    // have entered this turn; when it hits 2 (and Nissa is on BF), the tutor fires.
-    //
-    // This card has no activated ability — all effects are landfall triggers.
-    // The tapForMana is not set (she doesn't tap for mana herself).
-    //
-    // Implementation note: the landfall triggers live in actions.js's play_land section.
-  },
+  nissa_animist:       { name:'Nissa, Resurgent Animist',   types:['creature'],subtypes:['Elf','Scout'],       cost:'2G',   power:2,toughness:3 },
   skullwinder: {
     name: 'Skullwinder', types: ['creature'], subtypes: ['Snake'],
     cost: '2G', power: 1, toughness: 3,
@@ -4100,30 +3804,8 @@ var CARDS = {
   disciple_freyalise: {
     name: 'Disciple of Freyalise', types: ['creature'], subtypes: ['Elf','Druid'],
     cost: '3GGG', power: 4, toughness: 4,
-    // ETB: you may sacrifice another creature. If you do, gain X life and draw X cards
-    // where X = that creature's power.
-    onEnter(state) {
-      const sacrificeable = state.battlefield.filter(p =>
-        p.is('creature') && p.name !== 'Disciple of Freyalise'
-      );
-      if (sacrificeable.length === 0) return state; // no sac target — ETB still fine
-
-      const results = [];
-      // Option: don't sacrifice (just ETB with no draw)
-      results.push(state.log('Disciple of Freyalise ETB: no sacrifice'));
-
-      for (const sac of sacrificeable) {
-        const x = sac.power ?? 1;
-        if (x === 0) continue;
-        let s = state.removeFromBattlefield(sac.id, 'graveyard');
-        if (!s) continue;
-        s = s.clone();
-        s.life = (s.life ?? 40) + x;
-        s = s.playerDraws(0, x);
-        results.push(s.log(`Disciple of Freyalise ETB: sacrifice ${sac.name} (power ${x}) → gain ${x} life, draw ${x} cards`));
-      }
-      return results.length === 1 ? results[0] : results;
-    },
+    // ETB: may sacrifice another creature; gain X life and draw X cards where X = power.
+    // Also has a modal land backside, but that's a double-faced card — stub the creature side.
   },
   hyrax_tower_scout: {
     name: 'Hyrax Tower Scout', types: ['creature'], subtypes: ['Human','Scout'],
@@ -8169,26 +7851,6 @@ function generateActions(state, _presentHint = null) {
           ns = ns.playerDraws(0, 1);
         }
 
-        // Defiler of Vigor: whenever you cast a green permanent spell,
-        // put a +1/+1 counter on EACH creature you control.
-        // The {G} cost reduction (pay 2 life instead) is handled in costReductions();
-        // here we deduct the 2-life additional cost from life total.
-        const _isGreenPerm = def.cost?.includes('G') &&
-          (def.types.includes('creature') || def.types.includes('enchantment') ||
-           def.types.includes('artifact') || def.types.includes('planeswalker'));
-        if (ns.hasPermanent('Defiler of Vigor') && _isGreenPerm) {
-          ns.life -= 2;
-          ns = ns.log(`Defiler of Vigor: pay 2 life for {G} reduction (life: ${ns.life})`);
-          ns._ensureBF();
-          for (const p of ns.battlefield) {
-            if (p.types.includes('creature')) {
-              p.power     = (p.power     || 0) + 1;
-              p.toughness = (p.toughness || 0) + 1;
-            }
-          }
-          ns = ns.log('Defiler of Vigor: +1/+1 counter on each creature');
-        }
-
         // onEnter hook: Auras and cards with immediate resolution effects
         if (entersBattlefield && def.onEnter && typeof def.onEnter === 'function') {
           const entered = ns.getPermanent(def.name);
@@ -8424,13 +8086,10 @@ function generateActions(state, _presentHint = null) {
         ns.isOpponentTurn = true;
         // Mana drains between phases
         ns.mana = ns.mana.constructor ? new ns.mana.constructor() : ns.mana;
-        // Seedborn Muse: untap all permanents during each other player's untap step.
-        // Exerted creatures (abilitiesUsed.exert_two_lands) skip this untap — they
-        // are promised not to untap until your NEXT untap step.
+        // Seedborn Muse: untap all permanents during each other player's untap step
         if (ns.hasPermanent('Seedborn Muse')) {
           ns._ensureBF();
           for (const p of ns.battlefield) {
-            if (p.abilitiesUsed?.exert_two_lands) continue; // skip exerted
             p.tapped = false;
             p.abilitiesUsed = {};
           }
@@ -9595,61 +9254,12 @@ function assembleWin(state) {
             }
           }
 
-          // Cast Elvish Reclaimer (infinite mana available)
+          // Cast Elvish Reclaimer
           s = s.removeFromHand(found);
           s = s.enterBattlefield(found);
-          steps.push('Cast Elvish Reclaimer (infinite mana available)');
-
-          // ── O-10: Grant Elvish Reclaimer haste via a real enabler ────────
-          // Under Ashaya, Reclaimer is a Forest land-creature. We need to give
-          // it haste so it can activate the same turn it's cast.
-          // Priority: cheapest/simplest enabler first.
           const reclPerm = s.battlefield.find(p => p.name === 'Elvish Reclaimer');
-          let hasteGranted = false;
-
-          // 1. Global haste already on field (Concordant Crossroads, Thousand-Year Elixir,
-          //    Surrak and Goreclaw) — Reclaimer enters without summoning sickness.
-          const GLOBAL_HASTE = ['Concordant Crossroads','Thousand-Year Elixir','Surrak and Goreclaw'];
-          if (!hasteGranted && GLOBAL_HASTE.some(n => onField(n))) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            const enablerName = GLOBAL_HASTE.find(n => onField(n));
-            steps.push(`${enablerName}: Elvish Reclaimer enters with haste`);
-            hasteGranted = true;
-          }
-
-          // 2. Destiny Spinner on field — {3}{G}: animate Reclaimer (land under Ashaya) → haste
-          if (!hasteGranted && onField('Destiny Spinner') && onField('Ashaya, Soul of the Wild')) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            const enchCount = s.battlefield.filter(p => p.types.includes('enchantment')).length;
-            steps.push(`Destiny Spinner: {3}{G} → animate Elvish Reclaimer (land under Ashaya) → ${enchCount}/${enchCount} Elemental with haste`);
-            hasteGranted = true;
-          }
-
-          // 3. Badgermole Cub — ETB earthbend targets a creature-land → haste
-          if (!hasteGranted && (onField('Badgermole Cub') || inHand('badgermole_cub') || inLibrary('badgermole_cub'))) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            if (!onField('Badgermole Cub')) {
-              if (!inHand('badgermole_cub') && inLibrary('badgermole_cub')) {
-                if (onField('Duskwatch Recruiter')) {
-                  const { state: nsBc, cardKey: bcFound } = searchFor('badgermole_cub');
-                  if (bcFound) { s = nsBc.addToHand(bcFound); steps.push('Activate Duskwatch Recruiter → find Badgermole Cub'); }
-                }
-              }
-              if (inHand('badgermole_cub')) {
-                s = s.removeFromHand('badgermole_cub');
-                s = s.enterBattlefield('badgermole_cub');
-              }
-            }
-            steps.push('Badgermole Cub ETB (earthbend): target Elvish Reclaimer → gets haste');
-            hasteGranted = true;
-          }
-
-          // 4. Fallback — note that a haste enabler is needed but not yet available.
-          //    (The win line is still valid — this documents the gap for the pilot.)
-          if (!hasteGranted) {
-            if (reclPerm) reclPerm.summoningSick = false; // allow activation to proceed
-            steps.push('(Need haste enabler for Elvish Reclaimer: Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)');
-          }
+          if (reclPerm) reclPerm.summoningSick = false;
+          steps.push('Cast Elvish Reclaimer (infinite mana available)');
 
           // Activate: sacrifice the expendable creature-Forest to fetch Geier Reach
           const sacTarget = sacCreatureKey
@@ -9665,35 +9275,6 @@ function assembleWin(state) {
               if (gr) {
                 s = ns4.enterBattlefield(gr);
                 steps.push(`Elvish Reclaimer: sacrifice ${sacTarget.name} → fetch Geier Reach Sanitarium`);
-
-                // ── O-10: Identify the Sanitarium untap configuration ──────
-                // Geier Reach must be untapped repeatedly to mill the table.
-                // Detect which untap method is available and document the loop.
-                const ashayaOnField = onField('Ashaya, Soul of the Wild');
-                let untapMethod = null;
-
-                if (onField('Magus of the Candelabra') && ashayaOnField) {
-                  untapMethod = 'Magus of the Candelabra: {X},{T} → untap Geier Reach Sanitarium (land under Ashaya)';
-                } else if (onField('Temur Sabertooth') && (onField('Woodcaller Automaton') || inHand('woodcaller_automaton') || inLibrary('woodcaller_automaton'))) {
-                  untapMethod = 'Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop';
-                } else if ((onField('Scryb Ranger') || inHand('scryb_ranger')) && ashayaOnField) {
-                  untapMethod = 'Scryb Ranger: return Forest to hand → untap Geier Reach Sanitarium (Forest under Ashaya)';
-                } else if ((onField('Quirion Ranger') || inHand('quirion_ranger')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Quirion Ranger + Destiny Spinner: Ranger untaps Geier Reach (animated land-creature under Ashaya)';
-                } else if ((onField('Hyrax Tower Scout') || inHand('hyrax_tower_scout')) && onField('Destiny Spinner') && ashayaOnField) {
-                  untapMethod = 'Hyrax Tower Scout + Destiny Spinner: Scout ETB untaps Geier Reach (animated creature-land)';
-                } else if ((onField('Argothian Elder') || inHand('argothian_elder')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Argothian Elder + Destiny Spinner: Elder untaps Geier Reach (animated creature-land)';
-                } else if ((onField('Wirewood Symbiote') || inHand('wirewood_symbiote')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Wirewood Symbiote + Destiny Spinner: return Elf → untap Geier Reach (animated creature-land)';
-                }
-
-                if (untapMethod) {
-                  steps.push(`Untap method: ${untapMethod}`);
-                  steps.push('{2}: Activate Geier Reach Sanitarium (hold priority) → Untap Geier Reach → Repeat to mill entire library');
-                } else {
-                  steps.push('(Need untap for Geier Reach Sanitarium: Magus of the Candelabra, Woodcaller+Temur, Scryb Ranger+Ashaya, etc.)');
-                }
               }
             }
           }
