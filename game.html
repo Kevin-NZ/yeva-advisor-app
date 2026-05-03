@@ -147,11 +147,15 @@
     <div class="hud-block" style="align-items:flex-end;min-width:52px;">
       <span class="hud-label">WAVE</span>
       <span class="hud-value" id="hud-wave">1</span>
-      <span id="hud-sound" style="font-size:11px;cursor:pointer;opacity:0.6;" onclick="toggleMute()">🔊</span>
+      <div style="display:flex;gap:5px;align-items:center;">
+        <span id="hud-sound" style="font-size:11px;cursor:pointer;opacity:0.6;" onclick="toggleMute()">🔊</span>
+        <span id="hud-autofire" title="Toggle Auto-fire (F)" style="font-size:11px;cursor:pointer;opacity:0.4;" onclick="toggleAutoFire()">🔁</span>
+      </div>
     </div>
   </div>
 
   <canvas id="game-canvas"></canvas>
+  <div id="combo-display" style="position:absolute;top:52px;left:50%;transform:translateX(-50%);font-family:'Cinzel',serif;font-size:13px;font-weight:600;color:#f4d03f;letter-spacing:0.1em;text-shadow:0 0 12px rgba(244,208,63,0.7);opacity:0;transition:opacity 0.3s;pointer-events:none;z-index:12;"></div>
   <div id="wave-announce"></div>
 
   <!-- Wave card overlay -->
@@ -183,8 +187,10 @@
       <button class="diff-btn hard" data-diff="hard">COMMANDER</button>
     </div>
     <button class="btn" id="btn-start">CAST YOUR SPELLS →</button>
-    <p class="ctrl-hint">← → / A D — move &nbsp;·&nbsp; SPACE / click — shoot<br>Q — Flash Shot (3 arrows) &nbsp;·&nbsp; E — Natural Order (clears bottom row)<br>S — mute &nbsp;·&nbsp; ESC — pause</p>
+    <button class="btn ghost" id="btn-survival" style="margin-top:4px;">⚔ SURVIVAL MODE →</button>
+    <p class="ctrl-hint">← → / A D — move &nbsp;·&nbsp; SPACE / click — shoot<br>Q — Flash Shot (3 arrows) &nbsp;·&nbsp; E — Natural Order (clears bottom row)<br>F — toggle auto-fire &nbsp;·&nbsp; S — mute &nbsp;·&nbsp; ESC — pause</p>
     <p class="flavor">"Nature does not ask permission."</p>
+    <p style="font-size:8px;color:var(--text-dim);opacity:0.3;margin-top:8px;letter-spacing:0.12em;">⌨ there is a secret word of power…</p>
   </div>
 
   <!-- GAME OVER -->
@@ -195,6 +201,7 @@
     <div class="score-big" id="go-score">0</div>
     <div class="score-lbl">MANA EARNED</div>
     <button class="btn" id="btn-restart">RESHUFFLE & RETRY →</button>
+    <button class="btn ghost" id="btn-restart-survival" style="margin-top:4px;">⚔ TRY SURVIVAL →</button>
     <p class="flavor">"Even the tallest forest falls in time."</p>
   </div>
 
@@ -205,6 +212,7 @@
     <div class="score-big" id="win-score">0</div>
     <div class="score-lbl">FINAL MANA POOL</div>
     <button class="btn" id="btn-win-restart">PLAY AGAIN →</button>
+    <button class="btn ghost" id="btn-win-survival" style="margin-top:4px;">⚔ SURVIVE FOREVER →</button>
     <p class="flavor">"Tap. Untap. Loop. Win."</p>
   </div>
 
@@ -262,6 +270,14 @@ let flashCD=0, bombCD=0;
 let pxLayers=[], bgStars=[];
 let mysteryTimer=1200, diverTimer=400;
 
+// New state
+let powerups=[];
+let combo=0, comboTimer=0, comboDisplay=0;
+let autoFire=false;
+let autoFireTimer=0;
+let survivalMode=false;
+let speedBoost=0; // frames remaining of bullet speed boost
+
 // ── ENEMY TYPES ───────────────────────────────────────────────────────────────
 const ET={
   red:  {color:'#c0392b',glow:'#e74c3c',pts:10, shoot:true, bColor:'#e74c3c',hp:1,sym:'R',sColor:'#ff8888'},
@@ -290,6 +306,7 @@ function initGame(){
   shake={x:0,y:0,power:0};
   waveDone=false; wavePaused=false;
   mysteryTimer=1200; diverTimer=400;
+  powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
 }
@@ -432,10 +449,11 @@ function spawnWave(wNum,animate){
   const sp=Math.min(W/(cols+1),85),sx=W/2-(sp*(cols-1))/2;
   rows.forEach((row,ri)=>row.forEach((type,ci)=>{
     const t=ET[type],ty=60+ri*58;
-    // All rows start just above the top of the screen, staggered by only 20px
-    // so they all arrive quickly rather than deep rows starting far off-screen
-    enemies.push({type,x:sx+ci*sp,y:animate?-20-ri*20:ty,ty,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:animate,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty});
+    enemies.push({type,x:sx+ci*sp,y:animate?-20-ri*20:ty,ty,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:animate,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty,carrier:false});
   }));
+  // Pick one random enemy from the top row as the sole powerup carrier
+  const topRow=enemies.filter(e=>e.ty===60);
+  if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
   eShootTimer=80; diverTimer=400;
 }
 
@@ -603,6 +621,14 @@ function drawEnemy(e,ts){
   ctx.filter='none';
   if(e.mhp>1){const bw=e.w,fr=e.hp/e.mhp;ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-bw/2,r+4,bw,4);ctx.fillStyle=fr>0.5?'#4a9e4a':'#e74c3c';ctx.fillRect(-bw/2,r+4,bw*fr,4);}
   ctx.fillStyle=tp.sColor;ctx.font=`bold 11px 'Cinzel',serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(tp.sym,0,r*0.25);
+  // Carrier indicator — small pulsing gem beneath the enemy
+  if(e.carrier){
+    const cp=0.6+Math.sin(ts*0.008+e.phase)*0.4;
+    ctx.globalAlpha=cp;
+    ctx.fillStyle='#f4d03f';ctx.shadowColor='#f4d03f';ctx.shadowBlur=8;
+    ctx.beginPath();ctx.moveTo(0,r+12);ctx.lineTo(4,r+8);ctx.lineTo(0,r+4);ctx.lineTo(-4,r+8);ctx.closePath();ctx.fill();
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+  }
   ctx.restore();
 }
 
@@ -674,6 +700,174 @@ function drawBullet(b){
   ctx.restore();
 }
 function drawParticle(p){ctx.globalAlpha=p.life/p.mLife;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r*(p.life/p.mLife),0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+// ── POWERUPS ─────────────────────────────────────────────────────────────────
+const PU_TYPES = {
+  life:  { color:'#e74c3c', glow:'#ff6b6b', label:'♥', desc:'EXTRA LIFE' },
+  speed: { color:'#f4d03f', glow:'#ffe066', label:'⚡', desc:'SPEED BOOST' },
+};
+
+function spawnPowerup(x, y) {
+  const maxLives = DIFF[difficulty].lives;
+  // Weight: prefer speed if at full lives; prefer life if low
+  const wantLife = lives < maxLives ? 0.65 : 0.2;
+  const type = Math.random() < wantLife ? 'life' : 'speed';
+  powerups.push({ x, y, type, vy: 1.8, life: 420, mLife: 420, pulse: Math.random()*Math.PI*2 });
+}
+
+function drawPowerup(p) {
+  const t = PU_TYPES[p.type];
+  const fade = p.life < 80 ? p.life/80 : 1;
+  const pulse = 1 + Math.sin(Date.now()*0.007 + p.pulse)*0.1;
+  ctx.save();
+  ctx.globalAlpha = fade;
+  ctx.translate(p.x, p.y);
+  ctx.scale(pulse, pulse);
+  // Glow ring
+  ctx.shadowColor = t.glow; ctx.shadowBlur = 18;
+  ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2);
+  ctx.fillStyle = 'rgba(10,20,10,0.75)'; ctx.fill();
+  ctx.strokeStyle = t.color; ctx.lineWidth = 2;
+  ctx.stroke();
+  // Rotating outer ring
+  ctx.rotate(Date.now()*0.002);
+  ctx.setLineDash([4,4]);
+  ctx.strokeStyle = t.glow; ctx.lineWidth = 1; ctx.globalAlpha = fade*0.5;
+  ctx.beginPath(); ctx.arc(0,0,16,0,Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.rotate(-Date.now()*0.002);
+  // Label
+  ctx.globalAlpha = fade;
+  ctx.shadowBlur = 0;
+  ctx.font = 'bold 14px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = t.glow;
+  ctx.fillText(t.label, 0, 1);
+  ctx.restore();
+}
+
+function updatePowerups() {
+  for(let i=powerups.length-1; i>=0; i--) {
+    const p = powerups[i];
+    // Accelerate downward like gravity, cap at 4px/frame
+    p.vy = Math.min(p.vy + 0.08, 4.0);
+    p.y += p.vy;
+    p.life--;
+    // Remove if it falls below the ground line or expires
+    if(p.life <= 0 || p.y > groundY + 20) { powerups.splice(i,1); continue; }
+    // Check player collect — slightly generous hitbox
+    if(player && Math.abs(p.x-player.x)<28 && Math.abs(p.y-player.y)<32) {
+      collectPowerup(p); powerups.splice(i,1); continue;
+    }
+  }
+}
+
+function collectPowerup(p) {
+  const t = PU_TYPES[p.type];
+  spawnPx(p.x, p.y, t.glow, 20);
+  if(p.type === 'life') {
+    lives = Math.min(lives+1, DIFF[difficulty].lives+2);
+    updateHUD();
+    sndVictory();
+    particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:t.glow,life:70,mLife:70,text:'♥ +LIFE'});
+  } else if(p.type === 'speed') {
+    speedBoost = 420; // 7 seconds at 60fps
+    sndMystery();
+    particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:t.glow,life:70,mLife:70,text:'⚡ HASTE'});
+  }
+  trigShake(4);
+}
+
+// ── COMBO SYSTEM ─────────────────────────────────────────────────────────────
+function addCombo() {
+  combo++;
+  comboTimer = 180; // 3s window
+  if(combo >= 3) {
+    const el = document.getElementById('combo-display');
+    const mult = getComboMult();
+    el.textContent = `✦ ${combo}× COMBO  ×${mult} MANA ✦`;
+    el.style.opacity = '1';
+    comboDisplay = 90;
+  }
+}
+
+function breakCombo() {
+  combo = 0; comboTimer = 0;
+}
+
+function getComboMult() {
+  if(combo >= 15) return 4;
+  if(combo >= 10) return 3;
+  if(combo >=  5) return 2;
+  return 1;
+}
+
+function updateCombo() {
+  if(comboTimer > 0) { comboTimer--; if(comboTimer === 0) breakCombo(); }
+  if(comboDisplay > 0) {
+    comboDisplay--;
+    if(comboDisplay === 0) {
+      const el = document.getElementById('combo-display');
+      el.style.opacity = '0';
+    }
+  }
+  // Speed boost countdown
+  if(speedBoost > 0) speedBoost--;
+}
+
+// ── AUTO-FIRE ─────────────────────────────────────────────────────────────────
+function toggleAutoFire() {
+  autoFire = !autoFire;
+  const el = document.getElementById('hud-autofire');
+  el.style.opacity = autoFire ? '1' : '0.4';
+  el.title = autoFire ? 'Auto-fire ON (F)' : 'Auto-fire OFF (F)';
+}
+
+// ── SURVIVAL MODE ─────────────────────────────────────────────────────────────
+function startSurvival() {
+  survivalMode = true;
+  show(null); state='play'; resize(); initAudio(); marchPitch=0;
+  // Full reset but survivalMode stays true
+  const D=DIFF[difficulty];
+  groundY=Math.min(H - 70, H * 0.88); score=0; lives=D.lives; wave=1;
+  bullets=[]; eBullets=[]; particles=[]; barriers=[]; enemies=[]; mysteryStar=null; homingMissiles=[];
+  flashCD=0; bombCD=0; shootCD=0; eShootTimer=60;
+  formation={dirX:1,tickTimer:0,dropQ:false};
+  shake={x:0,y:0,power:0};
+  waveDone=false; wavePaused=false;
+  mysteryTimer=1200; diverTimer=400;
+  powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
+  initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
+  showWaveCard(1,()=>spawnWave(1,true));
+  lastTime=performance.now(); frameId=requestAnimationFrame(loop);
+}
+
+function spawnSurvivalWave(wNum) {
+  // Procedurally generate a wave based on wave number
+  enemies=[];
+  const types=['red','blue','black','white'];
+  const numRows = Math.min(2+Math.floor(wNum/2), 5);
+  const numCols = Math.min(3+Math.floor(wNum/3), 6);
+  const rows=[];
+  for(let r=0; r<numRows; r++) {
+    const row=[];
+    for(let c=0; c<numCols; c++) {
+      // Later waves include more dangerous types
+      const pool = wNum < 3 ? ['red','blue'] :
+                   wNum < 5 ? ['red','blue','black'] : types;
+      row.push(pool[Math.floor(Math.random()*pool.length)]);
+    }
+    rows.push(row);
+  }
+  const sp=Math.min(W/(numCols+1),85), sx=W/2-(sp*(numCols-1))/2;
+  rows.forEach((row,ri)=>row.forEach((type,ci)=>{
+    const t=ET[type], ty=60+ri*58;
+    enemies.push({type,x:sx+ci*sp,y:-20-ri*20,ty,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:true,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty,carrier:false});
+  }));
+  // Pick one random enemy from the top row as the sole powerup carrier
+  const topRow=enemies.filter(e=>e.ty===60);
+  if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+  eShootTimer=80; diverTimer=400;
+}
+
 function drawCrosshair(){
   if(mouseX===null||!player) return;
   ctx.strokeStyle='rgba(142,216,142,0.32)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(mouseX,0);ctx.lineTo(mouseX,H);ctx.stroke();ctx.setLineDash([]);
@@ -835,7 +1029,13 @@ function updateHomingMissiles(){
     }
   }
 }
-function shoot(){if(shootCD>0)return;bullets.push({x:player.x+6,y:player.y-58,vy:-9,vx:0,player:true});shootCD=14;sndShoot();}
+function shoot(){
+  const cd = speedBoost>0 ? 6 : 14;
+  if(shootCD>0)return;
+  const spd = speedBoost>0 ? 13 : 9;
+  bullets.push({x:player.x+6,y:player.y-58,vy:-spd,vx:0,player:true,flash:speedBoost>0});
+  shootCD=cd;sndShoot();
+}
 
 // ── MYSTERY STAR ──────────────────────────────────────────────────────────────
 function updateMystery(){
@@ -966,7 +1166,16 @@ function moveBullets(){
       const e=enemies[j];if(e.dead||e.shield)continue;
       if(Math.abs(b.x-e.x)<e.w*0.6&&Math.abs(b.y-e.y)<e.h*0.6){
         e.hp--;e.flash=6;hit=true;
-        if(e.hp<=0){e.dead=true;const tp=ET[e.type];spawnPx(e.x,e.y,tp.glow,15);spawnScore(e.x,e.y,tp.pts+wave*2);score+=tp.pts+wave*2;updateHUD();sndKill(e.type);trigShake(3);}
+        if(e.hp<=0){
+          e.dead=true;const tp=ET[e.type];
+          addCombo();
+          const mult=getComboMult();
+          const pts=(tp.pts+wave*2)*mult;
+          spawnPx(e.x,e.y,tp.glow,15);
+          spawnScore(e.x,e.y,pts);
+          score+=pts;updateHUD();sndKill(e.type);trigShake(3);
+          if(e.carrier) spawnPowerup(e.x,e.y);
+        }
         else sndHit();
         break;
       }
@@ -976,7 +1185,7 @@ function moveBullets(){
 }
 
 // ── LOSE LIFE ─────────────────────────────────────────────────────────────────
-function loseLife(){if(player)player.invincible=90;lives--;updateHUD();sndPlayerHit();trigShake(10);if(lives<=0)setTimeout(()=>endGame(false),500);}
+function loseLife(){if(player)player.invincible=90;lives--;updateHUD();sndPlayerHit();trigShake(18);breakCombo();if(lives<=0)setTimeout(()=>endGame(false),500);}
 
 // ── WAVE CLEAR ────────────────────────────────────────────────────────────────
 function checkWaveClear(){
@@ -984,8 +1193,13 @@ function checkWaveClear(){
   if(!waveDone&&!wavePaused&&enemies.length&&enemies.every(e=>e.dead)){
     waveDone=true; waveTimer=50;
     const el=document.getElementById('wave-announce');
-    el.textContent=wave<MAX_WAVES?'WAVE CLEAR! +100 MANA':'ALL WAVES CLEARED!';
-    if(wave<MAX_WAVES){score+=100;updateHUD();}
+    if(survivalMode){
+      el.textContent=`WAVE ${wave} SURVIVED! +${100+wave*20} MANA`;
+      score+=100+wave*20;updateHUD();
+    } else {
+      el.textContent=wave<MAX_WAVES?'WAVE CLEAR! +100 MANA':'ALL WAVES CLEARED!';
+      if(wave<MAX_WAVES){score+=100;updateHUD();}
+    }
     el.style.opacity='1'; setTimeout(()=>{el.style.opacity='0';},1400);
   }
   // Countdown runs always (even while card is showing) so transition isn't blocked
@@ -993,12 +1207,24 @@ function checkWaveClear(){
     waveTimer--;
     if(waveTimer<=0){
       waveDone=false; wave++;
-      if(wave>MAX_WAVES){ endGame(true); }
+      if(!survivalMode && wave>MAX_WAVES){ endGame(true); }
       else{
         formation={dirX:1,tickTimer:0,dropQ:false};
         bullets=[]; eBullets=[]; enemies=[]; homingMissiles=[];
         spawnBarriers(); updateHUD();
-        showWaveCard(wave,()=>spawnWave(wave,true));
+        if(survivalMode){
+          // Survival: show a wave card for first 6 waves, then just announce
+          if(wave<=MAX_WAVES){
+            showWaveCard(wave,()=>spawnSurvivalWave(wave));
+          } else {
+            const el2=document.getElementById('wave-announce');
+            el2.textContent=`WAVE ${wave} — THE SIEGE INTENSIFIES`;
+            el2.style.opacity='1'; setTimeout(()=>{el2.style.opacity='0';},1800);
+            setTimeout(()=>spawnSurvivalWave(wave), 1200);
+          }
+        } else {
+          showWaveCard(wave,()=>spawnWave(wave,true));
+        }
       }
     }
   }
@@ -1012,6 +1238,8 @@ function handleInput(dt){
   if(keys['ArrowRight']||keys['d']||keys['D'])player.x=Math.min(W-18,player.x+spd);
   if(mouseX!==null){const d=mouseX-player.x;player.x+=d*0.12;player.x=Math.max(18,Math.min(W-18,player.x));}
   if((keys[' ']||keys['Space'])&&!wavePaused)shoot();
+  // Auto-fire
+  if(autoFire&&!wavePaused){autoFireTimer--;if(autoFireTimer<=0){shoot();autoFireTimer=speedBoost>0?7:14;}}
   if(player.invincible>0)player.invincible--;
   if(shootCD>0)shootCD--;
 }
@@ -1019,9 +1247,14 @@ function handleInput(dt){
 // ── HUD ───────────────────────────────────────────────────────────────────────
 function updateHUD(){
   document.getElementById('hud-score').textContent=score.toLocaleString();
-  document.getElementById('hud-wave').textContent=wave;
+  document.getElementById('hud-wave').textContent=survivalMode?`∞${wave}`:wave;
   const lc=document.getElementById('hud-lives');lc.innerHTML='';
   for(let i=0;i<Math.max(lives,DIFF[difficulty].lives);i++){const p=document.createElement('div');p.className='life-pip'+(i>=lives?' dead':'');lc.appendChild(p);}
+  // Speed boost pip
+  let sb=document.getElementById('speed-pip');
+  if(speedBoost>0){
+    if(!sb){sb=document.createElement('div');sb.id='speed-pip';sb.style.cssText='width:9px;height:9px;border-radius:50%;background:#f4d03f;box-shadow:0 0 6px #f4d03f;margin-left:4px;';lc.appendChild(sb);}
+  } else if(sb) sb.remove();
 }
 
 // ── MAIN LOOP ─────────────────────────────────────────────────────────────────
@@ -1049,6 +1282,8 @@ function loop(ts){
     handleInput(dt);moveEnemies();moveEBullets();moveBullets();
     updateHomingMissiles();
     updateMystery();updateDivers();updateAbUI();
+    updatePowerups(); updateCombo();
+    powerups.forEach(p=>drawPowerup(p));
   } else {
     if(enemies.length) enemies.forEach(e=>drawEnemy(e,ts));
     drawYeva();
@@ -1059,8 +1294,23 @@ function loop(ts){
 
 // ── SCREENS ───────────────────────────────────────────────────────────────────
 function show(id){['screen-start','screen-gameover','screen-win','screen-pause'].forEach(s=>{document.getElementById(s).style.display=s===id?'flex':'none';});}
-function startGame(){show(null);state='play';resize();initAudio();marchPitch=0;initGame();lastTime=performance.now();frameId=requestAnimationFrame(loop);}
-function endGame(win){state='end';cancelAnimationFrame(frameId);if(win){document.getElementById('win-score').textContent=score.toLocaleString();show('screen-win');sndVictory();}else{document.getElementById('go-score').textContent=score.toLocaleString();document.getElementById('go-wave').textContent=`FELL ON WAVE ${wave}`;show('screen-gameover');sndGameOver();}}
+function startGame(){show(null);state='play';resize();initAudio();marchPitch=0;survivalMode=false;initGame();lastTime=performance.now();frameId=requestAnimationFrame(loop);}
+function endGame(win){
+  state='end';cancelAnimationFrame(frameId);
+  if(win&&!survivalMode){
+    document.getElementById('win-score').textContent=score.toLocaleString();
+    show('screen-win');sndVictory();
+  } else {
+    document.getElementById('go-score').textContent=score.toLocaleString();
+    if(survivalMode){
+      document.getElementById('go-wave').textContent=`SURVIVED ${wave-1} WAVE${wave>2?'S':''}`;
+    } else {
+      document.getElementById('go-wave').textContent=`FELL ON WAVE ${wave}`;
+    }
+    show('screen-gameover');sndGameOver();
+  }
+  survivalMode=false;
+}
 function pauseGame(){if(state==='play'){state='pause';cancelAnimationFrame(frameId);show('screen-pause');}else if(state==='pause'){state='play';show(null);lastTime=performance.now();frameId=requestAnimationFrame(loop);}}
 
 // ── AUDIO ─────────────────────────────────────────────────────────────────────
@@ -1086,10 +1336,13 @@ function sndMarch(){if(!AC)return;const g=AC.createGain();g.connect(MG);const o=
 
 // ── EVENT LISTENERS ───────────────────────────────────────────────────────────
 document.getElementById('btn-start').addEventListener('click',startGame);
+document.getElementById('btn-survival').addEventListener('click',()=>{initAudio();startSurvival();});
 document.getElementById('btn-restart').addEventListener('click',startGame);
+document.getElementById('btn-restart-survival').addEventListener('click',()=>{initAudio();startSurvival();});
 document.getElementById('btn-win-restart').addEventListener('click',startGame);
+document.getElementById('btn-win-survival').addEventListener('click',()=>{initAudio();startSurvival();});
 document.getElementById('btn-resume').addEventListener('click',pauseGame);
-document.getElementById('btn-quit').addEventListener('click',()=>{state='end';cancelAnimationFrame(frameId);show('screen-start');});
+document.getElementById('btn-quit').addEventListener('click',()=>{state='end';cancelAnimationFrame(frameId);survivalMode=false;show('screen-start');});
 
 // Cheat code: type "yeva" on the start screen to unlock 5 lives
 let cheatBuffer='';
@@ -1098,6 +1351,7 @@ document.addEventListener('keydown',e=>{
   keys[e.key]=true;
   if(e.key==='Escape')pauseGame();
   if(e.key==='s'||e.key==='S')toggleMute();
+  if(e.key==='f'||e.key==='F')toggleAutoFire();
   if((e.key==='q'||e.key==='Q')&&state==='play')useFlash();
   if((e.key==='e'||e.key==='E')&&state==='play')useBomb();
   if(e.key===' ')e.preventDefault();
@@ -1112,6 +1366,9 @@ document.addEventListener('keydown',e=>{
       const t=document.getElementById('title-hud');
       t.style.color='#f4d03f';
       t.textContent='✦ YEVA BLESSED ✦';
+      // Reveal the hint text permanently
+      const hint=document.querySelector('.flavor');
+      if(hint) hint.textContent='"The forest remembers. 5 lives granted."';
       setTimeout(()=>{t.style.color='';t.textContent="YEVA'S WRATH";},2000);
     }
   }
