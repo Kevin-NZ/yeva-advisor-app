@@ -157,6 +157,17 @@
   <canvas id="game-canvas"></canvas>
   <div id="combo-display" style="position:absolute;top:52px;left:50%;transform:translateX(-50%);font-family:'Cinzel',serif;font-size:13px;font-weight:600;color:#f4d03f;letter-spacing:0.1em;text-shadow:0 0 12px rgba(244,208,63,0.7);opacity:0;transition:opacity 0.3s;pointer-events:none;z-index:12;"></div>
   <div id="wave-announce"></div>
+  <!-- Wave tally overlay -->
+  <div id="wave-tally" style="display:none;position:absolute;inset:0;background:rgba(5,10,5,0.88);z-index:19;flex-direction:column;align-items:center;justify-content:center;font-family:'Cinzel',serif;">
+    <div id="wt-title" style="font-size:13px;letter-spacing:0.18em;color:var(--text-dim);margin-bottom:6px;"></div>
+    <div id="wt-kills" style="font-size:28px;font-weight:900;color:var(--green2);margin-bottom:2px;"></div>
+    <div style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);margin-bottom:10px;">ENEMIES SLAIN</div>
+    <div id="wt-combo" style="font-size:14px;color:var(--gold);margin-bottom:2px;"></div>
+    <div id="wt-bonus" style="font-size:20px;font-weight:700;color:var(--gold);margin-bottom:4px;"></div>
+    <div id="wt-bonus-lbl" style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);margin-bottom:14px;"></div>
+    <div id="wt-total" style="font-size:32px;font-weight:900;color:var(--green3);"></div>
+    <div style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);margin-top:2px;">TOTAL MANA</div>
+  </div>
 
   <!-- Wave card overlay -->
   <div id="wave-card">
@@ -190,7 +201,8 @@
     <button class="btn ghost" id="btn-survival" style="margin-top:4px;">⚔ SURVIVAL MODE →</button>
     <p class="ctrl-hint">← → / A D — move &nbsp;·&nbsp; SPACE / click — shoot<br>Q — Flash Shot (3 arrows) &nbsp;·&nbsp; E — Natural Order (clears bottom row)<br>F — toggle auto-fire &nbsp;·&nbsp; S — mute &nbsp;·&nbsp; ESC — pause</p>
     <p class="flavor">"Nature does not ask permission."</p>
-    <p style="font-size:8px;color:var(--text-dim);opacity:0.3;margin-top:8px;letter-spacing:0.12em;">⌨ there is a secret word of power…</p>
+    <p id="start-hiscore" style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);opacity:0.5;margin-top:8px;"></p>
+    <p style="font-size:8px;color:var(--text-dim);opacity:0.3;margin-top:4px;letter-spacing:0.12em;">⌨ there is a secret word of power…</p>
   </div>
 
   <!-- GAME OVER -->
@@ -200,6 +212,7 @@
     <p class="sub">Yeva could not hold the line.</p>
     <div class="score-big" id="go-score">0</div>
     <div class="score-lbl">MANA EARNED</div>
+    <div id="go-hiscore" style="font-size:10px;letter-spacing:0.14em;color:var(--gold);opacity:0.7;margin-bottom:10px;"></div>
     <button class="btn" id="btn-restart">RESHUFFLE & RETRY →</button>
     <button class="btn ghost" id="btn-restart-survival" style="margin-top:4px;">⚔ TRY SURVIVAL →</button>
     <p class="flavor">"Even the tallest forest falls in time."</p>
@@ -211,6 +224,7 @@
     <p class="sub">The combo is complete. Yeva reigns supreme.</p>
     <div class="score-big" id="win-score">0</div>
     <div class="score-lbl">FINAL MANA POOL</div>
+    <div id="win-hiscore" style="font-size:10px;letter-spacing:0.14em;color:var(--gold);opacity:0.7;margin-bottom:10px;"></div>
     <button class="btn" id="btn-win-restart">PLAY AGAIN →</button>
     <button class="btn ghost" id="btn-win-survival" style="margin-top:4px;">⚔ SURVIVE FOREVER →</button>
     <p class="flavor">"Tap. Untap. Loop. Win."</p>
@@ -272,11 +286,22 @@ let mysteryTimer=1200, diverTimer=400;
 
 // New state
 let powerups=[];
-let combo=0, comboTimer=0, comboDisplay=0;
+let combo=0, comboTimer=0, comboDisplay=0, peakCombo=0;
 let autoFire=false;
 let autoFireTimer=0;
 let survivalMode=false;
 let speedBoost=0; // frames remaining of bullet speed boost
+let waveKills=0, wavePeakCombo=0; // per-wave tally stats
+let highScore=parseInt(localStorage.getItem('yevaHiScore')||'0');
+
+function updateHiScore(){
+  if(score>highScore){ highScore=score; try{localStorage.setItem('yevaHiScore',highScore);}catch(e){} }
+}
+function showHiScore(){
+  const hs=highScore>0?`BEST: ${highScore.toLocaleString()} MANA`:'';
+  const sel=document.getElementById('start-hiscore');
+  if(sel) sel.textContent=hs;
+}
 
 // ── ENEMY TYPES ───────────────────────────────────────────────────────────────
 const ET={
@@ -307,6 +332,7 @@ function initGame(){
   waveDone=false; wavePaused=false;
   mysteryTimer=1200; diverTimer=400;
   powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
+  peakCombo=0; waveKills=0; wavePeakCombo=0;
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
 }
@@ -449,11 +475,13 @@ function spawnWave(wNum,animate){
   const sp=Math.min(W/(cols+1),85),sx=W/2-(sp*(cols-1))/2;
   rows.forEach((row,ri)=>row.forEach((type,ci)=>{
     const t=ET[type],ty=60+ri*58;
-    enemies.push({type,x:sx+ci*sp,y:animate?-20-ri*20:ty,ty,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:animate,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty,carrier:false});
+    enemies.push({type,x:sx+ci*sp,y:animate?-20-ri*20:ty,ty,startY:animate?-20-ri*20:ty,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:animate,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty,carrier:false});
   }));
-  // Pick one random enemy from the top row as the sole powerup carrier
-  const topRow=enemies.filter(e=>e.ty===60);
-  if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+  // Pick one random enemy from the top row as the sole powerup carrier (skip wave 1)
+  if(wNum > 1){
+    const topRow=enemies.filter(e=>e.ty===60);
+    if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+  }
   eShootTimer=80; diverTimer=400;
 }
 
@@ -779,6 +807,9 @@ function collectPowerup(p) {
 // ── COMBO SYSTEM ─────────────────────────────────────────────────────────────
 function addCombo() {
   combo++;
+  waveKills++;
+  if(combo > wavePeakCombo) wavePeakCombo = combo;
+  if(combo > peakCombo) peakCombo = combo;
   comboTimer = 180; // 3s window
   if(combo >= 3) {
     const el = document.getElementById('combo-display');
@@ -835,6 +866,7 @@ function startSurvival() {
   waveDone=false; wavePaused=false;
   mysteryTimer=1200; diverTimer=400;
   powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
+  peakCombo=0; waveKills=0; wavePeakCombo=0;
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
   lastTime=performance.now(); frameId=requestAnimationFrame(loop);
@@ -860,11 +892,13 @@ function spawnSurvivalWave(wNum) {
   const sp=Math.min(W/(numCols+1),85), sx=W/2-(sp*(numCols-1))/2;
   rows.forEach((row,ri)=>row.forEach((type,ci)=>{
     const t=ET[type], ty=60+ri*58;
-    enemies.push({type,x:sx+ci*sp,y:-20-ri*20,ty,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:true,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty,carrier:false});
+    enemies.push({type,x:sx+ci*sp,y:-20-ri*20,ty,startY:-20-ri*20,w:40,h:40,hp:t.hp,mhp:t.hp,phase:Math.random()*Math.PI*2,shield:t.shield||false,shTimer:0,shCD:0,dead:false,flash:0,entering:true,diver:false,diverPhase:0,homeX:sx+ci*sp,homeY:ty,carrier:false});
   }));
-  // Pick one random enemy from the top row as the sole powerup carrier
-  const topRow=enemies.filter(e=>e.ty===60);
-  if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+  // Pick one random enemy from the top row as the sole powerup carrier (skip wave 1)
+  if(wNum > 1){
+    const topRow=enemies.filter(e=>e.ty===60);
+    if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+  }
   eShootTimer=80; diverTimer=400;
 }
 
@@ -943,10 +977,19 @@ function drawHomingMissile(m){
   ctx.save();
   ctx.globalAlpha = skimAlpha;
   m.trail.forEach((pt,i)=>{
-    const a=(i/m.trail.length)*0.35;
-    ctx.fillStyle=`rgba(255,255,220,${a})`;
-    ctx.beginPath(); ctx.arc(pt.x,pt.y,2.5*(i/m.trail.length),0,Math.PI*2); ctx.fill();
+    const frac = i/m.trail.length;
+    const a = frac * 0.55;
+    const r = 1 + frac * 3;
+    // Colour shifts: white core → pale blue edge
+    const rC = Math.round(180 + frac*75);
+    const gC = Math.round(200 + frac*55);
+    const bC = 255;
+    ctx.fillStyle=`rgba(${rC},${gC},${bC},${a})`;
+    ctx.shadowColor=`rgba(140,200,255,${a*0.7})`;
+    ctx.shadowBlur = frac * 8;
+    ctx.beginPath(); ctx.arc(pt.x,pt.y,r,0,Math.PI*2); ctx.fill();
   });
+  ctx.shadowBlur = 0;
   // Body — small glowing diamond
   ctx.translate(m.x,m.y);
   const angle=Math.atan2(m.vy,m.vx)+Math.PI/2;
@@ -1083,7 +1126,16 @@ function moveEnemies(){
   if(!alive.length) return;
   let allIn=true;
   alive.forEach(e=>{
-    if(e.entering){e.y=Math.min(e.ty,e.y+7+wave*0.5);if(e.y>=e.ty)e.entering=false;else allIn=false;}
+    if(e.entering){
+      if(e.enterT === undefined) e.enterT = 0;
+      e.enterT = Math.min(e.enterT + 0.07, 1);
+      // Elastic ease-out: overshoot then settle
+      const t = e.enterT;
+      const elastic = t === 1 ? 1 : 1 - Math.pow(2, -10*t) * Math.cos(t*10*Math.PI*0.4);
+      e.y = e.startY + (e.ty - e.startY) * elastic;
+      if(e.enterT >= 1){ e.y = e.ty; e.entering = false; }
+      else allIn = false;
+    }
     if(e.flash>0)e.flash--;
     if(ET[e.type].shield){
       if(!e.shield){e.shCD++;if(e.shCD>=D.shRegen){e.shield=true;e.shCD=0;}}
@@ -1094,7 +1146,9 @@ function moveEnemies(){
   if(!allIn) return;
 
   const liveF=alive.filter(e=>!e.diver),frac=liveF.length/enemies.length;
-  const tick=Math.round(D.tickMin+(D.tickBase-D.tickMin)*frac);
+  // Speed scales with: fewer enemies alive (classic Space Invaders), AND higher wave number
+  const waveMult = 1 + (wave-1)*0.12; // each wave is 12% faster
+  const tick=Math.round((D.tickMin+(D.tickBase-D.tickMin)*frac)/waveMult);
   formation.tickTimer--;
   if(formation.tickTimer<=0){
     formation.tickTimer=tick;
@@ -1187,43 +1241,68 @@ function moveBullets(){
 // ── LOSE LIFE ─────────────────────────────────────────────────────────────────
 function loseLife(){if(player)player.invincible=90;lives--;updateHUD();sndPlayerHit();trigShake(18);breakCombo();if(lives<=0)setTimeout(()=>endGame(false),500);}
 
+// ── WAVE TALLY ────────────────────────────────────────────────────────────────
+function showWaveTally(waveNum, bonus, cb) {
+  const tally = document.getElementById('wave-tally');
+  document.getElementById('wt-title').textContent = `WAVE ${waveNum} CLEARED`;
+  document.getElementById('wt-kills').textContent = waveKills;
+  const comboStr = wavePeakCombo >= 3 ? `PEAK COMBO ×${wavePeakCombo}` : '';
+  document.getElementById('wt-combo').textContent = comboStr;
+  document.getElementById('wt-bonus').textContent = `+${bonus.toLocaleString()}`;
+  document.getElementById('wt-bonus-lbl').textContent = 'WAVE BONUS';
+  document.getElementById('wt-total').textContent = score.toLocaleString();
+  tally.style.display = 'flex';
+  // Reset per-wave stats for next wave
+  waveKills = 0; wavePeakCombo = 0;
+  setTimeout(() => {
+    tally.style.display = 'none';
+    cb && cb();
+  }, 2200);
+}
+
 // ── WAVE CLEAR ────────────────────────────────────────────────────────────────
 function checkWaveClear(){
-  // Detect clear — only when enemies exist and none are wavePaused-gated
   if(!waveDone&&!wavePaused&&enemies.length&&enemies.every(e=>e.dead)){
     waveDone=true; waveTimer=50;
-    const el=document.getElementById('wave-announce');
-    if(survivalMode){
-      el.textContent=`WAVE ${wave} SURVIVED! +${100+wave*20} MANA`;
-      score+=100+wave*20;updateHUD();
-    } else {
-      el.textContent=wave<MAX_WAVES?'WAVE CLEAR! +100 MANA':'ALL WAVES CLEARED!';
-      if(wave<MAX_WAVES){score+=100;updateHUD();}
-    }
-    el.style.opacity='1'; setTimeout(()=>{el.style.opacity='0';},1400);
+    sndWaveClear();
   }
-  // Countdown runs always (even while card is showing) so transition isn't blocked
   if(waveDone){
     waveTimer--;
     if(waveTimer<=0){
-      waveDone=false; wave++;
-      if(!survivalMode && wave>MAX_WAVES){ endGame(true); }
-      else{
-        formation={dirX:1,tickTimer:0,dropQ:false};
+      waveDone=false;
+      const clearedWave = wave;
+      wave++;
+      if(!survivalMode && wave>MAX_WAVES){
+        updateHiScore();
+        document.getElementById('win-score').textContent=score.toLocaleString();
+        const wh=document.getElementById('win-hiscore');
+        if(wh) wh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
+        show('screen-win'); state='end'; cancelAnimationFrame(frameId); sndVictory(); showHiScore();
+        survivalMode=false;
+      } else {
+        formation={dirX:Math.random()<0.5?1:-1,tickTimer:0,dropQ:false};
         bullets=[]; eBullets=[]; enemies=[]; homingMissiles=[];
         spawnBarriers(); updateHUD();
+
+        // Wave bonus: base 100, +20 per remaining life, +10 per combo streak
+        const bonus = survivalMode
+          ? 100 + clearedWave*20
+          : 100 + lives*20 + Math.max(0,wavePeakCombo-2)*10;
+        score += bonus; updateHUD(); updateHiScore();
+
         if(survivalMode){
-          // Survival: show a wave card for first 6 waves, then just announce
-          if(wave<=MAX_WAVES){
-            showWaveCard(wave,()=>spawnSurvivalWave(wave));
+          if(clearedWave<=MAX_WAVES){
+            showWaveTally(clearedWave, bonus, ()=>showWaveCard(wave,()=>spawnSurvivalWave(wave)));
           } else {
-            const el2=document.getElementById('wave-announce');
-            el2.textContent=`WAVE ${wave} — THE SIEGE INTENSIFIES`;
-            el2.style.opacity='1'; setTimeout(()=>{el2.style.opacity='0';},1800);
-            setTimeout(()=>spawnSurvivalWave(wave), 1200);
+            showWaveTally(clearedWave, bonus, ()=>{
+              const el2=document.getElementById('wave-announce');
+              el2.textContent=`WAVE ${wave} — THE SIEGE INTENSIFIES`;
+              el2.style.opacity='1'; setTimeout(()=>{el2.style.opacity='0';},1800);
+              setTimeout(()=>spawnSurvivalWave(wave), 1200);
+            });
           }
         } else {
-          showWaveCard(wave,()=>spawnWave(wave,true));
+          showWaveTally(clearedWave, bonus, ()=>showWaveCard(wave,()=>spawnWave(wave,true)));
         }
       }
     }
@@ -1297,11 +1376,16 @@ function show(id){['screen-start','screen-gameover','screen-win','screen-pause']
 function startGame(){show(null);state='play';resize();initAudio();marchPitch=0;survivalMode=false;initGame();lastTime=performance.now();frameId=requestAnimationFrame(loop);}
 function endGame(win){
   state='end';cancelAnimationFrame(frameId);
+  updateHiScore(); showHiScore();
   if(win&&!survivalMode){
     document.getElementById('win-score').textContent=score.toLocaleString();
+    const wh=document.getElementById('win-hiscore');
+    if(wh) wh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
     show('screen-win');sndVictory();
   } else {
     document.getElementById('go-score').textContent=score.toLocaleString();
+    const gh=document.getElementById('go-hiscore');
+    if(gh) gh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
     if(survivalMode){
       document.getElementById('go-wave').textContent=`SURVIVED ${wave-1} WAVE${wave>2?'S':''}`;
     } else {
@@ -1381,7 +1465,10 @@ canvas.addEventListener('touchmove',e=>{e.preventDefault();const r=canvas.getBou
 canvas.addEventListener('touchstart',e=>{e.preventDefault();if(state==='play'&&!wavePaused)shoot();},{passive:false});
 window.addEventListener('resize',()=>{resize();groundY=Math.min(H-70,H*0.88);if(player)player.y=groundY-8;initPX();bgStars=[];});
 
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&state==='play')pauseGame();});
+
 resize();
+showHiScore();
 show('screen-start');
 </script>
 </body>
