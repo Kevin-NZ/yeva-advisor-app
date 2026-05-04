@@ -125,6 +125,7 @@
     <div class="hud-block" style="align-items:center;flex:1;gap:2px;">
       <span id="title-hud">YEVA'S WRATH</span>
       <div class="hud-lives" id="hud-lives"></div>
+      <div id="hud-graveyard" style="font-size:9px;letter-spacing:0.1em;color:var(--text-dim);opacity:0.55;margin-top:1px;"></div>
     </div>
     <div id="hud-abilities">
       <div class="ab-wrap">
@@ -133,7 +134,7 @@
           <div class="ab-dim"    id="ab-q-dim"></div>
           <span class="ab-emoji">⚡</span>
         </div>
-        <span class="ab-key">Q FLASH</span>
+        <span class="ab-key">Q FLASH ⚡kills</span>
       </div>
       <div class="ab-wrap">
         <div class="ab-icon" id="ab-e">
@@ -167,6 +168,7 @@
     <div id="wt-bonus-lbl" style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);margin-bottom:14px;"></div>
     <div id="wt-total" style="font-size:32px;font-weight:900;color:var(--green3);"></div>
     <div style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);margin-top:2px;">TOTAL MANA</div>
+    <div id="wt-flavor" style="font-family:'Crimson Pro',serif;font-style:italic;font-size:11px;color:var(--text-dim);margin-top:14px;max-width:220px;text-align:center;line-height:1.5;opacity:0.75;"></div>
   </div>
 
   <!-- Wave card overlay -->
@@ -199,7 +201,7 @@
     </div>
     <button class="btn" id="btn-start">CAST YOUR SPELLS →</button>
     <button class="btn ghost" id="btn-survival" style="margin-top:4px;">⚔ SURVIVAL MODE →</button>
-    <p class="ctrl-hint">← → / A D — move &nbsp;·&nbsp; SPACE / click — shoot<br>Q — Flash Shot (3 arrows) &nbsp;·&nbsp; E — Natural Order (clears bottom row)<br>F — toggle auto-fire &nbsp;·&nbsp; S — mute &nbsp;·&nbsp; ESC — pause</p>
+    <p class="ctrl-hint">← → / A D — move &nbsp;·&nbsp; SPACE / click — shoot<br>Q — Flash Shot (charges from kills) &nbsp;·&nbsp; E — Natural Order (clears bottom row)<br>F — toggle auto-fire &nbsp;·&nbsp; S — mute &nbsp;·&nbsp; ESC — pause</p>
     <p class="flavor">"Nature does not ask permission."</p>
     <p id="start-hiscore" style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);opacity:0.5;margin-top:8px;"></p>
     <p style="font-size:8px;color:var(--text-dim);opacity:0.3;margin-top:4px;letter-spacing:0.12em;">⌨ there is a secret word of power…</p>
@@ -296,6 +298,8 @@ let waveKills=0, wavePeakCombo=0; // per-wave tally stats
 let highScore=parseInt(localStorage.getItem('yevaHiScore')||'0');
 let flashesCast=0; // for win screen flash counter
 let commanderDamage=0; // life losses from enemies reaching the ground line
+let waveClearLives=0, waveTotalEnemies=0; // for tally flavor
+let graveyard=0; // total creatures sent to graveyard this run
 
 function updateHiScore(){
   if(score>highScore){ highScore=score; try{localStorage.setItem('yevaHiScore',highScore);}catch(e){} }
@@ -314,7 +318,22 @@ const ET={
   white:{color:'#c8c0a8',glow:'#ffffff',pts:12, shoot:false,bColor:'#e8e4d0',hp:1,sym:'W',sColor:'#555544',shield:true, creature:'Kor Skyfisher'},
 };
 
-// ── WAVE CONFIGS ─────────────────────────────────────────────────────────────
+// ── NAMED ENEMY VARIANTS ──────────────────────────────────────────────────────
+// One per wave (wave 2+), telegraphed by larger size, extra HP, and a name plate
+const NAMED_VARIANTS = {
+  red:   [{name:'Krenko, Mob Boss',   hp:3, pts:80, sColor:'#ffaaaa', scale:1.4, flavor:'Tap: Add three Goblin Raiders.'},
+          {name:'Goblin Chieftain',   hp:2, pts:50, sColor:'#ffaaaa', scale:1.25, flavor:'+1/+1 to the horde.'}],
+  blue:  [{name:'Teferi, Time Raveler',hp:3, pts:90, sColor:'#aaddff', scale:1.4, flavor:'Your instants can only be cast on my turn.'},
+          {name:'Merfolk Sovereign',   hp:2, pts:55, sColor:'#aaddff', scale:1.25, flavor:'Islandwalk. Always.'}],
+  black: [{name:'Vampire Nocturnus',  hp:3, pts:100,sColor:'#ddaaff', scale:1.4, flavor:'Flying. +2/+1 if top card is black.'},
+          {name:'Geth, Lord of the Vault',hp:2,pts:60,sColor:'#ddaaff',scale:1.25,flavor:'Mill and reanimate. Repeatedly.'}],
+  white: [{name:'Linvala, Keeper of Silence',hp:3,pts:90,sColor:'#eeeecc',scale:1.4,flavor:'Activated abilities? Not today.'},
+          {name:'Kor Sanctifiers',    hp:2, pts:55, sColor:'#eeeecc', scale:1.25, flavor:'ETB: Destroy target artifact or enchantment.'}],
+};
+function pickNamedVariant(type) {
+  const pool = NAMED_VARIANTS[type] || NAMED_VARIANTS.red;
+  return {...pool[Math.floor(Math.random()*pool.length)]};
+}
 const WC=[
   {rows:[['red','red','red','red','red']], name:'Red Sun Rising',     cost:'{R}',         art:'🔥',  type:'Sorcery — Mountain',  text:'Five Goblin Raiders advance from the peaks. The mountains march at dawn.', flavor:'"The truly powerful need not explain themselves." —Yeva', num:'1/6'},
   {rows:[['red','red','red'],['blue','blue','blue']], name:'Tide & Flame', cost:'{2}{U}{R}', art:'🌊', type:'Sorcery — Coalition', text:'Goblin Raiders and Merfolk Tricksters converge. Blue forces carry 2 toughness.', flavor:'"Nature does not negotiate. It simply wins." —Yeva', num:'2/6'},
@@ -336,7 +355,8 @@ function initGame(){
   mysteryTimer=1200; diverTimer=400;
   powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
   peakCombo=0; waveKills=0; wavePeakCombo=0;
-  flashesCast=0; commanderDamage=0;
+  flashesCast=0; commanderDamage=0; graveyard=0;
+  flashCD=FLASH_MAX; // Flash must be earned from kills
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
 }
@@ -485,11 +505,25 @@ function spawnWave(wNum,animate){
   if(wNum > 1){
     const topRow=enemies.filter(e=>e.ty===60);
     if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+    // Inject one named variant — pick a random non-top-row enemy to become the boss
+    const candidates = enemies.filter(e=>e.ty!==60);
+    const pool = candidates.length ? candidates : enemies;
+    const boss = pool[Math.floor(Math.random()*pool.length)];
+    const variant = pickNamedVariant(boss.type);
+    boss.named=true; boss.variantName=variant.name; boss.variantFlavor=variant.flavor;
+    boss.hp=variant.hp; boss.mhp=variant.hp;
+    boss.pts=variant.pts; boss.sColor=variant.sColor;
+    boss.scale=variant.scale;
+    // Brief announcement
+    setTimeout(()=>{
+      const el=document.getElementById('wave-announce');
+      el.innerHTML=`⚔ ${variant.name} <span style="font-size:10px;opacity:0.6">enters the battlefield</span>`;
+      el.style.opacity='1'; el.style.color='#e74c3c';
+      setTimeout(()=>{el.style.opacity='0';el.style.color='';},2000);
+    }, 400);
   }
   eShootTimer=80; diverTimer=400;
 }
-
-// ── BACKGROUND ────────────────────────────────────────────────────────────────
 function drawBG(ts){
   // Season: waves 1-2 summer green, 3-4 autumn amber, 5-6 near-black with red sky
   const season = wave <= 2 ? 0 : wave <= 4 ? (wave-2)/2 : 1;
@@ -585,7 +619,8 @@ function drawEnemy(e,ts){
   if(e.dead) return;
   const tp=ET[e.type],x=Math.round(e.x),y=Math.round(e.y),r=e.w/2;
   const pulse=Math.sin(ts*0.003+e.phase)*0.06;
-  ctx.save(); ctx.translate(x,y); ctx.scale(1+pulse,1+pulse);
+  const sc = (e.scale||1) * (1+pulse);
+  ctx.save(); ctx.translate(x,y); ctx.scale(sc,sc);
   if(e.flash>0){ctx.filter='brightness(3)';}
   const grd=ctx.createRadialGradient(0,0,r*0.2,0,0,r);
   grd.addColorStop(0,lighten(tp.color,30)); grd.addColorStop(1,tp.color);
@@ -718,6 +753,29 @@ function drawEnemy(e,ts){
     ctx.fillStyle='#f4d03f';ctx.shadowColor='#f4d03f';ctx.shadowBlur=8;
     ctx.beginPath();ctx.moveTo(0,r+12);ctx.lineTo(4,r+8);ctx.lineTo(0,r+4);ctx.lineTo(-4,r+8);ctx.closePath();ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
+  }
+  // Named variant — extra outer glow ring + name plate
+  if(e.named){
+    ctx.shadowColor=tp.glow; ctx.shadowBlur=18;
+    ctx.strokeStyle=tp.glow; ctx.lineWidth=1.5; ctx.globalAlpha=0.55;
+    ctx.beginPath(); ctx.arc(0,0,r*1.55,0,Math.PI*2); ctx.stroke();
+    ctx.globalAlpha=1; ctx.shadowBlur=0;
+    // Name plate (drawn in screen space — reset scale)
+    ctx.restore();
+    ctx.save();
+    ctx.translate(x,y);
+    const nameY = r*(e.scale||1)+18;
+    ctx.fillStyle='rgba(5,12,5,0.82)';
+    const nm=e.variantName||'';
+    ctx.font=`bold 9px 'Cinzel',serif`;
+    const nw=ctx.measureText(nm).width+10;
+    ctx.fillRect(-nw/2, nameY-9, nw, 13);
+    ctx.strokeStyle=tp.glow; ctx.lineWidth=0.8; ctx.globalAlpha=0.6;
+    ctx.strokeRect(-nw/2, nameY-9, nw, 13);
+    ctx.globalAlpha=1;
+    ctx.fillStyle=e.sColor||tp.sColor;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(nm, 0, nameY-2);
   }
   ctx.restore();
 }
@@ -871,7 +929,7 @@ function collectPowerup(p) {
     particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:t.glow,life:70,mLife:70,text:'⚡ HASTE'});
   } else if(p.type === 'naturalize') {
     spawnBarriers();
-    sndVictory();
+    sndNaturalize();
     particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:'#2ecc71',life:70,mLife:70,text:'🌿 NATURALIZE'});
   }
   trigShake(4);
@@ -971,6 +1029,12 @@ function spawnSurvivalWave(wNum) {
   if(wNum > 1){
     const topRow=enemies.filter(e=>e.ty===60);
     if(topRow.length) topRow[Math.floor(Math.random()*topRow.length)].carrier=true;
+    const candidates = enemies.filter(e=>e.ty!==60);
+    const pool = candidates.length ? candidates : enemies;
+    const boss = pool[Math.floor(Math.random()*pool.length)];
+    const variant = pickNamedVariant(boss.type);
+    boss.named=true; boss.variantName=variant.name; boss.variantFlavor=variant.flavor;
+    boss.hp=variant.hp; boss.mhp=variant.hp; boss.sColor=variant.sColor; boss.scale=variant.scale;
   }
   eShootTimer=80; diverTimer=400;
 }
@@ -1023,7 +1087,7 @@ function useBomb(){
     targets=alive.filter(e=>Math.abs((e.homeY||e.y)-targetY)<30);
   }
   targets.forEach(e=>{
-    e.dead=true;const tp=ET[e.type];spawnPx(e.x,e.y,tp.glow,20);spawnScore(e.x,e.y,(tp.pts+wave*2)*2);score+=(tp.pts+wave*2)*2;trigShake(5);
+    e.dead=true;const tp=ET[e.type];graveyard++;spawnPx(e.x,e.y,tp.glow,20);spawnScore(e.x,e.y,(tp.pts+wave*2)*2);score+=(tp.pts+wave*2)*2;trigShake(5);
   });
   sndKill('red');updateHUD();bombCD=BOMB_MAX;
 }
@@ -1042,11 +1106,16 @@ function updateAbUI(){
   qi.className='ab-icon'+(flashCD===0?' ready':'');
   ei.className='ab-icon'+(bombCD===0?' ready':'');
 
-  if(flashCD>0) flashCD--;
-  if(bombCD>0)  bombCD--;
+  // Flash charges ONLY from kills (chargeFlashFromKill). Bomb still ticks down over time.
+  if(bombCD>0) bombCD--;
 }
 
-// ── HOMING MISSILES ───────────────────────────────────────────────────────────
+// Flash charges: each kill reduces flashCD. Tracked separately from time decay.
+const FLASH_KILL_CHARGE = 60; // each kill shaves 60 frames off Flash cooldown
+function chargeFlashFromKill() {
+  if(flashCD > 0) flashCD = Math.max(0, flashCD - FLASH_KILL_CHARGE);
+  if(bombCD  > 0) bombCD  = Math.max(0, bombCD  - Math.round(FLASH_KILL_CHARGE*0.5));
+}
 function spawnHomingMissile(x, y){
   homingMissiles.push({
     x, y,
@@ -1312,6 +1381,8 @@ function moveBullets(){
           addCombo();
           const mult=getComboMult();
           const pts=(tp.pts+wave*2)*mult;
+          graveyard++;
+          chargeFlashFromKill();
           spawnPx(e.x,e.y,tp.glow,15);
           spawnScore(e.x,e.y,pts);
           spawnKillText(e.x, e.y, e.type);
@@ -1338,7 +1409,20 @@ function loseLife(fromGround){
 }
 
 // ── WAVE TALLY ────────────────────────────────────────────────────────────────
-function showWaveTally(waveNum, bonus, cb) {
+const TALLY_FLAVOR = {
+  perfect:  ['"Efficient." —Yeva', '"The forest forgives nothing, and wastes nothing." —Yeva', '"That is how you cast at instant speed." —Yeva'],
+  great:    ['"The canopy holds." —Yeva', '"Nature does not celebrate. It prepares." —Yeva', '"They underestimated the green." —Yeva'],
+  rough:    ['"The truly powerful need not explain their losses." —Yeva', '"Roots run deep. We endure." —Yeva', '"Survive. That is enough for now." —Yeva'],
+  combo:    ['"You move like the forest itself — without hesitation." —Yeva', '"Flash. Always flash." —Yeva', '"That is what instant speed looks like." —Yeva'],
+};
+function pickFlavor(kills, totalEnemies, peakC, livesLost) {
+  if(peakC >= 8) return TALLY_FLAVOR.combo[Math.floor(Math.random()*TALLY_FLAVOR.combo.length)];
+  if(livesLost === 0 && kills === totalEnemies) return TALLY_FLAVOR.perfect[Math.floor(Math.random()*TALLY_FLAVOR.perfect.length)];
+  if(livesLost <= 1) return TALLY_FLAVOR.great[Math.floor(Math.random()*TALLY_FLAVOR.great.length)];
+  return TALLY_FLAVOR.rough[Math.floor(Math.random()*TALLY_FLAVOR.rough.length)];
+}
+
+function showWaveTally(waveNum, bonus, totalEnemies, livesAtStart, cb) {
   const tally = document.getElementById('wave-tally');
   document.getElementById('wt-title').textContent = `WAVE ${waveNum} CLEARED`;
   document.getElementById('wt-kills').textContent = waveKills;
@@ -1347,19 +1431,23 @@ function showWaveTally(waveNum, bonus, cb) {
   document.getElementById('wt-bonus').textContent = `+${bonus.toLocaleString()}`;
   document.getElementById('wt-bonus-lbl').textContent = 'WAVE BONUS';
   document.getElementById('wt-total').textContent = score.toLocaleString();
+  const livesLost = livesAtStart - lives;
+  const flavor = pickFlavor(waveKills, totalEnemies, wavePeakCombo, livesLost);
+  document.getElementById('wt-flavor').textContent = flavor;
   tally.style.display = 'flex';
-  // Reset per-wave stats for next wave
   waveKills = 0; wavePeakCombo = 0;
-  setTimeout(() => {
-    tally.style.display = 'none';
-    cb && cb();
-  }, 2200);
+  setTimeout(() => { tally.style.display = 'none'; cb && cb(); }, 2600);
 }
 
 // ── WAVE CLEAR ────────────────────────────────────────────────────────────────
 function checkWaveClear(){
   if(!waveDone&&!wavePaused&&enemies.length&&enemies.every(e=>e.dead)){
     waveDone=true; waveTimer=50;
+    waveClearLives = lives;
+    waveTotalEnemies = enemies.length;
+    // Clean up immediately — no shooting or collecting during transition
+    bullets=[]; eBullets=[]; powerups=[]; homingMissiles=[];
+    autoFireTimer=9999; // prevent auto-fire firing until next wave resets it
     sndWaveClear();
   }
   if(waveDone){
@@ -1374,12 +1462,13 @@ function checkWaveClear(){
         const wh=document.getElementById('win-hiscore');
         if(wh) wh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
         const wf=document.getElementById('win-flash');
-        if(wf) wf.textContent=`⚡ Spells cast with Flash: ${flashesCast}`;
+        if(wf) wf.textContent=`⚡ Spells cast with Flash: ${flashesCast}   ⚰ Creatures: ${graveyard}`;
         show('screen-win'); state='end'; cancelAnimationFrame(frameId); sndVictory(); showHiScore();
         survivalMode=false;
       } else {
         formation={dirX:Math.random()<0.5?1:-1,tickTimer:0,dropQ:false};
-        bullets=[]; eBullets=[]; enemies=[]; homingMissiles=[];
+        bullets=[]; eBullets=[]; enemies=[]; homingMissiles=[]; powerups=[];
+        autoFireTimer=0;
         spawnBarriers(); updateHUD();
 
         // Wave bonus: base 100, +20 per remaining life, +10 per combo streak
@@ -1390,9 +1479,9 @@ function checkWaveClear(){
 
         if(survivalMode){
           if(clearedWave<=MAX_WAVES){
-            showWaveTally(clearedWave, bonus, ()=>showWaveCard(wave,()=>spawnSurvivalWave(wave)));
+            showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>showWaveCard(wave,()=>spawnSurvivalWave(wave)));
           } else {
-            showWaveTally(clearedWave, bonus, ()=>{
+            showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>{
               const el2=document.getElementById('wave-announce');
               el2.textContent=`WAVE ${wave} — THE SIEGE INTENSIFIES`;
               el2.style.opacity='1'; setTimeout(()=>{el2.style.opacity='0';},1800);
@@ -1400,7 +1489,7 @@ function checkWaveClear(){
             });
           }
         } else {
-          showWaveTally(clearedWave, bonus, ()=>showWaveCard(wave,()=>spawnWave(wave,true)));
+          showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>showWaveCard(wave,()=>spawnWave(wave,true)));
         }
       }
     }
@@ -1432,6 +1521,8 @@ function updateHUD(){
   if(speedBoost>0){
     if(!sb){sb=document.createElement('div');sb.id='speed-pip';sb.style.cssText='width:9px;height:9px;border-radius:50%;background:#f4d03f;box-shadow:0 0 6px #f4d03f;margin-left:4px;';lc.appendChild(sb);}
   } else if(sb) sb.remove();
+  const gv=document.getElementById('hud-graveyard');
+  if(gv) gv.textContent=graveyard>0?`⚰ ${graveyard} in graveyard`:'';
 }
 
 // ── MAIN LOOP ─────────────────────────────────────────────────────────────────
@@ -1489,7 +1580,7 @@ function endGame(win){
     const wh=document.getElementById('win-hiscore');
     if(wh) wh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
     const wf=document.getElementById('win-flash');
-    if(wf) wf.textContent=`⚡ Spells cast with Flash: ${flashesCast}`;
+    if(wf) wf.textContent=`⚡ Spells cast with Flash: ${flashesCast}   ⚰ Creatures: ${graveyard}`;
     show('screen-win');sndVictory();
   } else {
     document.getElementById('go-score').textContent=score.toLocaleString();
@@ -1526,6 +1617,27 @@ function sndHoming(){if(!AC)return;const g=AC.createGain();g.connect(MG);const o
 let marchPitch=0;
 const MP=[55,46,41,46];
 function sndMarch(){if(!AC)return;const g=AC.createGain();g.connect(MG);const o=AC.createOscillator();o.type='square';o.frequency.value=MP[marchPitch%MP.length];marchPitch++;o.connect(g);const e=env(g,0.002,0.018,0.035,0.085);o.start(AC.currentTime);o.stop(e);}
+function sndNaturalize(){
+  if(!AC)return;
+  // Low woody thump
+  const g1=AC.createGain();g1.connect(MG);
+  const o1=AC.createOscillator();o1.type='sine';
+  o1.frequency.setValueAtTime(110,AC.currentTime);
+  o1.frequency.exponentialRampToValueAtTime(55,AC.currentTime+0.35);
+  o1.connect(g1);env(g1,0.005,0.02,0.28,0.22);
+  o1.start(AC.currentTime);o1.stop(AC.currentTime+0.38);
+  // Resonant nature chord — rising open fifth (G2, D3, G3)
+  [[98,0.04],[147,0.1],[196,0.18]].forEach(([f,delay])=>{
+    const g=AC.createGain();g.connect(MG);
+    const o=AC.createOscillator();o.type='triangle';
+    o.frequency.value=f;o.connect(g);
+    const t=AC.currentTime+delay;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.linearRampToValueAtTime(0.18,t+0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+0.55);
+    o.start(t);o.stop(t+0.58);
+  });
+}
 
 // ── EVENT LISTENERS ───────────────────────────────────────────────────────────
 document.getElementById('btn-start').addEventListener('click',startGame);
