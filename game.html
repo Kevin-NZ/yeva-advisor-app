@@ -186,10 +186,10 @@
     <h1>Yeva's Wrath</h1>
     <p class="sub">The forest is under siege. Defend the green against all colors.</p>
     <div class="legend">
-      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#c0392b" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#fff">🔥</text></svg><span>RED<br/>MOUNTAINS</span></div>
-      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1a5276" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#fff">🌊</text></svg><span>BLUE<br/>ISLANDS</span></div>
-      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1c2833" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#eee">💀</text></svg><span>BLACK<br/>SWAMPS</span></div>
-      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1c2a1c" opacity="0.7"/><polygon points="22,6 24.4,17.6 33.8,11.2 27.4,20.6 39,23 27.4,25.4 33.8,34.8 24.4,28.4 22,40 19.6,28.4 10.2,34.8 16.6,25.4 5,23 16.6,20.6 10.2,11.2 19.6,17.6" fill="#dde8dd" stroke="rgba(200,220,200,0.9)" stroke-width="0.8"/><circle cx="22" cy="23" r="2" fill="rgba(255,255,255,0.9)"/></svg><span>WHITE<br/>PLAINS</span></div>
+      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#c0392b" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#fff">🔥</text></svg><span>RED<br/>GOBLIN RAIDER</span></div>
+      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1a5276" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#fff">🌊</text></svg><span>BLUE<br/>MERFOLK TRICKSTER</span></div>
+      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1c2833" opacity="0.9"/><text x="22" y="29" text-anchor="middle" font-size="18" fill="#eee">💀</text></svg><span>BLACK<br/>VAMPIRE NIGHTHAWK</span></div>
+      <div class="legend-item"><svg class="legend-icon" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="#1c2a1c" opacity="0.7"/><polygon points="22,6 24.4,17.6 33.8,11.2 27.4,20.6 39,23 27.4,25.4 33.8,34.8 24.4,28.4 22,40 19.6,28.4 10.2,34.8 16.6,25.4 5,23 16.6,20.6 10.2,11.2 19.6,17.6" fill="#dde8dd" stroke="rgba(200,220,200,0.9)" stroke-width="0.8"/><circle cx="22" cy="23" r="2" fill="rgba(255,255,255,0.9)"/></svg><span>WHITE<br/>KOR SKYFISHER</span></div>
     </div>
     <div style="font-size:9px;color:var(--text-dim);letter-spacing:0.14em;margin-bottom:6px;">SELECT DIFFICULTY</div>
     <div class="diff-row">
@@ -225,6 +225,7 @@
     <div class="score-big" id="win-score">0</div>
     <div class="score-lbl">FINAL MANA POOL</div>
     <div id="win-hiscore" style="font-size:10px;letter-spacing:0.14em;color:var(--gold);opacity:0.7;margin-bottom:10px;"></div>
+    <div id="win-flash" style="font-size:10px;letter-spacing:0.12em;color:var(--text-mid);margin-bottom:6px;"></div>
     <button class="btn" id="btn-win-restart">PLAY AGAIN →</button>
     <button class="btn ghost" id="btn-win-survival" style="margin-top:4px;">⚔ SURVIVE FOREVER →</button>
     <p class="flavor">"Tap. Untap. Loop. Win."</p>
@@ -293,6 +294,8 @@ let survivalMode=false;
 let speedBoost=0; // frames remaining of bullet speed boost
 let waveKills=0, wavePeakCombo=0; // per-wave tally stats
 let highScore=parseInt(localStorage.getItem('yevaHiScore')||'0');
+let flashesCast=0; // for win screen flash counter
+let commanderDamage=0; // life losses from enemies reaching the ground line
 
 function updateHiScore(){
   if(score>highScore){ highScore=score; try{localStorage.setItem('yevaHiScore',highScore);}catch(e){} }
@@ -305,20 +308,20 @@ function showHiScore(){
 
 // ── ENEMY TYPES ───────────────────────────────────────────────────────────────
 const ET={
-  red:  {color:'#c0392b',glow:'#e74c3c',pts:10, shoot:true, bColor:'#e74c3c',hp:1,sym:'R',sColor:'#ff8888'},
-  blue: {color:'#1a5276',glow:'#5dade2',pts:15, shoot:true, bColor:'#5dade2',hp:2,sym:'U',sColor:'#88ccff'},
-  black:{color:'#1c2833',glow:'#7d3c98',pts:20, shoot:true, bColor:'#a569bd',hp:1,sym:'B',sColor:'#cc88ff'},
-  white:{color:'#c8c0a8',glow:'#ffffff',pts:12, shoot:false,bColor:'#e8e4d0',hp:1,sym:'W',sColor:'#555544',shield:true},
+  red:  {color:'#c0392b',glow:'#e74c3c',pts:10, shoot:true, bColor:'#e74c3c',hp:1,sym:'R',sColor:'#ff8888', creature:'Goblin Raider'},
+  blue: {color:'#1a5276',glow:'#5dade2',pts:15, shoot:true, bColor:'#5dade2',hp:2,sym:'U',sColor:'#88ccff', creature:'Merfolk Trickster'},
+  black:{color:'#1c2833',glow:'#7d3c98',pts:20, shoot:true, bColor:'#a569bd',hp:1,sym:'B',sColor:'#cc88ff', creature:'Vampire Nighthawk'},
+  white:{color:'#c8c0a8',glow:'#ffffff',pts:12, shoot:false,bColor:'#e8e4d0',hp:1,sym:'W',sColor:'#555544',shield:true, creature:'Kor Skyfisher'},
 };
 
 // ── WAVE CONFIGS ─────────────────────────────────────────────────────────────
 const WC=[
-  {rows:[['red','red','red','red','red']], name:'Red Sun Rising',     cost:'{R}',         art:'🔥',  type:'Sorcery — Mountain',  text:'Five Mountain formations advance.', flavor:'The mountains march.', num:'1/6'},
-  {rows:[['red','red','red'],['blue','blue','blue']], name:'Tide & Flame', cost:'{2}{U}{R}', art:'🌊', type:'Sorcery — Coalition', text:'Mountains and Islands converge. Blue forces carry 2 health.', flavor:'Two tides, one shore.', num:'2/6'},
-  {rows:[['red','red'],['blue','blue'],['black','black']], name:'Three-Color Siege',cost:'{3}{B}', art:'💀', type:'Sorcery — Coalition', text:'Swamp units fire triple bolts. Watch for the zigzag.', flavor:'Death walks between fire and water.', num:'3/6'},
-  {rows:[['white','white','white','white'],['red','red','red'],['black','black','black']], name:'Shielded Vanguard',cost:'{2}{W}', art:'✦', type:'Sorcery — Plains', text:'Plains shields regenerate. Destroy them before they reform.', flavor:'Light guards the line.', num:'4/6'},
-  {rows:[['white','white','white'],['blue','blue','blue'],['black','black','black'],['red','red','red']], name:'The Coalition',cost:'{W}{U}{B}{R}', art:'⭐', type:'Sorcery — Four Color', text:'Dive bombers enter the battlefield. Brace for impact.', flavor:'All colors united against the green.', num:'5/6'},
-  {rows:[['white','black','blue','red','white'],['black','blue','red','black','blue'],['red','white','black','blue','red'],['white','red','blue','black','white']], name:'The Final Siege',cost:'{W}{U}{B}{R}{G}', art:'🌀', type:'Sorcery — Chromatic', text:'Every color. Maximum speed. This is the final stand.', flavor:'Even Yeva cannot flash in what was never printed.', num:'6/6'},
+  {rows:[['red','red','red','red','red']], name:'Red Sun Rising',     cost:'{R}',         art:'🔥',  type:'Sorcery — Mountain',  text:'Five Goblin Raiders advance from the peaks. The mountains march at dawn.', flavor:'"The truly powerful need not explain themselves." —Yeva', num:'1/6'},
+  {rows:[['red','red','red'],['blue','blue','blue']], name:'Tide & Flame', cost:'{2}{U}{R}', art:'🌊', type:'Sorcery — Coalition', text:'Goblin Raiders and Merfolk Tricksters converge. Blue forces carry 2 toughness.', flavor:'"Nature does not negotiate. It simply wins." —Yeva', num:'2/6'},
+  {rows:[['red','red'],['blue','blue'],['black','black']], name:'Three-Color Siege',cost:'{3}{B}', art:'💀', type:'Sorcery — Coalition', text:'Vampire Nighthawks fire triple bolts and dive from the sky. Watch for the zigzag.', flavor:'"I can cast at instant speed. Can you?" —Yeva', num:'3/6'},
+  {rows:[['white','white','white','white'],['red','red','red'],['black','black','black']], name:'Shielded Vanguard',cost:'{2}{W}', art:'✦', type:'Sorcery — Plains', text:'Kor Skyfisher shields regenerate. Destroy them before they reform. Homing missiles inbound.', flavor:'"Flash. Because waiting is for the other colors." —Yeva', num:'4/6'},
+  {rows:[['white','white','white'],['blue','blue','blue'],['black','black','black'],['red','red','red']], name:'The Coalition',cost:'{W}{U}{B}{R}', art:'⭐', type:'Sorcery — Four Color', text:'All four tribes unite. Vampire dive bombers enter the battlefield. Brace for impact.', flavor:'"The forest has always been here. It will outlast you." —Yeva', num:'5/6'},
+  {rows:[['white','black','blue','red','white'],['black','blue','red','black','blue'],['red','white','black','blue','red'],['white','red','blue','black','white']], name:'The Final Siege',cost:'{W}{U}{B}{R}{G}', art:'🌀', type:'Sorcery — Chromatic', text:'Every creature. Maximum speed. This is the final stand for the Gavony forest.', flavor:'"Even Yeva cannot flash in what was never printed." —Reminder Text', num:'6/6'},
 ];
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
@@ -333,6 +336,7 @@ function initGame(){
   mysteryTimer=1200; diverTimer=400;
   powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
   peakCombo=0; waveKills=0; wavePeakCombo=0;
+  flashesCast=0; commanderDamage=0;
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
 }
@@ -487,15 +491,42 @@ function spawnWave(wNum,animate){
 
 // ── BACKGROUND ────────────────────────────────────────────────────────────────
 function drawBG(ts){
+  // Season: waves 1-2 summer green, 3-4 autumn amber, 5-6 near-black with red sky
+  const season = wave <= 2 ? 0 : wave <= 4 ? (wave-2)/2 : 1;
+  // Sky gradient shifts from deep green-black → dark amber-black → blood red-black
   const sky=ctx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0,'#060e06');sky.addColorStop(0.6,'#09150a');sky.addColorStop(1,'#0b1a0b');
+  const skyTop    = season < 0.5
+    ? `rgb(${Math.round(6+season*2*30)},${Math.round(14-season*2*4)},${Math.round(6)})`
+    : `rgb(${Math.round(36+(season-0.5)*2*60)},${Math.round(10-(season-0.5)*2*6)},${Math.round(6)})`;
+  const skyBottom = season < 0.5
+    ? `rgb(${Math.round(9+season*2*24)},${Math.round(21-season*2*6)},${Math.round(10)})`
+    : `rgb(${Math.round(33+(season-0.5)*2*55)},${Math.round(15-(season-0.5)*2*10)},${Math.round(10)})`;
+  sky.addColorStop(0,skyTop);
+  sky.addColorStop(0.6,skyBottom);
+  sky.addColorStop(1,'#060e06');
   ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
-  bgStars.forEach(s=>{s.tw+=0.018;const a=0.22+Math.sin(s.tw)*0.22;ctx.fillStyle=`rgba(142,216,142,${a})`;ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();});
+
+  // Stars: fade to red-tinged as season progresses
+  bgStars.forEach(s=>{
+    s.tw+=0.018;
+    const a=0.22+Math.sin(s.tw)*0.22;
+    const starR=Math.round(142+season*80);
+    const starG=Math.round(216-season*120);
+    ctx.fillStyle=`rgba(${starR},${starG},142,${a})`;
+    ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
+  });
+
+  // Tree colour shifts from deep green → rust brown → near-black charred
   pxLayers.forEach((layer,li)=>{
     ctx.globalAlpha=layer.alpha;
     layer.trees.forEach(tr=>{
       const sw=Math.sin(ts*0.0004+tr.sw)*3*layer.spd;
-      const dark=li===2?'rgba(14,36,14,0.98)':li===1?'rgba(11,28,11,0.88)':'rgba(8,20,8,0.72)';
+      // interpolate tree colour through seasons
+      const darkR = Math.round((li===2?14:li===1?11:8) + season*35);
+      const darkG = Math.round((li===2?36:li===1?28:20) - season*20);
+      const darkB = Math.round((li===2?14:li===1?11:8));
+      const alpha = li===2?0.98:li===1?0.88:0.72;
+      const dark=`rgba(${darkR},${darkG},${darkB},${alpha})`;
       ctx.fillStyle=dark;ctx.fillRect(tr.x+sw-tr.w/2,groundY-tr.h,tr.w,tr.h);
       ctx.beginPath();ctx.ellipse(tr.x+sw,groundY-tr.h,tr.w*3.2,tr.h*0.26,0,0,Math.PI*2);ctx.fill();
     });
@@ -503,7 +534,38 @@ function drawBG(ts){
   ctx.globalAlpha=1;
   const gg=ctx.createLinearGradient(0,groundY-10,0,H);gg.addColorStop(0,'#0e200e');gg.addColorStop(1,'#060e06');
   ctx.fillStyle=gg;ctx.fillRect(0,groundY-10,W,H-groundY+10);
-  ctx.strokeStyle='#1e3a1e';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,groundY);ctx.lineTo(W,groundY);ctx.stroke();
+  // Forest floor — gnarled roots and undergrowth
+  ctx.save();
+  const season2 = wave <= 2 ? 0 : wave <= 4 ? (wave-2)/2 : 1;
+  const rootG = Math.round(52 - season2*28);
+  const rootR = Math.round(20 + season2*40);
+  // Ground fill
+  ctx.fillStyle=gg; ctx.fillRect(0,groundY,W,H-groundY);
+  // Root arches — a row of organic curves along the ground line
+  ctx.strokeStyle=`rgba(${rootR},${rootG},14,0.55)`; ctx.lineWidth=2; ctx.lineCap='round';
+  const rootCount = Math.ceil(W/38);
+  for(let i=0;i<rootCount;i++){
+    const rx = i*38 - 10;
+    const rw = 28 + (i%3)*8;
+    const rdepth = 6 + (i%4)*4;
+    ctx.beginPath(); ctx.moveTo(rx,groundY);
+    ctx.bezierCurveTo(rx+rw*0.3,groundY+rdepth, rx+rw*0.7,groundY+rdepth, rx+rw,groundY);
+    ctx.stroke();
+  }
+  // Thin grass blades
+  const grassCol = season2 < 0.5
+    ? `rgba(${Math.round(30+season2*40)},${Math.round(80-season2*40)},20,0.5)`
+    : `rgba(${Math.round(70+(season2-0.5)*60)},${Math.round(40-(season2-0.5)*30)},14,0.45)`;
+  ctx.strokeStyle=grassCol; ctx.lineWidth=1;
+  for(let i=0;i<W;i+=7){
+    const h=4+((i*13)%7);
+    const lean=(Math.sin(ts*0.0003+i*0.4))*2;
+    ctx.beginPath(); ctx.moveTo(i,groundY); ctx.lineTo(i+lean,groundY-h); ctx.stroke();
+  }
+  // Ground line itself
+  ctx.strokeStyle=`rgba(${rootR+10},${rootG+10},20,0.55)`; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,groundY); ctx.lineTo(W,groundY); ctx.stroke();
+  ctx.restore();
 }
 
 // ── YEVA ──────────────────────────────────────────────────────────────────────
@@ -730,15 +792,22 @@ function drawBullet(b){
 function drawParticle(p){ctx.globalAlpha=p.life/p.mLife;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r*(p.life/p.mLife),0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
 // ── POWERUPS ─────────────────────────────────────────────────────────────────
 const PU_TYPES = {
-  life:  { color:'#e74c3c', glow:'#ff6b6b', label:'♥', desc:'EXTRA LIFE' },
-  speed: { color:'#f4d03f', glow:'#ffe066', label:'⚡', desc:'SPEED BOOST' },
+  life:       { color:'#e74c3c', glow:'#ff6b6b', label:'♥', desc:'EXTRA LIFE' },
+  speed:      { color:'#f4d03f', glow:'#ffe066', label:'⚡', desc:'SPEED BOOST' },
+  naturalize: { color:'#27ae60', glow:'#2ecc71', label:'🌿', desc:'NATURALIZE' },
 };
 
-function spawnPowerup(x, y) {
+function spawnPowerup(x, y, enemyType) {
   const maxLives = DIFF[difficulty].lives;
-  // Weight: prefer speed if at full lives; prefer life if low
-  const wantLife = lives < maxLives ? 0.65 : 0.2;
-  const type = Math.random() < wantLife ? 'life' : 'speed';
+  let type;
+  if(enemyType === 'white') {
+    // Kor Skyfisher drops Naturalize — rebuilds barriers
+    type = 'naturalize';
+  } else {
+    // Weight: prefer speed if at full lives; prefer life if low
+    const wantLife = lives < maxLives ? 0.65 : 0.2;
+    type = Math.random() < wantLife ? 'life' : 'speed';
+  }
   powerups.push({ x, y, type, vy: 1.8, life: 420, mLife: 420, pulse: Math.random()*Math.PI*2 });
 }
 
@@ -797,9 +866,13 @@ function collectPowerup(p) {
     sndVictory();
     particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:t.glow,life:70,mLife:70,text:'♥ +LIFE'});
   } else if(p.type === 'speed') {
-    speedBoost = 420; // 7 seconds at 60fps
+    speedBoost = 420;
     sndMystery();
     particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:t.glow,life:70,mLife:70,text:'⚡ HASTE'});
+  } else if(p.type === 'naturalize') {
+    spawnBarriers();
+    sndVictory();
+    particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:'#2ecc71',life:70,mLife:70,text:'🌿 NATURALIZE'});
   }
   trigShake(4);
 }
@@ -908,7 +981,21 @@ function drawCrosshair(){
   ctx.fillStyle='rgba(142,216,142,0.52)';ctx.beginPath();ctx.arc(mouseX,player.y-32,3,0,Math.PI*2);ctx.fill();
 }
 
-// ── PARTICLES ─────────────────────────────────────────────────────────────────
+// ── YEVA KILL TEXT ────────────────────────────────────────────────────────────
+const KILL_TEXT = {
+  red:   ['Flash!','Instant speed.','No mountains here.','The forest is faster.','Burn slow, fall fast.'],
+  blue:  ['Countered.','Nature needs no permission.','You had no response.','Tap out.','No islands in the canopy.'],
+  black:  ['Naturalize.','Death returns to the soil.','The swamp recedes.','No grave for the fallen here.','The green endures.'],
+  white:  ['Shattered.','Light fades.','The plains are burning.','Your shield was not enough.','No quarter.'],
+};
+function spawnKillText(x, y, type) {
+  const pool = KILL_TEXT[type] || ['Flash!'];
+  // Only show occasionally — every 3rd kill or so — to avoid spam
+  if(Math.random() > 0.45) return;
+  const txt = pool[Math.floor(Math.random()*pool.length)];
+  const color = ET[type]?.glow || '#8ed88e';
+  particles.push({x, y:y-18, vx:(Math.random()-0.5)*0.6, vy:-1.1, r:0, color, life:65, mLife:65, text:txt, small:true});
+}
 function spawnPx(x,y,color,n=12){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*3;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,r:2+Math.random()*4,color,life:40+Math.random()*20,mLife:60});}}
 function spawnScore(x,y,pts){particles.push({x,y,vx:0,vy:-1.5,r:0,color:'#f4d03f',life:50,mLife:50,text:`+${pts}`});}
 function updatePx(){for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx||0;p.y+=p.vy||0;if(p.vy)p.vy*=0.95;p.life--;if(p.life<=0)particles.splice(i,1);}}
@@ -918,7 +1005,7 @@ function trigShake(pw){shake.power=Math.max(shake.power,pw);}
 function applyShake(){if(shake.power<0.3){shake.power=0;shake.x=0;shake.y=0;return;}shake.x=(Math.random()-0.5)*shake.power*2;shake.y=(Math.random()-0.5)*shake.power*2;shake.power*=0.76;}
 
 // ── ABILITIES ─────────────────────────────────────────────────────────────────
-function useFlash(){if(flashCD>0)return;for(let i=-1;i<=1;i++)bullets.push({x:player.x+6+i*8,y:player.y-58,vy:-9,vx:i*2,player:true,flash:true});flashCD=FLASH_MAX;sndShoot();}
+function useFlash(){if(flashCD>0)return;for(let i=-1;i<=1;i++)bullets.push({x:player.x+6+i*8,y:player.y-58,vy:-9,vx:i*2,player:true,flash:true});flashCD=FLASH_MAX;flashesCast++;sndShoot();}
 function useBomb(){
   if(bombCD>0)return;
   const alive=enemies.filter(e=>!e.dead); if(!alive.length)return;
@@ -1141,7 +1228,7 @@ function moveEnemies(){
       if(!e.shield){e.shCD++;if(e.shCD>=D.shRegen){e.shield=true;e.shCD=0;}}
       else{e.shTimer++;if(e.shTimer>200){e.shield=false;e.shTimer=0;e.shCD=0;}}
     }
-    if(!e.entering&&!e.diver&&e.y+e.h/2>=groundY){e.dead=true;loseLife();}
+    if(!e.entering&&!e.diver&&e.y+e.h/2>=groundY){e.dead=true;loseLife(true);}
   });
   if(!allIn) return;
 
@@ -1227,8 +1314,9 @@ function moveBullets(){
           const pts=(tp.pts+wave*2)*mult;
           spawnPx(e.x,e.y,tp.glow,15);
           spawnScore(e.x,e.y,pts);
+          spawnKillText(e.x, e.y, e.type);
           score+=pts;updateHUD();sndKill(e.type);trigShake(3);
-          if(e.carrier) spawnPowerup(e.x,e.y);
+          if(e.carrier) spawnPowerup(e.x,e.y,e.type);
         }
         else sndHit();
         break;
@@ -1239,7 +1327,15 @@ function moveBullets(){
 }
 
 // ── LOSE LIFE ─────────────────────────────────────────────────────────────────
-function loseLife(){if(player)player.invincible=90;lives--;updateHUD();sndPlayerHit();trigShake(18);breakCombo();if(lives<=0)setTimeout(()=>endGame(false),500);}
+function loseLife(fromGround){
+  if(player)player.invincible=90;
+  lives--;updateHUD();sndPlayerHit();trigShake(18);breakCombo();
+  if(fromGround && difficulty==='hard'){
+    commanderDamage++;
+    particles.push({x:W/2,y:H/2-20,vx:0,vy:-1,r:0,color:'#e74c3c',life:90,mLife:90,text:'⚔ COMMANDER DAMAGE'});
+  }
+  if(lives<=0)setTimeout(()=>endGame(false),500);
+}
 
 // ── WAVE TALLY ────────────────────────────────────────────────────────────────
 function showWaveTally(waveNum, bonus, cb) {
@@ -1277,6 +1373,8 @@ function checkWaveClear(){
         document.getElementById('win-score').textContent=score.toLocaleString();
         const wh=document.getElementById('win-hiscore');
         if(wh) wh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
+        const wf=document.getElementById('win-flash');
+        if(wf) wf.textContent=`⚡ Spells cast with Flash: ${flashesCast}`;
         show('screen-win'); state='end'; cancelAnimationFrame(frameId); sndVictory(); showHiScore();
         survivalMode=false;
       } else {
@@ -1349,7 +1447,16 @@ function loop(ts){
   if(!wavePaused){
     updatePx();
     particles.forEach(p=>{
-      if(p.text){ctx.globalAlpha=p.life/p.mLife;ctx.fillStyle=p.color;ctx.font=`bold 14px 'Cinzel',serif`;ctx.textAlign='center';ctx.fillText(p.text,p.x,p.y);ctx.globalAlpha=1;}
+    if(p.text){
+      ctx.globalAlpha=p.life/p.mLife;
+      ctx.fillStyle=p.color;
+      if(p.small){
+        ctx.font=`italic 10px 'Crimson Pro',serif`;
+      } else {
+        ctx.font=`bold 14px 'Cinzel',serif`;
+      }
+      ctx.textAlign='center';ctx.fillText(p.text,p.x,p.y);ctx.globalAlpha=1;
+    }
       else drawParticle(p);
     });
     if(enemies.length) enemies.forEach(e=>drawEnemy(e,ts));
@@ -1381,6 +1488,8 @@ function endGame(win){
     document.getElementById('win-score').textContent=score.toLocaleString();
     const wh=document.getElementById('win-hiscore');
     if(wh) wh.textContent=score>=highScore?'✦ NEW BEST ✦':`BEST: ${highScore.toLocaleString()} MANA`;
+    const wf=document.getElementById('win-flash');
+    if(wf) wf.textContent=`⚡ Spells cast with Flash: ${flashesCast}`;
     show('screen-win');sndVictory();
   } else {
     document.getElementById('go-score').textContent=score.toLocaleString();
