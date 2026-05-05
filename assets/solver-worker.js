@@ -2343,7 +2343,6 @@ var CARDS = {
 
   shifting_woodland: {
     name: 'Shifting Woodland', types: ['land'], subtypes: [], cost: null,
-    tapForMana: simpleTap('{G}', [['G',1]]),
     // Enters tapped unless you control a Forest.
     // Delirium — {2}{G}{G}: Until end of turn, this land becomes a copy of target
     // permanent card in your graveyard (if you have 4+ card types in GY). It's still a land.
@@ -2351,6 +2350,8 @@ var CARDS = {
     // whatever is in the graveyard — most valuably Gaea's Cradle (tap for G per creature).
     // We model it as: if 4+ card types in GY AND a high-value permanent is there,
     // Shifting Woodland gains that card's tapForMana until end of turn.
+    // (NB: tapForMana is defined as a method below; do NOT also assign simpleTap('{G}')
+    // here — esbuild rejects the duplicate object key in strict mode.)
     abilities: {
       delirium_copy: {
         label: '{2}{G}{G}: Copy target permanent card in graveyard (delirium)',
