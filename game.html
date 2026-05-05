@@ -296,10 +296,11 @@ let survivalMode=false;
 let speedBoost=0; // frames remaining of bullet speed boost
 let waveKills=0, wavePeakCombo=0; // per-wave tally stats
 let highScore=parseInt(localStorage.getItem('yevaHiScore')||'0');
-let flashesCast=0; // for win screen flash counter
-let commanderDamage=0; // life losses from enemies reaching the ground line
-let waveClearLives=0, waveTotalEnemies=0; // for tally flavor
-let graveyard=0; // total creatures sent to graveyard this run
+let flashesCast=0;
+let commanderDamage=0;
+let waveClearLives=0, waveTotalEnemies=0;
+let graveyard=0;
+let waveTransition=false; // true for entire tally+card period, blocks shooting
 
 function updateHiScore(){
   if(score>highScore){ highScore=score; try{localStorage.setItem('yevaHiScore',highScore);}catch(e){} }
@@ -355,7 +356,7 @@ function initGame(){
   mysteryTimer=1200; diverTimer=400;
   powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
   peakCombo=0; waveKills=0; wavePeakCombo=0;
-  flashesCast=0; commanderDamage=0; graveyard=0;
+  flashesCast=0; commanderDamage=0; graveyard=0; waveTransition=false;
   flashCD=FLASH_MAX; // Flash must be earned from kills
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
@@ -908,8 +909,8 @@ function updatePowerups() {
     p.life--;
     // Remove if it falls below the ground line or expires
     if(p.life <= 0 || p.y > groundY + 20) { powerups.splice(i,1); continue; }
-    // Check player collect — slightly generous hitbox
-    if(player && Math.abs(p.x-player.x)<28 && Math.abs(p.y-player.y)<32) {
+    // Check player collect — only during active play
+    if(!waveTransition && player && Math.abs(p.x-player.x)<28 && Math.abs(p.y-player.y)<32) {
       collectPowerup(p); powerups.splice(i,1); continue;
     }
   }
@@ -1305,10 +1306,23 @@ function moveEnemies(){
   // Speed scales with: fewer enemies alive (classic Space Invaders), AND higher wave number
   const waveMult = 1 + (wave-1)*0.12; // each wave is 12% faster
   const tick=Math.round((D.tickMin+(D.tickBase-D.tickMin)*frac)/waveMult);
+
+  // Smooth drop glide — ease enemies toward their dropTarget if set
+  liveF.forEach(e=>{
+    if(e.dropTarget!==undefined && e.y < e.dropTarget){
+      e.y = Math.min(e.y + 3.5, e.dropTarget);
+      e.homeY = e.y;
+    }
+  });
+
   formation.tickTimer--;
   if(formation.tickTimer<=0){
     formation.tickTimer=tick;
-    if(formation.dropQ){liveF.forEach(e=>{e.y+=12;e.homeY=e.y;});formation.dirX*=-1;formation.dropQ=false;}
+    if(formation.dropQ){
+      // Set a drop target 18px lower — enemies glide down smoothly
+      liveF.forEach(e=>{ e.dropTarget=(e.dropTarget||e.y)+18; });
+      formation.dirX*=-1;formation.dropQ=false;
+    }
     else{
       liveF.forEach(e=>{e.x+=D.stepX*formation.dirX;e.homeX=e.x;});sndMarch();
       let mn=Infinity,mx=-Infinity;liveF.forEach(e=>{mn=Math.min(mn,e.x-e.w/2);mx=Math.max(mx,e.x+e.w/2);});
@@ -1442,12 +1456,11 @@ function showWaveTally(waveNum, bonus, totalEnemies, livesAtStart, cb) {
 // ── WAVE CLEAR ────────────────────────────────────────────────────────────────
 function checkWaveClear(){
   if(!waveDone&&!wavePaused&&enemies.length&&enemies.every(e=>e.dead)){
-    waveDone=true; waveTimer=50;
+    waveDone=true; waveTimer=50; waveTransition=true;
     waveClearLives = lives;
     waveTotalEnemies = enemies.length;
-    // Clean up immediately — no shooting or collecting during transition
     bullets=[]; eBullets=[]; powerups=[]; homingMissiles=[];
-    autoFireTimer=9999; // prevent auto-fire firing until next wave resets it
+    autoFireTimer=0;
     sndWaveClear();
   }
   if(waveDone){
@@ -1479,9 +1492,10 @@ function checkWaveClear(){
 
         if(survivalMode){
           if(clearedWave<=MAX_WAVES){
-            showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>showWaveCard(wave,()=>spawnSurvivalWave(wave)));
+            showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>{waveTransition=false;showWaveCard(wave,()=>spawnSurvivalWave(wave));});
           } else {
             showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>{
+              waveTransition=false;
               const el2=document.getElementById('wave-announce');
               el2.textContent=`WAVE ${wave} — THE SIEGE INTENSIFIES`;
               el2.style.opacity='1'; setTimeout(()=>{el2.style.opacity='0';},1800);
@@ -1489,7 +1503,7 @@ function checkWaveClear(){
             });
           }
         } else {
-          showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>showWaveCard(wave,()=>spawnWave(wave,true)));
+          showWaveTally(clearedWave, bonus, waveTotalEnemies, waveClearLives, ()=>{waveTransition=false;showWaveCard(wave,()=>spawnWave(wave,true));});
         }
       }
     }
@@ -1503,11 +1517,13 @@ function handleInput(dt){
   if(keys['ArrowLeft']||keys['a']||keys['A'])player.x=Math.max(18,player.x-spd);
   if(keys['ArrowRight']||keys['d']||keys['D'])player.x=Math.min(W-18,player.x+spd);
   if(mouseX!==null){const d=mouseX-player.x;player.x+=d*0.12;player.x=Math.max(18,Math.min(W-18,player.x));}
-  if((keys[' ']||keys['Space'])&&!wavePaused)shoot();
-  // Auto-fire
-  if(autoFire&&!wavePaused){autoFireTimer--;if(autoFireTimer<=0){shoot();autoFireTimer=speedBoost>0?7:14;}}
+  if((keys[' ']||keys['Space'])&&!wavePaused&&!waveTransition)shoot();
+  // Auto-fire — both the timer and shootCD freeze during wave transition
+  if(!waveTransition){
+    if(autoFire&&!wavePaused){autoFireTimer--;if(autoFireTimer<=0){shoot();autoFireTimer=speedBoost>0?7:14;}}
+    if(shootCD>0)shootCD--;
+  }
   if(player.invincible>0)player.invincible--;
-  if(shootCD>0)shootCD--;
 }
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
@@ -1556,7 +1572,9 @@ function loop(ts){
     eBullets.forEach(b=>drawBullet(b));
     homingMissiles.forEach(m=>drawHomingMissile(m));
     drawYeva();drawCrosshair();
-    handleInput(dt);moveEnemies();moveEBullets();moveBullets();
+    moveEnemies();moveEBullets();moveBullets(); // kills registered here
+    checkWaveClear(); // waveDone set immediately after kills, before handleInput
+    handleInput(dt); // auto-fire checks waveDone — won't fire if wave just cleared
     updateHomingMissiles();
     updateMystery();updateDivers();updateAbUI();
     updatePowerups(); updateCombo();
@@ -1564,8 +1582,8 @@ function loop(ts){
   } else {
     if(enemies.length) enemies.forEach(e=>drawEnemy(e,ts));
     drawYeva();
+    checkWaveClear(); // ticks waveTimer countdown during wavePaused
   }
-  checkWaveClear(); // always runs so the countdown isn't blocked by wavePaused
   ctx.restore();
 }
 
