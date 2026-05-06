@@ -1172,20 +1172,52 @@ function drawBear(){
   if(!bearCompanion||!player) return;
   const b=bearCompanion;
   b.walkPhase+=0.12;
-  const tx=player.x-52;
-  b.x+=(tx-b.x)*0.08;
+  const tx=player.x-28;
+  b.x+=(tx-b.x)*0.25;
   const bx=Math.round(b.x), by=Math.round(player.y-8);
   const hurt=b.hitTimer>0;
   if(b.hitTimer>0) b.hitTimer--;
+  const pulse=0.7+Math.sin(Date.now()*0.005)*0.3;
+
   ctx.save();
   ctx.translate(bx, by);
-  ctx.globalAlpha = hurt ? 0.5+Math.sin(b.hitTimer*1.2)*0.5 : 1;
-  const s=22;
-  for(let h=0;h<2;h++){
-    ctx.fillStyle=h<b.hp?'#e74c3c':'#333';
-    ctx.fillRect(-8+h*12,-s*1.55,9,5);
+
+  // Shield aura — large green semi-circle facing the enemies (upward)
+  const shieldColor = b.hp===2 ? `rgba(46,204,113,${pulse*0.35})` : `rgba(231,76,60,${pulse*0.35})`;
+  const shieldStroke = b.hp===2 ? `rgba(46,204,113,${pulse*0.8})` : `rgba(231,76,60,${pulse*0.8})`;
+  // Full elliptical shield aura
+  ctx.beginPath();
+  ctx.ellipse(0,-20,58,52,0,0,Math.PI*2);
+  ctx.fillStyle=shieldColor;
+  ctx.fill();
+  ctx.strokeStyle=shieldStroke;
+  ctx.lineWidth=b.hitTimer>0?3:1.5;
+  ctx.setLineDash(b.hp===1?[4,4]:[]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Crack lines on damaged shield
+  if(b.hp===1){
+    ctx.strokeStyle=`rgba(231,76,60,${pulse*0.7})`;
+    ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(-10,-40); ctx.lineTo(5,-10); ctx.lineTo(-5,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(15,-35); ctx.lineTo(25,-5); ctx.stroke();
   }
-  // Draw SVG bear, sized to match companion scale
+
+  ctx.globalAlpha = hurt ? 0.5+Math.sin(b.hitTimer*1.2)*0.5 : 1;
+
+  // HP pips
+  for(let h=0;h<2;h++){
+    ctx.fillStyle=h<b.hp?'#2ecc71':'#333';
+    ctx.fillRect(-8+h*12,-62,9,5);
+  }
+
+  // Shield label
+  ctx.font=`bold 8px 'Cinzel',serif`; ctx.textAlign='center';
+  ctx.fillStyle=b.hp===2?'rgba(46,204,113,0.8)':'rgba(231,76,60,0.8)';
+  ctx.fillText(b.hp===2?'WARD':'WARD ⚠','0',-68);
+
+  // Bear image
   if(bearImg.complete){
     const bw=90, bh=Math.round(90*0.52);
     ctx.drawImage(bearImg,-bw/2,-bh/2,bw,bh);
@@ -1196,19 +1228,23 @@ function drawBear(){
 
 function updateBear(){
   if(!bearCompanion||!player) return;
-  // Bear blocks enemy bullets
+  // Wide shield hitbox — protects a broad area around the bear
+  const shieldW=58, shieldH=52;
   for(let i=eBullets.length-1;i>=0;i--){
     const eb=eBullets[i];
-    if(Math.abs(eb.x-bearCompanion.x)<24&&Math.abs(eb.y-(player.y-10))<28){
+    const dx=Math.abs(eb.x-bearCompanion.x);
+    const dy=Math.abs(eb.y-(player.y-28));
+    if(dx<shieldW && dy<shieldH){
       eBullets.splice(i,1);
       bearCompanion.hp--;
-      bearCompanion.hitTimer=20;
-      spawnPx(bearCompanion.x,player.y,'#b5835a',10);
+      bearCompanion.hitTimer=25;
+      trigShake(5);
+      spawnPx(bearCompanion.x,player.y-20,'#2ecc71',12,'#27ae60');
+      particles.push({x:bearCompanion.x,y:player.y-50,vx:0,vy:-1.2,r:0,color:'#2ecc71',life:45,mLife:45,text:'WARD'});
       sndBear();
       if(bearCompanion.hp<=0){
-        // Bear dies — big roar burst
         spawnPx(bearCompanion.x,player.y,'#8B5E3C',22,'#b5835a');
-        particles.push({x:bearCompanion.x,y:player.y-30,vx:0,vy:-1.5,r:0,color:'#b5835a',life:80,mLife:80,text:'🐻 Bear token dies.'});
+        particles.push({x:bearCompanion.x,y:player.y-30,vx:0,vy:-1.5,r:0,color:'#e74c3c',life:80,mLife:80,text:'🐻 Ward broken!'});
         sndBear(); bearCompanion=null; return;
       }
     }
