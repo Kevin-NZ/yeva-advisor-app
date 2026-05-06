@@ -206,7 +206,7 @@
     <p class="ctrl-hint">← → / A D — move &nbsp;·&nbsp; SPACE / click — shoot<br>Q — Flash Shot (charges from kills) &nbsp;·&nbsp; E — Natural Order (clears bottom row)<br>F — toggle auto-fire &nbsp;·&nbsp; S — mute &nbsp;·&nbsp; ESC — pause</p>
     <p class="flavor">"Nature does not ask permission."</p>
     <p id="start-hiscore" style="font-size:9px;letter-spacing:0.14em;color:var(--text-dim);opacity:0.5;margin-top:8px;"></p>
-    <p style="font-size:8px;color:var(--text-dim);opacity:0.3;margin-top:4px;letter-spacing:0.12em;">⌨ there is a secret word of power…</p>
+    <p style="font-size:8px;color:var(--text-dim);opacity:0.3;margin-top:4px;letter-spacing:0.12em;">⌨ there are secret words of power…</p>
   </div>
 
   <!-- GAME OVER -->
@@ -306,6 +306,8 @@ let commanderDamage=0;
 let waveClearLives=0, waveTotalEnemies=0;
 let graveyard=0;
 let waveTransition=false; // true for entire tally+card period, blocks shooting
+let bearCompanion=null;  // active bear companion: {x, hp, hitTimer, walkPhase}
+let pendingBearCompanion=false; // set by bear easter egg to grant bear on next game start
 
 function updateHiScore(){
   if(score>highScore){ highScore=score; try{localStorage.setItem('yevaHiScore',highScore);}catch(e){} }
@@ -362,6 +364,8 @@ function initGame(){
   powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
   peakCombo=0; waveKills=0; wavePeakCombo=0;
   flashesCast=0; commanderDamage=0; graveyard=0; waveTransition=false;
+  bearCompanion=null;
+  if(pendingBearCompanion){ pendingBearCompanion=false; bearCompanion={x:W/2-52,hp:2,hitTimer:0,walkPhase:0}; }
   flashCD=FLASH_MAX; // Flash must be earned from kills
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
   showWaveCard(1,()=>spawnWave(1,true));
@@ -970,16 +974,18 @@ const PU_TYPES = {
   life:       { color:'#e74c3c', glow:'#ff6b6b', label:'♥', desc:'EXTRA LIFE' },
   speed:      { color:'#f4d03f', glow:'#ffe066', label:'⚡', desc:'SPEED BOOST' },
   naturalize: { color:'#27ae60', glow:'#2ecc71', label:'🌿', desc:'NATURALIZE' },
+  bear:       { color:'#8B5E3C', glow:'#b5835a', label:'🐻', desc:'BEAR TOKEN' },
 };
 
 function spawnPowerup(x, y, enemyType) {
   const maxLives = DIFF[difficulty].lives;
   let type;
   if(enemyType === 'white') {
-    // Kor Skyfisher drops Naturalize — rebuilds barriers
     type = 'naturalize';
+  } else if(enemyType === 'black' && !bearCompanion) {
+    // Black carriers occasionally drop a bear token if no bear active
+    type = Math.random() < 0.5 ? 'bear' : 'life';
   } else {
-    // Weight: prefer speed if at full lives; prefer life if low
     const wantLife = lives < maxLives ? 0.65 : 0.2;
     type = Math.random() < wantLife ? 'life' : 'speed';
   }
@@ -1044,6 +1050,10 @@ function collectPowerup(p) {
     speedBoost = 420;
     sndMystery();
     particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:t.glow,life:70,mLife:70,text:'⚡ HASTE'});
+  } else if(p.type === 'bear') {
+    bearCompanion = { x: player ? player.x - 40 : W/2, hp: 2, hitTimer: 0, walkPhase: 0 };
+    sndBear();
+    particles.push({x:p.x,y:p.y-20,vx:0,vy:-2,r:0,color:'#b5835a',life:70,mLife:70,text:'🐻 BEAR TOKEN'});
   } else if(p.type === 'naturalize') {
     spawnBarriers();
     sndNaturalize();
@@ -1156,6 +1166,53 @@ function spawnSurvivalWave(wNum) {
     boss.hp=variant.hp; boss.mhp=variant.hp; boss.sColor=variant.sColor; boss.scale=variant.scale;
   }
   eShootTimer=80; diverTimer=400;
+}
+
+function drawBear(){
+  if(!bearCompanion||!player) return;
+  const b=bearCompanion;
+  b.walkPhase+=0.12;
+  const tx=player.x-52;
+  b.x+=(tx-b.x)*0.08;
+  const bx=Math.round(b.x), by=Math.round(player.y-8);
+  const hurt=b.hitTimer>0;
+  if(b.hitTimer>0) b.hitTimer--;
+  ctx.save();
+  ctx.translate(bx, by);
+  ctx.globalAlpha = hurt ? 0.5+Math.sin(b.hitTimer*1.2)*0.5 : 1;
+  const s=22;
+  for(let h=0;h<2;h++){
+    ctx.fillStyle=h<b.hp?'#e74c3c':'#333';
+    ctx.fillRect(-8+h*12,-s*1.55,9,5);
+  }
+  // Draw SVG bear, sized to match companion scale
+  if(bearImg.complete){
+    const bw=90, bh=Math.round(90*0.52);
+    ctx.drawImage(bearImg,-bw/2,-bh/2,bw,bh);
+  }
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+
+function updateBear(){
+  if(!bearCompanion||!player) return;
+  // Bear blocks enemy bullets
+  for(let i=eBullets.length-1;i>=0;i--){
+    const eb=eBullets[i];
+    if(Math.abs(eb.x-bearCompanion.x)<24&&Math.abs(eb.y-(player.y-10))<28){
+      eBullets.splice(i,1);
+      bearCompanion.hp--;
+      bearCompanion.hitTimer=20;
+      spawnPx(bearCompanion.x,player.y,'#b5835a',10);
+      sndBear();
+      if(bearCompanion.hp<=0){
+        // Bear dies — big roar burst
+        spawnPx(bearCompanion.x,player.y,'#8B5E3C',22,'#b5835a');
+        particles.push({x:bearCompanion.x,y:player.y-30,vx:0,vy:-1.5,r:0,color:'#b5835a',life:80,mLife:80,text:'🐻 Bear token dies.'});
+        sndBear(); bearCompanion=null; return;
+      }
+    }
+  }
 }
 
 function drawCrosshair(){
@@ -1709,6 +1766,7 @@ function loop(ts){
   ctx.save();ctx.translate(shake.x,shake.y);
   ctx.clearRect(-20,-20,W+40,H+40);
   drawBG(ts);
+  drawEggBears();
   barriers.forEach(b=>drawBarrier(b));
   if(!wavePaused){
     updatePx();
@@ -1730,13 +1788,13 @@ function loop(ts){
     bullets.forEach(b=>drawBullet(b));
     eBullets.forEach(b=>drawBullet(b));
     homingMissiles.forEach(m=>drawHomingMissile(m));
-    drawYeva();drawCrosshair();
+    drawYeva(); drawBear(); drawCrosshair();
     moveEnemies();moveEBullets();moveBullets(); // kills registered here
     checkWaveClear(); // waveDone set immediately after kills, before handleInput
     handleInput(dt); // auto-fire checks waveDone — won't fire if wave just cleared
     updateHomingMissiles();
     updateMystery();updateDivers();updateAbUI();
-    updatePowerups(); updateCombo();
+    updatePowerups(); updateCombo(); updateBear();
     powerups.forEach(p=>drawPowerup(p));
   } else {
     if(enemies.length) enemies.forEach(e=>drawEnemy(e,ts));
@@ -1889,6 +1947,27 @@ function sndHoming(){if(!AC)return;const g=AC.createGain();g.connect(MG);const o
 let marchPitch=0;
 const MP=[55,46,41,46];
 function sndMarch(){if(!AC)return;const g=AC.createGain();g.connect(MG);const o=AC.createOscillator();o.type='square';o.frequency.value=MP[marchPitch%MP.length];marchPitch++;o.connect(g);const e=env(g,0.002,0.018,0.035,0.085);o.start(AC.currentTime);o.stop(e);}
+function sndBear(){
+  if(!AC)return;
+  // Low growl: noise burst filtered through low bandpass, descending
+  const g=AC.createGain(); g.connect(MG);
+  const buf=AC.createBuffer(1,Math.floor(AC.sampleRate*0.5),AC.sampleRate),d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length*0.6);
+  const src=AC.createBufferSource(); src.buffer=buf;
+  const flt=AC.createBiquadFilter(); flt.type='bandpass';
+  flt.frequency.setValueAtTime(280,AC.currentTime);
+  flt.frequency.exponentialRampToValueAtTime(80,AC.currentTime+0.45);
+  flt.Q.value=4;
+  src.connect(flt); flt.connect(g);
+  env(g,0.01,0.08,0.3,0.35); src.start(AC.currentTime); src.stop(AC.currentTime+0.55);
+  // Rumble undertone
+  const g2=AC.createGain(); g2.connect(MG);
+  const o=AC.createOscillator(); o.type='sine';
+  o.frequency.setValueAtTime(72,AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(38,AC.currentTime+0.4);
+  o.connect(g2); env(g2,0.01,0.06,0.28,0.3);
+  o.start(AC.currentTime); o.stop(AC.currentTime+0.5);
+}
 function sndNaturalOrder(){
   if(!AC)return;
   // Sweeping vine crack — descending noise sweep + low resonant thump
@@ -1945,6 +2024,103 @@ document.getElementById('btn-resume').addEventListener('click',pauseGame);
 document.getElementById('btn-quit').addEventListener('click',()=>{state='end';cancelAnimationFrame(frameId);survivalMode=false;show('screen-start');});
 
 // Cheat code: type "yeva" on the start screen to unlock 5 lives
+// ── BEAR EASTER EGG ───────────────────────────────────────────────────────────
+let eggBears=[];
+let eggAnimId=null;
+// Pre-render the SVG bear into an Image once
+const BEAR_SVG=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 260">
+<g>
+  <ellipse cx="210" cy="145" rx="125" ry="62" fill="#4f4f4a"/>
+  <ellipse cx="270" cy="118" rx="60" ry="48" fill="#5c5c57"/>
+  <path d="M135 95 L310 95 L335 145 L150 145 Z" fill="#5b3a22" opacity="0.9"/>
+  <rect x="200" y="90" width="20" height="120" fill="#3e2618"/>
+  <rect x="300" y="95" width="34" height="34" rx="10" fill="#555550"/>
+  <ellipse cx="365" cy="108" rx="46" ry="38" fill="#555550"/>
+  <circle cx="336" cy="74" r="12" fill="#444"/>
+  <circle cx="380" cy="72" r="12" fill="#444"/>
+  <polygon points="387,82 398,93 387,104 376,93" fill="#cfd8dc" stroke="#7f8c8d" stroke-width="2.5"/>
+  <path d="M387 86 L394 93 L387 100 L380 93 Z" fill="#4fc3f7" opacity="0.85"/>
+  <ellipse cx="402" cy="118" rx="24" ry="17" fill="#6a6a64"/>
+  <ellipse cx="420" cy="118" rx="6" ry="5" fill="#111"/>
+  <circle cx="378" cy="100" r="4" fill="#111"/>
+  <path d="M115 100 Q70 135 95 195 Q150 180 155 125 Z" fill="#2f5d3a"/>
+  <circle cx="82" cy="125" r="12" fill="#3f3f3a"/>
+  <rect x="270" y="180" width="28" height="56" rx="10" fill="#3c3c38"/>
+  <rect x="268" y="175" width="32" height="18" fill="#7f8c8d"/>
+  <ellipse cx="284" cy="237" rx="19" ry="8" fill="#2b2b28"/>
+  <rect x="312" y="173" width="32" height="64" rx="10" fill="#444440"/>
+  <rect x="309" y="168" width="36" height="20" fill="#7f8c8d"/>
+  <ellipse cx="328" cy="238" rx="21" ry="9" fill="#2b2b28"/>
+  <rect x="118" y="182" width="30" height="54" rx="10" fill="#3a3a36"/>
+  <rect x="116" y="177" width="34" height="18" fill="#7f8c8d"/>
+  <ellipse cx="133" cy="237" rx="19" ry="8" fill="#2b2b28"/>
+  <rect x="168" y="175" width="34" height="62" rx="10" fill="#444440"/>
+  <rect x="165" y="170" width="38" height="20" fill="#7f8c8d"/>
+  <ellipse cx="185" cy="238" rx="21" ry="9" fill="#2b2b28"/>
+  <path d="M95 120 Q180 80 300 100" fill="none" stroke="#6f6f69" stroke-width="6" stroke-linecap="round"/>
+  <path d="M100 160 Q200 190 315 170" fill="none" stroke="#3d3d39" stroke-width="5" stroke-linecap="round"/>
+</g></svg>`;
+const bearImg=new Image();
+bearImg.src='data:image/svg+xml;base64,'+btoa(BEAR_SVG);
+
+function startBearEasterEgg(){
+  initAudio(); sndBear();
+  eggBears=[];
+  for(let i=0;i<4;i++){
+    const dir=i%2===0?1:-1;
+    eggBears.push({
+      x: dir>0 ? -160 : W+160,
+      y: H*0.35+i*52,
+      vx: dir*(1.6+i*0.4),
+      phase: i*1.4,
+      w: 120+i*20,
+      done: false,
+    });
+  }
+  const el=document.getElementById('wave-announce');
+  el.innerHTML='🐻 <span style="color:#b5835a">Bear Token · Bear Token · Bear Token · Bear Token</span>';
+  el.style.opacity='1';
+  setTimeout(()=>{el.style.opacity='0';},3200);
+
+  if(eggAnimId) cancelAnimationFrame(eggAnimId);
+  function eggLoop(){
+    eggBears.forEach(b=>{
+      b.x+=b.vx; b.phase+=0.08;
+      if((b.vx>0&&b.x>W+180)||(b.vx<0&&b.x<-180)) b.done=true;
+    });
+    eggBears=eggBears.filter(b=>!b.done);
+    // Drive our own full redraw so bears are visible on start screen
+    const ts=performance.now();
+    ctx.save();
+    ctx.clearRect(0,0,W,H);
+    if(!groundY) groundY=Math.min(H-70,H*0.88); // ensure groundY is set before drawBG
+    drawBG(ts);
+    drawEggBears();
+    ctx.restore();
+    if(eggBears.length) eggAnimId=requestAnimationFrame(eggLoop);
+    else eggAnimId=null;
+  }
+  eggAnimId=requestAnimationFrame(eggLoop);
+}
+
+function drawEggBears(){
+  if(!bearImg.complete||!eggBears.length) return;
+  eggBears.forEach(b=>{
+    const w=b.w, h=Math.round(w*0.52);
+    const bob=Math.sin(b.phase)*4;
+    ctx.save();
+    ctx.translate(Math.round(b.x), Math.round(b.y+bob));
+    // SVG bear faces right, so flip when moving left
+    if(b.vx<0){ ctx.scale(-1,1); }
+    ctx.drawImage(bearImg,-w/2,-h/2,w,h);
+    if(b.vx<0){ ctx.scale(-1,1); }
+    ctx.font=`bold ${Math.round(w*0.14)}px 'Cinzel',serif`;
+    ctx.textAlign='center'; ctx.fillStyle='rgba(200,168,120,0.92)';
+    ctx.fillText('2/2',0,-h/2-6);
+    ctx.restore();
+  });
+}
+
 let cheatBuffer='';
 let cheatActive=false;
 document.addEventListener('keydown',e=>{
@@ -1962,14 +2138,22 @@ document.addEventListener('keydown',e=>{
     if(cheatBuffer==='yeva'&&!cheatActive){
       cheatActive=true;
       DIFF.easy.lives=5; DIFF.normal.lives=5; DIFF.hard.lives=5;
-      // Flash the title as confirmation
       const t=document.getElementById('title-hud');
-      t.style.color='#f4d03f';
-      t.textContent='✦ YEVA BLESSED ✦';
-      // Reveal the hint text permanently
+      t.style.color='#f4d03f'; t.textContent='✦ YEVA BLESSED ✦';
       const hint=document.querySelector('.flavor');
       if(hint) hint.textContent='"The forest remembers. 5 lives granted."';
       setTimeout(()=>{t.style.color='';t.textContent="YEVA'S WRATH";},2000);
+    }
+    if(cheatBuffer==='bear'){
+      startBearEasterEgg();
+      // Grant a bear companion for the next game
+      if(state==='play' && player){
+        bearCompanion = { x: player.x - 52, hp: 2, hitTimer: 0, walkPhase: 0 };
+      } else {
+        // Store flag so initGame picks it up
+        pendingBearCompanion = true;
+      }
+      cheatBuffer='';
     }
   }
 });
