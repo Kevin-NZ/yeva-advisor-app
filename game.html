@@ -219,6 +219,7 @@
     <div id="go-hiscore" style="font-size:10px;letter-spacing:0.14em;color:var(--gold);opacity:0.7;margin-bottom:10px;"></div>
     <button class="btn" id="btn-restart">RESHUFFLE & RETRY →</button>
     <button class="btn ghost" id="btn-restart-survival" style="margin-top:4px;">⚔ TRY SURVIVAL →</button>
+    <button class="btn ghost" id="btn-go-menu" style="margin-top:4px;">↩ QUIT TO MENU</button>
     <p class="flavor">"Even the tallest forest falls in time."</p>
   </div>
 
@@ -232,6 +233,7 @@
     <div id="win-flash" style="font-size:10px;letter-spacing:0.12em;color:var(--text-mid);margin-bottom:6px;"></div>
     <button class="btn" id="btn-win-restart">PLAY AGAIN →</button>
     <button class="btn ghost" id="btn-win-survival" style="margin-top:4px;">⚔ SURVIVE FOREVER →</button>
+    <button class="btn ghost" id="btn-win-menu" style="margin-top:4px;">↩ QUIT TO MENU</button>
     <p class="flavor">"Tap. Untap. Loop. Win."</p>
   </div>
 
@@ -2056,6 +2058,8 @@ document.getElementById('btn-restart').addEventListener('click',startGame);
 document.getElementById('btn-restart-survival').addEventListener('click',()=>{initAudio();startSurvival();});
 document.getElementById('btn-win-restart').addEventListener('click',startGame);
 document.getElementById('btn-win-survival').addEventListener('click',()=>{initAudio();startSurvival();});
+document.getElementById('btn-win-menu').addEventListener('click',()=>{show('screen-start');showHiScore();});
+document.getElementById('btn-go-menu').addEventListener('click',()=>{show('screen-start');showHiScore();});
 document.getElementById('btn-resume').addEventListener('click',pauseGame);
 document.getElementById('btn-quit').addEventListener('click',()=>{state='end';cancelAnimationFrame(frameId);survivalMode=false;show('screen-start');});
 
@@ -2102,19 +2106,17 @@ bearImg.src='data:image/svg+xml;base64,'+btoa(BEAR_SVG);
 function startBearEasterEgg(){
   initAudio(); sndBear();
   eggBears=[];
-  for(let i=0;i<4;i++){
-    const dir=i%2===0?1:-1;
-    eggBears.push({
-      x: dir>0 ? -160 : W+160,
-      y: H*0.35+i*52,
-      vx: dir*(1.6+i*0.4),
-      phase: i*1.4,
-      w: 120+i*20,
-      done: false,
-    });
-  }
+  const dir=1; // always left to right
+  eggBears.push({
+    x: -160,
+    y: H*0.55,
+    vx: 2.2,
+    phase: 0,
+    w: 160,
+    done: false,
+  });
   const el=document.getElementById('wave-announce');
-  el.innerHTML='🐻 <span style="color:#b5835a">Bear Token · Bear Token · Bear Token · Bear Token</span>';
+  el.innerHTML='🐻 <span style="color:#b5835a">Bear Token</span> — Yeva\'s ward has answered.';
   el.style.opacity='1';
   setTimeout(()=>{el.style.opacity='0';},3200);
 
