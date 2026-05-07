@@ -1829,8 +1829,31 @@ class GameState {
     // an aura enchants different lands are never aliased, but equivalent states
     // reached via different action orderings still deduplicate correctly.
     const _encMap = new Map(this.battlefield.map(p => [p.id, p.name]));
+    var _fpCards = CARDS;
     const bf = this.battlefield
-      .map(p => p.name + (p.tapped ? ':T' : ':U') + (p.isForest ? ':F' : '') + (p.enchantedLandId !== undefined ? ':E[' + (_encMap.get(p.enchantedLandId) ?? p.enchantedLandId) + ']' : ''))
+      .map(p => {
+        // Base: name + tapped/untapped + Forest status + aura target
+        let s = p.name + (p.tapped ? ':T' : ':U');
+        if (p.isForest) s += ':F';
+        if (p.enchantedLandId !== undefined)
+          s += ':E[' + (_encMap.get(p.enchantedLandId) ?? p.enchantedLandId) + ']';
+        // Summoning sickness — encode when present on a creature. Without this,
+        // states where a haste-granter has cured a creature vs not are aliased,
+        // causing the solver to prune the usable branch as a "revisit".
+        if (p.summoningSick) s += ':S';
+        // Power — only encode when it deviates from the card-definition baseline.
+        // Marwyn, Topiary Lecturer, and Leyline-boosted creatures all gain counters
+        // mid-combo; without this, Marwyn@1 and Marwyn@4 hash identically and the
+        // solver can skip the high-power branch as a duplicate.
+        if (p.power !== undefined && _fpCards[p.cardKey]?.power !== p.power)
+          s += ':P' + p.power;
+        // Counters bag — verse counters on Yisan, +1/+1 counters, etc.
+        if (p.counters && typeof p.counters === 'object') {
+          const ents = Object.entries(p.counters).filter(([, v]) => v);
+          if (ents.length) s += ':C{' + ents.map(([k, v]) => v + k).sort().join(',') + '}';
+        }
+        return s;
+      })
       .sort().join('|');
 
     // Mana — fast colon-separated digits (avoids conditional string building)
@@ -3701,9 +3724,13 @@ var CARDS = {
       tap_creature_untap_land: {
         label: 'Tap untapped creature: Untap target basic land',
         fn(state, perm) {
+          var cards = CARDS;
           const results = [];
           const untapped = state.creatures().filter(c=>!c.tapped&&!c.summoningSick);
-          const tbasic  = state.lands().filter(l=>l.tapped&&(l.subtypes&&l.subtypes.includes('Forest')));
+          // Oracle: "Untap target BASIC land." — must check the card definition's isBasic flag,
+          // NOT just the Forest subtype. Under Ashaya, creatures gain the Forest subtype but
+          // are NOT basic lands. Dryad Arbor is a Forest but also not basic.
+          const tbasic  = state.lands().filter(l => l.tapped && cards[l.cardKey]?.isBasic);
           for (const c of untapped) for (const l of tbasic) {
             let s = state.tapPermanent(c.id); if (!s) continue;
             results.push(s.untapPermanent(l.id).log(`Earthcraft: tap ${c.name} → untap ${l.name}`));
@@ -6448,9 +6475,13 @@ var DETECTORS = [
       if (!hasPerm(state, 'Earthcraft')) return false;
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false; // ability must not be exhausted this turn
-      // Earthcraft requires a BASIC land target — Ashaya creatures are Forests but not basic
+      // Earthcraft requires a BASIC land target — Ashaya creatures are Forests but not basic.
+      // l.basic is not a Permanent field; use the card definition's isBasic flag instead.
+      // l.name === 'Forest' is a reliable fallback since 'Forest' is the only named basic
+      // land in this decklist, but cards[l.cardKey]?.isBasic is the canonical check.
+      var cards = CARDS;
       const hasBasicForest = state.lands().some(l =>
-        (l.name === 'Forest' || (l.subtypes && l.subtypes.includes('Forest') && l.basic))
+        l.name === 'Forest' || cards[l.cardKey]?.isBasic
       );
       if (!hasBasicForest) return false;
       // Need a mana dork (other than Ranger) to net positive
