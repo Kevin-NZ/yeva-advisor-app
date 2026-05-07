@@ -1852,6 +1852,14 @@ class GameState {
           const ents = Object.entries(p.counters).filter(([, v]) => v);
           if (ents.length) s += ':C{' + ents.map(([k, v]) => v + k).sort().join(',') + '}';
         }
+        // Abilities used — once-per-turn activated abilities (Wirewood Lodge,
+        // Sylvan Library, Quirion Ranger, etc.). Without this, a state where
+        // Lodge's untap has already been consumed aliases with one where it hasn't,
+        // allowing the solver to incorrectly revisit the state as if Lodge were fresh.
+        if (p.abilitiesUsed && typeof p.abilitiesUsed === 'object') {
+          const used = Object.keys(p.abilitiesUsed).filter(k => p.abilitiesUsed[k]).sort();
+          if (used.length) s += ':A{' + used.join(',') + '}';
+        }
         return s;
       })
       .sort().join('|');
@@ -4206,22 +4214,27 @@ var CARDS = {
           if (perm.summoningSick) return [];
           const ap = state.payMana('3G'); if (!ap) return [];
           // Count enchantments you control for the X/X size
-          const x = state.battlefield.filter(p => p.types.includes('enchantment')).length;
+          const x = ap.battlefield.filter(p => p.types.includes('enchantment')).length;
           if (x === 0) return []; // 0/0 lands die immediately — no value
           const results = [];
-          // Target any land (or any creature that is also a land under Ashaya)
-          const targets = ap.battlefield.filter(p => p.is('land') && !p.summoningSick);
-          for (const target of targets) {
-            let s = ap;
-            // Animate: add creature type, set haste (no summoning sickness)
-            const tgt = s.battlefield.find(p => p.id === target.id);
+          // Target any land (or any creature that is also a land under Ashaya).
+          // We snapshot target IDs before cloning so each result gets its own isolated clone.
+          const targetIds = ap.battlefield
+            .filter(p => p.is('land') && !p.summoningSick)
+            .map(p => p.id);
+          for (const tid of targetIds) {
+            // Clone per-target so mutations are isolated across sibling DFS branches.
+            const s = ap.clone();
+            s._ensureBF();
+            const tgt = s.getPermanentById(tid);
             if (!tgt) continue;
+            // Animate: add creature type, grant haste (clear summoning sickness), set P/T.
             tgt._ensureOwnTypes?.();
             if (!tgt.types.includes('creature')) tgt.types = [...(tgt.types || []), 'creature'];
             tgt.summoningSick = false;
             tgt.power     = x;
             tgt.toughness = x;
-            results.push(s.log(`Destiny Spinner: animate ${target.name} → ${x}/${x} Elemental with haste`));
+            results.push(s.log(`Destiny Spinner: animate ${tgt.name} → ${x}/${x} Elemental with haste`));
           }
           return results;
         },
@@ -5398,6 +5411,15 @@ var CARDS = {
     // optimisation: do `enterBattlefield(ck)` (which clones internally) then
     // patch the library on that clone via copy-on-write. Same story as
     // Nature's Rhythm above. Empirically halves the per-call cost.
+    //
+    // PERF NOTE (2026-05-07 C-23): the previous version branched over every
+    // valid library creature for each sacrifice candidate — producing up to
+    // 192 child states in hands with 5 sac candidates × 40 eligible targets.
+    // In BFS this causes exponential blowup. Fix: for each sac candidate,
+    // pick only the single best fetch target (highest TUTOR_PRIORITY_SCORE
+    // within MV ≤ sacMV+2) — mirrors how Green Sun's Zenith and Chord of
+    // Calling are modelled. The solver is still correct because it explores
+    // every sac candidate; the branching is now O(unique sac names) ≤ 6.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
@@ -5406,14 +5428,29 @@ var CARDS = {
       const creatures = state.creatures();
       if (creatures.length === 0) return [];
 
-      // Pre-build a NAME → key map so the inner loop doesn't re-scan CARDS
-      // for every sacrifice candidate. This was previously O(creatures × |CARDS|)
-      // via `Object.keys(cards).find(...)`; now O(|CARDS|) once.
+      // Pre-build a NAME → key map
       const nameToKey = new Map();
       for (const k of Object.keys(cards)) {
         const d = cards[k];
         if (d?.name) nameToKey.set(d.name, k);
       }
+
+      // Pre-scan library once for all eligible creatures, scored by priority.
+      // Key: cardKey → { def, mv, score } for eligible fetch targets.
+      const libraryCreatures = [];
+      const seenLib = new Set();
+      for (const ck of state.players[0].library) {
+        if (seenLib.has(ck) || ck === 'unknown') continue;
+        seenLib.add(ck);
+        const def = cards[ck];
+        if (!def?.types.includes('creature') || !def.cost) continue;
+        const parsed = pc(def.cost);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        libraryCreatures.push({ ck, def, mv, score });
+      }
+      // Sort descending by score so the first valid candidate is always the best.
+      libraryCreatures.sort((a, b) => b.score - a.score);
 
       const seen_sac = new Set();
       for (const sacPerm of creatures) {
@@ -5430,35 +5467,28 @@ var CARDS = {
         const afterSac = state.removeFromBattlefield(sacPerm.id, 'graveyard');
         if (!afterSac) continue;
 
-        const seen_target = new Set();
-        for (const ck of afterSac.players[0].library) {
-          if (seen_target.has(ck) || ck === 'unknown' || isStax(ck)) continue;
-          seen_target.add(ck);
-          if (sacKey && ck === sacKey) continue;
-          const def = cards[ck];
-          if (!def || !def.types.includes('creature') || !def.cost) continue;
-          const parsed = pc(def.cost);
-          const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
-          if (mv > maxMV) continue;
+        // Pick the highest-priority valid target in library (first after sort).
+        // Skip the sacrificed creature itself and STAX cards.
+        const best = libraryCreatures.find(({ ck, mv }) =>
+          mv <= maxMV && ck !== sacKey && !isStax(ck)
+        );
+        if (!best) continue;
+        const { ck, def, mv: fetchMV } = best;
 
-          // ETB the fetched creature on the post-sac state, then patch the
-          // library and add Eldritch Evolution to graveyard. enterBattlefield
-          // clones once; we mutate library and graveyard on that clone.
-          let ns = afterSac.enterBattlefield(ck);
-          ns._ensurePlayers();
-          ns.players[0] = ns.players[0].clone();
-          const idx = ns.players[0].library.indexOf(ck);
-          if (idx !== -1) {
-            ns.players[0].library = [
-              ...ns.players[0].library.slice(0, idx),
-              ...ns.players[0].library.slice(idx + 1),
-            ];
-          }
-          ns.players[0].graveyard = [...ns.players[0].graveyard, 'Eldritch Evolution'];
-          results.push(ns.log(
-            `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${mv})`
-          ));
+        let ns = afterSac.enterBattlefield(ck);
+        ns._ensurePlayers();
+        ns.players[0] = ns.players[0].clone();
+        const idx = ns.players[0].library.indexOf(ck);
+        if (idx !== -1) {
+          ns.players[0].library = [
+            ...ns.players[0].library.slice(0, idx),
+            ...ns.players[0].library.slice(idx + 1),
+          ];
         }
+        ns.players[0].graveyard = [...ns.players[0].graveyard, 'Eldritch Evolution'];
+        results.push(ns.log(
+          `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${fetchMV})`
+        ));
       }
       return results;
     },
@@ -5487,21 +5517,20 @@ var CARDS = {
     // Harmonize: recastable from graveyard (ignored for solver simplicity).
     // Essentially a second Green Sun's Zenith — same implementation.
     //
-    // PERF NOTE (2026-04-30): the original implementation called
-    // `state.searchLibraryFor(k => k === ck)` per eligible creature, which
-    // performs a full `state.clone()` per result. With ~30 eligible creatures
-    // in the library, that's 30 redundant clones — `enterBattlefield` already
-    // clones internally, so the searchLibraryFor clone is wasted work. The
-    // version below does direct library mutation on the post-ETB state via
-    // copy-on-write, eliminating the 30 redundant clones. Empirically this
-    // cuts castFn cost by ~40% (6.0ms → 3.5ms per call on the 7-creature
-    // user-reported state), which directly bounds the BFS hang reported on
-    // the sowing_mycospawn,natures_rhythm,boseiju,eldritch_evolution hand.
+    // PERF NOTE (2026-04-30): eliminated redundant state.clone per target.
+    // PERF NOTE (2026-05-07 C-23b): like Eldritch Evolution, this previously
+    // branched over every library creature with MV ≤ X. With X=3 and 15+
+    // eligible candidates that creates a 15-way fan-out per cast. Fixed to
+    // select only the single highest-TUTOR_PRIORITY_SCORE target, matching
+    // Green Sun's Zenith / Chord of Calling / Eldritch Evolution behaviour.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
-      const results = [];
       const x = state.mana.total();
+
+      // Build sorted eligible list once (descending score) and pick the best.
+      let best = null;
+      let bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -5509,23 +5538,26 @@ var CARDS = {
         const def = cards[ck];
         if (!def || !def.types.includes('creature') || !def.cost) continue;
         const parsed = pc(def.cost);
-        const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
         if (mv > x) continue;
-        // Drain mana then ETB the fetched creature. enterBattlefield does a
-        // full state.clone; we then patch the library on that clone in place.
-        let ns = drainMana(state).enterBattlefield(ck);
-        ns._ensurePlayers();
-        ns.players[0] = ns.players[0].clone();
-        const idx = ns.players[0].library.indexOf(ck);
-        if (idx !== -1) {
-          ns.players[0].library = [
-            ...ns.players[0].library.slice(0, idx),
-            ...ns.players[0].library.slice(idx + 1),
-          ];
-        }
-        results.push(ns.log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
       }
-      return results.length ? results : [drainMana(state).log(`Nature's Rhythm X=${x}: no eligible creature`)];
+
+      if (!best) return [drainMana(state).log(`Nature's Rhythm X=${x}: no eligible creature`)];
+
+      const { ck, def, mv } = best;
+      let ns = drainMana(state).enterBattlefield(ck);
+      ns._ensurePlayers();
+      ns.players[0] = ns.players[0].clone();
+      const idx = ns.players[0].library.indexOf(ck);
+      if (idx !== -1) {
+        ns.players[0].library = [
+          ...ns.players[0].library.slice(0, idx),
+          ...ns.players[0].library.slice(idx + 1),
+        ];
+      }
+      return [ns.log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`)];
     },
   },
   turntimber_symbiosis: {
@@ -5533,22 +5565,32 @@ var CARDS = {
     // Oracle: Look at top 7 cards, put a creature onto battlefield, rest on bottom.
     // Simplified: treat as a tutor for any creature in library (non-deterministic top-7
     // ignored; in a 99-card deck the best creature is effectively always in top 7).
-    // Fetches the highest-priority missing combo piece.
+    // C-23b: select only the highest-priority target — prevents O(library) fan-out.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('creature')) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(ns.enterBattlefield(cardKey)
-          .log(`Turntimber Symbiosis → ${def.name}`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def }; }
       }
-      return results.length ? results : [state.log('Turntimber Symbiosis: no creature found')];
+      if (!best) return [state.log('Turntimber Symbiosis: no creature found')];
+      const { ck, def } = best;
+      let ns = state.enterBattlefield(ck);
+      ns._ensurePlayers();
+      ns.players[0] = ns.players[0].clone();
+      const idx = ns.players[0].library.indexOf(ck);
+      if (idx !== -1) {
+        ns.players[0].library = [
+          ...ns.players[0].library.slice(0, idx),
+          ...ns.players[0].library.slice(idx + 1),
+        ];
+      }
+      return [ns.log(`Turntimber Symbiosis → ${def.name}`)];
     },
   },
   bridgeworks_battle:     { name:'Bridgeworks Battle',       types:['sorcery'],  subtypes:[], cost:'2G'   },
