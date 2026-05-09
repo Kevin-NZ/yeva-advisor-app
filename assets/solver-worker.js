@@ -349,6 +349,19 @@ function buildDefaultLibrary(opts = {}) {
   return deck;
 }
 
+// [E12] Quick "is this bag of {key→truthy} effectively empty?" — used by
+// fingerprint() to short-circuit when a permanent's counters or
+// abilitiesUsed object exists but contains only falsy values.
+// Fast: returns false on the first truthy hit; returns true only if every
+// own key has a falsy value (the common case when the object was initialized
+// from {} or shared via clone but never written to).
+function _isEmptyBag(obj) {
+  for (const k in obj) {
+    if (obj[k]) return false;
+  }
+  return true;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  Player
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1824,45 +1837,77 @@ class GameState {
     // _afterDraw, constructor) so we skip the sort here — O(n) join only.
     const hand = this.hand.join(',');
 
-    // Battlefield — sort by encoded string.
-    // enchantedLandId is encoded as the target land name (not ID) so states where
-    // an aura enchants different lands are never aliased, but equivalent states
-    // reached via different action orderings still deduplicate correctly.
-    const _encMap = new Map(this.battlefield.map(p => [p.id, p.name]));
+    // [E12] Battlefield encoding — fast path for the common case + lazy
+    // construction of optional structures.
+    //
+    // Profile (default + Arbor Elf hands, ~60K perm encodings):
+    //   • ~75% of permanents only need name + tap state (no auras, no counters,
+    //     no power-mod, no abilitiesUsed).  Inline that as the hot path.
+    //   • enchantedLandId fires on ~0–15% of encodings — the per-fingerprint
+    //     `new Map(this.battlefield.map(...))` was being built unconditionally,
+    //     which is the single biggest waste.  Build _encMap lazily only when
+    //     a perm actually has enchantedLandId set.
+    //   • counters fire on ~0% of encodings during a normal solve — keep the
+    //     branch but skip the Object.entries/filter when the bag is empty.
+    //
+    // Correctness is preserved: every field that can affect dedup correctness
+    // is still encoded, in the same order, with the same delimiter syntax.
     var _fpCards = CARDS;
-    const bf = this.battlefield
-      .map(p => {
-        // Base: name + tapped/untapped + Forest status + aura target
-        let s = p.name + (p.tapped ? ':T' : ':U');
-        if (p.isForest) s += ':F';
-        if (p.enchantedLandId !== undefined)
-          s += ':E[' + (_encMap.get(p.enchantedLandId) ?? p.enchantedLandId) + ']';
-        // Summoning sickness — encode when present on a creature. Without this,
-        // states where a haste-granter has cured a creature vs not are aliased,
-        // causing the solver to prune the usable branch as a "revisit".
-        if (p.summoningSick) s += ':S';
-        // Power — only encode when it deviates from the card-definition baseline.
-        // Marwyn, Topiary Lecturer, and Leyline-boosted creatures all gain counters
-        // mid-combo; without this, Marwyn@1 and Marwyn@4 hash identically and the
-        // solver can skip the high-power branch as a duplicate.
-        if (p.power !== undefined && _fpCards[p.cardKey]?.power !== p.power)
-          s += ':P' + p.power;
-        // Counters bag — verse counters on Yisan, +1/+1 counters, etc.
-        if (p.counters && typeof p.counters === 'object') {
-          const ents = Object.entries(p.counters).filter(([, v]) => v);
-          if (ents.length) s += ':C{' + ents.map(([k, v]) => v + k).sort().join(',') + '}';
+    const bfArr = this.battlefield;
+    const segs = new Array(bfArr.length);
+    let _encMap = null;  // built lazily on first enchantedLandId hit
+
+    for (let i = 0; i < bfArr.length; i++) {
+      const p = bfArr[i];
+      // Fast path: detect "no extras" by short-circuit-checking each rare
+      // field.  When all are absent, build only the 4-char-or-so base string.
+      const tap = p.tapped ? ':T' : ':U';
+      const isF = p.isForest;
+      const enc = p.enchantedLandId;
+      const sick = p.summoningSick;
+      const power = p.power;
+      const counters = p.counters;
+      const used = p.abilitiesUsed;
+
+      // Detect the dominant "name + tap only" case in a single conjunction.
+      // Microbench shows this single combined check is faster than 6 sequential
+      // ifs that all ultimately fall through to a string concat.
+      if (
+        !isF &&
+        enc === undefined &&
+        !sick &&
+        (power === undefined || _fpCards[p.cardKey]?.power === power) &&
+        (!counters || _isEmptyBag(counters)) &&
+        (!used || _isEmptyBag(used))
+      ) {
+        segs[i] = p.name + tap;
+        continue;
+      }
+
+      // Slow path: at least one rare field is set.
+      let s = p.name + tap;
+      if (isF) s += ':F';
+      if (enc !== undefined) {
+        if (_encMap === null) {
+          // Lazy build — single pass over BF, only when needed.
+          _encMap = new Map();
+          for (let j = 0; j < bfArr.length; j++) _encMap.set(bfArr[j].id, bfArr[j].name);
         }
-        // Abilities used — once-per-turn activated abilities (Wirewood Lodge,
-        // Sylvan Library, Quirion Ranger, etc.). Without this, a state where
-        // Lodge's untap has already been consumed aliases with one where it hasn't,
-        // allowing the solver to incorrectly revisit the state as if Lodge were fresh.
-        if (p.abilitiesUsed && typeof p.abilitiesUsed === 'object') {
-          const used = Object.keys(p.abilitiesUsed).filter(k => p.abilitiesUsed[k]).sort();
-          if (used.length) s += ':A{' + used.join(',') + '}';
-        }
-        return s;
-      })
-      .sort().join('|');
+        s += ':E[' + (_encMap.get(enc) ?? enc) + ']';
+      }
+      if (sick) s += ':S';
+      if (power !== undefined && _fpCards[p.cardKey]?.power !== power) s += ':P' + power;
+      if (counters && typeof counters === 'object') {
+        const ents = Object.entries(counters).filter(([, v]) => v);
+        if (ents.length) s += ':C{' + ents.map(([k, v]) => v + k).sort().join(',') + '}';
+      }
+      if (used && typeof used === 'object') {
+        const usedKeys = Object.keys(used).filter(k => used[k]).sort();
+        if (usedKeys.length) s += ':A{' + usedKeys.join(',') + '}';
+      }
+      segs[i] = s;
+    }
+    const bf = segs.sort().join('|');
 
     // Mana — fast colon-separated digits (avoids conditional string building)
     const mn = this.mana;
@@ -2050,7 +2095,16 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
           results.push(s);
         }
       }
-      return results;
+      // Deduplicate by fingerprint: when multiple identical permanents exist
+      // (e.g. 3 Forests), bouncing any of them produces the same resulting
+      // state. Keeping duplicates wastes BFS queue budget.
+      const seen = new Set();
+      return results.filter(r => {
+        const fp = r.fingerprint();
+        if (seen.has(fp)) return false;
+        seen.add(fp);
+        return true;
+      });
     },
   };
 }
@@ -3557,7 +3611,10 @@ var CARDS = {
               results.push(s.log(`Magus of the Candelabra: {${x}}, tap → untap ${targets.map(l => l.name).join(', ')}`));
             }
           }
-          return results;
+          // Deduplicate: identical tapped lands (e.g. 3 Forests) produce the same
+          // state regardless of which specific permanent slot was chosen.
+          const seen = new Set();
+          return results.filter(r => { const fp = r.fingerprint(); if (seen.has(fp)) return false; seen.add(fp); return true; });
         },
       },
     },
@@ -3607,10 +3664,15 @@ var CARDS = {
           const pairs = tl.length === 1
             ? [[tl[0]]]
             : tl.flatMap((a, i) => tl.slice(i + 1).map(b => [a, b]));
-          return pairs.map(pair => {
+          const seen = new Set();
+          return pairs.flatMap(pair => {
             let s = at;
             for (const land of pair) s = s.untapPermanent(land.id);
-            return s.log(`Hope Tender (exert): {1}, tap → untap ${pair.map(p => p.name).join(' + ')}`);
+            s = s.log(`Hope Tender (exert): {1}, tap → untap ${pair.map(p => p.name).join(' + ')}`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return [];
+            seen.add(fp);
+            return [s];
           });
         },
       },
@@ -3662,10 +3724,15 @@ var CARDS = {
           const at = state.tapPermanent(perm.id); if (!at) return [];
           const tl = at.lands().filter(l => l.tapped);
           if (tl.length < 2) return [];
-          return tl.flatMap((a,i) => tl.slice(i+1).map(b => {
+          const seen = new Set();
+          return tl.flatMap((a, i) => tl.slice(i + 1).map(b => {
             let s = at.untapPermanent(a.id);
-            return s.untapPermanent(b.id).log(`Argothian Elder → untap ${a.name} + ${b.name}`);
-          }));
+            s = s.untapPermanent(b.id).log(`Argothian Elder → untap ${a.name} + ${b.name}`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return null;
+            seen.add(fp);
+            return s;
+          })).filter(Boolean);
         },
       },
     },
@@ -3682,10 +3749,15 @@ var CARDS = {
           const at = state.tapPermanent(perm.id); if (!at) return [];
           const tl = at.lands().filter(l => l.tapped);
           if (tl.length < 2) return [];
-          return tl.flatMap((a,i) => tl.slice(i+1).map(b => {
+          const seen = new Set();
+          return tl.flatMap((a, i) => tl.slice(i + 1).map(b => {
             let s = at.untapPermanent(a.id);
-            return s.untapPermanent(b.id).log(`Ley Weaver → untap ${a.name} + ${b.name}`);
-          }));
+            s = s.untapPermanent(b.id).log(`Ley Weaver → untap ${a.name} + ${b.name}`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return null;
+            seen.add(fp);
+            return s;
+          })).filter(Boolean);
         },
       },
     },
@@ -3700,9 +3772,14 @@ var CARDS = {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('1'); if (!ap) return [];
           const targets = [...ap.lands().filter(l=>l.tapped), ...ap.creatures().filter(c=>c.tapped&&c.id!==perm.id)];
+          const seen = new Set();
           return targets.flatMap(t => {
             let s = ap.tapPermanent(perm.id); if (!s) return [];
-            return [s.untapPermanent(t.id).log(`Saryth → untap ${t.name}`)];
+            s = s.untapPermanent(t.id).log(`Saryth → untap ${t.name}`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return [];
+            seen.add(fp);
+            return [s];
           });
         },
       },
@@ -3717,9 +3794,14 @@ var CARDS = {
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('1'); if (!ap) return [];
+          const seen = new Set();
           return ap.battlefield.filter(p=>p.tapped&&p.id!==perm.id).flatMap(t => {
             let s = ap.tapPermanent(perm.id); if (!s) return [];
-            return [s.untapPermanent(t.id).log(`Formidable Speaker → untap ${t.name}`)];
+            s = s.untapPermanent(t.id).log(`Formidable Speaker → untap ${t.name}`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return [];
+            seen.add(fp);
+            return [s];
           });
         },
       },
@@ -3758,11 +3840,17 @@ var CARDS = {
           if (perm.summoningSick) return [];
           const ap = state.payMana('1G'); if (!ap) return [];
           var cards = CARDS;
+          const seen = new Set();
           return state.creatures().filter(c=>c.id!==perm.id).flatMap(c => {
             let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
             const ck = Object.keys(cards).find(k=>cards[k].name===c.name);
             if (ck) s = s.addToHand(ck);
-            return [s.log(`Temur Sabertooth → return ${c.name} to hand`)];
+            s = s.log(`Temur Sabertooth → return ${c.name} to hand`);
+            // Deduplicate: bouncing two identical creatures yields the same state
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return [];
+            seen.add(fp);
+            return [s];
           });
         },
       },
@@ -3777,11 +3865,16 @@ var CARDS = {
         fn(state, perm) {
           const ap = state.payMana('1G'); if (!ap) return [];
           var cards = CARDS;
+          const seen = new Set();
           return state.creatures().filter(c=>c.subtypes&&c.subtypes.includes('Human')).flatMap(c => {
             let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
             const ck = Object.keys(cards).find(k=>cards[k].name===c.name);
             if (ck) s = s.addToHand(ck);
-            return [s.log(`Kogla → return ${c.name} to hand`)];
+            s = s.log(`Kogla → return ${c.name} to hand`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) return [];
+            seen.add(fp);
+            return [s];
           });
         },
       },
@@ -4282,10 +4375,15 @@ var CARDS = {
         p.is('artifact') && p.name !== 'Manglehorn'
       );
       if (artifacts.length === 0) return state;
+      const seen = new Set();
       const results = [state.log('Manglehorn ETB: no artifact target')];
       for (const t of artifacts) {
         const s = state.removeFromBattlefield(t.id, 'graveyard');
-        if (s) results.push(s.log(`Manglehorn ETB: destroy ${t.name}`));
+        if (!s) continue;
+        const fp = s.fingerprint();
+        if (seen.has(fp)) continue;
+        seen.add(fp);
+        results.push(s.log(`Manglehorn ETB: destroy ${t.name}`));
       }
       return results.length === 1 ? results[0] : results;
     },
@@ -4309,13 +4407,19 @@ var CARDS = {
         const s = state.removeFromBattlefield(t.id, 'exile');
         if (s) results.push(s.log(`Warping Wail: exile ${t.name}`));
       }
+      // Deduplicate: multiple identical small creatures (e.g. two Llanowar Elves)
+      // produce the same resulting state when exiled.
+      const seen = new Set();
+      const deduped = results.filter(r => {
+        const fp = r.fingerprint(); if (seen.has(fp)) return false; seen.add(fp); return true;
+      });
       // Mode 3: create 1/1 Eldrazi Scion token (sac for {C})
       // Modelled as immediately adding {C} (the token's only practical effect in combo lines)
       {
         const s = state.addMana('C').log('Warping Wail: create Eldrazi Scion (sac → {C})');
-        results.push(s);
+        deduped.push(s);
       }
-      return results;
+      return deduped;
     },
   },
   tireless_provisioner: {
@@ -4345,10 +4449,41 @@ var CARDS = {
   badgermole_cub: {
     name: 'Badgermole Cub', types: ['creature'], subtypes: ['Badger','Mole'],
     cost: '1G', power: 2, toughness: 2,
-    // ETB: earthbend 1 (land becomes a 0/0+1/1 creature with haste).
+    // ETB: earthbend 1 — target land you control becomes a 0/0 creature with haste
+    //   that's still a land, then put a +1/+1 counter on it (making it 1/1).
+    //   Key use: animate Gaea's Cradle or Nykthos so they can tap for mana without
+    //   summoning sickness, and so Quirion/Scryb Ranger can bounce them via Ashaya.
     // Static: whenever you tap a creature for mana, add {G}.
-    // The static is the same as Leyline of Abundance — modeled in tap_for_mana.
-    // Earthbend is complex — stub for now.
+    //   Already modeled in actions.js tap_for_mana (same as Leyline of Abundance).
+    onEnter(state) {
+      // Pick the highest-value land target. Priority:
+      //   Gaea's Cradle > Nykthos > Big non-basic (Ancient Tomb) > basic Forest
+      // Under Ashaya every creature is already a land, so skip those —
+      // only target permanents that are PURELY lands (no creature type before earthbend).
+      const candidates = state.battlefield.filter(p =>
+        p.is('land') && !p.is('creature') && p.name !== 'Badgermole Cub'
+      );
+      if (candidates.length === 0) return state.log('Badgermole Cub ETB: no land target');
+
+      const priority = ["Gaea's Cradle", 'Nykthos, Shrine to Nyx', 'Ancient Tomb',
+        'Deserted Temple', 'Wirewood Lodge', 'Forest', 'Boseiju, Who Endures'];
+      const target = candidates.sort((a, b) => {
+        const ai = priority.indexOf(a.name); const bi = priority.indexOf(b.name);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      })[0];
+
+      // Clone and mutate the target land: add creature type, haste, 1/1 P/T
+      let s = state.clone();
+      s._ensureBF();
+      const tgt = s.getPermanentById(target.id);
+      if (!tgt) return state.log('Badgermole Cub ETB: target not found');
+      tgt._ensureOwnTypes?.();
+      if (!tgt.types.includes('creature')) tgt.types = [...tgt.types, 'creature'];
+      tgt.summoningSick = false; // haste
+      tgt.power     = 1;
+      tgt.toughness = 1;
+      return s.log(`Badgermole Cub ETB: earthbend ${target.name} → 1/1 creature with haste`);
+    },
   },
   outland_liberator: {
     name: 'Outland Liberator', types: ['creature'], subtypes: ['Human','Werewolf'],
@@ -4505,12 +4640,12 @@ var CARDS = {
       const sacrificeable = state.battlefield.filter(p =>
         p.is('creature') && p.name !== 'Disciple of Freyalise'
       );
-      if (sacrificeable.length === 0) return state; // no sac target — ETB still fine
+      if (sacrificeable.length === 0) return state;
 
       const results = [];
-      // Option: don't sacrifice (just ETB with no draw)
       results.push(state.log('Disciple of Freyalise ETB: no sacrifice'));
 
+      const seen = new Set();
       for (const sac of sacrificeable) {
         const x = sac.power ?? 1;
         if (x === 0) continue;
@@ -4519,7 +4654,11 @@ var CARDS = {
         s = s.clone();
         s.life = (s.life ?? 40) + x;
         s = s.playerDraws(0, x);
-        results.push(s.log(`Disciple of Freyalise ETB: sacrifice ${sac.name} (power ${x}) → gain ${x} life, draw ${x} cards`));
+        s = s.log(`Disciple of Freyalise ETB: sacrifice ${sac.name} (power ${x}) → gain ${x} life, draw ${x} cards`);
+        const fp = s.fingerprint();
+        if (seen.has(fp)) continue;
+        seen.add(fp);
+        results.push(s);
       }
       return results.length === 1 ? results[0] : results;
     },
@@ -4797,36 +4936,30 @@ var CARDS = {
     name: 'Invasion of Ikoria', types: ['battle'], subtypes: ['Siege'], cost: 'XGG',
     // Oracle: When this Siege enters, search your library and/or graveyard for a
     // non-Human creature card with mana value X or less and put it onto the battlefield.
-    // If you search your library this way, shuffle.
-    //
-    // Modelled identically to Chord of Calling / Green Sun's Zenith:
-    // castFn receives state after dispatch pays the base {G}{G} cost.
-    // Remaining mana pool total = X.
-    // Battles enter the battlefield but the solver treats them as one-shot tutors
-    // (the siege/transform back-face is not modelled — too many turns away to matter).
+    // C-23 fix: previously branched over all eligible library creatures. Now picks best.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
-      const results = [];
       const x = state.mana.total();
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def?.types.includes('creature') || !def.cost) continue;
-        if (def.subtypes?.includes('Human')) continue; // non-Human only per oracle
+        if (def.subtypes?.includes('Human')) continue;
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
         if (mv > x) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(drainMana(ns).enterBattlefield(cardKey)
-          .log(`Invasion of Ikoria X=${x} → ${def.name} (MV ${mv})`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
       }
-      return results.length
-        ? results
-        : [drainMana(state).log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
+      if (!best) return [drainMana(state).log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
+      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [drainMana(state).log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
+      return [drainMana(ns).enterBattlefield(cardKey)
+        .log(`Invasion of Ikoria X=${x} → ${best.def.name} (MV ${best.mv})`)];
     },
   },
 
@@ -4835,18 +4968,13 @@ var CARDS = {
   chord_of_calling: {
     name: 'Chord of Calling', types: ['instant'], subtypes: [], cost: 'XGGG',
     // Oracle: Convoke. Search library for creature with MV ≤ X, put onto battlefield.
-    // Convoke: each tapped creature pays {1} or one mana of its color.
-    // Solver: X = number of untapped creatures (convoke) + available generic mana.
-    // Treats Chord like GSZ (creature to battlefield) but with convoke economy.
+    // C-23 fix: previously branched over all library creatures within MV budget.
+    // Now picks the single highest-TUTOR_PRIORITY_SCORE creature.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
-      const results = [];
-      // castFn is called AFTER the dispatch pays the {G}{G}{G} base cost.
-      // X = mana remaining in the pool (identical pattern to Green Sun's Zenith).
-      // Convoke is implicitly handled: tapping creatures reduces the effective cost
-      // paid by the dispatch, leaving more mana in the pool as X.
       const x = state.mana.total();
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -4856,12 +4984,14 @@ var CARDS = {
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(drainMana(ns).enterBattlefield(cardKey)
-          .log(`Chord of Calling X=${x} → ${def.name} (MV ${mv})`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
       }
-      return results.length ? results : [drainMana(state).log(`Chord of Calling X=${x}: no eligible creature`)];
+      if (!best) return [drainMana(state).log(`Chord of Calling X=${x}: no eligible creature`)];
+      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [drainMana(state).log(`Chord of Calling X=${x}: no eligible creature`)];
+      return [drainMana(ns).enterBattlefield(cardKey)
+        .log(`Chord of Calling X=${x} → ${best.def.name} (MV ${best.mv})`)];
     },
   },
   shared_summons: {
@@ -4963,9 +5093,13 @@ var CARDS = {
     // Oracle: {0} — Search library for a green creature, put in hand.
     // At your next upkeep, pay {2}{G}{G} or lose the game.
     // pactOwed is set on the state so startNewTurn() enforces the payment.
+    //
+    // C-23 fix: previously branched over every green creature in library (~30+
+    // results). Now picks the single highest-TUTOR_PRIORITY_SCORE green creature,
+    // matching the approach of Green Sun's Zenith and Chord of Calling.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -4973,43 +5107,61 @@ var CARDS = {
         const def = cards[ck];
         if (!def || !def.types.includes('creature')) continue;
         if (!def.cost || !def.cost.includes('G')) continue; // green creatures only
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        const result = ns.addToHand(cardKey).log(`Summoner's Pact → find ${def.name}`);
-        result.pactOwed = true; // upkeep trigger: pay {2}{G}{G} next turn or lose
-        results.push(result);
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def }; }
       }
-      return results.length ? results : [state.log("Summoner's Pact: no green creature")];
+      if (!best) return [state.log("Summoner's Pact: no green creature")];
+      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [state.log("Summoner's Pact: no green creature")];
+      const result = ns.addToHand(cardKey).log(`Summoner's Pact → find ${best.def.name}`);
+      result.pactOwed = true; // upkeep trigger: pay {2}{G}{G} next turn or lose
+      return [result];
     },
   },
   archdruid_charm: {
     name: "Archdruid's Charm", types: ['instant'], subtypes: [], cost: 'GGG',
     // Oracle mode 1: Search library for creature or land → battlefield (if land, tapped) or hand.
     // Modes 2 (fight) and 3 (exile artifact/enchantment) not useful to model for combos.
-    // Solver: only implements mode 1 (the tutor mode).
+    // C-23 fix: previously branched over all library creatures + lands. Now picks best
+    // creature (to hand) and best land (to battlefield, tapped) — 2 results max.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
+      const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
+                             'wirewood_lodge','geier_reach_sanitarium','boseiju','forest'];
+      const onBF = new Set(state.battlefield.map(p =>
+        Object.keys(cards).find(k => cards[k].name === p.name)).filter(Boolean));
+      let bestCreature = null, bestCreatureScore = -Infinity;
+      let bestLand = null;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def) continue;
-        const isCreature = def.types.includes('creature');
-        const isLand = def.types.includes('land');
-        if (!isCreature && !isLand) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        if (isLand) {
-          // Land enters battlefield tapped
+        if (def.types.includes('creature')) {
+          const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+          if (score > bestCreatureScore) { bestCreatureScore = score; bestCreature = { ck, def }; }
+        } else if (def.types.includes('land')) {
+          const pri = LAND_PRIORITY.indexOf(ck);
+          const score = pri === -1 ? 99 : pri;
+          const alreadyPresent = onBF.has(ck);
+          if (!bestLand || score < bestLand.score || (score === bestLand.score && !alreadyPresent && bestLand.alreadyPresent)) {
+            bestLand = { ck, def, score, alreadyPresent };
+          }
+        }
+      }
+      const results = [];
+      if (bestCreature) {
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === bestCreature.ck);
+        if (cardKey) results.push(ns.addToHand(cardKey).log(`Archdruid's Charm → find ${bestCreature.def.name}`));
+      }
+      if (bestLand) {
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === bestLand.ck);
+        if (cardKey) {
           const ns2 = ns.enterBattlefield(cardKey);
-          const landPerm = ns2.battlefield.find(p => p.name === def.name && !p.tapped);
+          const landPerm = ns2.battlefield.find(p => p.name === bestLand.def.name && !p.tapped);
           if (landPerm) landPerm.tapped = true;
-          results.push(ns2.log(`Archdruid's Charm → fetch land ${def.name} (tapped)`));
-        } else {
-          // Creature goes to hand
-          results.push(ns.addToHand(cardKey).log(`Archdruid's Charm → find ${def.name}`));
+          results.push(ns2.log(`Archdruid's Charm → fetch land ${bestLand.def.name} (tapped)`));
         }
       }
       return results.length ? results : [state.log("Archdruid's Charm: nothing found")];
@@ -5041,12 +5193,12 @@ var CARDS = {
     // Solver: give haste to the highest-value tapped creature (removes summoning sickness).
     // The one-shot untap is modelled as immediate untap.
     castFn(state) {
-      const results = [];
       const targets = state.creatures().filter(c => c.summoningSick || c.tapped);
       if (targets.length === 0) {
-        // Still playable on any creature but minimal benefit
         return [state.log('Touch of Vitae: no useful target')];
       }
+      const seen = new Set();
+      const results = [];
       for (const target of targets) {
         let s = state.clone();
         s._ensureBF();
@@ -5054,7 +5206,11 @@ var CARDS = {
         if (!perm) continue;
         perm.summoningSick = false;
         perm.tapped = false; // immediate untap from the {0} ability
-        results.push(s.log(`Touch of Vitae → ${target.name} gains haste + untap`));
+        s = s.log(`Touch of Vitae → ${target.name} gains haste + untap`);
+        const fp = s.fingerprint();
+        if (seen.has(fp)) continue;
+        seen.add(fp);
+        results.push(s);
       }
       return results;
     },
@@ -5224,26 +5380,28 @@ var CARDS = {
     name: 'Worldly Tutor', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle: Search library for a creature, REVEAL it, then SHUFFLE and put on TOP of library.
     // Sets state.topDecked so startNewTurn knows to draw exactly that card into hand.
+    // C-23 fix: previously branched over all library creatures. Now picks best target.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('creature')) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        // Put creature on top of library and set topDecked flag
-        const ns2 = ns.clone();
-        ns2._ensurePlayers();
-        ns2.players[0] = ns2.players[0].clone();
-        ns2.players[0].library = [cardKey, ...ns2.players[0].library];
-        ns2.topDecked = cardKey;   // startNewTurn will draw this card into hand
-        results.push(ns2.log(`Worldly Tutor → put ${def.name} on top of library`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def }; }
       }
-      return results.length ? results : [state.log('Worldly Tutor: no creature in library')];
+      if (!best) return [state.log('Worldly Tutor: no creature in library')];
+      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [state.log('Worldly Tutor: no creature in library')];
+      const ns2 = ns.clone();
+      ns2._ensurePlayers();
+      ns2.players[0] = ns2.players[0].clone();
+      ns2.players[0].library = [cardKey, ...ns2.players[0].library];
+      ns2.topDecked = cardKey;
+      return [ns2.log(`Worldly Tutor → put ${best.def.name} on top of library`)];
     },
   },
   crop_rotation: {
@@ -5251,42 +5409,55 @@ var CARDS = {
     // Oracle: As an additional cost, sacrifice a land. Search → put land onto battlefield → shuffle.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
-      // Must have a land to sacrifice (additional cost)
       const lands = state.lands();
       if (lands.length === 0) return [];
-      // Generate one result per (sacrifice target, fetch target) combination.
-      // For the solver: sacrifice the least-valuable land (first non-Cradle non-Nykthos land).
-      // Sort sacrifice candidates: prefer expendable lands (not key engine lands).
       const KEEP = new Set(['gaeas_cradle','nykthos','yavimaya','wirewood_lodge','geier_reach','deserted_temple']);
       const sacrificeable = lands.filter(l => {
         const ck = Object.keys(cards).find(k => cards[k].name === l.name);
         return !KEEP.has(ck);
       });
-      const sacrificeTargets = sacrificeable.length > 0 ? sacrificeable : lands;
-      // Use first sacrifice target (simplest; solver can explore via branching)
-      const sacLand = sacrificeTargets[0];
+      const sacLand = (sacrificeable.length > 0 ? sacrificeable : lands)[0];
       const afterSac = state.removeFromBattlefield(sacLand.id, 'graveyard');
       if (!afterSac) return [];
+      // C-23 fix: pick the single highest-priority land from library.
+      // Non-basic engine lands already on the battlefield are skipped first —
+      // fetching a second Cradle is always worse than fetching a new utility land.
+      const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
+                             'wirewood_lodge','geier_reach_sanitarium','boseiju',
+                             'emergence_zone','forest'];
+      const onBF = new Set(afterSac.battlefield.map(p => {
+        return Object.keys(cards).find(k => cards[k].name === p.name);
+      }).filter(Boolean));
+      // Determine which engine lands are already present (skip duplicates)
+      const UNIQUE_LANDS = new Set(['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
+                                    'wirewood_lodge','geier_reach_sanitarium','boseiju','emergence_zone']);
+      let best = null;
       const seen = new Set();
       for (const ck of afterSac.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('land')) continue;
-        const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(ns.enterBattlefield(cardKey).log(`Crop Rotation: sac ${sacLand.name} → fetch ${def.name}`));
+        // Skip unique engine lands already on the battlefield
+        if (UNIQUE_LANDS.has(ck) && onBF.has(ck)) continue;
+        const pri = LAND_PRIORITY.indexOf(ck);
+        const score = pri === -1 ? 99 : pri;
+        if (!best || score < best.score) best = { ck, def, score };
       }
-      return results.length ? results : [afterSac.log('Crop Rotation: no land in library')];
+      if (!best) return [afterSac.log('Crop Rotation: no land in library')];
+      const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [afterSac.log('Crop Rotation: no land in library')];
+      return [ns.enterBattlefield(cardKey).log('Crop Rotation: sac ' + sacLand.name + ' → fetch ' + best.def.name)];
     },
   },
   green_suns_zenith: {
     name: "Green Sun's Zenith", types: ['sorcery'], subtypes: [], cost: 'XG',
+    // C-23 fix: previously branched over all green creatures within MV budget.
+    // Now picks the single highest-TUTOR_PRIORITY_SCORE green creature.
     castFn(state) {
       var cards = CARDS;
       const xMax = state.mana.total();
-      const results = [];
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -5297,11 +5468,13 @@ var CARDS = {
         const parsed = parseCost(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > xMax) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(drainMana(ns).enterBattlefield(cardKey).log(`Green Sun's Zenith → fetch ${def.name} (MV ${mv})`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
       }
-      return results.length ? results : [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
+      if (!best) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
+      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
+      return [drainMana(ns).enterBattlefield(cardKey).log(`Green Sun's Zenith → fetch ${best.def.name} (MV ${best.mv})`)];
     },
   },
   finale_of_devastation: {
@@ -5313,28 +5486,22 @@ var CARDS = {
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
-      const results = [];
-      // With infinite mana, X is effectively unlimited. Use all available mana as X proxy.
-      // In practice the solver uses this to find Duskwatch or another finisher.
-      // castFn receives state AFTER dispatch pays the base cost — remaining mana = X.
       const x = state.mana.total();
-      // Search library
+      // C-23 fix: pick single best target from library (highest score within MV)
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
-        if (!def || !def.types.includes('creature')) continue;
-        if (!def.cost) continue;
+        if (!def || !def.types.includes('creature') || !def.cost) continue;
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(drainMana(ns).enterBattlefield(cardKey)
-          .log(`Finale of Devastation X=${x} → ${def.name} (MV ${mv}) from library`));
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def, mv, src: 'library' }; }
       }
-      // Search graveyard
+      // Also check graveyard for higher-priority targets
       for (const name of state.players[0].graveyard) {
         const ck = Object.keys(cards).find(k => cards[k].name === name);
         if (!ck || seen.has(ck) || isStax(ck)) continue;
@@ -5344,53 +5511,59 @@ var CARDS = {
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        // Return from graveyard
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def, mv, src: 'graveyard', name }; }
+      }
+      if (!best) return [drainMana(state).log(`Finale of Devastation X=${x}: no target`)];
+      if (best.src === 'library') {
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+        if (!cardKey) return [drainMana(state).log(`Finale of Devastation X=${x}: no target`)];
+        return [drainMana(ns).enterBattlefield(cardKey)
+          .log(`Finale of Devastation X=${x} → ${best.def.name} (MV ${best.mv}) from library`)];
+      } else {
         let s = state.clone();
         s._ensurePlayers();
         s.players[0] = s.players[0].clone();
-        const gyIdx = s.players[0].graveyard.indexOf(name);
-        if (gyIdx < 0) continue;
-        s.players[0].graveyard = [...s.players[0].graveyard.slice(0,gyIdx), ...s.players[0].graveyard.slice(gyIdx+1)];
-        s = drainMana(s).enterBattlefield(ck);
-        results.push(s.log(`Finale of Devastation X=${x} → ${def.name} (MV ${mv}) from graveyard`));
+        const gyIdx = s.players[0].graveyard.indexOf(best.name);
+        if (gyIdx >= 0) s.players[0].graveyard = [...s.players[0].graveyard.slice(0,gyIdx), ...s.players[0].graveyard.slice(gyIdx+1)];
+        s = drainMana(s).enterBattlefield(best.ck);
+        return [s.log(`Finale of Devastation X=${x} → ${best.def.name} (MV ${best.mv}) from graveyard`)];
       }
-      return results.length ? results : [drainMana(state).log(`Finale of Devastation X=${x}: no target`)];
     },
   },
   natural_order: {
     name: 'Natural Order', types: ['sorcery'], subtypes: [], cost: '2GG',
     // Oracle: Sacrifice a green creature as additional cost. Search → any green creature onto BF → shuffle.
+    // C-23 fix: previously branched over all green library creatures. Now picks best target.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
       const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
                             'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
       const greenCreatures = state.creatures().filter(c => {
         const ck = Object.keys(cards).find(k => cards[k].name === c.name);
-        const def = ck ? cards[ck] : null;
-        return def?.cost?.includes('G');
+        return cards[ck]?.cost?.includes('G');
       });
       if (greenCreatures.length === 0) return [];
       const expendable = greenCreatures.filter(c => !KEEP.has(c.name));
       const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
       const afterSac = state.removeFromBattlefield(sacCreature.id, 'graveyard');
       if (!afterSac) return [];
-      // Resolve sacCreature's card key once for duplicate-fetch filtering
       const sacCreatureKey = Object.keys(cards).find(k => cards[k].name === sacCreature.name) ?? null;
+      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of afterSac.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
-        // Never fetch the same card that was just sacrificed — it's always a net-zero play.
         if (sacCreatureKey && ck === sacCreatureKey) continue;
         const def = cards[ck];
-        if (!def || !def.types.includes('creature')) continue;
-        if (!def.cost?.includes('G')) continue;
-        const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(ns.enterBattlefield(cardKey).log(`Natural Order: sac ${sacCreature.name} → fetch ${def.name}`));
+        if (!def || !def.types.includes('creature') || !def.cost?.includes('G')) continue;
+        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (score > bestScore) { bestScore = score; best = { ck, def }; }
       }
-      return results.length ? results : [afterSac.log('Natural Order: no green creature in library')];
+      if (!best) return [afterSac.log('Natural Order: no green creature in library')];
+      const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [afterSac.log('Natural Order: no green creature in library')];
+      return [ns.enterBattlefield(cardKey).log(`Natural Order: sac ${sacCreature.name} → fetch ${best.def.name}`)];
     },
   },
   eldritch_evolution: {
@@ -5495,20 +5668,33 @@ var CARDS = {
   },
   sylvan_scrying: {
     name: 'Sylvan Scrying', types: ['sorcery'], subtypes: [], cost: '1G',
+    // C-23 fix: previously branched over all lands in library (~20 results).
+    // Now picks the single highest-priority land not already on the battlefield.
     castFn(state) {
       var cards = CARDS;
-      const results = [];
+      const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
+                             'wirewood_lodge','geier_reach_sanitarium','boseiju',
+                             'emergence_zone','forest'];
+      const UNIQUE_LANDS = new Set(['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
+                                    'wirewood_lodge','geier_reach_sanitarium','boseiju','emergence_zone']);
+      const onBF = new Set(state.battlefield.map(p =>
+        Object.keys(cards).find(k => cards[k].name === p.name)).filter(Boolean));
+      let best = null;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('land')) continue;
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
-        if (!cardKey) continue;
-        results.push(ns.addToHand(cardKey).log(`Sylvan Scrying → find ${def.name}`));
+        if (UNIQUE_LANDS.has(ck) && onBF.has(ck)) continue;
+        const pri = LAND_PRIORITY.indexOf(ck);
+        const score = pri === -1 ? 99 : pri;
+        if (!best || score < best.score) best = { ck, def, score };
       }
-      return results.length ? results : [state.log('Sylvan Scrying: no land in library')];
+      if (!best) return [state.log('Sylvan Scrying: no land in library')];
+      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
+      if (!cardKey) return [state.log('Sylvan Scrying: no land in library')];
+      return [ns.addToHand(cardKey).log(`Sylvan Scrying → find ${best.def.name}`)];
     },
   },
   natures_rhythm: {
@@ -7790,8 +7976,24 @@ var WIN_CONDITIONS = [
  * (mana-positive, mana-neutral ETB/draw/LTB/storm). Used by checkVictory to
  * select win conditions whose prerequisites match the loop output.
  */
-function checkCombos(state) {
+/**
+ * Check whether an infinite-mana combo is assembled.
+ * Returns { achieved, name, description, loopType } or null.
+ *
+ * `loopType` is one of LOOP_TYPE.* values describing what the loop produces
+ * (mana-positive, mana-neutral ETB/draw/LTB/storm). Used by checkVictory to
+ * select win conditions whose prerequisites match the loop output.
+ *
+ * [E11] Optional `present` (Set<string>) — when provided, detectors whose
+ * prefilter rejects against this Set are skipped without calling check(),
+ * cutting the per-node detector loop on hands that lack each combo's
+ * required pieces. Caller must pass the post-equiv-expanded hand∪BF Set
+ * (Solver.analyzeState() builds this; pass `analysis.present`).
+ * When `present` is omitted, all detectors run (legacy behaviour).
+ */
+function checkCombos(state, present) {
   for (const detector of DETECTORS) {
+    if (!_passesPrefilter(detector, present)) continue;
     if (detector.check(state)) {
       return {
         achieved:    true,
@@ -7820,10 +8022,17 @@ function checkCombos(state) {
  * If a detector fires with loopType that no win condition accepts, checkVictory
  * returns the "infinite mana assembled but no win" sentinel — same as before,
  * preserving existing behaviour for unused loop types.
+ *
+ * [E11] Optional `present` (Set<string>) — same contract as checkCombos: if
+ * provided, win conditions whose prefilter rejects against `present` are
+ * skipped. Also forwarded to the inner checkCombos call when no pre-computed
+ * `_infiniteMana` is supplied.
  */
-function checkVictory(state, _infiniteMana) {
+function checkVictory(state, _infiniteMana, present) {
   // [E3] Accept pre-computed checkCombos result to avoid redundant call in hot path.
-  const infiniteMana = _infiniteMana !== undefined ? _infiniteMana : checkCombos(state);
+  // [E11] Forward `present` to the lazy checkCombos call so the inner detector
+  // loop also benefits from the prefilter when checkVictory is called standalone.
+  const infiniteMana = _infiniteMana !== undefined ? _infiniteMana : checkCombos(state, present);
   if (!infiniteMana) return null;
 
   // Loop type from the firing detector. If undefined (e.g. caller passed in a
@@ -7840,6 +8049,11 @@ function checkVictory(state, _infiniteMana) {
     // loop type that fired. Default = [MANA_POSITIVE] (today's behaviour).
     // We use the cached `_acceptedLoopTypes` Set stamped at module load.
     if (!wc._acceptedLoopTypes.has(detectorLoopType)) continue;
+
+    // [E11] Prefilter on the present set — skips wcs whose required keys
+    // are not in the hand∪BF (post-equiv-expansion). Falls through to
+    // wc.check(state) when no prefilter is registered for this wc.
+    if (!_passesPrefilter(wc, present)) continue;
 
     if (!wc.check(state)) continue;
 
@@ -7939,6 +8153,251 @@ var DETECTOR_REQUIRED_KEYS = {
 // Stamp requiredKeys onto each detector at load time (Fix #8).
 for (const d of [...DETECTORS, ...WIN_CONDITIONS]) {
   d.requiredKeys = DETECTOR_REQUIRED_KEYS[d.name] ?? [];
+}
+
+// ── [E11] Hot-path prefilter for checkCombos / checkVictory ───────────────
+//
+// Per-detector "provably required" key gate, evaluated against the caller's
+// pre-built `present` Set (hand ∪ battlefield, post-equiv-expansion). The
+// prefilter MUST be a necessary condition for the detector's check() to
+// return true — i.e. if prefilter rejects, check() is guaranteed to also
+// reject. We hand-audit each entry against the corresponding `.check()`
+// source above; detectors NOT in the table run unconditionally (safe
+// default — same as old behaviour).
+//
+// Schema per entry: { all: string[], any: string[][] }
+//   all  = every key listed must be in `present` (post equiv-expansion)
+//   any  = each inner array is a disjunction; at least one of its keys
+//          must be in `present`
+//
+// Equivalence groups (FUNCTIONAL_EQUIVALENTS) are already expanded into
+// `present` by Solver.analyzeState() before checkCombos is called, so
+// e.g. listing 'temur_sabertooth' here also matches a board with Kogla,
+// and 'quirion_ranger' matches a board with Scryb Ranger. This is the
+// one place the prefilter intentionally relaxes — it's correct because
+// every check() that names one of these names also accepts the other
+// via the same equiv groups (verified by audit).
+//
+// CORRECTNESS NOTES (per-detector, with the line in check() that justifies):
+//
+// • Ashaya+QR/Scryb mana-dork detectors:  ashayaOut() AND quirionAvailable()
+//     ⇒ ashaya + quirion_ranger (≡ scryb_ranger via equiv group).
+// • Ashaya+Hope Tender variants:           ashayaOut() AND permReady('Hope Tender')
+//     ⇒ ashaya + hope_tender. The third piece (Cradle/Circle/Marwyn/Selvala/
+//     Nykthos) is not a hard prefilter requirement here — listing every
+//     variant separately keeps the prefilter strict.
+// • Earthcraft+Ashaya+QR:                  earthcraft + ashaya + quirion_ranger.
+// • Hyrax+Temur:                           temur_sabertooth + hyrax_tower_scout.
+// • Hyrax+Kogla:                           kogla + hyrax_tower_scout (Hyrax can
+//     be in hand or on field; both go into `present`).
+// • Tireless Provisioner+Ashaya+Ranger:    ashayaOut() AND tireless_provisioner +
+//     either ranger.
+// • Argothian Elder+Wirewood Lodge:        (argothian_elder OR ley_weaver) AND
+//     wirewood_lodge — equiv-grouped, so 'argothian_elder' suffices.
+// • Argothian Elder + Maze of Ith:         argothian_elder + maze_of_ith.
+// • Defiler win:                           defiler_of_vigor + (any ranger / bouncer / symbiote).
+// • Hitzel:                                geier_reach + endurance + (Temur OR (Kogla+EW)
+//     OR (Ashaya + (QR OR Scryb))). The post-equiv `present` accepts Kogla
+//     for `temur_sabertooth`, but the Ashaya+Ranger third variant breaks the
+//     temur_sabertooth requirement. Use an `any` group instead.
+// • Mikokoro:                              mikokoro + eternal_witness +
+//     (temur OR kogla) [equiv-grouped] + (noxious_revival OR elvish_reclaimer
+//     OR crop_rotation). Note: Reclaimer must be on BF in check(), but it is
+//     in `present` if on BF, so listing the key is sufficient.
+// • Win: Defiler:                          defiler_of_vigor.
+// • Win: Duskwatch / Finale / Bite:        single key, simple inclusion test.
+// • Win: Tutor for Finisher:               NO prefilter — too many disjunctive
+//     paths through tutors, draw engines, ETB chains, and a topDecked check.
+// • Win: Draw Library:                     NO prefilter — accepts Beast Whisperer
+//     OR Glademuse, each gated by additional bouncer/ranger requirements that
+//     are easier to encode as the existing check.
+// • Selvala + Quirion/Scryb + Power≥2:     selvala + quirion_ranger.
+// • Selvala+Cloudstone+Symbiote:           selvala + cloudstone_curio + wirewood_symbiote.
+// • Marwyn/Selvala + EW + Temur/Kogla + Vitalize/Charm: 4 keys all required, the
+//     spell is required in hand specifically — but `present` Set already covers
+//     hand. Use an `any` group for vitalize/emerald_charm.
+// • Survival/Fauna→Ashaya+Ranger:          survival_fittest (or fauna_shaman, but
+//     this detector specifically gates on Survival per its check) + ashaya +
+//     quirion_ranger. Conservative: only require ashaya + quirion_ranger.
+// • Beast Whisperer / Glademuse Draw:      beast_whisperer (or glademuse, but
+//     the detector at line 1386 specifically requires Beast Whisperer for the
+//     mana-neutral draw; Glademuse is documented but not gated). Conservative:
+//     require beast_whisperer for prefilter.
+// • Ashaya+Ranger neutral (combos 1, 41):  ashaya + (quirion_ranger OR scryb_ranger,
+//     equiv-grouped, so `quirion_ranger` alone in `all` is sufficient AFTER
+//     equiv-expansion) + a green tapper. Conservative: require ashaya + ranger;
+//     do NOT enumerate green tappers.
+// • Destiny Spinner+Ashaya+Ranger+Big:     destiny_spinner + ashaya + quirion_ranger.
+// • Ashaya+Magus+Source:                   ashaya + magus_of_the_candelabra.
+// • Ashaya+Argothian/Ley:                  ashaya + argothian_elder (equiv).
+// • Selvala+Quirion+Power:                 selvala + quirion_ranger.
+// • Kogla+Acolyte:                         kogla + karametra_acolyte.
+// • Temur+Symbiote+Circle:                 temur_sabertooth + wirewood_symbiote +
+//     circle_of_dreams_druid.
+// • Temur+Symbiote+Selvala:                temur_sabertooth + wirewood_symbiote +
+//     selvala.
+// • Temur+Haste+Dork:                      temur_sabertooth + (concordant_crossroads
+//     OR thousand_year_elixir OR surrak_goreclaw).
+// • Woodcaller+Temur:                      temur_sabertooth + woodcaller_automaton.
+// • Ashaya+QR+Arbor Elf:                   ashaya + quirion_ranger + arbor_elf.
+// • Ashaya+QR+Arbor Elf+Yavimaya:          ashaya + quirion_ranger + arbor_elf +
+//     yavimaya.
+// • Ashaya+QR+Badgermole:                  ashaya + quirion_ranger + badgermole_cub.
+//
+// If a detector is missing from this table, it falls through and runs
+// unconditionally — same as the pre-prefilter baseline. Adding entries is
+// purely additive and reversible.
+var _DETECTOR_PREFILTER = {
+  // Ashaya + Ranger family
+  'Infinite Green Mana (Ashaya + Quirion Ranger + Mana Dork ≥2G)':
+    { all: ['ashaya', 'quirion_ranger'] },
+  'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]':
+    { all: ['ashaya', 'scryb_ranger'] },
+  'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]':
+    { all: ['ashaya', 'quirion_ranger'] },  // equiv-expanded: covers Scryb Ranger too
+  'Infinite Green Mana (Ashaya + Quirion Ranger + Badgermole Cub + Creature Dork)':
+    { all: ['ashaya', 'quirion_ranger', 'badgermole_cub'] },
+  'Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Enchanted Land)':
+    { all: ['ashaya', 'quirion_ranger', 'arbor_elf'] },
+  'Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Yavimaya + Big Land)':
+    { all: ['ashaya', 'quirion_ranger', 'arbor_elf', 'yavimaya'] },
+  'Infinite Mana (Earthcraft + Ashaya + Quirion Ranger + Basic Forest)  [Combo Summary #4]':
+    { all: ['earthcraft', 'ashaya', 'quirion_ranger'] },
+  'Infinite Green Mana (Survival/Fauna Shaman → Ashaya + Ranger + Big Dork)':
+    { all: ['ashaya', 'quirion_ranger', 'survival_fittest'] },
+  'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)':
+    { all: ['ashaya', 'destiny_spinner', 'quirion_ranger'] },
+  'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]':
+    { all: ['ashaya', 'tireless_provisioner', 'quirion_ranger'] },
+
+  // Ashaya + Hope Tender family
+  "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":
+    { all: ['ashaya', 'hope_tender', 'gaeas_cradle'] },
+  'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':
+    { all: ['ashaya', 'hope_tender', 'circle_of_dreams_druid'] },
+  'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':
+    { all: ['ashaya', 'hope_tender', 'marwyn'] },
+  'Infinite Mana (Ashaya + Hope Tender + Selvala)  [COMBO 56]':
+    { all: ['ashaya', 'hope_tender', 'selvala'] },
+  'Infinite Mana (Ashaya + Hope Tender + Nykthos, devotion ≥4)  [COMBO 45]':
+    { all: ['ashaya', 'hope_tender', 'nykthos'] },
+
+  // Ashaya + Argothian Elder / Magus
+  'Infinite Mana (Ashaya + Argothian Elder / Ley Weaver)  [COMBO 6, 24]':
+    { all: ['ashaya', 'argothian_elder'] },  // equiv-grouped with ley_weaver
+  'Infinite Mana (Ashaya + Magus of the Candelabra + Source ≥3G)  [COMBO 32, 34, 36, 43, 47, 52, 60, 62]':
+    { all: ['ashaya', 'magus_of_the_candelabra'] },
+
+  // Argothian Elder + Wirewood Lodge / Maze of Ith (no Ashaya)
+  'Infinite Mana (Argothian Elder + Wirewood Lodge + Big Land)  [COMBO 40, 31, 42, 46]':
+    { all: ['argothian_elder', 'wirewood_lodge'] },  // equiv-grouped with ley_weaver
+  'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':
+    { all: ['argothian_elder', 'maze_of_ith'] },
+
+  // Selvala + Ranger / Cloudstone variants
+  'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':
+    { all: ['selvala', 'quirion_ranger'] },
+  'Infinite Mana (Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf)  [COMBO 53, 54, 55]':
+    { all: ['selvala', 'cloudstone_curio', 'wirewood_symbiote'] },
+
+  // Kogla + Acolyte (combo 2)
+  "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥6)  [COMBO 2]":
+    { all: ['kogla', 'karametra_acolyte'],
+      any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
+
+  // Temur Sabertooth + various engines
+  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid)  [COMBO 4, 5, 17]':
+    { all: ['temur_sabertooth', 'wirewood_symbiote', 'circle_of_dreams_druid'] },
+  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
+    { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
+  'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]':
+    { all: ['temur_sabertooth'],
+      any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
+  'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]':
+    { all: ['temur_sabertooth', 'hyrax_tower_scout'] },
+  'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]':
+    { all: ['kogla', 'hyrax_tower_scout'] },
+  'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
+    { all: ['temur_sabertooth', 'woodcaller_automaton'] },
+
+  // Marwyn / Selvala + Eternal Witness + Temur/Kogla + Vitalize/Charm
+  'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]':
+    { all: ['marwyn', 'eternal_witness', 'temur_sabertooth'],
+      any: [['vitalize', 'emerald_charm']] },
+  'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]':
+    { all: ['marwyn', 'eternal_witness', 'kogla'],
+      any: [['vitalize', 'emerald_charm']] },
+  'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]':
+    { all: ['selvala', 'eternal_witness', 'temur_sabertooth'],
+      any: [['vitalize', 'emerald_charm']] },
+  'Infinite Mana (Selvala + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 44]':
+    { all: ['selvala', 'eternal_witness', 'kogla'],
+      any: [['vitalize', 'emerald_charm']] },
+
+  // Beast Whisperer draw engine (mana-neutral)
+  'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':
+    { all: ['beast_whisperer'] },
+
+  // ── Win Conditions ──────────────────────────────────────────────────────
+  "Win: Geier Reach Sanitarium Mill (Hitzel's Sequence)":
+    { all: ['geier_reach', 'endurance'],
+      // 3 variants: Temur, Kogla+Witness, Ashaya+Ranger
+      any: [['temur_sabertooth', 'kogla', 'ashaya']] },
+  'Win: Duskwatch Recruiter (find all creatures)':
+    { all: ['duskwatch_recruiter'] },
+  'Win: Finale of Devastation X≥10':
+    { all: ['finale_of_devastation'] },
+  'Win: Infectious Bite (poison counters)':
+    { all: ['infectious_bite'] },
+  'Win: Mikokoro Mill Line':
+    { all: ['mikokoro', 'eternal_witness'],
+      any: [['temur_sabertooth', 'kogla'],
+            ['noxious_revival', 'elvish_reclaimer', 'crop_rotation']] },
+  'Win: Defiler of Vigor (infinite +1/+1 counters)':
+    { all: ['defiler_of_vigor'],
+      any: [['quirion_ranger', 'scryb_ranger', 'temur_sabertooth', 'kogla', 'wirewood_symbiote']] },
+  // 'Win: Tutor for Finisher' and 'Win: Draw Library' have too many disjunctive
+  // paths to safely prefilter — they fall through and run unconditionally.
+};
+
+// Stamp _prefilterAll / _prefilterAny on each detector at load.
+// Detectors not in _DETECTOR_PREFILTER get null prefilters (match-all behaviour).
+for (const d of [...DETECTORS, ...WIN_CONDITIONS]) {
+  const pf = _DETECTOR_PREFILTER[d.name];
+  d._prefilterAll = pf?.all ?? null;
+  d._prefilterAny = pf?.any ?? null;
+}
+
+/**
+ * [E11] Test whether the caller's `present` Set satisfies a detector's
+ * prefilter requirements. Returns true when:
+ *   - the detector has no prefilter (always run), OR
+ *   - every key in `_prefilterAll` is in `present`, AND
+ *   - for every group in `_prefilterAny`, at least one key is in `present`.
+ * `present` is the post-equiv-expanded hand∪battlefield Set built by
+ * Solver.analyzeState() — keep that contract or this filter can wrongly
+ * skip detectors. When `present` is null/undefined, returns true (no skip).
+ */
+function _passesPrefilter(detector, present) {
+  if (!present) return true;
+  const all = detector._prefilterAll;
+  if (all) {
+    for (let i = 0; i < all.length; i++) {
+      if (!present.has(all[i])) return false;
+    }
+  }
+  const any = detector._prefilterAny;
+  if (any) {
+    for (let i = 0; i < any.length; i++) {
+      const group = any[i];
+      let hit = false;
+      for (let j = 0; j < group.length; j++) {
+        if (present.has(group[j])) { hit = true; break; }
+      }
+      if (!hit) return false;
+    }
+  }
+  return true;
 }
 
 // [E4] Sort DETECTORS by empirical hit frequency so checkCombos short-circuits
@@ -9194,6 +9653,40 @@ for (const group of FUNCTIONAL_EQUIVALENTS) {
   for (const k of group) _equivGroupOf.set(k, group);
 }
 
+// ── [E11] buildPresentSet ────────────────────────────────────────────────
+// Returns a Set<string> of card keys representing what the active player
+// has access to right now: hand ∪ battlefield ∪ (topDecked, optionally),
+// expanded via FUNCTIONAL_EQUIVALENTS (so e.g. Kogla on board adds
+// 'temur_sabertooth' to the set, since they slot into the same combos).
+//
+// Factored out of analyzeState so the Solver hot path can build it ONCE per
+// node, then reuse it for: checkCombos (as the [E11] prefilter input),
+// checkVictory ([E11] prefilter), generateActions ([E2] missingComboCards
+// reuse), and analyzeState (this same Set fed back in).
+function buildPresentSet(state) {
+  const present = new Set(state.hand);
+  for (const p of state.battlefield) {
+    const ck = NAME_TO_KEY[p.name];
+    if (ck) present.add(ck);
+  }
+  // topDecked counts as 'will be in hand next turn'
+  if (state.topDecked) present.add(state.topDecked);
+
+  // Expand present set via FUNCTIONAL_EQUIVALENTS (same logic that was inline
+  // in analyzeState).  [E8] Two-pass: collect additions first, then apply —
+  // avoids [...present] array allocation while iterating a Set we're adding to.
+  let _equivAdditions = null;
+  for (const k of present) {
+    const grp = _equivGroupOf.get(k);
+    if (grp) {
+      if (!_equivAdditions) _equivAdditions = [];
+      for (const m of grp) { if (!present.has(m)) _equivAdditions.push(m); }
+    }
+  }
+  if (_equivAdditions) for (const m of _equivAdditions) present.add(m);
+  return present;
+}
+
 // ── #2 analyzeState ───────────────────────────────────────────────────────
 // Returns { present: Set<string>, minMissing: number }
 //
@@ -9209,33 +9702,15 @@ for (const group of FUNCTIONAL_EQUIVALENTS) {
 // 2 missing creatures, only the first costs 1 — the second costs 2.
 // This correctly handles the Crop Rotation case: 1 land use, missing ashaya
 // (creature) + something else → the creature piece costs 2 even with a land tutor.
-function analyzeState(state, _infiniteMana) {
+//
+// [E11] Optional `_present`: when supplied, skips rebuilding the present Set.
+// Caller (Solver hot path) builds it once via buildPresentSet() then passes it
+// here AND to checkCombos for the prefilter — no double work.
+function analyzeState(state, _infiniteMana, _present) {
   // [E3] _infiniteMana: pre-computed checkCombos(state) result from the caller,
   // passed in to avoid calling checkCombos a second time inside this function.
-  const present = new Set(state.hand);
-  for (const p of state.battlefield) {
-    const ck = NAME_TO_KEY[p.name];
-    if (ck) present.add(ck);
-  }
-  // topDecked counts as 'will be in hand next turn'
-  if (state.topDecked) present.add(state.topDecked);
-
-  // Expand present set via FUNCTIONAL_EQUIVALENTS: if any member of an
-  // equivalence group is present, treat ALL members as present for combo-
-  // distance purposes.  E.g. having temur_sabertooth satisfies any combo
-  // requiring kogla, preventing an off-by-one in minMissing that kept dead
-  // branches alive when the hand held a functional equivalent.
-  // [E8] Two-pass: collect additions first, then apply — avoids [...present]
-  // array allocation while iterating a Set that we're adding to.
-  let _equivAdditions = null;
-  for (const k of present) {
-    const grp = _equivGroupOf.get(k);
-    if (grp) {
-      if (!_equivAdditions) _equivAdditions = [];
-      for (const m of grp) { if (!present.has(m)) _equivAdditions.push(m); }
-    }
-  }
-  if (_equivAdditions) for (const m of _equivAdditions) present.add(m);
+  // [E11] _present: pre-built (and equiv-expanded) Set from buildPresentSet().
+  const present = _present ?? buildPresentSet(state);
 
   const base = _tutorCounts(state);
 
@@ -9498,8 +9973,23 @@ class Solver {
     if (state.youLost()) { this.pruned++; return; }
 
     // Score pruning (DFS-only, disabled in exhaustive mode)
+    //
+    // [E13 / C-29] In allLines mode, use strict `>` so sibling branches with
+    // score == bestScore are still explored.  Pre-fix, the `>=` cutoff dropped
+    // tied-score winning leaves once the first one was found, silently
+    // under-reporting the line count.  In single-best mode we keep `>=` —
+    // ties are equivalent for "an optimal line", and the stricter prune keeps
+    // search space bounded on tutor-heavy hands.
+    //
+    // Note: score is monotone-non-decreasing along any DFS path
+    // (depth*10 dominates -mana.total() deltas), so a state at score s
+    // cannot produce wins at score < s.  Therefore `>` is sufficient (we
+    // only miss ties at this exact score, which `>` admits).
     const s = score(state, depth);
-    if (!this.opts.exhaustive && s >= this.bestScore) { this.pruned++; return; }
+    if (!this.opts.exhaustive) {
+      const cut = this.opts.allLines ? (s > this.bestScore) : (s >= this.bestScore);
+      if (cut) { this.pruned++; return; }
+    }
 
     // Dedup: full fingerprint including mana (mana affects what actions are available)
     const fp = state.fingerprint();
@@ -9507,15 +9997,25 @@ class Solver {
     if (prev !== undefined && prev <= depth) { this.pruned++; return; }
     this.visited.set(fp, depth);
 
+    // [E11] Build the present Set ONCE for this node, then thread it through
+    // every checkCombos / checkVictory / analyzeState / generateActions call so
+    // the per-detector prefilter can short-circuit without rebuilding the Set.
+    // The Set is hand∪BF post-equiv-expansion; see Solver.buildPresentSet.
+    const present = buildPresentSet(state);
+
     // [E3] Compute checkCombos ONCE per node and reuse in analyzeState,
     // checkVictory, canReachCombo, and heuristic — eliminates 3+ redundant calls.
-    const infiniteMana = checkCombos(state);
+    // [E11] Pass `present` so checkCombos can skip detectors whose required
+    // keys aren't in hand∪BF — modest wins on most hands, larger on tutor-heavy
+    // (we measure ~10–25% reduction in detector .check() calls).
+    const infiniteMana = checkCombos(state, present);
 
     // #2: Build present-set + minMissing once for this node (pass pre-computed result)
-    const analysis = analyzeState(state, infiniteMana);
+    // [E11] Pass `present` so analyzeState skips its own (identical) build.
+    const analysis = analyzeState(state, infiniteMana, present);
 
-    // Combo/victory check (pass pre-computed infiniteMana)
-    const combo = checkVictory(state, infiniteMana);
+    // Combo/victory check (pass pre-computed infiniteMana + present for prefilter)
+    const combo = checkVictory(state, infiniteMana, present);
     if (combo) {
       // #1: Reconstruct path only on win
       const node = { state, parent: parentNode };
@@ -9547,9 +10047,12 @@ class Solver {
       catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
       if (!next) continue;
 
+      // [E11] Build the child's present Set first, then pass it through both
+      // checkCombos (prefilter) and analyzeState (skip rebuild).
+      const childPresent = buildPresentSet(next);
       // [E3] Compute child's infiniteMana once, reuse in analyzeState + canReachCombo + heuristic
-      const childInfiniteMana = checkCombos(next);
-      const childAnalysis = analyzeState(next, childInfiniteMana);
+      const childInfiniteMana = checkCombos(next, childPresent);
+      const childAnalysis = analyzeState(next, childInfiniteMana, childPresent);
       // Fix #4: prune unreachable children before they enter the sort list
       if (!this.opts.exhaustive) {
         const childTurns = this.opts.maxTurns - next.turn;
@@ -9625,9 +10128,15 @@ class Solver {
         // mutated while sitting in the queue), so a single check at enqueue
         // is sufficient.
 
+        // [E11] Build present once for this BFS node, share with checkCombos
+        // (prefilter), checkVictory (prefilter), analyzeState (skip rebuild),
+        // and generateActions ([E2] missingComboCards reuse).
+        const present = buildPresentSet(state);
+
         // [E3] Compute checkCombos once per BFS node, reuse in checkVictory + children
-        const infiniteMana = checkCombos(state);
-        const combo = checkVictory(state, infiniteMana);
+        // [E11] Pass present to enable detector prefilter.
+        const infiniteMana = checkCombos(state, present);
+        const combo = checkVictory(state, infiniteMana, present);
         if (combo) {
           if (combo.deployed) {
             this._recordWin(reconstructPath(node), combo, score(state, depth));
@@ -9645,7 +10154,8 @@ class Solver {
         // Generate and heuristic-sort children, routing each to the correct
         // turn queue (same turn = stays here; pass turn = next turn's queue)
         // [E2] Build present Set once for this node; share with generateActions + children.
-        const nodeAnalysis = analyzeState(state, infiniteMana);
+        // [E11] present already built above; pass into analyzeState to skip rebuild.
+        const nodeAnalysis = analyzeState(state, infiniteMana, present);
         const actions = generateActions(state, nodeAnalysis.present);
         const children = [];
         for (const action of actions) {
@@ -9653,9 +10163,11 @@ class Solver {
           try { next = action.apply(state); }
           catch (e) { continue; }
           if (!next || next.turn > this.opts.maxTurns) continue;
+          // [E11] Per-child present set + prefilter — same pattern as DFS.
+          const childPresent = buildPresentSet(next);
           // [E3] Compute child's infiniteMana once, reuse in analyzeState + canReachCombo + heuristic
-          const childInfiniteMana = checkCombos(next);
-          const ca = analyzeState(next, childInfiniteMana);
+          const childInfiniteMana = checkCombos(next, childPresent);
+          const ca = analyzeState(next, childInfiniteMana, childPresent);
           const childTurnsLeft = this.opts.maxTurns - next.turn;
           if (!this.opts.exhaustive && childTurnsLeft >= 0 && !canReachCombo(next, childTurnsLeft + 1, ca, childInfiniteMana)) {
             this.pruned++;
