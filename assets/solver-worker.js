@@ -3246,7 +3246,8 @@ var CARDS = {
       dino_pump: {
         label: '{4}{G}{G}: Elves become 5/5 Dinosaurs until EOT',
         fn(state, perm) {
-          if (perm.summoningSick) return [];
+          // Activated ability with no tap cost — legal on a sick Shepherd.
+          // See ToDo C-33 audit.
           const ap = state.payMana('4GG'); if (!ap) return [];
           const s = ap.clone();
           s._ensureBF();
@@ -3837,7 +3838,9 @@ var CARDS = {
       bounce_creature: {
         label: '{1}{G}: Return another creature to hand',
         fn(state, perm) {
-          if (perm.summoningSick) return [];
+          // Per Magic rules, summoning sickness only restricts attacks and
+          // {T}/{Q} abilities.  Temur's bounce is {1G} with no tap cost —
+          // legal on a sick Temur.  See ToDo C-33 audit.
           const ap = state.payMana('1G'); if (!ap) return [];
           var cards = CARDS;
           const seen = new Set();
@@ -3902,7 +3905,10 @@ var CARDS = {
       transform: {
         label: '{5}{G}{G}: Transform into Ulvenwald Behemoth (all creatures gain haste)',
         fn(state, perm) {
-          if (perm.summoningSick) return [];
+          // Activated ability with no tap cost.  Oddity has haste so this
+          // check was already unreachable, but removed for consistency
+          // (per Magic rules, no-tap activated abilities are legal on sick
+          // creatures).  See ToDo C-33 audit.
           const ap = state.payMana('5GG'); if (!ap) return [];
           let s = ap.clone();
           s._ensureBF();
@@ -4214,7 +4220,8 @@ var CARDS = {
       exile_from_gy: {
         label: '{G}: Exile a card from a graveyard, gain 1 life if creature',
         fn(state, perm) {
-          if (perm.summoningSick) return [];
+          // Activated ability with no tap cost — legal on a sick Ooze.
+          // See ToDo C-33 audit.
           const ap = state.payMana('G'); if (!ap) return [];
           // Check if any graveyard has cards
           const anyGY = state.players.some(p => p.graveyard.length > 0);
@@ -4304,7 +4311,10 @@ var CARDS = {
       animate_land: {
         label: '{3}{G}: Give target land creature haste until EOT (X/X where X = enchantments)',
         fn(state, perm) {
-          if (perm.summoningSick) return [];
+          // Activated ability with no tap cost — legal on a sick Spinner.
+          // This particularly matters for the Hitzel Reclaimer-haste path:
+          // Spinner cast same turn as Reclaimer can still animate Reclaimer
+          // immediately after ETB.  See ToDo C-33 audit.
           const ap = state.payMana('3G'); if (!ap) return [];
           // Count enchantments you control for the X/X size
           const x = ap.battlefield.filter(p => p.types.includes('enchantment')).length;
@@ -4694,7 +4704,8 @@ var CARDS = {
       look_three: {
         label: '{4}{G}: Look at top 3 cards, may put a permanent in hand',
         fn(state, perm) {
-          if (perm.summoningSick) return [];
+          // Activated ability with no tap cost — legal on a sick Vanguard.
+          // See ToDo C-33 audit.
           const ap = state.payMana('4G'); if (!ap) return [];
           let s = ap.playerDraws(0, 1);
           return [s.log('Beastrider Vanguard: look at top 3, take a permanent')];
@@ -7514,18 +7525,33 @@ var WIN_CONDITIONS = [
     check(state) {
       if (!inHandOrField(state, 'Geier Reach Sanitarium', 'geier_reach')) return false;
       if (!inHandOrField(state, 'Endurance', 'endurance')) return false;
+      // [O-5] Helper: is an instant in hand?  Instants are not on the battlefield;
+      // they're cast from hand at the moment of use.  Beast Within and Legolas's
+      // Quick Reflexes are the kill-spells required by the Kogla and Ashaya
+      // variants — without them, the variant can't actually fire even though
+      // the creatures are present.
+      const inHand = (key) => state.hand && state.hand.includes(key);
+
       // Need a way to bounce/remove Endurance after its ETB is on the stack
       const hasBouncer =
-        // Temur variant: Sabertooth bounces Endurance
+        // Temur variant: Sabertooth bounces Endurance directly with its activated
+        // ability ({1G}) — no kill spell needed because Endurance returns to hand.
         inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
-        // Kogla variant: Kogla bounces Eternal Witness, Witness returns Endurance
+        // Kogla variant: Endurance is killed (via Beast Within or LQR) while its
+        // ETB is on the stack.  Eternal Witness then returns Endurance from
+        // graveyard.  Kogla bounces Witness.  REQUIRES a kill spell.
         (inHandOrField(state, 'Kogla, the Titan Ape', 'kogla') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
-        // Ashaya variant: Ranger bounces Endurance (Endurance is a Forest via Ashaya),
-        // LQR provides tap-damage to kill Endurance while ETB on stack
+         inHandOrField(state, 'Eternal Witness', 'eternal_witness') &&
+         (inHand('beast_within') || inHand('legolas_quick_reflexes'))) ||
+        // Ashaya variant: Ranger bounces Endurance (Endurance is a Forest via
+        // Ashaya).  LQR's tap-trigger damages Endurance + Ranger to kill them
+        // while ETBs are on stack.  REQUIRES Legolas's Quick Reflexes in hand
+        // — Ashaya/Ranger alone cannot kill Endurance, and the variant's
+        // graveyard-reset trick fundamentally depends on the kill effect.
         (inHandOrField(state, 'Ashaya, Soul of the Wild', 'ashaya') &&
          (inHandOrField(state, 'Quirion Ranger', 'quirion_ranger') ||
-          inHandOrField(state, 'Scryb Ranger', 'scryb_ranger')));
+          inHandOrField(state, 'Scryb Ranger', 'scryb_ranger')) &&
+         inHand('legolas_quick_reflexes'));
       if (!hasBouncer) return false;
       // Need a way to untap Geier Reach each cycle (any land untapper in the combo already handles this)
       const hasUntapper =
@@ -7545,13 +7571,20 @@ var WIN_CONDITIONS = [
       if (!hasPerm(state, 'Geier Reach Sanitarium')) return false;
       // Endurance must be in hand or on field (it gets cast as part of the sequence)
       if (!inHandOrField(state, 'Endurance', 'endurance')) return false;
+      // [O-5] Same kill-spell requirement as check() above.  The Kogla and
+      // Ashaya variants need Beast Within or Legolas's Quick Reflexes in hand
+      // to actually execute — without it, the variant is structurally
+      // incomplete even when all creatures are on the battlefield.
+      const inHand = (key) => state.hand && state.hand.includes(key);
       // Bouncer must be on battlefield
       const bouncerReady =
         hasPerm(state, 'Temur Sabertooth') ||
         (hasPerm(state, 'Kogla, the Titan Ape') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
+         inHandOrField(state, 'Eternal Witness', 'eternal_witness') &&
+         (inHand('beast_within') || inHand('legolas_quick_reflexes'))) ||
         (hasPerm(state, 'Ashaya, Soul of the Wild') &&
-         (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger')));
+         (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger')) &&
+         inHand('legolas_quick_reflexes'));
       return bouncerReady;
     },
   },
@@ -9747,7 +9780,31 @@ function analyzeState(state, _infiniteMana, _present) {
       // Use pre-computed result if available, otherwise call checkCombos once.
       const fired = (_infiniteMana !== undefined) ? _infiniteMana : checkCombos(state);
       if (fired) break;
+      // [E14] Fast path: when the caller already knows no combo fires globally
+      // (_infiniteMana === null, which the Solver always passes from its hot
+      // path via the [E3] pre-computed value), we can skip the rest of the
+      // outer loop entirely. Reasoning:
+      //   • The cost=0 fallback fires on >98% of states in profiled solves.
+      //     Continuing the loop iterates 50–94 more entries, almost all of
+      //     which short-circuit at `cost++ >= minMissing` after 1–2 inner
+      //     iterations — but that's still ~3% of total search time wasted.
+      //   • If _infiniteMana === null, NO combo fires globally. So no
+      //     subsequent COMBO_REQUIRED_KEYS entry can hit the `if (fired)
+      //     break` — they all fall back to minMissing=1.
+      //   • minMissing only goes DOWN inside the loop, and 1 is the minimum
+      //     reachable value here (cost=0 + no firing → set 1; cost>0 entries
+      //     can't lower minMissing below 1 since each non-present piece adds
+      //     at least 1 cost).
+      //   • Therefore minMissing=1 is the final answer and the remaining
+      //     outer iterations are pure waste.
+      // When _infiniteMana === undefined (caller didn't pre-compute), we
+      // CONSERVATIVELY keep iterating — a later combo might fire even if
+      // this one didn't, since `fired = checkCombos(state)` only checked
+      // once at this point. This branch shouldn't happen in the Solver hot
+      // path (which always pre-computes), but keeps the function correct
+      // when called standalone.
       minMissing = 1;
+      if (_infiniteMana === null) break;
     }
   }
 
@@ -9802,19 +9859,49 @@ function score(state, depth) {
 //
 //  A) Search-spell penalty (+2000 per castable tutor in hand):
 //     Forces "cast tutor now" strictly before "do other things first".
-//     Penalty is 2× the per-missing-piece unit (1000) so it dominates the
-//     combo-distance signal. Without this, the DFS explores all N! orderings
-//     of "when to cast the tutor", causing ~10× state explosion.
+//     Without this, the DFS explores all N! orderings of "when to cast
+//     the tutor", causing ~10× state explosion.
 //
 //  B) topDecked bonus (−500 if a combo piece is on top of library):
 //     After a tutor resolves, the target is topDecked. Strongly prefers passing
 //     to draw the tutored piece over continuing to do other things first.
+//
+//  C) Turn penalty (+10000 per turn beyond the first):
+//     Hard partition: every turn-1 child sorts before every turn-2 child.
+//
+// [C-32] minMissing was previously included as `minMissing * 1000` here —
+// but instrumentation during the C-31 work showed minMissing is essentially
+// flat (=1) on >99% of states explored during search on Ashaya hands.
+// On tutor-heavy hands the value DOES vary (regime 2 — no combo's pieces
+// fully present), but in those cases canReachCombo's pruning is the
+// active mechanism, not heuristic ordering.  Either way, the
+// `minMissing * 1000` term in heuristic provides no discrimination
+// between siblings on the dominant hot path: it's a near-constant offset
+// that just shifts every child's score by the same amount.
+//
+// Confirmed by experiment: removing the term leaves state counts
+// unchanged on every benched hand (default 8400, arbor_elf 19561,
+// priest 27728, tutor-heavy 51024, eladamri 3810) and on every
+// locked-in test in the suite — proving it provided no useful ordering
+// signal.  Documented as zero-impact code cleanup; minMissing is still
+// computed and used by canReachCombo for hard pruning.
+//
+// Future work: a richer "combo readiness" signal (counting unready pieces
+// — tapped/sick/in-hand — of partly-assembled combos) showed early signs
+// of meaningfully reducing state counts (default 8400 → ~6077 in a quick
+// experiment) but needs careful per-bench validation and weight tuning
+// before shipping.  See the [readiness-signal] item under Open ideas in
+// ToDo.md for follow-up.
 function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefined, _searchSpellWins = undefined) {
   // [E3] Use pre-computed checkCombos result when available.
+  // The minMissing===0 short-circuit still fires when the caller has detected
+  // a firing combo on this state — push it to the front of the queue.
   const fired = (_infiniteMana !== undefined) ? _infiniteMana : (minMissing === 0 ? checkCombos(state) : null);
   if (minMissing === 0 && fired) return -1_000_000 - state.mana.total();
 
-  let h = minMissing * 1000 - state.mana.total();
+  // [C-32] Base score: just floating mana.  minMissing*1000 was dropped —
+  // see function-level note.
+  let h = -state.mana.total();
 
   // A) Search-spell penalty — disabled in exhaustive mode so every ordering is explored.
   //
@@ -10666,11 +10753,13 @@ function assembleWin(state) {
               s = ns2.addToHand(sacFound);
               const sacName = CARDS[sacFound]?.name ?? sacFound;
               steps.push(`Activate Duskwatch Recruiter → find ${sacName} (sacrifice fodder)`);
-              // Cast the expendable creature (becomes Forest under Ashaya)
+              // Cast the expendable creature (becomes Forest under Ashaya).
+              // [C-33 cleanup] No need to clear summoningSick — sacrificing a
+              // creature is a cost (not an activated ability), and is legal
+              // on a sick creature.  The sac target's only purpose is to be
+              // sacrificed for Reclaimer's {2}{T}.
               s = s.removeFromHand(sacFound);
               s = s.enterBattlefield(sacFound);
-              const sacPerm = s.battlefield[s.battlefield.length - 1];
-              if (sacPerm) sacPerm.summoningSick = false;
               steps.push(`Cast ${sacName} (sacrifice fodder — becomes Forest under Ashaya)`);
             }
           }
@@ -10807,7 +10896,11 @@ function assembleWin(state) {
     if (!inHand(key)) continue;
     s = s.removeFromHand(key);
     s = s.enterBattlefield(key);
-    s.battlefield.find(p => p.name === name).summoningSick = false;
+    // [C-33 cleanup] No need to clear summoningSick.  Endurance's ETB
+    // triggers on enter regardless of sickness; Temur and Kogla both have
+    // bounce abilities at {1G} (no tap cost) which after C-33 are correctly
+    // legal on a sick creature.  Earlier code cleared sick here as a cheat
+    // around the over-restrictive sickness check in Temur's bounce_creature.
     steps.push(`Cast ${name} (infinite mana available)`);
   }
 
