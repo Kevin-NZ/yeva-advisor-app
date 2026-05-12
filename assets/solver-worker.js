@@ -709,6 +709,8 @@ class Permanent {
     // Custom fields set by card ETB hooks
     if (this.imprintedColor  !== undefined) p.imprintedColor  = this.imprintedColor;
     if (this.enchantedLandId !== undefined) p.enchantedLandId = this.enchantedLandId;
+    if (this.elvishGuidance)                p.elvishGuidance  = this.elvishGuidance;
+    if (this.cauldronAbilityKey !== undefined) p.cauldronAbilityKey = this.cauldronAbilityKey;
     return p;
   }
 
@@ -1612,6 +1614,21 @@ class GameState {
       if (target) perm.enchantedLandId = target.id;
     }
 
+    // Elvish Guidance: Aura that enchants a land.
+    // Same pattern as Wild Growth / Utopia Sprawl — must set elvishGuidance=true on the
+    // target land so actions.js tapForMana adds +elfCount{G} when it taps.
+    // Prefer Gaea's Cradle (or any Forest) over non-Forest lands.
+    if (cardKey === 'elvish_guidance') {
+      const lands = s.battlefield.filter(p => p.is('land') && p.id !== perm.id);
+      const target = lands.find(l => l.name === "Gaea's Cradle") ??
+                     lands.find(l => l.isForest) ?? lands[0];
+      if (target) {
+        s._ensureBF();
+        const tgt = s.battlefield.find(p => p.id === target.id);
+        if (tgt) tgt.elvishGuidance = true;
+      }
+    }
+
     // Dynamic Ashaya P/T: whenever any permanent enters while Ashaya is on the
     // battlefield, recompute her power/toughness = number of lands controlled.
     // This covers: new creature entering (becomes a Forest land under Ashaya),
@@ -1868,6 +1885,7 @@ class GameState {
       const power = p.power;
       const counters = p.counters;
       const used = p.abilitiesUsed;
+      const guided = p.elvishGuidance;
 
       // Detect the dominant "name + tap only" case in a single conjunction.
       // Microbench shows this single combined check is faster than 6 sequential
@@ -1878,7 +1896,8 @@ class GameState {
         !sick &&
         (power === undefined || _fpCards[p.cardKey]?.power === power) &&
         (!counters || _isEmptyBag(counters)) &&
-        (!used || _isEmptyBag(used))
+        (!used || _isEmptyBag(used)) &&
+        !guided
       ) {
         segs[i] = p.name + tap;
         continue;
@@ -1887,6 +1906,7 @@ class GameState {
       // Slow path: at least one rare field is set.
       let s = p.name + tap;
       if (isF) s += ':F';
+      if (guided) s += ':EG'; // elvishGuidance — land has +elfCount{G} per tap
       if (enc !== undefined) {
         if (_encMap === null) {
           // Lazy build — single pass over BF, only when needed.
@@ -3144,11 +3164,11 @@ var CARDS = {
       },
     },
   },
-  emerald_medallion:{ name: 'Emerald Medallion', types: ['artifact'], subtypes: [], cost: '2', costReduction: { color: 'G', amount: 1 } },
-  null_rod:         { name: 'Null Rod',          types: ['artifact'], subtypes: [], cost: '2' },
-  thorn_of_amethyst:{ name: 'Thorn of Amethyst', types: ['artifact'], subtypes: [], cost: '2' },
-  trinisphere:      { name: 'Trinisphere',        types: ['artifact'], subtypes: [], cost: '3' },
-  orb_of_dreams:    { name: 'Orb of Dreams',      types: ['artifact'], subtypes: [], cost: '3' },
+  emerald_medallion: { externallyImplemented: true, name: 'Emerald Medallion', types: ['artifact'], subtypes: [], cost: '2', costReduction: { color: 'G', amount: 1 } },
+  null_rod:         { externallyImplemented: true, name: 'Null Rod',          types: ['artifact'], subtypes: [], cost: '2' },
+  thorn_of_amethyst:{ externallyImplemented: true, name: 'Thorn of Amethyst', types: ['artifact'], subtypes: [], cost: '2' },
+  trinisphere:      { externallyImplemented: true, name: 'Trinisphere',        types: ['artifact'], subtypes: [], cost: '3' },
+  orb_of_dreams:    { externallyImplemented: true, name: 'Orb of Dreams',      types: ['artifact'], subtypes: [], cost: '3' },
 
   // Chalice of the Void: Cast with X charge counters. Counters all spells with
   // CMC equal to X. Modeled as a stax piece — the solver won't self-cast it,
@@ -3156,6 +3176,7 @@ var CARDS = {
   // Most impactful at X=1 (hits almost all 1-drop mana dorks, cantrips, tutors).
   chalice_of_the_void: {
     name: 'Chalice of the Void', types: ['artifact'], subtypes: [], cost: 'XX',
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // chargeCounters stored on the permanent at placement time (default 1)
     // Static effect modelled in effectiveCost / action generation (see actions.js)
   },
@@ -3165,6 +3186,7 @@ var CARDS = {
   // will not cast or fetch it, but it suppresses opponent engines when placed.
   disruptor_flute: {
     name: 'Disruptor Flute', types: ['artifact'], subtypes: [], cost: '2',
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Named card tracked in perm.namedCard at placement; no active ability in solver.
   },
   vexing_bauble: {
@@ -3949,6 +3971,7 @@ var CARDS = {
 
   eternal_witness: {
     name: 'Eternal Witness', types: ['creature'], subtypes: ['Human','Shaman'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '1GG', power: 2, toughness: 1,
     // ETB: return target card from your graveyard to hand — handled in GameState.enterBattlefield.
   },
@@ -3988,6 +4011,7 @@ var CARDS = {
     },
   },
   seedborn_muse: {
+    externallyImplemented: true,  // [drift-detector] impl in actions.js opponent_turn action
     name: 'Seedborn Muse', types: ['creature'], subtypes: ['Spirit'],
     cost: '3GG', power: 2, toughness: 4,
     // Static: untap all your permanents during each other player's untap step.
@@ -3997,17 +4021,20 @@ var CARDS = {
   },
   beast_whisperer: {
     name: 'Beast Whisperer', types: ['creature'], subtypes: ['Elf','Druid'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '2GG', power: 2, toughness: 3,
     // Static trigger: whenever you cast a creature spell, draw a card.
     // Modeled in actions.js: cast_spell with a creature draws if Whisperer is in play.
   },
   regal_force: {
     name: 'Regal Force', types: ['creature'], subtypes: ['Elemental'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '4GGG', power: 5, toughness: 5,
     // ETB: draw a card for each green creature you control — handled in GameState.enterBattlefield.
   },
   woodland_bellower: {
     name: 'Woodland Bellower', types: ['creature'], subtypes: ['Beast'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '4GG', power: 6, toughness: 5,
     // ETB: search library for a nonlegendary green creature with MV ≤ 3, put it on BF.
     // Modeled as: on entry, generate states for each eligible card in hand.
@@ -4045,6 +4072,7 @@ var CARDS = {
   },
   great_oak_guardian: {
     name: 'Great Oak Guardian', types: ['creature'], subtypes: ['Treefolk'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '5G', power: 4, toughness: 5,
     // Flash. ETB: creatures target player controls get +2/+2 and untap.
     // Untap is handled in GameState.enterBattlefield. +2/+2 is cosmetic (not tracked).
@@ -4125,7 +4153,8 @@ var CARDS = {
       },
     },
   },
-  collector_ouphe:     { name:'Collector Ouphe',            types:['creature'],subtypes:['Ouphe'],             cost:'1G',   power:2,toughness:2 },
+  collector_ouphe:     { externallyImplemented: true, name:'Collector Ouphe', types:['creature'],subtypes:['Ouphe'], cost:'1G', power:2,toughness:2 },
+  // [drift-detector] Collector Ouphe suppresses artifact activated abilities — modeled via _hasSTAX in GameState.js
   skyshroud_poacher: {
     name: 'Skyshroud Poacher', types: ['creature'], subtypes: ['Human','Rebel'],
     cost: '2GG', power: 2, toughness: 4,
@@ -4138,31 +4167,41 @@ var CARDS = {
           const ap = state.payMana('3'); if (!ap) return [];
           const s0 = ap.tapPermanent(perm.id); if (!s0) return [];
           var cards = CARDS;
-          const results = [];
 
-          // Search the actual library first
-          const elfLibKeys = [...new Set(s0.players[0].library)].filter(k =>
-            cards[k] && cards[k].subtypes && cards[k].subtypes.includes('Elf')
-          );
-          for (const k of elfLibKeys) {
-            const { state: ns, cardKey: found } = s0.searchLibraryFor(lk => lk === k);
-            if (!found) continue;
-            const after = ns.enterBattlefield(found);
-            results.push(after.log(`Skyshroud Poacher: put ${cards[k].name} onto battlefield`));
+          // C-26 pattern: return only the single best-priority Elf target rather than
+          // fanning out over every Elf in the library.  Branching over all Elves compounds
+          // multiplicatively in BFS (same bug class as Eldritch Evolution pre-C-23).
+          // _bestCreatureTutorTarget already filters to the highest-priority library creature
+          // missing from the present set — we further restrict to Elves only by checking
+          // the resolved key's subtypes before accepting the result.
+
+          // Build a restricted eligible set: Elf creatures in library, not already present.
+          const presentKeys = new Set([
+            ...s0.hand,
+            ...s0.battlefield.map(p => {
+              // resolve name → key for present-set check
+              const k = Object.keys(cards).find(ck => cards[ck].name === p.name);
+              return k;
+            }).filter(Boolean),
+          ]);
+
+          const seenLib = new Set();
+          let bestKey = null, bestScore = -1;
+          for (const ck of s0.players[0].library) {
+            if (ck === 'unknown' || seenLib.has(ck)) continue;
+            seenLib.add(ck);
+            if (presentKeys.has(ck)) continue;
+            const def = cards[ck];
+            if (!def?.subtypes?.includes('Elf')) continue;
+            const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+            if (sc > bestScore) { bestKey = ck; bestScore = sc; }
           }
 
-          // Also check hand (approximation for unknown library contents)
-          const elfHandKeys = [...new Set(s0.hand)].filter(k =>
-            cards[k] && cards[k].subtypes && cards[k].subtypes.includes('Elf') &&
-            !elfLibKeys.includes(k)
-          );
-          for (const k of elfHandKeys) {
-            let ns = s0.removeFromHand(k); if (!ns) continue;
-            ns = ns.enterBattlefield(k);
-            results.push(ns.log(`Skyshroud Poacher: put ${cards[k].name} onto battlefield`));
-          }
-
-          return results;
+          if (!bestKey) return [];
+          const { state: ns, cardKey: found } = s0.searchLibraryFor(lk => lk === bestKey);
+          if (!found) return [];
+          const after = ns.enterBattlefield(found);
+          return [after.log(`Skyshroud Poacher: put ${cards[bestKey].name} onto battlefield`)];
         },
       },
     },
@@ -4207,10 +4246,13 @@ var CARDS = {
   },
   reclamation_sage: {
     name: 'Reclamation Sage', types: ['creature'], subtypes: ['Elf','Shaman'],
+    intentionalStub: true,  // [drift-detector] ETB destroy has no targets in single-player (no opponent permanents modeled)
     cost: '2G', power: 2, toughness: 1,
     // ETB: destroy target artifact or enchantment.
-    // Modeled as: if an opponent artifact/enchantment exists, remove it.
-    // For the solver this is a utility effect, not a combo piece — simplified.
+    // Not modeled — the single-player solver has no opponent permanents to
+    // target.  Functionally a vanilla 2/1 for {2G} in the solver.  Card is
+    // included in the deck list for real games but the ETB destroy isn't
+    // useful for combo solving.
   },
   scavenging_ooze: {
     name: 'Scavenging Ooze', types: ['creature'], subtypes: ['Ooze'],
@@ -4245,11 +4287,13 @@ var CARDS = {
   },
   surrak_goreclaw: {
     name: 'Surrak and Goreclaw', types: ['creature'], subtypes: ['Human','Bear'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '4GG', power: 7, toughness: 6,
     // Other creatures have trample. Nontoken creatures get +1/+1 and haste when entering.
     // ETB haste modeled in GameState (like Concordant Crossroads for newly entering creatures).
   },
   defiler_of_vigor: {
+    externallyImplemented: true,  // [drift-detector] cost reduction + counter trigger in actions.js
     name: 'Defiler of Vigor', types: ['creature'], subtypes: ['Phyrexian','Wurm'],
     cost: '3GG', power: 6, toughness: 6,
     // (1) Cost reduction: green permanent spells cost {G} less if you pay 2 life.
@@ -4279,6 +4323,7 @@ var CARDS = {
   },
   duskwatch_recruiter: {
     name: 'Duskwatch Recruiter', types: ['creature'], subtypes: ['Human','Warrior','Werewolf'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '1G', power: 2, toughness: 2,
     // Oracle: {2G},{T}: Look at top 3 cards, may reveal a creature and put in hand.
     //
@@ -4344,15 +4389,17 @@ var CARDS = {
       },
     },
   },
-  chomping_changeling: { name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
+  chomping_changeling: { intentionalStub: true, name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
   lotus_cobra: {
     name: 'Lotus Cobra', types: ['creature'], subtypes: ['Snake'], cost: '1G',
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     power: 2, toughness: 1,
     // Landfall: whenever a land enters, add one mana of any color.
     // This is applied in actions.js: after play_land, check for Cobra and add {G}.
     // Modeled as a pseudo-ability that the action generator fires automatically.
   },
   nissa_animist: {
+    externallyImplemented: true,  // [drift-detector] landfall triggers in actions.js play_land section
     name: 'Nissa, Resurgent Animist', types:['creature'], subtypes:['Elf','Scout'], cost:'2G', power:2,toughness:3,
     // Landfall — Whenever a land enters the battlefield under your control:
     //   • Add one mana of any color.
@@ -4370,6 +4417,7 @@ var CARDS = {
   },
   skullwinder: {
     name: 'Skullwinder', types: ['creature'], subtypes: ['Snake'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '2G', power: 1, toughness: 3,
     // Deathtouch. ETB: return target card from YOUR graveyard to hand,
     // then choose an opponent to return a card from THEIR graveyard.
@@ -4433,6 +4481,7 @@ var CARDS = {
     },
   },
   tireless_provisioner: {
+    externallyImplemented: true,  // [drift-detector] landfall trigger in actions.js play_land section
     name: 'Tireless Provisioner', types: ['creature'], subtypes: ['Elf','Scout'],
     cost: '2G', power: 3, toughness: 2,
     // Landfall: create a Food or Treasure token.
@@ -4441,6 +4490,7 @@ var CARDS = {
   },
   sowing_mycospawn: {
     name: 'Sowing Mycospawn', types: ['creature'], subtypes: ['Eldrazi','Fungus'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '3G', power: 4, toughness: 4,
     // Oracle: When Sowing Mycospawn enters, search your library for a basic
     // land card or Eldrazi land card, put it onto the battlefield TAPPED,
@@ -4675,11 +4725,13 @@ var CARDS = {
   },
   hyrax_tower_scout: {
     name: 'Hyrax Tower Scout', types: ['creature'], subtypes: ['Human','Scout'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '2G', power: 2, toughness: 2,
     // ETB: untap target creature — handled in GameState.enterBattlefield (untaps first tapped creature).
   },
   woodcaller_automaton: {
     name: 'Woodcaller Automaton', types: ['creature','artifact'], subtypes: ['Construct'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Modelled at its Prototype cost {2GG} — 3/3. This is virtually always how it
     // is cast in this deck; the {10} base cost is irrelevant in practice.
     // Oracle: "When this creature enters, if you cast it, untap target land you control.
@@ -4718,6 +4770,7 @@ var CARDS = {
 
   concordant_crossroads: {
     name: 'Concordant Crossroads', types: ['enchantment'], subtypes: [], cost: 'G',
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Static: all creatures have haste (implemented as no summoning sickness on ETB in GameState).
     // No activated ability needed.
   },
@@ -4763,6 +4816,7 @@ var CARDS = {
   },
   guardian_project: {
     name: 'Guardian Project', types: ['enchantment'], subtypes: [], cost: '3G',
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Draw a card when a nontoken creature enters if it doesn't share a name
     // with another creature you control or in your graveyard.
     // Modeled as: draw when any creature enters (simplified — name check skipped for solver).
@@ -4838,6 +4892,7 @@ var CARDS = {
   },
   root_maze: {
     name: 'Root Maze', types: ['enchantment'], subtypes: [], cost: 'G',
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Artifacts and lands enter tapped (stax). Hostile to combo — noted.
     // Solver will not voluntarily cast this unless directed.
   },
@@ -4921,7 +4976,7 @@ var CARDS = {
       },
     },
   },
-  lignify: { name: 'Lignify', types: ['enchantment'], subtypes: ['Aura','Treefolk'], cost: '1G' },
+  lignify: { intentionalStub: true, name: 'Lignify', types: ['enchantment'], subtypes: ['Aura','Treefolk'], cost: '1G' },
   kenriths_transformation: {
     name: "Kenrith's Transformation", types: ['enchantment'], subtypes: ['Aura'], cost: '1G',
     // ETB: draw a card. Enchanted creature loses abilities, becomes 3/3 Elk.
@@ -4931,15 +4986,87 @@ var CARDS = {
   },
   growing_rites: {
     name: 'Growing Rites of Itlimoc', types: ['enchantment'], subtypes: ['Legendary'], cost: '2G',
-    // ETB: look at top 4, may reveal a creature and put in hand.
-    // End step: if 4+ creatures, transform into Itlimoc.
-    // Simplified: after casting, draw a card (ETB effect) and convert if 4+ creatures.
-    onCast(state) {
-      // Draw from ETB look (simplified to card draw)
-      return state.playerDraws(0, 1);
+    // ETB: look at the top four cards of your library. You may reveal a creature card
+    //   from among them and put it into your hand. Put the rest on the bottom in any order.
+    // End step: if you control four or more creatures, transform into Itlimoc.
+    //
+    // Implementation via castFn so branching works with the solver's action system:
+    //   Branch A: enter Growing Rites; look at top 4; put best creature in hand (if any)
+    //   Branch B: enter Growing Rites; no creature taken (or none available)
+    //   Transform: if 4+ creatures present after resolution, flip to Itlimoc immediately
+    //              (end-step approximation — player won't cast more creatures before EOT
+    //               in a winning line, so the count is stable).
+    castFn(state) {
+      var cards = CARDS;
+
+      // Enter Growing Rites onto the battlefield
+      let base = state.enterBattlefield('growing_rites');
+      base = base.log('Cast Growing Rites of Itlimoc');
+
+      const results = [];
+
+      // ── ETB look: top 4 cards of library ─────────────────────────────────
+      const lib = base.players[0].library;
+      const top4 = lib.slice(0, 4);
+      const creatureKeys = [...new Set(top4)].filter(k => cards[k]?.types?.includes('creature'));
+
+      // Build present set to skip cards already in hand/battlefield
+      const present = new Set(base.hand);
+      for (const p of base.battlefield) {
+        const k = NAME_TO_KEY[p.name] ?? Object.keys(cards).find(ck => cards[ck].name === p.name);
+        if (k) present.add(k);
+      }
+
+      // Pick the best creature from top 4 (highest TUTOR_PRIORITY_SCORE, not already present)
+      let bestKey = null, bestScore = -1;
+      for (const ck of creatureKeys) {
+        if (present.has(ck)) continue;
+        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+        if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+      }
+      // Fallback: if all creatures are already present, take any one from top 4
+      if (!bestKey && creatureKeys.length > 0) bestKey = creatureKeys[0];
+
+      // Branch A: put creature into hand (if one was found)
+      if (bestKey) {
+        const { state: ns, cardKey: found } = base.searchLibraryFor(k => k === bestKey);
+        if (found) {
+          let s = ns.addToHand(found);
+          s = s.log(`Growing Rites ETB: put ${cards[bestKey].name} into hand`);
+          results.push(_applyTransform(s));
+        }
+      }
+
+      // Branch B: no creature taken (always offered as an option)
+      {
+        const s = base.log('Growing Rites ETB: no creature taken');
+        results.push(_applyTransform(s));
+      }
+
+      // Deduplicate (identical top-4 composition → same result for both branches)
+      const seen = new Set();
+      return results.filter(s => {
+        const fp = s.fingerprint();
+        if (seen.has(fp)) return false;
+        seen.add(fp);
+        return true;
+      });
+
+      // Helper: if 4+ creatures on board, transform to Itlimoc immediately
+      function _applyTransform(s) {
+        const creatureCount = s.creatures().length;
+        if (creatureCount < 4) return s;
+        const self = s.getPermanent('Growing Rites of Itlimoc');
+        if (!self) return s;
+        let ts = s.removeFromBattlefield(self.id, null); // DFC transform (leaves the game zone)
+        if (!ts) return s;
+        ts = ts.enterBattlefield('itlimoc', { tapped: false });
+        ts = ts.log(`Growing Rites transforms → Itlimoc, Cradle of the Sun (${creatureCount} creatures)`);
+        return ts;
+      }
     },
   },
-  titania_song: { name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G' },
+  titania_song: { intentionalStub: true, name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G' },
 
   // ─── BATTLES ─────────────────────────────────────────────────────────────
 
@@ -5178,8 +5305,8 @@ var CARDS = {
       return results.length ? results : [state.log("Archdruid's Charm: nothing found")];
     },
   },
-  force_of_vigor:         { name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
-  beast_within:           { name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
+  force_of_vigor:         { intentionalStub: true, name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
+  beast_within:           { intentionalStub: true, name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
   vitalize: {
     name: 'Vitalize', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle: Untap all creatures you control.
@@ -5284,6 +5411,7 @@ var CARDS = {
     // target creature you don't control. Trample excess to player/planeswalker.
     // In single-player: modeled as fight-style — destroys target creature whose
     // toughness ≤ attacker's power. Most useful to remove blockers (minimal combo use).
+    intentionalStub: true,  // [drift-detector] marks effective-stub castFn for ref/implementation_gaps.md
     castFn(state) {
       const attackers = state.battlefield.filter(p => p.is('creature') && (p.power ?? 0) > 0);
       if (attackers.length === 0) return [];
@@ -5299,6 +5427,7 @@ var CARDS = {
     // If this spell was cast during your main phase, the creature you control gets +1/+1.
     // Then those creatures fight.
     // In single-player: minimal combo relevance — stub castFn.
+    intentionalStub: true,  // [drift-detector] effective-stub castFn
     castFn(state) { return []; },
   },
 
@@ -5307,6 +5436,7 @@ var CARDS = {
     // {2}{G}: Target creature or planeswalker takes X damage where X = greatest power
     // among creatures you control. Costs {2} less if that permanent is black.
     // In single-player: minimal combo relevance — stub castFn.
+    intentionalStub: true,  // [drift-detector] effective-stub castFn
     castFn(state) { return []; },
   },
   autumn_veil:            { name:"Autumn's Veil",            types:['instant'],  subtypes:[], cost:'G'    },
@@ -5763,6 +5893,9 @@ var CARDS = {
     // Simplified: treat as a tutor for any creature in library (non-deterministic top-7
     // ignored; in a 99-card deck the best creature is effectively always in top 7).
     // C-23b: select only the highest-priority target — prevents O(library) fan-out.
+    //
+    // DFC land back: Turntimber, Serpentine Wood — {T}: Add {G}; enters tapped unless
+    // you pay 3 life. Playable as a land drop from hand via handAbilities.
     castFn(state) {
       var cards = CARDS;
       let best = null, bestScore = -Infinity;
@@ -5789,7 +5922,30 @@ var CARDS = {
       }
       return [ns.log(`Turntimber Symbiosis → ${def.name}`)];
     },
+    handAbilities: {
+      play_as_land: {
+        label: 'Play Turntimber, Serpentine Wood (land side, tapped or pay 3 life)',
+        fn(state, cardKey) {
+          if (state.landDrops <= 0) return null;
+          const s0 = state.removeFromHand(cardKey); if (!s0) return null;
+          const s1 = s0.clone(); s1.landDrops--;
+          // Prefer tapped (no cost) as default — the untapped branch costs 3 life
+          // and the solver's heuristic will handle the tradeoff.
+          // Return the tapped branch (safe default).
+          const sB = s1.enterBattlefield('turntimber_land', { tapped: true });
+          return sB.log('Play Turntimber, Serpentine Wood → enters tapped');
+        },
+      },
+    },
   },
+
+  // Turntimber, Serpentine Wood — back face of Turntimber Symbiosis DFC
+  // Entered directly via the handAbility above or via enterBattlefield('turntimber_land').
+  turntimber_land: {
+    name: 'Turntimber, Serpentine Wood', types: ['land'], subtypes: ['Forest'], cost: null,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+  },
+
   bridgeworks_battle:     { name:'Bridgeworks Battle',       types:['sorcery'],  subtypes:[], cost:'2G'   },
 
   // ─── Yeva commander ───────────────────────────────────────────────────────
@@ -9341,6 +9497,54 @@ function generateActions(state, _presentHint = null) {
     });
   }
 
+  // ── 4b. Agatha's Soul Cauldron — grafted activated abilities ────────────────
+  // When Agatha's Cauldron exiles a creature, it sets cauldronAbilityKey on the
+  // creature that received the +1/+1 counter. All creatures with +1/+1 counters
+  // (counters > 0) that have a cauldronAbilityKey get to use that card's
+  // tapForMana as an additional tap action.
+  //
+  // Most combo-relevant case: exile Priest of Titania → countered creatures
+  // tap for G×elves instead of their base mana ability.
+  //
+  // Only fires if Agatha's Cauldron is on the battlefield (the static requires it).
+  if (state.hasPermanent("Agatha's Soul Cauldron")) {
+    for (const perm of state.battlefield) {
+      if (perm.tapped || perm.summoningSick) continue;
+      if (!perm.cauldronAbilityKey) continue;
+      // Cauldron grants abilities to creatures with +1/+1 counters
+      const hasCounter = perm.counters && (
+        typeof perm.counters === 'number' ? perm.counters > 0
+          : Object.values(perm.counters).some(v => v > 0)
+      );
+      if (!hasCounter) continue;
+      const graftedDef = CARDS[perm.cauldronAbilityKey];
+      if (!graftedDef?.tapForMana) continue;
+      // Pre-check: grafted ability actually produces mana in current state
+      if (!graftedDef.tapForMana(state, perm).length) continue;
+
+      const capturedPerm = perm;
+      const capturedGraftedDef = graftedDef;
+      actions.push({
+        type: 'tap_for_mana',
+        label: `Tap ${perm.name} for mana (${graftedDef.name} ability via Cauldron)`,
+        priority: 7,
+        apply(s) {
+          const live = s.getPermanentById(capturedPerm.id);
+          if (!live || live.tapped || live.summoningSick) return null;
+          const results = capturedGraftedDef.tapForMana(s, live);
+          if (!results.length) return null;
+          let ns = results[0];
+          // Leyline / Badgermole bonuses apply to creature tap-for-mana
+          if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
+          if (ns.hasPermanent('Badgermole Cub') && capturedPerm.name !== 'Badgermole Cub') {
+            ns = ns.addMana('G');
+          }
+          return ns;
+        },
+      });
+    }
+  }
+
   // ── 5. Activated abilities ────────────────────────────────────────────────
   // Helper: get the Disruptor Flute named card (own or opponent)
   const fluteNamedCards = new Set();
@@ -10493,7 +10697,8 @@ function assembleWin(state) {
         const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
         if (found) {
           s = ns.enterBattlefield(found);
-          s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
+          // summoningSick not cleared: assembleWin never invokes Duskwatch's tap ability;
+          // it's handled entirely by WIN_CONDITIONS. Sickness state is irrelevant here.
           steps.push('Cast Woodland Bellower → ETB: fetch Duskwatch Recruiter onto battlefield');
         }
       } else if (inHand('fierce_empath') && inLibrary('woodland_bellower')) {
@@ -10509,7 +10714,7 @@ function assembleWin(state) {
             const { state: ns2, cardKey: dw } = searchFor('duskwatch_recruiter');
             if (dw) {
               s = ns2.enterBattlefield(dw);
-              s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
+              // summoningSick not cleared — see note at Woodland Bellower path above.
               steps.push('Cast Woodland Bellower → ETB: fetch Duskwatch Recruiter onto battlefield');
             }
           }
@@ -10539,7 +10744,7 @@ function assembleWin(state) {
             const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
             if (found) {
               s = ns.enterBattlefield(found);
-              s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
+              // summoningSick not cleared — see note at Woodland Bellower path above.
               steps.push(step);
             }
           } else {
@@ -10567,7 +10772,7 @@ function assembleWin(state) {
           const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
           if (found) {
             s = ns.enterBattlefield(found);
-            s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
+            // summoningSick not cleared — see note at Woodland Bellower path above.
             steps.push(step);
             break;
           }
@@ -10587,7 +10792,9 @@ function assembleWin(state) {
   if (inHand('duskwatch_recruiter') && !onField('Duskwatch Recruiter')) {
     s = s.removeFromHand('duskwatch_recruiter');
     s = s.enterBattlefield('duskwatch_recruiter');
-    s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
+    // summoningSick not cleared: assembleWin represents Duskwatch activations as
+    // narrative steps rather than state-machine taps, so sickness state is irrelevant.
+    // Duskwatch's {2G},{T} ability is handled by WIN_CONDITIONS, not by this state.
     steps.push('Cast Duskwatch Recruiter (infinite mana available)');
   }
 
