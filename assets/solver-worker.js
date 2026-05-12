@@ -711,6 +711,11 @@ class Permanent {
     if (this.enchantedLandId !== undefined) p.enchantedLandId = this.enchantedLandId;
     if (this.elvishGuidance)                p.elvishGuidance  = this.elvishGuidance;
     if (this.cauldronAbilityKey !== undefined) p.cauldronAbilityKey = this.cauldronAbilityKey;
+    if (this.copyKey  !== undefined)        p.copyKey   = this.copyKey;
+    if (this.copyName !== undefined)        p.copyName  = this.copyName;
+    if (this.levelCounters)                 p.levelCounters = this.levelCounters;
+    if (this.namedCard !== undefined)       p.namedCard = this.namedCard;
+    if (this.luckCounter)                   p.luckCounter = this.luckCounter;
     return p;
   }
 
@@ -1547,7 +1552,31 @@ class GameState {
       }
     }
 
-    // Manglehorn ETB: destroy target artifact you control (or opponent's — but we only
+    // Elvish Harbinger ETB: search library for an Elf card, put on top.
+    // Deterministic: pick the highest TUTOR_PRIORITY_SCORE Elf.
+    // Unlike Fierce Empath (MV ≥ 6), Harbinger can find ANY Elf — including
+    // Priest of Titania, Selvala, Quirion Ranger, etc.
+    if (!skipETB && cardKey === 'elvish_harbinger') {
+      var cardsModule = CARDS;
+      let bestKey = null, bestScore = -1;
+      const seenLib = new Set();
+      for (const ck of s.players[0].library) {
+        if (seenLib.has(ck) || ck === 'unknown') continue;
+        seenLib.add(ck);
+        const def = cardsModule[ck];
+        if (!def?.subtypes?.includes('Elf')) continue;
+        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 1;
+        if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+      }
+      if (bestKey) {
+        const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === bestKey);
+        if (found) {
+          s = ns.clone();
+          s.topDecked = found;
+          s = s.log(`Elvish Harbinger ETB: put ${cardsModule[found]?.name ?? found} on top of library`);
+        }
+      }
+    }
     // model our own battlefield). In the solver, Manglehorn is never self-destructive:
     // we only offer to destroy opponent stax pieces (Null Rod, Collector Ouphe, etc.)
     // or other artifacts that are in the way. Deterministic: pick the lowest-priority
@@ -1971,6 +2000,10 @@ class GameState {
       const guided = p.elvishGuidance;
       const imprint = p.imprintedColor;
       const cauldron = p.cauldronAbilityKey;
+      const copyK = p.copyKey;          // Destiny Spinner animate_land — land taps as creature
+      const lvl = p.levelCounters;      // Joraga Treespeaker level 0/1/2
+      const named = p.namedCard;        // Disruptor Flute — named card can't activate abilities
+      const luck = p.luckCounter;       // Gemstone Caverns — luck counter enables colored mana
 
       // Detect the dominant "name + tap only" case in a single conjunction.
       // Microbench shows this single combined check is faster than 6 sequential
@@ -1984,7 +2017,11 @@ class GameState {
         (!used || _isEmptyBag(used)) &&
         !guided &&
         imprint === undefined &&
-        cauldron === undefined
+        cauldron === undefined &&
+        copyK === undefined &&
+        (lvl === undefined || lvl === 0) &&
+        named === undefined &&
+        !luck
       ) {
         segs[i] = p.name + tap;
         continue;
@@ -1996,6 +2033,10 @@ class GameState {
       if (guided) s += ':EG'; // elvishGuidance — land has +elfCount{G} per tap
       if (imprint !== undefined) s += ':I' + (imprint ?? 'none'); // Chrome Mox imprinted color
       if (cauldron !== undefined) s += ':CA[' + cauldron + ']'; // Agatha's Cauldron grafted ability
+      if (copyK !== undefined) s += ':CK[' + copyK + ']'; // Destiny Spinner animate_land copy
+      if (lvl) s += ':LV' + lvl; // Joraga Treespeaker level
+      if (named !== undefined) s += ':N[' + named + ']'; // Disruptor Flute named card
+      if (luck) s += ':LK'; // Gemstone Caverns luck counter
       if (enc !== undefined) {
         if (_encMap === null) {
           // Lazy build — single pass over BF, only when needed.
@@ -2038,9 +2079,11 @@ class GameState {
 
     this._fp = 'T' + this.turn + '|H:' + hand + '|BF:' + bf + '|M:' + m +
                '|L:' + this.landDrops + '|P:' + players + '|CZ:' + cmd +
-               (this.flashThisTurn ? '|FL' : '') +
-               (this.pactOwed      ? '|PC' : '') +
-               (this.topDecked     ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
+               (this.flashThisTurn  ? '|FL' : '') +
+               (this.pactOwed       ? '|PC' : '') +
+               (this.isOpponentTurn ? '|OT' : '') +
+               (this.opponentStax?.length ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
+               (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
     return this._fp;
   }
 
@@ -3000,13 +3043,16 @@ var CARDS = {
           const results = [];
           for (const card of exileCandidates) {
             let s = state.discardFromHand(card); if (!s) continue;
-            // Mark perm as having a luck counter
+            // Mark perm as having a luck counter using proper Permanent mutation
             s = s.clone();
             s._ensureBF();
             const idx = s.battlefield.findIndex(p => p.id === perm.id);
             if (idx < 0) continue;
+            // Use clone+mutate to preserve Permanent class methods (NOT object spread)
+            const updated = s.battlefield[idx].clone();
+            updated.luckCounter = true;
             s.battlefield = [...s.battlefield];
-            s.battlefield[idx] = { ...s.battlefield[idx], luckCounter: true };
+            s.battlefield[idx] = updated;
             results.push(s.log(`Gemstone Caverns: exile ${card} → luck counter`));
           }
           return results;
@@ -3439,40 +3485,13 @@ var CARDS = {
     },
   },
   treefolk_harbinger: {
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Treefolk Harbinger', types:['creature'], subtypes:['Treefolk','Druid'], cost:'G', power:1,toughness:1,
-    // ETB: search library for a Treefolk or Forest card, reveal it, put on top of library.
-    // In this deck the relevant targets are: Forest (basic land), Yavimaya, Dryad Arbor
-    // (Forest subtype land), Ashaya (Elemental, not Treefolk — not a valid target),
-    // Woodland Bellower (Beast, not Treefolk — not valid).
-    // Valid Treefolk: Treefolk Harbinger itself, Lignify aura has Treefolk subtype.
-    // Modeled as: on ETB, generate one branch per unique matching card in the library;
-    // put the found card on top (topDecked) so it's drawn next turn.
-    onEnter(state) {
-      var cards = CARDS;
-      const library = state.players[0].library;
-      // Collect unique matching keys (Forest-subtype land OR Treefolk creature)
-      const matchKeys = [...new Set(library)].filter(k => {
-        const def = cards[k];
-        if (!def) return false;
-        if (def.subtypes?.includes('Forest')) return true;   // Forest land
-        if (def.subtypes?.includes('Treefolk')) return true; // Treefolk creature
-        return false;
-      });
-      if (matchKeys.length === 0) return state; // nothing to find — return unchanged state
-      const results = [];
-      for (const targetKey of matchKeys) {
-        const { state: ns, cardKey: found } = state.searchLibraryFor(k => k === targetKey);
-        if (!found) continue;
-        const s = ns.clone();
-        s.topDecked = found;
-        const cardName = cards[found]?.name ?? found;
-        results.push(s.log(`Treefolk Harbinger ETB: put ${cardName} on top of library`));
-      }
-      // Return array of branches, or single state if only one option
-      return results.length === 1 ? results[0] : results.length > 1 ? results : state;
-    },
+    // ETB: search library for a Treefolk or Forest-subtype card, reveal it, put on top.
+    // Implemented in GameState.enterBattlefield (deterministic: best TUTOR_PRIORITY_SCORE match).
+    // cards.js onEnter removed (2026-05-12) to prevent double-fire when cast via actions.js.
   },
-  elvish_reclaimer: {
+    elvish_reclaimer: {
     name: 'Elvish Reclaimer', types: ['creature'], subtypes: ['Elf','Warrior'], cost: 'G',
     power: 1, toughness: 1,
     // Oracle: {2},{T}, Sacrifice a land: Search library for a land, put it onto the battlefield tapped.
@@ -3732,7 +3751,14 @@ var CARDS = {
     },
   },
 
-  elvish_harbinger: { name:'Elvish Harbinger', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2, tapForMana: simpleTap('{any}',[['G',1]]) },
+  elvish_harbinger: {
+    name:'Elvish Harbinger', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2,
+    // ETB: you may search your library for an Elf card, reveal it, then shuffle and put on top.
+    // Implemented in GameState.enterBattlefield (deterministic: highest TUTOR_PRIORITY_SCORE Elf).
+    // The tap ability is below.
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
+    tapForMana: simpleTap('{any}',[['G',1]]),
+  },
 
   // ─── CREATURES — Untappers ────────────────────────────────────────────────
 
@@ -4802,36 +4828,14 @@ var CARDS = {
     },
   },
   disciple_freyalise: {
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Disciple of Freyalise', types: ['creature'], subtypes: ['Elf','Druid'],
     cost: '3GGG', power: 4, toughness: 4,
     // ETB: you may sacrifice another creature. If you do, gain X life and draw X cards
     // where X = that creature's power.
-    onEnter(state) {
-      const sacrificeable = state.battlefield.filter(p =>
-        p.is('creature') && p.name !== 'Disciple of Freyalise'
-      );
-      if (sacrificeable.length === 0) return state;
-
-      const results = [];
-      results.push(state.log('Disciple of Freyalise ETB: no sacrifice'));
-
-      const seen = new Set();
-      for (const sac of sacrificeable) {
-        const x = sac.power ?? 1;
-        if (x === 0) continue;
-        let s = state.removeFromBattlefield(sac.id, 'graveyard');
-        if (!s) continue;
-        s = s.clone();
-        s.life = (s.life ?? 40) + x;
-        s = s.playerDraws(0, x);
-        s = s.log(`Disciple of Freyalise ETB: sacrifice ${sac.name} (power ${x}) → gain ${x} life, draw ${x} cards`);
-        const fp = s.fingerprint();
-        if (seen.has(fp)) continue;
-        seen.add(fp);
-        results.push(s);
-      }
-      return results.length === 1 ? results[0] : results;
-    },
+    // Implementation in GameState.enterBattlefield: sacrifices lowest-power non-key
+    // creature (deterministic). cards.js onEnter removed (2026-05-12) to prevent
+    // double-fire when cast via actions.js.
   },
   hyrax_tower_scout: {
     name: 'Hyrax Tower Scout', types: ['creature'], subtypes: ['Human','Scout'],
@@ -6083,6 +6087,7 @@ var CARDS = {
 
   // ─── Yeva commander ───────────────────────────────────────────────────────
   yeva: {
+    externallyImplemented: true,  // [drift-detector] flash + flash-grant in actions.js canCastNow()
     name: 'Yeva, Nature\'s Herald',
     types: ['creature'], subtypes: ['Elf', 'Shaman'],
     cost: '2GG', power: 4, toughness: 4,
