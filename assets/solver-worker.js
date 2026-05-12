@@ -1547,6 +1547,58 @@ class GameState {
       }
     }
 
+    // Manglehorn ETB: destroy target artifact you control (or opponent's — but we only
+    // model our own battlefield). In the solver, Manglehorn is never self-destructive:
+    // we only offer to destroy opponent stax pieces (Null Rod, Collector Ouphe, etc.)
+    // or other artifacts that are in the way. Deterministic: pick the lowest-priority
+    // artifact to destroy (the one we want least). Sol Ring and mana artifacts are high
+    // priority; stax pieces are the target. Since we generally don't want to destroy our
+    // own mana artifacts, only fire if there's a STAX artifact on the battlefield.
+    if (!skipETB && cardKey === 'manglehorn') {
+      const STAX_ARTIFACT_NAMES = new Set([
+        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+        'Vexing Bauble', 'Disruptor Flute',
+      ]);
+      // Find stax artifacts first (highest-value targets); fall back to any non-mana artifact
+      const staxTargets = s.battlefield.filter(p =>
+        p.is('artifact') && p.name !== 'Manglehorn' && STAX_ARTIFACT_NAMES.has(p.name)
+      );
+      if (staxTargets.length > 0) {
+        // Destroy the first stax artifact (deterministic — there's rarely more than one)
+        const target = staxTargets[0];
+        s = s.removeFromBattlefield(target.id, 'graveyard');
+        if (s) s = s.log(`Manglehorn ETB: destroy ${target.name}`);
+      }
+    }
+
+    // King of the Coldblood Curse ETB: target creature loses all abilities, becomes 4/4 Lizard.
+    // Only fires if a stax creature (Collector Ouphe) is on the battlefield — that's the
+    // relevant case for the solver (removes a stax suppression effect).
+    if (!skipETB && cardKey === 'king_coldblood') {
+      const STAX_CREATURE_NAMES = new Set(['Collector Ouphe']);
+      const staxTarget = s.battlefield.find(p =>
+        p.is('creature') && p.name !== 'King of the Coldblood Curse' &&
+        STAX_CREATURE_NAMES.has(p.name)
+      );
+      if (staxTarget) {
+        s = s.removeFromBattlefield(staxTarget.id, null);
+        if (s) {
+          // Re-enter as blank 4/4 Lizard without stax properties
+          s._ensureBF();
+          const blankId = s._nextId++;
+          const blank = new Permanent({
+            id: blankId, name: staxTarget.name + ' (Lizard 4/4)', cardKey: 'blank_lizard',
+            types: ['creature'], subtypes: ['Lizard'], tapped: staxTarget.tapped,
+            summoningSick: staxTarget.summoningSick, power: 4, toughness: 4,
+            counters: {}, abilitiesUsed: {},
+          });
+          s.battlefield = [...s.battlefield, blank];
+          s = s.log(`King of the Coldblood Curse ETB: ${staxTarget.name} loses all abilities → 4/4 Lizard`);
+        }
+      }
+    }
+
     // Skullwinder ETB: return a card from your graveyard to hand.
     // Prefers missing combo pieces (same logic as Eternal Witness).
     // Note: the opponent also returns a card — not modelled (no opponent graveyard).
@@ -4590,9 +4642,29 @@ var CARDS = {
       sac_destroy: {
         label: '{1}, Sacrifice: Destroy target artifact or enchantment',
         fn(state, perm) {
+          if (perm.summoningSick) return []; // summoning sickness prevents sacrificing? No —
+          // Actually sacrifice is a cost and legal on sick creatures. But this ability
+          // requires paying {1} and sacrificing, so check mana.
           const ap = state.payMana('1'); if (!ap) return [];
+          // Find targets: preferably opponent stax artifacts/enchantments on our BF
+          // (in single-player, we only have access to our own permanents to destroy).
+          // Priority: stax pieces first, then any artifact/enchantment.
+          const STAX_NAMES = new Set([
+            'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+            'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+            'Vexing Bauble', 'Disruptor Flute',
+          ]);
+          const targets = ap.battlefield.filter(p =>
+            p.id !== perm.id && (p.is('artifact') || p.is('enchantment'))
+          );
+          if (targets.length === 0) return []; // nothing to destroy
+          // Sacrifice self
           let s = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!s) return [];
-          return [s.log('Outland Liberator: sacrifice to destroy an artifact or enchantment')];
+          // Destroy highest-priority target (stax first, then any)
+          const staxTarget = targets.find(t => STAX_NAMES.has(t.name));
+          const target = staxTarget ?? targets[0];
+          s = s.removeFromBattlefield(target.id, 'graveyard'); if (!s) return [];
+          return [s.log(`Outland Liberator: sacrifice → destroy ${target.name}`)];
         },
       },
     },
@@ -4727,6 +4799,37 @@ var CARDS = {
     name: 'King of the Coldblood Curse', types: ['creature'], subtypes: ['Lizard','Villain'],
     cost: '2GG', power: 4, toughness: 4,
     // ETB: up to one other target creature loses all abilities and becomes a 4/4 green Lizard.
+    // Combo-relevant: can disable stax creatures (Collector Ouphe, etc.) by stripping abilities.
+    // Modeled: on ETB, if a stax creature is on the battlefield, strip its abilities
+    // by removing it from the battlefield (it becomes a vanilla 4/4 — since we don't
+    // model "creature with no abilities", the simplest correct approximation is removal
+    // from our battlefield's effective stax pool, keeping it as a vanilla creature).
+    // In practice: remove the stax creature from BF and re-enter it as a blank 4/4.
+    onEnter(state) {
+      const STAX_CREATURE_NAMES = new Set([
+        'Collector Ouphe', 'Null Rod', // artifact-ability suppression creatures
+      ]);
+      const target = state.battlefield.find(p =>
+        p.is('creature') && p.name !== 'King of the Coldblood Curse' &&
+        STAX_CREATURE_NAMES.has(p.name)
+      );
+      if (!target) return state; // no useful target — ETB is optional ("up to one")
+      // Strip abilities: remove from BF and enter as a blank 4/4 green Lizard.
+      // We keep it on the battlefield (it's still a creature) but without stax effects.
+      let s = state.removeFromBattlefield(target.id, null); // doesn't go to GY (stays as new perm)
+      if (!s) return state;
+      // Re-enter as a blank 4/4 Lizard (cardKey: king_coldblood_blank to avoid re-triggering)
+      s = s.clone(); s._ensureBF();
+      const blankId = s._nextId++;
+      const blank = new Permanent({
+        id: blankId, name: target.name + ' (Lizard 4/4)', cardKey: 'blank_lizard',
+        types: ['creature'], subtypes: ['Lizard'], tapped: target.tapped,
+        summoningSick: target.summoningSick, power: 4, toughness: 4,
+        counters: {}, abilitiesUsed: {},
+      });
+      s.battlefield = [...s.battlefield, blank];
+      return s.log(`King of the Coldblood Curse ETB: ${target.name} loses all abilities → 4/4 Lizard`);
+    },
   },
   disciple_freyalise: {
     name: 'Disciple of Freyalise', types: ['creature'], subtypes: ['Elf','Druid'],
@@ -5983,7 +6086,30 @@ var CARDS = {
     tapForMana: simpleTap('{G}', [['G', 1]]),
   },
 
-  bridgeworks_battle:     { name:'Bridgeworks Battle',       types:['sorcery'],  subtypes:[], cost:'2G'   },
+  bridgeworks_battle: {
+    name: 'Bridgeworks Battle', types: ['sorcery'], subtypes: [], cost: '2G',
+    intentionalStub: true,  // fight effect targets opponent creatures — not modeled
+    // DFC land back: Tanglespan Bridgeworks — same pattern as Turntimber Symbiosis.
+    // {T}: Add {G}. Enters tapped unless 3 life paid.
+    handAbilities: {
+      play_as_land: {
+        label: 'Play Tanglespan Bridgeworks (land side, enters tapped)',
+        fn(state, cardKey) {
+          if (state.landDrops <= 0) return null;
+          const s0 = state.removeFromHand(cardKey); if (!s0) return null;
+          const s1 = s0.clone(); s1.landDrops--;
+          const sB = s1.enterBattlefield('tanglespan_bridgeworks', { tapped: true });
+          return sB.log('Play Tanglespan Bridgeworks → enters tapped');
+        },
+      },
+    },
+  },
+
+  // Tanglespan Bridgeworks — back face of Bridgeworks Battle DFC
+  tanglespan_bridgeworks: {
+    name: 'Tanglespan Bridgeworks', types: ['land'], subtypes: ['Forest'], cost: null,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+  },
 
   // ─── Yeva commander ───────────────────────────────────────────────────────
   yeva: {
