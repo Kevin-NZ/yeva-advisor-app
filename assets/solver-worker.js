@@ -1516,6 +1516,37 @@ class GameState {
       }
     }
 
+    // Treefolk Harbinger ETB: search library for a Treefolk or Forest-subtype card,
+    // reveal it, put it on top of library.
+    // Deterministic selection: prefer highest-TUTOR_PRIORITY_SCORE match to avoid
+    // branching inside GameState.enterBattlefield (which must return a single state).
+    // The cast path in actions.js calls cards.js onEnter which CAN branch; the
+    // direct-enter path uses this deterministic fallback.
+    if (!skipETB && cardKey === 'treefolk_harbinger') {
+      var cardsModule = CARDS;
+      let bestKey = null, bestScore = -1;
+      const seenLib = new Set();
+      for (const ck of s.players[0].library) {
+        if (seenLib.has(ck) || ck === 'unknown') continue;
+        seenLib.add(ck);
+        const def = cardsModule[ck];
+        if (!def) continue;
+        const isForestLand = def.subtypes?.includes('Forest');
+        const isTreefolk = def.subtypes?.includes('Treefolk');
+        if (!isForestLand && !isTreefolk) continue;
+        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 1;
+        if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+      }
+      if (bestKey) {
+        const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === bestKey);
+        if (found) {
+          s = ns.clone();
+          s.topDecked = found;
+          s = s.log(`Treefolk Harbinger ETB: put ${cardsModule[found]?.name ?? found} on top of library`);
+        }
+      }
+    }
+
     // Skullwinder ETB: return a card from your graveyard to hand.
     // Prefers missing combo pieces (same logic as Eternal Witness).
     // Note: the opponent also returns a card — not modelled (no opponent graveyard).
@@ -1886,6 +1917,8 @@ class GameState {
       const counters = p.counters;
       const used = p.abilitiesUsed;
       const guided = p.elvishGuidance;
+      const imprint = p.imprintedColor;
+      const cauldron = p.cauldronAbilityKey;
 
       // Detect the dominant "name + tap only" case in a single conjunction.
       // Microbench shows this single combined check is faster than 6 sequential
@@ -1897,7 +1930,9 @@ class GameState {
         (power === undefined || _fpCards[p.cardKey]?.power === power) &&
         (!counters || _isEmptyBag(counters)) &&
         (!used || _isEmptyBag(used)) &&
-        !guided
+        !guided &&
+        imprint === undefined &&
+        cauldron === undefined
       ) {
         segs[i] = p.name + tap;
         continue;
@@ -1907,6 +1942,8 @@ class GameState {
       let s = p.name + tap;
       if (isF) s += ':F';
       if (guided) s += ':EG'; // elvishGuidance — land has +elfCount{G} per tap
+      if (imprint !== undefined) s += ':I' + (imprint ?? 'none'); // Chrome Mox imprinted color
+      if (cauldron !== undefined) s += ':CA[' + cauldron + ']'; // Agatha's Cauldron grafted ability
       if (enc !== undefined) {
         if (_encMap === null) {
           // Lazy build — single pass over BF, only when needed.
@@ -9454,47 +9491,67 @@ function generateActions(state, _presentHint = null) {
     // (but not by Null Rod/Collector Ouphe since it's a land ability).
     if (perm.name === 'Dryad Arbor' && perm.summoningSick) continue;
 
-    // Pre-check: skip permanents whose tapForMana produces nothing when untapped.
-    // This suppresses no-op actions (e.g. Maze of Ith, which has tapForMana: () => []).
-    if (!def.tapForMana(state, perm).length) continue;
+    // Pre-check: get all mana options now. Most cards return exactly 1 result.
+    // Some (Fanatic ferocious, Nykthos devotion) return multiple — generate one
+    // action per option so the solver can independently explore each branch.
+    const preResults = def.tapForMana(state, perm);
+    if (!preResults.length) continue;
 
-    actions.push({
-      type: 'tap_for_mana',
-      label: `Tap ${perm.name} for mana`,
-      priority: 7,
-      apply(s) {
-        const live = s.getPermanentById(perm.id);
-        if (!live || live.tapped) return null;
-        if (def.types.includes('creature') && live.summoningSick) return null;
-        const results = def.tapForMana(s, live);
-        if (!results.length) return null;
-        let ns = results[0];
-        // Leyline of Abundance: whenever you tap a creature for mana, add {G}
-        if (def.types.includes('creature') && ns.hasPermanent('Leyline of Abundance')) {
-          ns = ns.addMana('G');
+    // Shared bonus-application helper (Leyline, Badgermole, Auras)
+    function applyTapBonuses(ns, live) {
+      if (def.types.includes('creature')) {
+        if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
+        if (ns.hasPermanent('Badgermole Cub') && perm.name !== 'Badgermole Cub') ns = ns.addMana('G');
+      }
+      if (live.types.includes('land')) {
+        const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
+        if (sprawl) ns = ns.addMana('G');
+        const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
+        if (wildG) ns = ns.addMana('G');
+        if (live.elvishGuidance) {
+          const elfCount = ns.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
+          for (let i = 0; i < elfCount; i++) ns = ns.addMana('G');
         }
-        // Badgermole Cub: whenever you tap a creature for mana, add {G}
-        if (def.types.includes('creature') && ns.hasPermanent('Badgermole Cub') &&
-            perm.name !== 'Badgermole Cub') {
-          ns = ns.addMana('G');
-        }
-        // Utopia Sprawl: only the one enchanted Forest gets +{G} when it taps.
-        // Match by permanent ID stored on the Sprawl at ETB — not "any Forest".
-        if (live.types.includes('land')) {
-          const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
-          if (sprawl) ns = ns.addMana('G');
-          // Wild Growth: same single-land model
-          const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
-          if (wildG) ns = ns.addMana('G');
-          // Elvish Guidance: enchanted land adds +{G} per Elf on the battlefield
-          if (live.elvishGuidance) {
-            const elfCount = ns.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
-            for (let i = 0; i < elfCount; i++) ns = ns.addMana('G');
-          }
-        }
-        return ns;
-      },
-    });
+      }
+      return ns;
+    }
+
+    if (preResults.length === 1) {
+      // Common case: single option — one action, no label disambiguation needed.
+      actions.push({
+        type: 'tap_for_mana',
+        label: `Tap ${perm.name} for mana`,
+        priority: 7,
+        apply(s) {
+          const live = s.getPermanentById(perm.id);
+          if (!live || live.tapped) return null;
+          if (def.types.includes('creature') && live.summoningSick) return null;
+          const results = def.tapForMana(s, live);
+          if (!results.length) return null;
+          return applyTapBonuses(results[0], live);
+        },
+      });
+    } else {
+      // Multi-option case (ferocious, devotion variants, etc.): one action per result.
+      // Label includes the result's last history message so the solver log is readable.
+      for (let ri = 0; ri < preResults.length; ri++) {
+        const resultIndex = ri;
+        const optionMsg = preResults[ri].history[preResults[ri].history.length - 1]?.msg ?? `option ${ri}`;
+        actions.push({
+          type: 'tap_for_mana',
+          label: `Tap ${perm.name} for mana: ${optionMsg}`,
+          priority: 7,
+          apply(s) {
+            const live = s.getPermanentById(perm.id);
+            if (!live || live.tapped) return null;
+            if (def.types.includes('creature') && live.summoningSick) return null;
+            const results = def.tapForMana(s, live);
+            if (resultIndex >= results.length) return null;
+            return applyTapBonuses(results[resultIndex], live);
+          },
+        });
+      }
+    }
   }
 
   // ── 4b. Agatha's Soul Cauldron — grafted activated abilities ────────────────
