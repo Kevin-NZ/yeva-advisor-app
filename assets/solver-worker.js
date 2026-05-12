@@ -4296,42 +4296,12 @@ var CARDS = {
     },
   },
   fierce_empath: {
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Fierce Empath', types:['creature'], subtypes:['Elf'], cost:'2G', power:1,toughness:1,
-    // ETB: you may search your library for a creature card with mana value 6 or greater,
-    // reveal it, and put it into your hand. Shuffle.
-    // Key targets in this deck: Woodland Bellower (6), Regal Force (7), Kogla (7),
-    // Temur Sabertooth (4 — NOT a valid target, MV too low),
-    // Selvala (4 — NOT valid), Seedborn Muse (5 — NOT valid).
-    // Valid: Woodland Bellower (6), Regal Force (7), Kogla the Titan Ape (7).
-    onEnter(state) {
-      var cards = CARDS;
-      // Parse MV from cost string: count all mana symbols
-      function mv(cost) {
-        if (!cost) return 0;
-        let total = 0;
-        for (const ch of cost) {
-          if (ch >= '1' && ch <= '9') total += parseInt(ch);
-          else if (ch === 'G' || ch === 'W' || ch === 'U' || ch === 'R' || ch === 'B' ||
-                   ch === 'C') total += 1;
-          else if (ch === 'X') continue; // X spells: treat X=0 for MV calculation
-        }
-        return total;
-      }
-
-      const results = [];
-      const seen = new Set();
-      for (const k of state.players[0].library) {
-        if (seen.has(k)) continue; seen.add(k);
-        const def = cards[k];
-        if (!def || !def.types.includes('creature')) continue;
-        if (mv(def.cost) < 6) continue;
-        const { state: ns, cardKey: found } = state.searchLibraryFor(lk => lk === k);
-        if (!found) continue;
-        results.push(ns.addToHand(found).log(`Fierce Empath ETB: search → ${def.name} to hand`));
-      }
-      // Also check: if no target exists, Fierce Empath still ETBs (just doesn't search)
-      return results.length === 1 ? results[0] : results.length > 1 ? results : state;
-    },
+    // ETB: search library for MV≥6 creature, put into hand.
+    // Implemented in GameState.enterBattlefield (deterministic: picks highest TUTOR_PRIORITY_SCORE).
+    // cards.js onEnter removed (2026-05-12) to prevent double-fire: GameState.enterBattlefield
+    // already handles the ETB for both cast and direct-enter paths.
   },
   reclamation_sage: {
     name: 'Reclamation Sage', types: ['creature'], subtypes: ['Elf','Shaman'],
@@ -9516,7 +9486,10 @@ function generateActions(state, _presentHint = null) {
         if (entersBattlefield && def.onEnter && typeof def.onEnter === 'function') {
           const entered = ns.getPermanent(def.name);
           const after = def.onEnter(ns, entered);
-          if (after) ns = after;
+          // onEnter may return a single state, an array of branching states, or null.
+          // The cast_spell action must return a single state — take the first branch.
+          // Cards that need full branching (Growing Rites, Disciple) use castFn instead.
+          if (after) ns = Array.isArray(after) ? after[0] : after;
         }
 
         // Surrak and Goreclaw: nontoken creatures entering get +1/+1 and haste
