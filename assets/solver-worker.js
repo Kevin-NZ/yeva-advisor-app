@@ -2163,32 +2163,34 @@ function makeFetchLand(name) {
         fn(state, perm) {
           if (perm.tapped) return [];
           const results = [];
+          const lib = state.players[0].library;
 
           // Option 1: Dryad Arbor (forest creature — best for combos)
-          // Only offer if Dryad Arbor is actually in the library (not in hand or on battlefield)
-          {
-            const dryadInHand = state.hand.includes('dryad_arbor');
-            const dryadOnBF   = state.battlefield.some(p => p.name === 'Dryad Arbor');
-            const dryadExiled = state.exile.includes('Dryad Arbor');
-            if (!dryadInHand && !dryadOnBF && !dryadExiled) {
-              let s = state.clone();
-              s.life -= 1;
-              s = s.removeFromBattlefield(perm.id, 'graveyard');
-              if (s) {
-                s = s.enterBattlefield('dryad_arbor');
-                results.push(s.log(`${name}: fetch Dryad Arbor`));
-              }
-            }
-          }
-
-          // Option 2: Basic Forest (immediately tappable for {G})
-          {
+          // Only offered if dryad_arbor is actually in the library.
+          if (lib.includes('dryad_arbor')) {
             let s = state.clone();
             s.life -= 1;
             s = s.removeFromBattlefield(perm.id, 'graveyard');
             if (s) {
-              s = s.enterBattlefield('forest');
-              results.push(s.log(`${name}: fetch Forest`));
+              const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === 'dryad_arbor');
+              if (found) {
+                const after = ns.enterBattlefield(found);
+                results.push(after.log(`${name}: fetch Dryad Arbor`));
+              }
+            }
+          }
+
+          // Option 2: Basic Forest — only offered if 'forest' is in the library.
+          if (lib.includes('forest')) {
+            let s = state.clone();
+            s.life -= 1;
+            s = s.removeFromBattlefield(perm.id, 'graveyard');
+            if (s) {
+              const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === 'forest');
+              if (found) {
+                const after = ns.enterBattlefield(found);
+                results.push(after.log(`${name}: fetch Forest`));
+              }
             }
           }
 
