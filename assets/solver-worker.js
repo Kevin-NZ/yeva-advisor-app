@@ -928,6 +928,23 @@ class GameState {
   }
 
   /**
+   * Remove a named entry from opponentStax and recompute _hasSTAX.
+   * cardName should match the prefix before any '@' separator.
+   * Returns a new state with the entry removed.
+   */
+  removeFromOpponentStax(cardName) {
+    const s = this.clone();
+    s.opponentStax = new Set([...this.opponentStax].filter(e => e.split('@')[0].trim() !== cardName));
+    // Recompute _hasSTAX: true if any battlefield stax OR remaining opponentStax cost-stax
+    const COST_STAX = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
+    const BF_STAX_NAMES = new Set(['Null Rod','Collector Ouphe','Root Maze','Orb of Dreams',
+      'Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
+    s._hasSTAX = s.battlefield.some(p => BF_STAX_NAMES.has(p.name)) ||
+                 [...s.opponentStax].some(e => COST_STAX.has(e.split('@')[0].trim()));
+    return s;
+  }
+
+  /**
    * Get a parameter from an opponent stax entry, e.g.
    * opponentStaxParam('Chalice of the Void') → '1' (from 'Chalice of the Void@1')
    * Returns null if not present or not parameterized.
@@ -1577,33 +1594,82 @@ class GameState {
         }
       }
     }
-    // model our own battlefield). In the solver, Manglehorn is never self-destructive:
-    // we only offer to destroy opponent stax pieces (Null Rod, Collector Ouphe, etc.)
-    // or other artifacts that are in the way. Deterministic: pick the lowest-priority
-    // artifact to destroy (the one we want least). Sol Ring and mana artifacts are high
-    // priority; stax pieces are the target. Since we generally don't want to destroy our
-    // own mana artifacts, only fire if there's a STAX artifact on the battlefield.
+    // Manglehorn ETB: destroy target artifact. Checks battlefield first, then opponentStax.
     if (!skipETB && cardKey === 'manglehorn') {
       const STAX_ARTIFACT_NAMES = new Set([
         'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
         'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
         'Vexing Bauble', 'Disruptor Flute',
       ]);
-      // Find stax artifacts first (highest-value targets); fall back to any non-mana artifact
       const staxTargets = s.battlefield.filter(p =>
         p.is('artifact') && p.name !== 'Manglehorn' && STAX_ARTIFACT_NAMES.has(p.name)
       );
       if (staxTargets.length > 0) {
-        // Destroy the first stax artifact (deterministic — there's rarely more than one)
         const target = staxTargets[0];
         s = s.removeFromBattlefield(target.id, 'graveyard');
         if (s) s = s.log(`Manglehorn ETB: destroy ${target.name}`);
+      } else {
+        // Check opponentStax — remove the first matching entry
+        const oppTarget = [...s.opponentStax].find(e => STAX_ARTIFACT_NAMES.has(e.split('@')[0].trim()));
+        if (oppTarget) {
+          const oppName = oppTarget.split('@')[0].trim();
+          s = s.removeFromOpponentStax(oppName);
+          s = s.log(`Manglehorn ETB: destroy opponent's ${oppName}`);
+        }
       }
     }
 
+    // Reclamation Sage ETB: destroy target artifact or enchantment.
+    // Checks battlefield first, then opponentStax.
+    if (!skipETB && cardKey === 'reclamation_sage') {
+      const STAX_TARGETS = new Set([
+        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+        'Vexing Bauble', 'Disruptor Flute',
+      ]);
+      const staxTarget = s.battlefield.find(p =>
+        (p.is('artifact') || p.is('enchantment')) &&
+        p.name !== 'Reclamation Sage' && STAX_TARGETS.has(p.name)
+      );
+      if (staxTarget) {
+        s = s.removeFromBattlefield(staxTarget.id, 'graveyard');
+        if (s) s = s.log(`Reclamation Sage ETB: destroy ${staxTarget.name}`);
+      } else {
+        const oppTarget = [...s.opponentStax].find(e => STAX_TARGETS.has(e.split('@')[0].trim()));
+        if (oppTarget) {
+          const oppName = oppTarget.split('@')[0].trim();
+          s = s.removeFromOpponentStax(oppName);
+          s = s.log(`Reclamation Sage ETB: destroy opponent's ${oppName}`);
+        }
+      }
+    }
+
+    // Chomping Changeling ETB: destroy up to one target artifact or enchantment.
+    // Identical stax-removal logic as Reclamation Sage.
+    if (!skipETB && cardKey === 'chomping_changeling') {
+      const STAX_TARGETS = new Set([
+        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+        'Vexing Bauble', 'Disruptor Flute',
+      ]);
+      const staxTarget = s.battlefield.find(p =>
+        (p.is('artifact') || p.is('enchantment')) &&
+        p.name !== 'Chomping Changeling' && STAX_TARGETS.has(p.name)
+      );
+      if (staxTarget) {
+        s = s.removeFromBattlefield(staxTarget.id, 'graveyard');
+        if (s) s = s.log(`Chomping Changeling ETB: destroy ${staxTarget.name}`);
+      } else {
+        const oppTarget = [...s.opponentStax].find(e => STAX_TARGETS.has(e.split('@')[0].trim()));
+        if (oppTarget) {
+          const oppName = oppTarget.split('@')[0].trim();
+          s = s.removeFromOpponentStax(oppName);
+          s = s.log(`Chomping Changeling ETB: destroy opponent's ${oppName}`);
+        }
+      }
+    }
     // King of the Coldblood Curse ETB: target creature loses all abilities, becomes 4/4 Lizard.
-    // Only fires if a stax creature (Collector Ouphe) is on the battlefield — that's the
-    // relevant case for the solver (removes a stax suppression effect).
+    // Fires if a stax creature (Collector Ouphe) is on the battlefield OR in opponentStax.
     if (!skipETB && cardKey === 'king_coldblood') {
       const STAX_CREATURE_NAMES = new Set(['Collector Ouphe']);
       const staxTarget = s.battlefield.find(p =>
@@ -1624,6 +1690,13 @@ class GameState {
           });
           s.battlefield = [...s.battlefield, blank];
           s = s.log(`King of the Coldblood Curse ETB: ${staxTarget.name} loses all abilities → 4/4 Lizard`);
+        }
+      } else {
+        // Check opponentStax for Collector Ouphe (strips artifact-ability suppression)
+        const oppOuphe = [...s.opponentStax].find(e => e.split('@')[0].trim() === 'Collector Ouphe');
+        if (oppOuphe) {
+          s = s.removeFromOpponentStax('Collector Ouphe');
+          s = s.log(`King of the Coldblood Curse ETB: opponent's Collector Ouphe loses all abilities`);
         }
       }
     }
@@ -4332,14 +4405,14 @@ var CARDS = {
     // already handles the ETB for both cast and direct-enter paths.
   },
   reclamation_sage: {
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Reclamation Sage', types: ['creature'], subtypes: ['Elf','Shaman'],
-    intentionalStub: true,  // [drift-detector] ETB destroy has no targets in single-player (no opponent permanents modeled)
     cost: '2G', power: 2, toughness: 1,
-    // ETB: destroy target artifact or enchantment.
-    // Not modeled — the single-player solver has no opponent permanents to
-    // target.  Functionally a vanilla 2/1 for {2G} in the solver.  Card is
-    // included in the deck list for real games but the ETB destroy isn't
-    // useful for combo solving.
+    // ETB: you may destroy target artifact or enchantment.
+    // Implemented deterministically in GameState.enterBattlefield:
+    // destroys the highest-priority stax artifact/enchantment (Null Rod,
+    // Collector Ouphe, Orb of Dreams, etc.), same pattern as Manglehorn.
+    // Does not destroy our own mana artifacts (Sol Ring, Chrome Mox, etc.).
   },
   scavenging_ooze: {
     name: 'Scavenging Ooze', types: ['creature'], subtypes: ['Ooze'],
@@ -4476,7 +4549,14 @@ var CARDS = {
       },
     },
   },
-  chomping_changeling: { intentionalStub: true, name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
+  chomping_changeling: {
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
+    name:'Chomping Changeling', types:['creature'], subtypes:['Shapeshifter'],
+    cost:'2G', power:3, toughness:3,
+    // ETB: destroy up to one target artifact or enchantment.
+    // Identical to Reclamation Sage ETB — implemented in GameState.enterBattlefield.
+    // Targets stax artifacts/enchantments on battlefield first, then opponentStax.
+  },
   lotus_cobra: {
     name: 'Lotus Cobra', types: ['creature'], subtypes: ['Snake'], cost: '1G',
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
@@ -4655,14 +4735,25 @@ var CARDS = {
           const targets = ap.battlefield.filter(p =>
             p.id !== perm.id && (p.is('artifact') || p.is('enchantment'))
           );
-          if (targets.length === 0) return []; // nothing to destroy
+          // Also check opponentStax
+          const oppStaxEntries = [...ap.opponentStax].filter(e => STAX_NAMES.has(e.split('@')[0].trim()));
+          if (targets.length === 0 && oppStaxEntries.length === 0) return [];
           // Sacrifice self
           let s = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!s) return [];
-          // Destroy highest-priority target (stax first, then any)
-          const staxTarget = targets.find(t => STAX_NAMES.has(t.name));
-          const target = staxTarget ?? targets[0];
-          s = s.removeFromBattlefield(target.id, 'graveyard'); if (!s) return [];
-          return [s.log(`Outland Liberator: sacrifice → destroy ${target.name}`)];
+          // Prefer stax targets on our BF, then opponentStax, then any artifact
+          const staxBFTarget = targets.find(t => STAX_NAMES.has(t.name));
+          if (staxBFTarget) {
+            s = s.removeFromBattlefield(staxBFTarget.id, 'graveyard'); if (!s) return [];
+            return [s.log(`Outland Liberator: sacrifice → destroy ${staxBFTarget.name}`)];
+          } else if (oppStaxEntries.length > 0) {
+            const oppName = oppStaxEntries[0].split('@')[0].trim();
+            s = s.removeFromOpponentStax(oppName);
+            return [s.log(`Outland Liberator: sacrifice → destroy opponent's ${oppName}`)];
+          } else {
+            const target = targets[0];
+            s = s.removeFromBattlefield(target.id, 'graveyard'); if (!s) return [];
+            return [s.log(`Outland Liberator: sacrifice → destroy ${target.name}`)];
+          }
         },
       },
     },
@@ -5092,7 +5183,46 @@ var CARDS = {
       },
     },
   },
-  lignify: { intentionalStub: true, name: 'Lignify', types: ['enchantment'], subtypes: ['Aura','Treefolk'], cost: '1G' },
+  lignify: {
+    name: 'Lignify', types: ['enchantment'], subtypes: ['Aura','Treefolk'], cost: '1G',
+    isRemoval: true,
+    // Enchanted creature is a Treefolk 0/4 with no abilities.
+    // In the solver context, this is only useful for targeting stax creatures
+    // (Collector Ouphe) on our own battlefield OR in opponentStax.
+    castFn(state) {
+      const STAX_CREATURE_NAMES = new Set(['Collector Ouphe']);
+      const results = [];
+      // Target stax creatures on our battlefield
+      const bfTarget = state.battlefield.find(p =>
+        p.is('creature') && STAX_CREATURE_NAMES.has(p.name)
+      );
+      if (bfTarget) {
+        let s = state.clone(); s._ensureBF();
+        // Strip the creature's stax identity — replace with blank 0/4 Treefolk
+        s = s.removeFromBattlefield(bfTarget.id, null);
+        if (s) {
+          const treefolk = new Permanent({
+            id: s._nextId++, name: bfTarget.name + ' (Treefolk 0/4)', cardKey: 'blank_treefolk',
+            types: ['creature'], subtypes: ['Treefolk'], tapped: bfTarget.tapped,
+            summoningSick: bfTarget.summoningSick, power: 0, toughness: 4,
+            counters: {}, abilitiesUsed: {},
+          });
+          s._ensureBF(); s.battlefield = [...s.battlefield, treefolk];
+          s = s.log(`Lignify: ${bfTarget.name} → 0/4 Treefolk (no abilities)`);
+          results.push(s);
+        }
+      }
+      // Target stax creatures in opponentStax (specifically Collector Ouphe)
+      const oppOuphe = [...state.opponentStax].find(e => STAX_CREATURE_NAMES.has(e.split('@')[0].trim()));
+      if (oppOuphe) {
+        const oppName = oppOuphe.split('@')[0].trim();
+        let s = state.removeFromOpponentStax(oppName);
+        s = s.log(`Lignify: opponent's ${oppName} → 0/4 Treefolk (no abilities)`);
+        results.push(s);
+      }
+      return results;
+    },
+  },
   kenriths_transformation: {
     name: "Kenrith's Transformation", types: ['enchantment'], subtypes: ['Aura'], cost: '1G',
     // ETB: draw a card. Enchanted creature loses abilities, becomes 3/3 Elk.
@@ -5182,7 +5312,39 @@ var CARDS = {
       }
     },
   },
-  titania_song: { intentionalStub: true, name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G' },
+  titania_song: {
+    name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G',
+    // Each noncreature artifact loses all abilities and becomes an artifact creature
+    // with power and toughness each equal to its mana value.
+    // Key combo effect: Null Rod and Collector Ouphe lose their abilities.
+    // Modeled as an ETB that strips stax artifacts on our battlefield and opponentStax.
+    // Persistent static effects are not tracked turn-by-turn (no static engine),
+    // so we apply the effect greedily on entry — same approach as Manglehorn/Rec Sage.
+    onEnter(state) {
+      const STAX_ARTIFACT_NAMES = new Set([
+        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+        'Vexing Bauble', 'Disruptor Flute',
+      ]);
+      let s = state;
+      // Strip all stax artifacts on our battlefield
+      for (const p of [...s.battlefield]) {
+        if (p.is('artifact') && !p.is('creature') && STAX_ARTIFACT_NAMES.has(p.name)) {
+          s = s.removeFromBattlefield(p.id, null); // becomes a creature, stays on BF as blank
+          if (s) s = s.log(`Titania's Song: ${p.name} loses all abilities`);
+        }
+      }
+      // Strip all stax artifacts in opponentStax
+      for (const entry of [...(s.opponentStax ?? [])]) {
+        const name = entry.split('@')[0].trim();
+        if (STAX_ARTIFACT_NAMES.has(name)) {
+          s = s.removeFromOpponentStax(name);
+          if (s) s = s.log(`Titania's Song: opponent's ${name} loses all abilities`);
+        }
+      }
+      return s;
+    },
+  },
 
   // ─── BATTLES ─────────────────────────────────────────────────────────────
 
@@ -5421,7 +5583,92 @@ var CARDS = {
       return results.length ? results : [state.log("Archdruid's Charm: nothing found")];
     },
   },
-  force_of_vigor:         { intentionalStub: true, name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
+  force_of_vigor: {
+    name: 'Force of Vigor', types: ['instant'], subtypes: [], cost: '2GG',
+    isRemoval: true,
+    // Destroy up to two target artifacts and/or enchantments.
+    // Alternative cost: if not your turn, exile a green card from hand instead.
+    // Modeled: two modes —
+    //   (a) Normal cast: pay {2GG}, destroy up to 2 stax targets.
+    //   (b) Free cast (opponent turn): exile a green card, destroy up to 2 stax targets.
+    //       The free mode is offered as a handAbility on the opponent's turn.
+    castFn(state) {
+      const STAX_NAMES = new Set([
+        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+        'Vexing Bauble', 'Disruptor Flute',
+      ]);
+      const bfTargets = state.battlefield.filter(p =>
+        (p.is('artifact') || p.is('enchantment')) && STAX_NAMES.has(p.name)
+      );
+      const oppTargets = [...state.opponentStax].filter(e => STAX_NAMES.has(e.split('@')[0].trim()));
+      if (bfTargets.length === 0 && oppTargets.length === 0) return [];
+      let s = state;
+      let destroyed = 0;
+      // Destroy up to 2: BF targets first, then opponentStax
+      for (const t of bfTargets.slice(0, 2)) {
+        s = s.removeFromBattlefield(t.id, 'graveyard');
+        if (!s) return [];
+        s = s.log(`Force of Vigor: destroy ${t.name}`);
+        destroyed++;
+        if (destroyed >= 2) break;
+      }
+      if (destroyed < 2) {
+        for (const opp of oppTargets.slice(0, 2 - destroyed)) {
+          const oppName = opp.split('@')[0].trim();
+          s = s.removeFromOpponentStax(oppName);
+          s = s.log(`Force of Vigor: destroy opponent's ${oppName}`);
+          destroyed++;
+        }
+      }
+      return [s];
+    },
+    // Free cast on opponent's turn: exile a green card from hand
+    handAbilities: {
+      free_cast: {
+        label: 'Force of Vigor (free): exile a green card → destroy up to 2 stax',
+        fn(state, cardKey) {
+          if (!state.isOpponentTurn) return null;
+          const STAX_NAMES = new Set([
+            'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+            'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+            'Vexing Bauble', 'Disruptor Flute',
+          ]);
+          const targets = state.battlefield.filter(p =>
+            (p.is('artifact') || p.is('enchantment')) && STAX_NAMES.has(p.name)
+          );
+          const oppTargets2 = [...state.opponentStax].filter(e => STAX_NAMES.has(e.split('@')[0].trim()));
+          if (targets.length === 0 && oppTargets2.length === 0) return null;
+          // Find a green card in hand to exile (not Force of Vigor itself)
+          const exileCandidate = state.hand.find(k =>
+            k !== cardKey && CARDS[k]?.cost?.includes('G')
+          );
+          if (!exileCandidate) return null;
+          let s = state.discardFromHand(cardKey);   // remove Force of Vigor
+          if (!s) return null;
+          s = s.discardFromHand(exileCandidate);     // exile the green card
+          if (!s) return null;
+          s = s.clone(); s.exile = [...(s.exile ?? []), CARDS[exileCandidate]?.name ?? exileCandidate];
+          let destroyed2 = 0;
+          for (const t of targets.slice(0, 2)) {
+            s = s.removeFromBattlefield(t.id, 'graveyard');
+            if (!s) return null;
+            s = s.log(`Force of Vigor (free, exile ${CARDS[exileCandidate]?.name}): destroy ${t.name}`);
+            destroyed2++;
+            if (destroyed2 >= 2) break;
+          }
+          if (destroyed2 < 2) {
+            for (const opp of oppTargets2.slice(0, 2 - destroyed2)) {
+              const oppName2 = opp.split('@')[0].trim();
+              s = s.removeFromOpponentStax(oppName2);
+              s = s.log(`Force of Vigor (free, exile ${CARDS[exileCandidate]?.name}): destroy opponent's ${oppName2}`);
+            }
+          }
+          return s;
+        },
+      },
+    },
+  },
   beast_within:           { intentionalStub: true, name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
   vitalize: {
     name: 'Vitalize', types: ['instant'], subtypes: [], cost: 'G',
@@ -9155,6 +9402,11 @@ function generateActions(state, _presentHint = null) {
     const def = CARDS[cardKey];
     if (!def?.handAbilities) continue;
     for (const [abilKey, ability] of Object.entries(def.handAbilities)) {
+      // Pre-check: skip abilities that would return null in current state
+      // (e.g. Force of Vigor free cast only on opponent turn, fetch lands only
+      // when targets are in library). This avoids adding dead actions to the list.
+      const preCheck = ability.fn(state, cardKey);
+      if (preCheck === null || preCheck === undefined) continue;
       actions.push({
         type: 'hand_ability',
         label: `${def.name} (hand): ${ability.label ?? abilKey}`,
