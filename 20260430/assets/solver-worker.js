@@ -145,29 +145,6 @@ var COMBO_REQUIRED_KEYS = [
   // Win condition pairs (need infinite mana already + win piece)
   ['duskwatch_recruiter','gaeas_cradle'],
   ['beast_whisperer','gaeas_cradle'],
-
-  // ── C-13 routing-gap closures (2026-04-30) ─────────────────────────────
-  // The C-13 manifest-routability test surfaced 10 combos whose cardKeys
-  // were not a superset of any existing routing tuple. Adding the smallest
-  // tuple per combo so the tutor heuristic recognises each.
-  //
-  // Eternal Witness chains (combos 33, 51, 58): Witness recurs the bounce
-  // engine card from graveyard each cycle.
-  ['marwyn','eternal_witness','temur_sabertooth'],            // 33, 58
-  ['marwyn','eternal_witness','kogla'],                       // 51
-  // Temur Sabertooth + 2-drop dork (combos 9, 10, 18, 20, 22, 57): bounce
-  // and recast the dork. Source-of-truth lists various haste enablers; the
-  // base routing tuple is just (Temur, dork) since the haste enabler can
-  // be any of Concordant Crossroads / Thousand-Year Elixir / Surrak.
-  ['temur_sabertooth','priest_of_titania'],                   // 9
-  ['temur_sabertooth','circle_of_dreams_druid'],              // 10
-  ['hyrax_tower_scout','temur_sabertooth','circle_of_dreams_druid'], // 18
-  ['temur_sabertooth','karametra_acolyte'],                   // 20
-  ['temur_sabertooth','marwyn'],                              // 22
-  ['hyrax_tower_scout','temur_sabertooth','karametra_acolyte'], // 57
-  // Magus + Cradle (combo 32): Magus untaps a land for {3}, paying its own
-  // recast cost when Cradle has ≥3 creatures.
-  ['magus_of_the_candelabra','gaeas_cradle'],                 // 32
 ];
 
 // ── Tutor target priority ─────────────────────────────────────────────────
@@ -347,19 +324,6 @@ function buildDefaultLibrary(opts = {}) {
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;
-}
-
-// [E12] Quick "is this bag of {key→truthy} effectively empty?" — used by
-// fingerprint() to short-circuit when a permanent's counters or
-// abilitiesUsed object exists but contains only falsy values.
-// Fast: returns false on the first truthy hit; returns true only if every
-// own key has a falsy value (the common case when the object was initialized
-// from {} or shared via clone but never written to).
-function _isEmptyBag(obj) {
-  for (const k in obj) {
-    if (obj[k]) return false;
-  }
-  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -709,13 +673,6 @@ class Permanent {
     // Custom fields set by card ETB hooks
     if (this.imprintedColor  !== undefined) p.imprintedColor  = this.imprintedColor;
     if (this.enchantedLandId !== undefined) p.enchantedLandId = this.enchantedLandId;
-    if (this.elvishGuidance)                p.elvishGuidance  = this.elvishGuidance;
-    if (this.cauldronAbilityKey !== undefined) p.cauldronAbilityKey = this.cauldronAbilityKey;
-    if (this.copyKey  !== undefined)        p.copyKey   = this.copyKey;
-    if (this.copyName !== undefined)        p.copyName  = this.copyName;
-    if (this.levelCounters)                 p.levelCounters = this.levelCounters;
-    if (this.namedCard !== undefined)       p.namedCard = this.namedCard;
-    if (this.luckCounter)                   p.luckCounter = this.luckCounter;
     return p;
   }
 
@@ -792,28 +749,6 @@ class GameState {
     // _hasSTAX: true when a STAX permanent is on the battlefield.
     // Enables fast-path in effectiveCost that skips Thorn/Trinisphere checks.
     this._hasSTAX       = data._hasSTAX ?? false;
-    // opponentStax: Set of stax card NAMES that opponents control.
-    // These are injected at solve-time and enforce restrictions on YOUR actions
-    // just as if they were on your battlefield — but you cannot remove them
-    // (no interaction targeting opponent permanents in single-player model).
-    // Supported: 'Null Rod', 'Thorn of Amethyst', 'Trinisphere', 'Root Maze',
-    //            'Orb of Dreams', 'Vexing Bauble', 'Titania\'s Song'
-    this.opponentStax   = data.opponentStax instanceof Set
-      ? data.opponentStax
-      : new Set(Array.isArray(data.opponentStax) ? data.opponentStax : []);
-    // Bug fix: when constructed directly with cost-affecting opponentStax (the
-    // path runSolver uses — `new SolverGameState({ opponentStax: ... })`), we
-    // must seed _hasSTAX so effectiveCost takes the slow path. Otherwise Thorn,
-    // Trinisphere, Chalice, Vexing Bauble and Disruptor Flute would silently
-    // be ignored on the very first state of every solve. Mirrors the logic in
-    // withOpponentStax() and the recompute in remove(). Skipped when the caller
-    // supplied an explicit _hasSTAX (preserves clone() semantics).
-    if (data._hasSTAX === undefined && this.opponentStax.size > 0) {
-      const COST_STAX_C = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-      for (const entry of this.opponentStax) {
-        if (COST_STAX_C.has(entry.split('@')[0].trim())) { this._hasSTAX = true; break; }
-      }
-    }
     // flashThisTurn: true when Emergence Zone has been sacrificed this turn
     // (all spells can be cast as though they had flash).
     this.flashThisTurn  = data.flashThisTurn ?? false;
@@ -911,54 +846,11 @@ class GameState {
   untappedCreatures() { return this.creatures().filter(p => !p.tapped && !p.summoningSick); }
 
   /** O(1) permanent-name check via lazy-built Set cache. */
-  /**
-   * Return a new state with the given opponent stax card names applied.
-   * Usage: state.withOpponentStax(['Null Rod', 'Trinisphere'])
-   * Parameterized: 'Chalice of the Void@1' (at MV=1), 'Disruptor Flute@Quirion Ranger'
-   * These names are used by hasStax() to enforce restrictions without
-   * the cards appearing on your battlefield.
-   */
-  withOpponentStax(names) {
-    const s = this.clone();
-    s.opponentStax = new Set(names);
-    // If any of the stax cards affect cost, flag _hasSTAX
-    const costStax = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-    if (names.some(n => costStax.has(n.split('@')[0].trim()))) s._hasSTAX = true;
-    return s;
-  }
-
-  /**
-   * Get a parameter from an opponent stax entry, e.g.
-   * opponentStaxParam('Chalice of the Void') → '1' (from 'Chalice of the Void@1')
-   * Returns null if not present or not parameterized.
-   */
-  opponentStaxParam(cardName) {
-    for (const entry of this.opponentStax) {
-      const [name, param] = entry.split('@');
-      if (name.trim() === cardName && param !== undefined) return param.trim();
-    }
-    return null;
-  }
-
   hasPermanent(name) {
     if (!this._permNames) {
       this._permNames = new Set(this.battlefield.map(p => p.name));
     }
     return this._permNames.has(name);
-  }
-
-  /**
-   * Returns true if a stax permanent is active — either because YOU control it
-   * (on your battlefield) OR because an opponent controls it (opponentStax set).
-   * Use this in all stax-enforcement checks so both sources are covered.
-   * Handles parameterized entries like 'Chalice of the Void@1'.
-   */
-  hasStax(name) {
-    if (this.hasPermanent(name)) return true;
-    for (const entry of this.opponentStax) {
-      if (entry === name || entry.startsWith(name + '@')) return true;
-    }
-    return false;
   }
 
   getPermanent(name)  { return this.battlefield.find(p => p.name === name); }
@@ -997,7 +889,6 @@ class GameState {
     s.topDecked     = this.topDecked;
     s.drawForTurn   = this.drawForTurn;
     s._hasSTAX      = this._hasSTAX;
-    s.opponentStax  = this.opponentStax; // Set is immutable — safe to share
     s.flashThisTurn = this.flashThisTurn;
     s.pactOwed      = this.pactOwed;
     s._fp           = null;
@@ -1051,7 +942,6 @@ class GameState {
     s.topDecked     = this.topDecked;
     s.drawForTurn   = this.drawForTurn;
     s._hasSTAX      = this._hasSTAX;
-    s.opponentStax  = this.opponentStax; // Set is immutable — safe to share
     s.flashThisTurn = this.flashThisTurn;
     s.pactOwed      = this.pactOwed;
     s._fp           = null;
@@ -1232,15 +1122,6 @@ class GameState {
     const p = s.getPermanentById(id);
     if (!p) return null;
     p.tapped = false;
-    // When a permanent is untapped mid-turn (e.g. by Quirion Ranger bouncing itself
-    // to untap Hope Tender), once-per-tap ability flags should reset so the creature
-    // can activate again. The exert flag (exert_two_lands) is preserved — exert
-    // persists until the creature's NEXT untap step, not cleared by mid-turn untaps.
-    if (p.abilitiesUsed && Object.keys(p.abilitiesUsed).length > 0) {
-      const preserved = {};
-      if (p.abilitiesUsed.exert_two_lands) preserved.exert_two_lands = true;
-      p.abilitiesUsed = preserved;
-    }
     return s;
   }
 
@@ -1273,21 +1154,6 @@ class GameState {
 
     // ── Static layer: apply existing statics to the new permanent ────────────
 
-    // Orb of Dreams / Root Maze: all permanents enter tapped.
-    // Applies whether YOU or an OPPONENT controls the piece.
-    if (s.hasStax('Orb of Dreams')) {
-      perm.tapped = true;
-      perm.summoningSick = true;
-    } else if (s.hasStax('Root Maze')) {
-      if (perm.is('land') || perm.is('artifact')) perm.tapped = true;
-    }
-
-    // Castle Garenbrig: enters tapped unless you control a Forest.
-    if (cardKey === 'castle_garenbrig') {
-      const hasForest = s.battlefield.some(p => p.isForest && p.cardKey !== 'castle_garenbrig');
-      if (!hasForest) perm.tapped = true;
-    }
-
     // Ashaya: new creatures become Forest lands
     if (s.hasPermanent('Ashaya, Soul of the Wild') && perm.is('creature')) {
       if (perm._cow) perm._ensureOwnTypes();
@@ -1315,8 +1181,7 @@ class GameState {
 
     // ── ETB triggers: card-specific effects on entry ──────────────────────────
 
-    // Ashaya ETB: all existing non-token creatures become Forest lands.
-    // Also set Ashaya's own power/toughness = current land count (she's a land herself).
+    // Ashaya ETB: all existing non-token creatures become Forest lands
     if (cardKey === 'ashaya') {
       for (const bf of s.battlefield) {
         if (bf.is('creature')) {
@@ -1325,14 +1190,6 @@ class GameState {
           if (!bf.types.includes('land')) bf.types.push('land');
           if (!bf.subtypes.includes('Forest')) bf.subtypes.push('Forest');
         }
-      }
-      // Ashaya's P/T = number of lands she controls (herself included, since the loop above
-      // just added her to the land pool)
-      const ashayaPerm = s.battlefield.find(p => p.cardKey === 'ashaya');
-      if (ashayaPerm) {
-        const landCount = s.lands().length;
-        ashayaPerm.power     = landCount;
-        ashayaPerm.toughness = landCount;
       }
     }
 
@@ -1521,113 +1378,6 @@ class GameState {
       }
     }
 
-    // Treefolk Harbinger ETB: search library for a Treefolk or Forest-subtype card,
-    // reveal it, put it on top of library.
-    // Deterministic selection: prefer highest-TUTOR_PRIORITY_SCORE match to avoid
-    // branching inside GameState.enterBattlefield (which must return a single state).
-    // The cast path in actions.js calls cards.js onEnter which CAN branch; the
-    // direct-enter path uses this deterministic fallback.
-    if (!skipETB && cardKey === 'treefolk_harbinger') {
-      var cardsModule = CARDS;
-      let bestKey = null, bestScore = -1;
-      const seenLib = new Set();
-      for (const ck of s.players[0].library) {
-        if (seenLib.has(ck) || ck === 'unknown') continue;
-        seenLib.add(ck);
-        const def = cardsModule[ck];
-        if (!def) continue;
-        const isForestLand = def.subtypes?.includes('Forest');
-        const isTreefolk = def.subtypes?.includes('Treefolk');
-        if (!isForestLand && !isTreefolk) continue;
-        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 1;
-        if (sc > bestScore) { bestKey = ck; bestScore = sc; }
-      }
-      if (bestKey) {
-        const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === bestKey);
-        if (found) {
-          s = ns.clone();
-          s.topDecked = found;
-          s = s.log(`Treefolk Harbinger ETB: put ${cardsModule[found]?.name ?? found} on top of library`);
-        }
-      }
-    }
-
-    // Elvish Harbinger ETB: search library for an Elf card, put on top.
-    // Deterministic: pick the highest TUTOR_PRIORITY_SCORE Elf.
-    // Unlike Fierce Empath (MV ≥ 6), Harbinger can find ANY Elf — including
-    // Priest of Titania, Selvala, Quirion Ranger, etc.
-    if (!skipETB && cardKey === 'elvish_harbinger') {
-      var cardsModule = CARDS;
-      let bestKey = null, bestScore = -1;
-      const seenLib = new Set();
-      for (const ck of s.players[0].library) {
-        if (seenLib.has(ck) || ck === 'unknown') continue;
-        seenLib.add(ck);
-        const def = cardsModule[ck];
-        if (!def?.subtypes?.includes('Elf')) continue;
-        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 1;
-        if (sc > bestScore) { bestKey = ck; bestScore = sc; }
-      }
-      if (bestKey) {
-        const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === bestKey);
-        if (found) {
-          s = ns.clone();
-          s.topDecked = found;
-          s = s.log(`Elvish Harbinger ETB: put ${cardsModule[found]?.name ?? found} on top of library`);
-        }
-      }
-    }
-    // model our own battlefield). In the solver, Manglehorn is never self-destructive:
-    // we only offer to destroy opponent stax pieces (Null Rod, Collector Ouphe, etc.)
-    // or other artifacts that are in the way. Deterministic: pick the lowest-priority
-    // artifact to destroy (the one we want least). Sol Ring and mana artifacts are high
-    // priority; stax pieces are the target. Since we generally don't want to destroy our
-    // own mana artifacts, only fire if there's a STAX artifact on the battlefield.
-    if (!skipETB && cardKey === 'manglehorn') {
-      const STAX_ARTIFACT_NAMES = new Set([
-        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
-        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
-        'Vexing Bauble', 'Disruptor Flute',
-      ]);
-      // Find stax artifacts first (highest-value targets); fall back to any non-mana artifact
-      const staxTargets = s.battlefield.filter(p =>
-        p.is('artifact') && p.name !== 'Manglehorn' && STAX_ARTIFACT_NAMES.has(p.name)
-      );
-      if (staxTargets.length > 0) {
-        // Destroy the first stax artifact (deterministic — there's rarely more than one)
-        const target = staxTargets[0];
-        s = s.removeFromBattlefield(target.id, 'graveyard');
-        if (s) s = s.log(`Manglehorn ETB: destroy ${target.name}`);
-      }
-    }
-
-    // King of the Coldblood Curse ETB: target creature loses all abilities, becomes 4/4 Lizard.
-    // Only fires if a stax creature (Collector Ouphe) is on the battlefield — that's the
-    // relevant case for the solver (removes a stax suppression effect).
-    if (!skipETB && cardKey === 'king_coldblood') {
-      const STAX_CREATURE_NAMES = new Set(['Collector Ouphe']);
-      const staxTarget = s.battlefield.find(p =>
-        p.is('creature') && p.name !== 'King of the Coldblood Curse' &&
-        STAX_CREATURE_NAMES.has(p.name)
-      );
-      if (staxTarget) {
-        s = s.removeFromBattlefield(staxTarget.id, null);
-        if (s) {
-          // Re-enter as blank 4/4 Lizard without stax properties
-          s._ensureBF();
-          const blankId = s._nextId++;
-          const blank = new Permanent({
-            id: blankId, name: staxTarget.name + ' (Lizard 4/4)', cardKey: 'blank_lizard',
-            types: ['creature'], subtypes: ['Lizard'], tapped: staxTarget.tapped,
-            summoningSick: staxTarget.summoningSick, power: 4, toughness: 4,
-            counters: {}, abilitiesUsed: {},
-          });
-          s.battlefield = [...s.battlefield, blank];
-          s = s.log(`King of the Coldblood Curse ETB: ${staxTarget.name} loses all abilities → 4/4 Lizard`);
-        }
-      }
-    }
-
     // Skullwinder ETB: return a card from your graveyard to hand.
     // Prefers missing combo pieces (same logic as Eternal Witness).
     // Note: the opponent also returns a card — not modelled (no opponent graveyard).
@@ -1678,11 +1428,6 @@ class GameState {
     // Sowing Mycospawn on-cast trigger: search library for a land → battlefield.
     // (This is an on-cast trigger, not ETB — but enterBattlefield is the closest hook.)
     // In practice, treating it as ETB is close enough for the solver.
-    //
-    // Per oracle: the fetched land enters TAPPED. The previous version of
-    // this block didn't pass `tapped: true`, which produced an over-strong
-    // engine in the solver — Mycospawn could fetch a Cradle and tap it the
-    // same turn for {G}. Corrected in C-15.
     if (!skipETB && cardKey === 'sowing_mycospawn') {
       var cardsModule = CARDS;
       var { TUTOR_PRIORITY_SCORE: TPS } = _CDM;
@@ -1702,9 +1447,9 @@ class GameState {
       if (bestLandKey) {
         const { state: ns, cardKey: lk } = s.searchLibraryFor(k => k === bestLandKey);
         if (lk) {
-          s = ns.enterBattlefield(lk, { tapped: true });
+          s = ns.enterBattlefield(lk);
           const landName = cardsModule[lk]?.name ?? lk;
-          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield tapped`);
+          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield`);
         }
       }
     }
@@ -1726,34 +1471,6 @@ class GameState {
       if (target) perm.enchantedLandId = target.id;
     }
 
-    // Elvish Guidance: Aura that enchants a land.
-    // Same pattern as Wild Growth / Utopia Sprawl — must set elvishGuidance=true on the
-    // target land so actions.js tapForMana adds +elfCount{G} when it taps.
-    // Prefer Gaea's Cradle (or any Forest) over non-Forest lands.
-    if (cardKey === 'elvish_guidance') {
-      const lands = s.battlefield.filter(p => p.is('land') && p.id !== perm.id);
-      const target = lands.find(l => l.name === "Gaea's Cradle") ??
-                     lands.find(l => l.isForest) ?? lands[0];
-      if (target) {
-        s._ensureBF();
-        const tgt = s.battlefield.find(p => p.id === target.id);
-        if (tgt) tgt.elvishGuidance = true;
-      }
-    }
-
-    // Dynamic Ashaya P/T: whenever any permanent enters while Ashaya is on the
-    // battlefield, recompute her power/toughness = number of lands controlled.
-    // This covers: new creature entering (becomes a Forest land under Ashaya),
-    // new land entering directly, and Ashaya herself entering (handled above).
-    if (cardKey !== 'ashaya') {
-      const ashayaP = s.battlefield.find(p => p.cardKey === 'ashaya');
-      if (ashayaP) {
-        const landCount = s.lands().length;
-        ashayaP.power     = landCount;
-        ashayaP.toughness = landCount;
-      }
-    }
-
     return s;
   }
 
@@ -1773,17 +1490,8 @@ class GameState {
     if (zone === 'graveyard' || zone === 'exile') s._ensurePlayers();
     if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
     if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
-    // Recompute _hasSTAX from BOTH our battlefield AND opponent stax.
-    // Bug fix (2026-05-05): previously this only checked our battlefield, so
-    // sacrificing/destroying any of our permanents would silently turn off
-    // opponent stax effects (Thorn of Amethyst, Trinisphere, etc.) for the
-    // rest of the search.  Only cost-affecting stax names matter for the
-    // _hasSTAX flag's purpose (gating effectiveCost's slow path).
     const STAX_NAMES_R = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble','Chalice of the Void','Disruptor Flute']);
-    const COST_STAX_R  = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-    const ownHas = s.battlefield.some(p => STAX_NAMES_R.has(p.name));
-    const oppHas = [...(s.opponentStax || [])].some(e => COST_STAX_R.has(e.split('@')[0].trim()));
-    s._hasSTAX = ownHas || oppHas;
+    s._hasSTAX = s.battlefield.some(p => STAX_NAMES_R.has(p.name));
     return s;
   }
 
@@ -1828,15 +1536,7 @@ class GameState {
     s.flashThisTurn  = false;
     s._ensureBF();  // untap loop mutates permanents
     for (const p of s.battlefield) {
-      // Exerted creatures don't untap on your next untap step.
-      // The exert_two_lands flag is set by Hope Tender's exert ability.
-      // We clear the flag here (it's consumed) but keep the creature tapped.
-      if (p.abilitiesUsed?.exert_two_lands) {
-        p.abilitiesUsed = {};  // clear all ability flags (exert consumed)
-        // p.tapped stays true — exerted creatures don't untap
-      } else {
-        p.tapped = false;
-      }
+      p.tapped = false;
       p.summoningSick = false;
       p.abilitiesUsed = {};
     }
@@ -1966,98 +1666,14 @@ class GameState {
     // _afterDraw, constructor) so we skip the sort here — O(n) join only.
     const hand = this.hand.join(',');
 
-    // [E12] Battlefield encoding — fast path for the common case + lazy
-    // construction of optional structures.
-    //
-    // Profile (default + Arbor Elf hands, ~60K perm encodings):
-    //   • ~75% of permanents only need name + tap state (no auras, no counters,
-    //     no power-mod, no abilitiesUsed).  Inline that as the hot path.
-    //   • enchantedLandId fires on ~0–15% of encodings — the per-fingerprint
-    //     `new Map(this.battlefield.map(...))` was being built unconditionally,
-    //     which is the single biggest waste.  Build _encMap lazily only when
-    //     a perm actually has enchantedLandId set.
-    //   • counters fire on ~0% of encodings during a normal solve — keep the
-    //     branch but skip the Object.entries/filter when the bag is empty.
-    //
-    // Correctness is preserved: every field that can affect dedup correctness
-    // is still encoded, in the same order, with the same delimiter syntax.
-    var _fpCards = CARDS;
-    const bfArr = this.battlefield;
-    const segs = new Array(bfArr.length);
-    let _encMap = null;  // built lazily on first enchantedLandId hit
-
-    for (let i = 0; i < bfArr.length; i++) {
-      const p = bfArr[i];
-      // Fast path: detect "no extras" by short-circuit-checking each rare
-      // field.  When all are absent, build only the 4-char-or-so base string.
-      const tap = p.tapped ? ':T' : ':U';
-      const isF = p.isForest;
-      const enc = p.enchantedLandId;
-      const sick = p.summoningSick;
-      const power = p.power;
-      const counters = p.counters;
-      const used = p.abilitiesUsed;
-      const guided = p.elvishGuidance;
-      const imprint = p.imprintedColor;
-      const cauldron = p.cauldronAbilityKey;
-      const copyK = p.copyKey;          // Destiny Spinner animate_land — land taps as creature
-      const lvl = p.levelCounters;      // Joraga Treespeaker level 0/1/2
-      const named = p.namedCard;        // Disruptor Flute — named card can't activate abilities
-      const luck = p.luckCounter;       // Gemstone Caverns — luck counter enables colored mana
-
-      // Detect the dominant "name + tap only" case in a single conjunction.
-      // Microbench shows this single combined check is faster than 6 sequential
-      // ifs that all ultimately fall through to a string concat.
-      if (
-        !isF &&
-        enc === undefined &&
-        !sick &&
-        (power === undefined || _fpCards[p.cardKey]?.power === power) &&
-        (!counters || _isEmptyBag(counters)) &&
-        (!used || _isEmptyBag(used)) &&
-        !guided &&
-        imprint === undefined &&
-        cauldron === undefined &&
-        copyK === undefined &&
-        (lvl === undefined || lvl === 0) &&
-        named === undefined &&
-        !luck
-      ) {
-        segs[i] = p.name + tap;
-        continue;
-      }
-
-      // Slow path: at least one rare field is set.
-      let s = p.name + tap;
-      if (isF) s += ':F';
-      if (guided) s += ':EG'; // elvishGuidance — land has +elfCount{G} per tap
-      if (imprint !== undefined) s += ':I' + (imprint ?? 'none'); // Chrome Mox imprinted color
-      if (cauldron !== undefined) s += ':CA[' + cauldron + ']'; // Agatha's Cauldron grafted ability
-      if (copyK !== undefined) s += ':CK[' + copyK + ']'; // Destiny Spinner animate_land copy
-      if (lvl) s += ':LV' + lvl; // Joraga Treespeaker level
-      if (named !== undefined) s += ':N[' + named + ']'; // Disruptor Flute named card
-      if (luck) s += ':LK'; // Gemstone Caverns luck counter
-      if (enc !== undefined) {
-        if (_encMap === null) {
-          // Lazy build — single pass over BF, only when needed.
-          _encMap = new Map();
-          for (let j = 0; j < bfArr.length; j++) _encMap.set(bfArr[j].id, bfArr[j].name);
-        }
-        s += ':E[' + (_encMap.get(enc) ?? enc) + ']';
-      }
-      if (sick) s += ':S';
-      if (power !== undefined && _fpCards[p.cardKey]?.power !== power) s += ':P' + power;
-      if (counters && typeof counters === 'object') {
-        const ents = Object.entries(counters).filter(([, v]) => v);
-        if (ents.length) s += ':C{' + ents.map(([k, v]) => v + k).sort().join(',') + '}';
-      }
-      if (used && typeof used === 'object') {
-        const usedKeys = Object.keys(used).filter(k => used[k]).sort();
-        if (usedKeys.length) s += ':A{' + usedKeys.join(',') + '}';
-      }
-      segs[i] = s;
-    }
-    const bf = segs.sort().join('|');
+    // Battlefield — sort by encoded string.
+    // enchantedLandId is encoded as the target land name (not ID) so states where
+    // an aura enchants different lands are never aliased, but equivalent states
+    // reached via different action orderings still deduplicate correctly.
+    const _encMap = new Map(this.battlefield.map(p => [p.id, p.name]));
+    const bf = this.battlefield
+      .map(p => p.name + (p.tapped ? ':T' : ':U') + (p.isForest ? ':F' : '') + (p.enchantedLandId !== undefined ? ':E[' + (_encMap.get(p.enchantedLandId) ?? p.enchantedLandId) + ']' : ''))
+      .sort().join('|');
 
     // Mana — fast colon-separated digits (avoids conditional string building)
     const mn = this.mana;
@@ -2079,11 +1695,9 @@ class GameState {
 
     this._fp = 'T' + this.turn + '|H:' + hand + '|BF:' + bf + '|M:' + m +
                '|L:' + this.landDrops + '|P:' + players + '|CZ:' + cmd +
-               (this.flashThisTurn  ? '|FL' : '') +
-               (this.pactOwed       ? '|PC' : '') +
-               (this.isOpponentTurn ? '|OT' : '') +
-               (this.opponentStax?.length ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
-               (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
+               (this.flashThisTurn ? '|FL' : '') +
+               (this.pactOwed      ? '|PC' : '') +
+               (this.topDecked     ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
     return this._fp;
   }
 
@@ -2163,34 +1777,26 @@ function makeFetchLand(name) {
         fn(state, perm) {
           if (perm.tapped) return [];
           const results = [];
-          const lib = state.players[0].library;
 
           // Option 1: Dryad Arbor (forest creature — best for combos)
-          // Only offered if dryad_arbor is actually in the library.
-          if (lib.includes('dryad_arbor')) {
+          {
             let s = state.clone();
             s.life -= 1;
             s = s.removeFromBattlefield(perm.id, 'graveyard');
             if (s) {
-              const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === 'dryad_arbor');
-              if (found) {
-                const after = ns.enterBattlefield(found);
-                results.push(after.log(`${name}: fetch Dryad Arbor`));
-              }
+              s = s.enterBattlefield('dryad_arbor');
+              results.push(s.log(`${name}: fetch Dryad Arbor`));
             }
           }
 
-          // Option 2: Basic Forest — only offered if 'forest' is in the library.
-          if (lib.includes('forest')) {
+          // Option 2: Basic Forest (immediately tappable for {G})
+          {
             let s = state.clone();
             s.life -= 1;
             s = s.removeFromBattlefield(perm.id, 'graveyard');
             if (s) {
-              const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === 'forest');
-              if (found) {
-                const after = ns.enterBattlefield(found);
-                results.push(after.log(`${name}: fetch Forest`));
-              }
+              s = s.enterBattlefield('forest');
+              results.push(s.log(`${name}: fetch Forest`));
             }
           }
 
@@ -2249,87 +1855,10 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
           results.push(s);
         }
       }
-      // Deduplicate by fingerprint: when multiple identical permanents exist
-      // (e.g. 3 Forests), bouncing any of them produces the same resulting
-      // state. Keeping duplicates wastes BFS queue budget.
-      const seen = new Set();
-      return results.filter(r => {
-        const fp = r.fingerprint();
-        if (seen.has(fp)) return false;
-        seen.add(fp);
-        return true;
-      });
+      return results;
     },
   };
 }
-
-/**
- * Identify card keys currently in hand that were put there by a previous
- * Survival of the Fittest or Fauna Shaman activation in this game's history,
- * and have not yet been cast. These cards are "freshly tutored" — discarding
- * them to ANOTHER Survival/Fauna activation would create a self-cancelling
- * chain (each chain step burns {G} with no net change in hand composition).
- *
- * This is a stronger guard than the score-based protection (TUTOR_PRIORITY_SCORE
- * ≥ 70). The score-based one protects high-value combo pieces; this one
- * protects ANY card that just came in via a tutor activation, regardless of
- * its priority score. It catches the user-reported failure mode where DFS
- * spent its 500K state budget chaining mid-tier creatures (Duskwatch → Beast
- * Whisperer → Ashaya, only the last step doing useful work) instead of
- * exploring elegant alternative lines.
- *
- * Implementation: scan history backward for tutor-to-hand and cast messages.
- * Build a set of "tutored, not yet cast" card NAMES, then intersect with the
- * current hand to get card KEYS.
- *
- * Pattern coverage (explicit, narrow):
- *   - `Survival of the Fittest: ... → NAME to hand`  (tutored)
- *   - `Fauna Shaman: ... → NAME to hand`             (tutored)
- *   - `Cast NAME ...`                                (consumed)
- *
- * NOTE: this intentionally doesn't match every tutor wording in the codebase
- * (Worldly Tutor on top of library, Eternal Witness graveyard returns, etc.).
- * It only catches the Survival/Fauna chain pattern, which is the user-reported
- * failure mode.
- *
- * @param {GameState} state
- * @returns {Set<string>} card keys currently in hand that came from a tutor
- */
-function _freshlyTutoredKeys(state) {
-  var cards = CARDS;
-  const tutorRe = /^(?:Survival of the Fittest|Fauna Shaman): .*?→\s+(.+?)\s+to hand/;
-  const castRe  = /^Cast\s+(.+?)(?:\s+\(|\s*$)/;
-
-  // Walk history forward, maintaining a multiset of "tutored, not yet cast" names.
-  // Multiset because the same card name can be tutored, cast, then tutored again.
-  const tutoredCount = new Map();
-  for (const entry of state.history) {
-    const msg = entry.msg ?? '';
-    let m;
-    if ((m = msg.match(tutorRe))) {
-      const name = m[1].trim();
-      tutoredCount.set(name, (tutoredCount.get(name) ?? 0) + 1);
-    } else if ((m = msg.match(castRe))) {
-      const name = m[1].trim();
-      const cur = tutoredCount.get(name) ?? 0;
-      if (cur > 0) {
-        if (cur === 1) tutoredCount.delete(name);
-        else tutoredCount.set(name, cur - 1);
-      }
-    }
-  }
-
-  // Convert names → card keys, restricted to cards currently in hand.
-  const handSet = new Set(state.hand);
-  const result = new Set();
-  for (const name of tutoredCount.keys()) {
-    for (const k of handSet) {
-      if (cards[k]?.name === name) { result.add(k); break; }
-    }
-  }
-  return result;
-}
-
 
 /**
  * Shared helper for activated creature-tutor abilities (Survival of the Fittest,
@@ -2580,70 +2109,7 @@ var CARDS = {
   windswept_heath:   makeFetchLand('Windswept Heath'),
   wooded_foothills:  makeFetchLand('Wooded Foothills'),
 
-  shifting_woodland: {
-    name: 'Shifting Woodland', types: ['land'], subtypes: [], cost: null,
-    // Enters tapped unless you control a Forest.
-    // Delirium — {2}{G}{G}: Until end of turn, this land becomes a copy of target
-    // permanent card in your graveyard (if you have 4+ card types in GY). It's still a land.
-    // Modeled: the copy ability makes Shifting Woodland functionally equivalent to
-    // whatever is in the graveyard — most valuably Gaea's Cradle (tap for G per creature).
-    // We model it as: if 4+ card types in GY AND a high-value permanent is there,
-    // Shifting Woodland gains that card's tapForMana until end of turn.
-    // (NB: tapForMana is defined as a method below; do NOT also assign simpleTap('{G}')
-    // here — esbuild rejects the duplicate object key in strict mode.)
-    abilities: {
-      delirium_copy: {
-        label: '{2}{G}{G}: Copy target permanent card in graveyard (delirium)',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          // Check delirium: 4+ card types in graveyard
-          const gy = state.players[0].graveyard ?? [];
-          if (gy.length === 0) return [];
-          var cards = CARDS;
-          const gyTypes = new Set();
-          for (const name of gy) {
-            const key = Object.keys(cards).find(k => cards[k]?.name === name);
-            const def = key ? cards[key] : null;
-            if (!def) continue;
-            for (const t of (def.types ?? [])) gyTypes.add(t);
-          }
-          if (gyTypes.size < 4) return [];
-          const ap = state.payMana('2GG'); if (!ap) return [];
-          const results = [];
-          // Find unique permanent cards in GY to copy
-          const seen = new Set();
-          for (const name of gy) {
-            if (seen.has(name)) continue; seen.add(name);
-            const key = Object.keys(cards).find(k => cards[k]?.name === name);
-            const def = key ? cards[key] : null;
-            if (!def) continue;
-            // Only useful targets: permanents (not instants/sorceries)
-            if (def.types?.includes('instant') || def.types?.includes('sorcery')) continue;
-            // Animate this land as a copy — mark perm with copyKey for this turn
-            let s = ap.clone(); s._ensureBF();
-            const live = s.battlefield.find(p => p.id === perm.id);
-            if (!live) continue;
-            live.copyKey = key;   // tapForMana will delegate to this card's ability
-            live.copyName = name;
-            results.push(s.log(`Shifting Woodland: delirium copy of ${name} until EOT`));
-          }
-          return results;
-        },
-      },
-    },
-    // tapForMana delegates to the copied card's tapForMana when copyKey is set
-    tapForMana(state, perm) {
-      if (perm.tapped) return [];
-      if (perm.copyKey) {
-        var cards = CARDS;
-        const copyDef = cards[perm.copyKey];
-        if (copyDef?.tapForMana) return copyDef.tapForMana(state, perm);
-      }
-      // Default: tap for {G}
-      const s = state.tapPermanent(perm.id); if (!s) return [];
-      return [s.addMana('G').log('Tap Shifting Woodland → {G}')];
-    },
-  },
+  shifting_woodland:   { name: 'Shifting Woodland',          types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{G}', [['G',1]]) },
   emergence_zone: {
     name: 'Emergence Zone', types: ['land'], subtypes: [], cost: null,
     tapForMana: simpleTap('{C}', [['C',1]]),
@@ -2664,100 +2130,9 @@ var CARDS = {
       },
     },
   },
-  boseiju: {
-    name: 'Boseiju, Who Endures', types: ['land'], subtypes: ['Legendary'], cost: null,
-    tapForMana: simpleTap('{G}', [['G',1]]),
-    // Channel — {1}{G}, Discard this card: Destroy target artifact, enchantment, or
-    // nonbasic land. This spell can't be countered. Cost reduced by {1} for each
-    // legendary creature you control.
-    // Modelled as a handAbility (discard from hand).
-    handAbilities: {
-      channel: {
-        label: 'Channel {1}{G}: Discard Boseiju → destroy artifact/enchantment/nonbasic land',
-        fn(state, cardKey) {
-          // Count legendary creatures for cost reduction ({1} per legend)
-          const legendCount = state.battlefield.filter(p =>
-            p.is('creature') && (p.types.includes('legendary') || p.name.includes(','))
-          ).length;
-          const reducedCost = Math.max(0, 1 - legendCount); // {1}{G} base, {1} off per legend
-          const costStr = reducedCost === 0 ? 'G' : '1G';
-          const ap = state.payMana(costStr); if (!ap) return [];
-          // Remove Boseiju from hand as the discard cost
-          const s0 = ap.removeFromHand(cardKey); if (!s0) return [];
-          // Find valid targets: artifacts, enchantments, nonbasic lands on the battlefield
-          const targets = s0.battlefield.filter(p =>
-            p.is('artifact') || p.is('enchantment') ||
-            (p.is('land') && !p.subtypes?.includes('Basic'))
-          );
-          if (targets.length === 0) return [];
-          return targets.map(target => {
-            const s = s0.removeFromBattlefield(target.id, 'graveyard');
-            return s ? s.log(`Boseiju channel: → destroy ${target.name}`) : null;
-          }).filter(Boolean);
-        },
-      },
-    },
-  },
-
-  war_room: {
-    name: 'War Room', types: ['land'], subtypes: [], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {3}, {T}, Pay 1 life per color in commander's color identity: Draw a card.
-    // Yeva is mono-green, so cost = {3}, {T}, pay 1 life. Only activatable if
-    // you control a creature with power 4 or greater.
-    abilities: {
-      draw: {
-        label: '{3}, {T}, Pay 1 life: Draw a card (requires creature with power ≥ 4)',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          // Requires a creature with power 4 or greater
-          const hasPower4 = state.battlefield.some(p =>
-            p.is('creature') && (p.power ?? 0) >= 4
-          );
-          if (!hasPower4) return [];
-          const ap = state.payMana('3'); if (!ap) return [];
-          let s = ap.tapPermanent(perm.id); if (!s) return [];
-          if (s.life <= 1) return []; // would die from the life payment
-          s = s.clone(); s.life -= 1;
-          s = s.playerDraws(0, 1);
-          return [s.log('War Room: {3}, tap, pay 1 life → draw a card')];
-        },
-      },
-    },
-  },
-  talon_gates: {
-    name: 'Talon Gates of Madara', types: ['land'], subtypes: ['Gate'], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {1}, {T}: Add one mana of any color.
-    // {4}: You may put this card from your hand onto the battlefield.
-    // The hand-play ability is unusual; model it as a handAbility.
-    abilities: {
-      tap_any_color: {
-        label: '{1}, {T}: Add one mana of any color',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          const ap = state.payMana('1'); if (!ap) return [];
-          const at = ap.tapPermanent(perm.id); if (!at) return [];
-          // Offer G, C, W, U, B, R options — in this deck G and C are relevant
-          return ['G','C','W','U','B','R'].map(color => {
-            const s = at.addMana(color);
-            return s.log(`Talon Gates: {1},{T} → {${color}}`);
-          });
-        },
-      },
-    },
-    handAbilities: {
-      play_for_four: {
-        label: '{4}: Put Talon Gates from hand onto battlefield',
-        fn(state, cardKey) {
-          const ap = state.payMana('4'); if (!ap) return null;
-          const s0 = ap.removeFromHand(cardKey); if (!s0) return null;
-          const s = s0.enterBattlefield(cardKey);
-          return s.log('Talon Gates: {4} from hand → battlefield');
-        },
-      },
-    },
-  },
+  boseiju:             { name: 'Boseiju, Who Endures',       types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{G}', [['G',1]]) },
+  talon_gates:         { name: 'Talon Gates of Madara',      types: ['land'], subtypes: ['Gate'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  war_room:            { name: 'War Room',                   types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
   geier_reach: {
     name: 'Geier Reach Sanitarium', types: ['land'], subtypes: ['Legendary'], cost: null,
     tapForMana: simpleTap('{C}', [['C', 1]]),
@@ -2807,46 +2182,8 @@ var CARDS = {
       },
     },
   },
-  bonders_enclave: {
-    name: "Bonders' Enclave", types: ['land'], subtypes: [], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {3}, {T}: Draw a card. Activate only if you control a creature with power 4 or greater.
-    abilities: {
-      draw: {
-        label: '{3}, {T}: Draw a card (requires creature with power ≥ 4)',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          const hasPower4 = state.battlefield.some(p =>
-            p.is('creature') && (p.power ?? 0) >= 4
-          );
-          if (!hasPower4) return [];
-          const ap = state.payMana('3'); if (!ap) return [];
-          let s = ap.tapPermanent(perm.id); if (!s) return [];
-          s = s.playerDraws(0, 1);
-          return [s.log("Bonders' Enclave: {3}, tap → draw a card")];
-        },
-      },
-    },
-  },
-  mikokoro: {
-    name: 'Mikokoro, Center of the Sea', types:['land'], subtypes:['Legendary'], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {2}, {T}: Each player draws a card.
-    // In the Hitzel mill loop this is activated repeatedly (opponents mill via Endurance shuffle).
-    // In the solver we model it as: pay {2}, tap → you draw a card (opponents drawing is not tracked).
-    abilities: {
-      group_draw: {
-        label: '{2}, {T}: Each player draws a card',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          const ap = state.payMana('2'); if (!ap) return [];
-          const at = ap.tapPermanent(perm.id); if (!at) return [];
-          const s = at.playerDraws(0, 1);
-          return [s.log('Mikokoro: {2}, tap → draw a card (each player draws)')];
-        },
-      },
-    },
-  },
+  bonders_enclave:     { name: "Bonders' Enclave",           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
+  mikokoro:            { name: 'Mikokoro, Center of the Sea', types: ['land'], subtypes: ['Legendary'], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
 
   abstergo_entertainment: {
     name: 'Abstergo Entertainment', types: ['land'], subtypes: ['Legendary'], cost: null,
@@ -2969,39 +2306,7 @@ var CARDS = {
       },
     },
   },
-  urza_cave: {
-    name: "Urza's Cave", types: ['land'], subtypes: [], cost: null,
-    tapForMana: simpleTap('{C}', [['C',1]]),
-    // {3}, {T}, Sacrifice Urza's Cave: Search your library for a land card,
-    // put it onto the battlefield tapped, then shuffle.
-    abilities: {
-      sac_tutor: {
-        label: "{3}, {T}, Sacrifice Urza's Cave: Search library for a land → battlefield tapped",
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          const ap = state.payMana('3'); if (!ap) return [];
-          // Remove Urza's Cave from battlefield (sacrifice)
-          const at = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!at) return [];
-          // Search library for any land
-          var cards = CARDS;
-          const library = at.players[0].library;
-          const landKeys = [...new Set(library)].filter(k => {
-            const def = cards[k];
-            return def?.types?.includes('land');
-          });
-          if (landKeys.length === 0) return [at.log("Urza's Cave: sac → no land in library")];
-          const results = [];
-          for (const k of landKeys) {
-            const { state: ns, cardKey: found } = at.searchLibraryFor(lk => lk === k);
-            if (!found) continue;
-            const s = ns.enterBattlefield(found, { tapped: true });
-            results.push(s.log(`Urza's Cave: sac → ${cards[k].name} enters tapped`));
-          }
-          return results;
-        },
-      },
-    },
-  },
+  urza_cave:           { name: "Urza's Cave",                types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
   ominous_cemetery:    { name: 'Ominous Cemetery',           types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
   mariposa_military:   { name: 'Mariposa Military Base',     types: ['land'], subtypes: [], cost: null, tapForMana: simpleTap('{C}', [['C',1]]) },
 
@@ -3045,16 +2350,13 @@ var CARDS = {
           const results = [];
           for (const card of exileCandidates) {
             let s = state.discardFromHand(card); if (!s) continue;
-            // Mark perm as having a luck counter using proper Permanent mutation
+            // Mark perm as having a luck counter
             s = s.clone();
             s._ensureBF();
             const idx = s.battlefield.findIndex(p => p.id === perm.id);
             if (idx < 0) continue;
-            // Use clone+mutate to preserve Permanent class methods (NOT object spread)
-            const updated = s.battlefield[idx].clone();
-            updated.luckCounter = true;
             s.battlefield = [...s.battlefield];
-            s.battlefield[idx] = updated;
+            s.battlefield[idx] = { ...s.battlefield[idx], luckCounter: true };
             results.push(s.log(`Gemstone Caverns: exile ${card} → luck counter`));
           }
           return results;
@@ -3246,66 +2548,12 @@ var CARDS = {
       },
     },
   },
-  agatha_cauldron: {
-    name: "Agatha's Soul Cauldron", types: ['artifact'], subtypes: ['Legendary'], cost: '2',
-    // (1) You may spend mana as though it were any color to activate creature abilities.
-    //     → modeled implicitly (solver treats all mana as fungible for activated abilities).
-    // (2) Creatures you control with +1/+1 counters have activated abilities of
-    //     exiled creature cards. → modeled: when Cauldron exiles a creature, the
-    //     best activated ability is grafted onto creatures with counters.
-    // (3) {T}: Exile target creature card from any graveyard; put a +1/+1 counter
-    //     on a creature you control.
-    abilities: {
-      exile_and_counter: {
-        label: '{T}: Exile creature from graveyard; put +1/+1 counter on a creature you control',
-        fn(state, perm) {
-          if (perm.tapped) return [];
-          // Find creature cards in any graveyard (we model only player 0's graveyard)
-          const gy = state.players[0].graveyard ?? [];
-          var cards = CARDS;
-          const gyCreatures = [...new Set(gy)].filter(name => {
-            const key = Object.keys(cards).find(k => cards[k]?.name === name);
-            return key && cards[key]?.types?.includes('creature');
-          });
-          if (gyCreatures.length === 0) return [];
-          const creatures = state.battlefield.filter(p => p.is('creature'));
-          if (creatures.length === 0) return [];
-          const results = [];
-          const at = state.tapPermanent(perm.id); if (!at) return [];
-          for (const gyName of gyCreatures) {
-            const gyKey = Object.keys(cards).find(k => cards[k]?.name === gyName);
-            // Remove from graveyard
-            let s = at.clone(); s._ensurePlayers();
-            s.players[0] = s.players[0].clone();
-            const idx = s.players[0].graveyard.indexOf(gyName);
-            if (idx < 0) continue;
-            s.players[0].graveyard = [...s.players[0].graveyard];
-            s.players[0].graveyard.splice(idx, 1);
-            // Add to exile
-            s = s.clone(); s.exile = [...(s.exile ?? []), gyName];
-            // Put +1/+1 counter on the best creature (most powerful)
-            s._ensureBF();
-            const best = s.battlefield.filter(p => p.is('creature'))
-              .sort((a,b) => (b.power??0) - (a.power??0))[0];
-            if (best) {
-              best.power = (best.power ?? 0) + 1;
-              best.toughness = (best.toughness ?? 0) + 1;
-              best.counters = (typeof best.counters === 'number' ? best.counters : 0) + 1;
-              // Graft the exiled creature's activated abilities onto countered creatures
-              if (gyKey) best.cauldronAbilityKey = gyKey;
-            }
-            results.push(s.log(`Agatha's Cauldron: exile ${gyName} from GY → +1/+1 counter on ${best?.name ?? 'creature'}`));
-          }
-          return results;
-        },
-      },
-    },
-  },
-  emerald_medallion: { externallyImplemented: true, name: 'Emerald Medallion', types: ['artifact'], subtypes: [], cost: '2', costReduction: { color: 'G', amount: 1 } },
-  null_rod:         { externallyImplemented: true, name: 'Null Rod',          types: ['artifact'], subtypes: [], cost: '2' },
-  thorn_of_amethyst:{ externallyImplemented: true, name: 'Thorn of Amethyst', types: ['artifact'], subtypes: [], cost: '2' },
-  trinisphere:      { externallyImplemented: true, name: 'Trinisphere',        types: ['artifact'], subtypes: [], cost: '3' },
-  orb_of_dreams:    { externallyImplemented: true, name: 'Orb of Dreams',      types: ['artifact'], subtypes: [], cost: '3' },
+  agatha_cauldron:  { name: "Agatha's Soul Cauldron", types: ['artifact'], subtypes: ['Legendary'], cost: '2' },
+  emerald_medallion:{ name: 'Emerald Medallion', types: ['artifact'], subtypes: [], cost: '2', costReduction: { color: 'G', amount: 1 } },
+  null_rod:         { name: 'Null Rod',          types: ['artifact'], subtypes: [], cost: '2' },
+  thorn_of_amethyst:{ name: 'Thorn of Amethyst', types: ['artifact'], subtypes: [], cost: '2' },
+  trinisphere:      { name: 'Trinisphere',        types: ['artifact'], subtypes: [], cost: '3' },
+  orb_of_dreams:    { name: 'Orb of Dreams',      types: ['artifact'], subtypes: [], cost: '3' },
 
   // Chalice of the Void: Cast with X charge counters. Counters all spells with
   // CMC equal to X. Modeled as a stax piece — the solver won't self-cast it,
@@ -3313,7 +2561,6 @@ var CARDS = {
   // Most impactful at X=1 (hits almost all 1-drop mana dorks, cantrips, tutors).
   chalice_of_the_void: {
     name: 'Chalice of the Void', types: ['artifact'], subtypes: [], cost: 'XX',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // chargeCounters stored on the permanent at placement time (default 1)
     // Static effect modelled in effectiveCost / action generation (see actions.js)
   },
@@ -3323,7 +2570,6 @@ var CARDS = {
   // will not cast or fetch it, but it suppresses opponent engines when placed.
   disruptor_flute: {
     name: 'Disruptor Flute', types: ['artifact'], subtypes: [], cost: '2',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Named card tracked in perm.namedCard at placement; no active ability in solver.
   },
   vexing_bauble: {
@@ -3405,8 +2651,7 @@ var CARDS = {
       dino_pump: {
         label: '{4}{G}{G}: Elves become 5/5 Dinosaurs until EOT',
         fn(state, perm) {
-          // Activated ability with no tap cost — legal on a sick Shepherd.
-          // See ToDo C-33 audit.
+          if (perm.summoningSick) return [];
           const ap = state.payMana('4GG'); if (!ap) return [];
           const s = ap.clone();
           s._ensureBF();
@@ -3486,14 +2731,8 @@ var CARDS = {
       },
     },
   },
-  treefolk_harbinger: {
-    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
-    name: 'Treefolk Harbinger', types:['creature'], subtypes:['Treefolk','Druid'], cost:'G', power:1,toughness:1,
-    // ETB: search library for a Treefolk or Forest-subtype card, reveal it, put on top.
-    // Implemented in GameState.enterBattlefield (deterministic: best TUTOR_PRIORITY_SCORE match).
-    // cards.js onEnter removed (2026-05-12) to prevent double-fire when cast via actions.js.
-  },
-    elvish_reclaimer: {
+  treefolk_harbinger:{ name:'Treefolk Harbinger',types:['creature'],subtypes:['Treefolk','Druid'],cost:'G',power:1,toughness:1 },
+  elvish_reclaimer: {
     name: 'Elvish Reclaimer', types: ['creature'], subtypes: ['Elf','Warrior'], cost: 'G',
     power: 1, toughness: 1,
     // Oracle: {2},{T}, Sacrifice a land: Search library for a land, put it onto the battlefield tapped.
@@ -3592,33 +2831,6 @@ var CARDS = {
         if (s2) { for(let i=0;i<4;i++) s2=s2.addMana('G'); results.push(s2.log(`Tap ${perm.name} (Ferocious) → {G}x4`)); }
       }
       return results;
-    },
-    // Eternalize {2}{G}{G} — exile from graveyard, create 4/4 black Zombie Snake Druid token copy.
-    // Modelled as a graveyard activated ability: pay cost, exile self, enter as 4/4 token.
-    graveyardAbilities: {
-      eternalize: {
-        label: '{2}{G}{G}: Eternalize — exile from graveyard → 4/4 Zombie Snake token',
-        fn(state, cardName) {
-          // Pay {2}{G}{G}
-          const ap = state.payMana('2GG'); if (!ap) return [];
-          // Exile from graveyard
-          let s = ap.clone(); s._ensurePlayers();
-          s.players[0] = s.players[0].clone();
-          const idx = s.players[0].graveyard.indexOf(cardName);
-          if (idx < 0) return [];
-          s.players[0].graveyard = [...s.players[0].graveyard];
-          s.players[0].graveyard.splice(idx, 1);
-          s = s.clone(); s.exile = [...(s.exile ?? []), cardName];
-          // Enter as 4/4 black Zombie Snake Druid token (still taps for mana via copy)
-          s = s.enterBattlefield('fanatic_of_rhonas', { power: 4, toughness: 4, isToken: true });
-          const token = s.battlefield[s.battlefield.length - 1];
-          if (token) {
-            token.power = 4; token.toughness = 4; token.isToken = true;
-            token.summoningSick = false; // tokens ETB with sickness; solver removes for combo paths
-          }
-          return [s.log('Fanatic of Rhonas: Eternalize → 4/4 Zombie Snake token')];
-        },
-      },
     },
   },
 
@@ -3744,23 +2956,13 @@ var CARDS = {
               results.push(s.log(`Magus of the Candelabra: {${x}}, tap → untap ${targets.map(l => l.name).join(', ')}`));
             }
           }
-          // Deduplicate: identical tapped lands (e.g. 3 Forests) produce the same
-          // state regardless of which specific permanent slot was chosen.
-          const seen = new Set();
-          return results.filter(r => { const fp = r.fingerprint(); if (seen.has(fp)) return false; seen.add(fp); return true; });
+          return results;
         },
       },
     },
   },
 
-  elvish_harbinger: {
-    name:'Elvish Harbinger', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2,
-    // ETB: you may search your library for an Elf card, reveal it, then shuffle and put on top.
-    // Implemented in GameState.enterBattlefield (deterministic: highest TUTOR_PRIORITY_SCORE Elf).
-    // The tap ability is below.
-    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
-    tapForMana: simpleTap('{any}',[['G',1]]),
-  },
+  elvish_harbinger: { name:'Elvish Harbinger', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:1,toughness:2, tapForMana: simpleTap('{any}',[['G',1]]) },
 
   // ─── CREATURES — Untappers ────────────────────────────────────────────────
 
@@ -3771,16 +2973,11 @@ var CARDS = {
         label: '{1}, {T}: Untap target land',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
-          if (perm.abilitiesUsed?.untap_one_land) return [];
-          // Note: exert_two_lands does NOT block single-untap — an exerted
-          // Hope Tender can still use {1},{T} after being untapped mid-turn.
           const ap = state.payMana('1'); if (!ap) return [];
           const at = ap.tapPermanent(perm.id); if (!at) return [];
           const results = [];
-          for (const land of at.lands().filter(l => l.tapped)) {
-            let s = at.untapPermanent(land.id);
-            s = s.markAbilityUsed(perm.id, 'untap_one_land');
-            results.push(s.log(`Hope Tender: {1}, tap → untap ${land.name}`));
+          for (const land of at.lands().filter(l=>l.tapped)) {
+            results.push(at.untapPermanent(land.id).log(`Hope Tender: {1}, tap → untap ${land.name}`));
           }
           return results;
         },
@@ -3789,30 +2986,14 @@ var CARDS = {
         label: '{1}, {T}, Exert: Untap two target lands',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
-          // Exert cost: this creature won't untap during your NEXT untap step.
-          // This is modelled by preserving exert_two_lands through untapPermanent()
-          // and skipping the untap in startNewTurn. It does NOT prevent re-exerting
-          // mid-turn if something else (Quirion Ranger, Scryb Ranger, etc.) untaps
-          // Hope Tender — perm.tapped is the only gate needed.
           const ap = state.payMana('1'); if (!ap) return [];
-          let at = ap.tapPermanent(perm.id); if (!at) return [];
-          // Mark exerted — startNewTurn will skip the untap for this permanent.
-          at = at.markAbilityUsed(perm.id, 'exert_two_lands');
-          const tl = at.lands().filter(l => l.tapped);
-          if (tl.length === 0) return [];
-          // Build all pairs (or single if only 1 tapped land)
-          const pairs = tl.length === 1
-            ? [[tl[0]]]
-            : tl.flatMap((a, i) => tl.slice(i + 1).map(b => [a, b]));
-          const seen = new Set();
-          return pairs.flatMap(pair => {
+          const at = ap.tapPermanent(perm.id); if (!at) return [];
+          const tl = at.lands().filter(l=>l.tapped); if (tl.length===0) return [];
+          const pairs = tl.length===1 ? [[tl[0]]] : tl.flatMap((a,i)=>tl.slice(i+1).map(b=>[a,b]));
+          return pairs.map(pair => {
             let s = at;
             for (const land of pair) s = s.untapPermanent(land.id);
-            s = s.log(`Hope Tender (exert): {1}, tap → untap ${pair.map(p => p.name).join(' + ')}`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return [];
-            seen.add(fp);
-            return [s];
+            return s.log(`Activate Hope Tender: pay {1}, tap → untap [${pair.map(p=>p.name).join(' + ')}]`);
           });
         },
       },
@@ -3864,15 +3045,10 @@ var CARDS = {
           const at = state.tapPermanent(perm.id); if (!at) return [];
           const tl = at.lands().filter(l => l.tapped);
           if (tl.length < 2) return [];
-          const seen = new Set();
-          return tl.flatMap((a, i) => tl.slice(i + 1).map(b => {
+          return tl.flatMap((a,i) => tl.slice(i+1).map(b => {
             let s = at.untapPermanent(a.id);
-            s = s.untapPermanent(b.id).log(`Argothian Elder → untap ${a.name} + ${b.name}`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return null;
-            seen.add(fp);
-            return s;
-          })).filter(Boolean);
+            return s.untapPermanent(b.id).log(`Argothian Elder → untap ${a.name} + ${b.name}`);
+          }));
         },
       },
     },
@@ -3889,15 +3065,10 @@ var CARDS = {
           const at = state.tapPermanent(perm.id); if (!at) return [];
           const tl = at.lands().filter(l => l.tapped);
           if (tl.length < 2) return [];
-          const seen = new Set();
-          return tl.flatMap((a, i) => tl.slice(i + 1).map(b => {
+          return tl.flatMap((a,i) => tl.slice(i+1).map(b => {
             let s = at.untapPermanent(a.id);
-            s = s.untapPermanent(b.id).log(`Ley Weaver → untap ${a.name} + ${b.name}`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return null;
-            seen.add(fp);
-            return s;
-          })).filter(Boolean);
+            return s.untapPermanent(b.id).log(`Ley Weaver → untap ${a.name} + ${b.name}`);
+          }));
         },
       },
     },
@@ -3912,14 +3083,9 @@ var CARDS = {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('1'); if (!ap) return [];
           const targets = [...ap.lands().filter(l=>l.tapped), ...ap.creatures().filter(c=>c.tapped&&c.id!==perm.id)];
-          const seen = new Set();
           return targets.flatMap(t => {
             let s = ap.tapPermanent(perm.id); if (!s) return [];
-            s = s.untapPermanent(t.id).log(`Saryth → untap ${t.name}`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return [];
-            seen.add(fp);
-            return [s];
+            return [s.untapPermanent(t.id).log(`Saryth → untap ${t.name}`)];
           });
         },
       },
@@ -3934,14 +3100,9 @@ var CARDS = {
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('1'); if (!ap) return [];
-          const seen = new Set();
           return ap.battlefield.filter(p=>p.tapped&&p.id!==perm.id).flatMap(t => {
             let s = ap.tapPermanent(perm.id); if (!s) return [];
-            s = s.untapPermanent(t.id).log(`Formidable Speaker → untap ${t.name}`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return [];
-            seen.add(fp);
-            return [s];
+            return [s.untapPermanent(t.id).log(`Formidable Speaker → untap ${t.name}`)];
           });
         },
       },
@@ -3954,13 +3115,9 @@ var CARDS = {
       tap_creature_untap_land: {
         label: 'Tap untapped creature: Untap target basic land',
         fn(state, perm) {
-          var cards = CARDS;
           const results = [];
           const untapped = state.creatures().filter(c=>!c.tapped&&!c.summoningSick);
-          // Oracle: "Untap target BASIC land." — must check the card definition's isBasic flag,
-          // NOT just the Forest subtype. Under Ashaya, creatures gain the Forest subtype but
-          // are NOT basic lands. Dryad Arbor is a Forest but also not basic.
-          const tbasic  = state.lands().filter(l => l.tapped && cards[l.cardKey]?.isBasic);
+          const tbasic  = state.lands().filter(l=>l.tapped&&(l.subtypes&&l.subtypes.includes('Forest')));
           for (const c of untapped) for (const l of tbasic) {
             let s = state.tapPermanent(c.id); if (!s) continue;
             results.push(s.untapPermanent(l.id).log(`Earthcraft: tap ${c.name} → untap ${l.name}`));
@@ -3977,22 +3134,14 @@ var CARDS = {
       bounce_creature: {
         label: '{1}{G}: Return another creature to hand',
         fn(state, perm) {
-          // Per Magic rules, summoning sickness only restricts attacks and
-          // {T}/{Q} abilities.  Temur's bounce is {1G} with no tap cost —
-          // legal on a sick Temur.  See ToDo C-33 audit.
+          if (perm.summoningSick) return [];
           const ap = state.payMana('1G'); if (!ap) return [];
           var cards = CARDS;
-          const seen = new Set();
           return state.creatures().filter(c=>c.id!==perm.id).flatMap(c => {
             let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
             const ck = Object.keys(cards).find(k=>cards[k].name===c.name);
             if (ck) s = s.addToHand(ck);
-            s = s.log(`Temur Sabertooth → return ${c.name} to hand`);
-            // Deduplicate: bouncing two identical creatures yields the same state
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return [];
-            seen.add(fp);
-            return [s];
+            return [s.log(`Temur Sabertooth → return ${c.name} to hand`)];
           });
         },
       },
@@ -4007,16 +3156,11 @@ var CARDS = {
         fn(state, perm) {
           const ap = state.payMana('1G'); if (!ap) return [];
           var cards = CARDS;
-          const seen = new Set();
           return state.creatures().filter(c=>c.subtypes&&c.subtypes.includes('Human')).flatMap(c => {
             let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
             const ck = Object.keys(cards).find(k=>cards[k].name===c.name);
             if (ck) s = s.addToHand(ck);
-            s = s.log(`Kogla → return ${c.name} to hand`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return [];
-            seen.add(fp);
-            return [s];
+            return [s.log(`Kogla → return ${c.name} to hand`)];
           });
         },
       },
@@ -4044,10 +3188,7 @@ var CARDS = {
       transform: {
         label: '{5}{G}{G}: Transform into Ulvenwald Behemoth (all creatures gain haste)',
         fn(state, perm) {
-          // Activated ability with no tap cost.  Oddity has haste so this
-          // check was already unreachable, but removed for consistency
-          // (per Magic rules, no-tap activated abilities are legal on sick
-          // creatures).  See ToDo C-33 audit.
+          if (perm.summoningSick) return [];
           const ap = state.payMana('5GG'); if (!ap) return [];
           let s = ap.clone();
           s._ensureBF();
@@ -4068,27 +3209,11 @@ var CARDS = {
 
   ashaya: {
     name: 'Ashaya, Soul of the Wild', types:['creature'], subtypes:['Elemental'], cost:'3GG', power:0,toughness:0,
-    // Power/toughness = number of lands you control (including herself, since she is a Forest land).
-    // GameState.enterBattlefield already sets isForest=true, adds 'land'/'Forest' types on the
-    // Ashaya ETB block (the loop at cardKey==='ashaya' iterates all creatures including herself).
-    // tapForMana: because she's a Forest land, she taps for {G} (driven by isForest check in actions.js).
-    tapForMana(state, perm) {
-      // Only tap if isForest was applied (by GameState ETB logic)
-      if (!perm.isForest) return [];
-      if (perm.tapped || perm.summoningSick) return [];
-      const s = state.tapPermanent(perm.id); if (!s) return [];
-      return [s.addMana('G').log(`Tap Ashaya, Soul of the Wild → {G}`)];
-    },
-    onEnter(state, perm) {
-      // Power/toughness and isForest/land-type marking are all handled by the
-      // ETB block in GameState.enterBattlefield. Nothing extra needed here.
-      return state;
-    },
+    onEnter(state, perm) { return state; },
   },
 
   eternal_witness: {
     name: 'Eternal Witness', types: ['creature'], subtypes: ['Human','Shaman'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '1GG', power: 2, toughness: 1,
     // ETB: return target card from your graveyard to hand — handled in GameState.enterBattlefield.
   },
@@ -4128,30 +3253,25 @@ var CARDS = {
     },
   },
   seedborn_muse: {
-    externallyImplemented: true,  // [drift-detector] impl in actions.js opponent_turn action
     name: 'Seedborn Muse', types: ['creature'], subtypes: ['Spirit'],
     cost: '3GG', power: 2, toughness: 4,
     // Static: untap all your permanents during each other player's untap step.
-    // Implemented in actions.js: the 'opponent_turn' action untaps all permanents
-    // when Seedborn Muse is on the battlefield. Exerted creatures are correctly
-    // excluded from this untap (they wait for your own next untap step).
+    // Modeled as: each call to startNewTurn() checks for Muse and untaps extra.
+    // (Multiple turns = extra untap opportunities — tracked in Solver's turn loop.)
   },
   beast_whisperer: {
     name: 'Beast Whisperer', types: ['creature'], subtypes: ['Elf','Druid'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '2GG', power: 2, toughness: 3,
     // Static trigger: whenever you cast a creature spell, draw a card.
     // Modeled in actions.js: cast_spell with a creature draws if Whisperer is in play.
   },
   regal_force: {
     name: 'Regal Force', types: ['creature'], subtypes: ['Elemental'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '4GGG', power: 5, toughness: 5,
     // ETB: draw a card for each green creature you control — handled in GameState.enterBattlefield.
   },
   woodland_bellower: {
     name: 'Woodland Bellower', types: ['creature'], subtypes: ['Beast'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '4GG', power: 6, toughness: 5,
     // ETB: search library for a nonlegendary green creature with MV ≤ 3, put it on BF.
     // Modeled as: on entry, generate states for each eligible card in hand.
@@ -4189,7 +3309,6 @@ var CARDS = {
   },
   great_oak_guardian: {
     name: 'Great Oak Guardian', types: ['creature'], subtypes: ['Treefolk'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '5G', power: 4, toughness: 5,
     // Flash. ETB: creatures target player controls get +2/+2 and untap.
     // Untap is handled in GameState.enterBattlefield. +2/+2 is cosmetic (not tracked).
@@ -4270,76 +3389,48 @@ var CARDS = {
       },
     },
   },
-  collector_ouphe:     { externallyImplemented: true, name:'Collector Ouphe', types:['creature'],subtypes:['Ouphe'], cost:'1G', power:2,toughness:2 },
-  // [drift-detector] Collector Ouphe suppresses artifact activated abilities — modeled via _hasSTAX in GameState.js
+  collector_ouphe:     { name:'Collector Ouphe',            types:['creature'],subtypes:['Ouphe'],             cost:'1G',   power:2,toughness:2 },
   skyshroud_poacher: {
     name: 'Skyshroud Poacher', types: ['creature'], subtypes: ['Human','Rebel'],
     cost: '2GG', power: 2, toughness: 4,
-    // {3}, {T}: Search your library for an Elf permanent card, put it onto the battlefield.
+    // {3}, {T}: Search library for an Elf permanent card, put it onto the battlefield.
     abilities: {
       tutor_elf: {
         label: '{3}, {T}: Search library for an Elf, put onto battlefield',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('3'); if (!ap) return [];
-          const s0 = ap.tapPermanent(perm.id); if (!s0) return [];
+          let s = ap.tapPermanent(perm.id); if (!s) return [];
           var cards = CARDS;
-
-          // C-26 pattern: return only the single best-priority Elf target rather than
-          // fanning out over every Elf in the library.  Branching over all Elves compounds
-          // multiplicatively in BFS (same bug class as Eldritch Evolution pre-C-23).
-          // _bestCreatureTutorTarget already filters to the highest-priority library creature
-          // missing from the present set — we further restrict to Elves only by checking
-          // the resolved key's subtypes before accepting the result.
-
-          // Build a restricted eligible set: Elf creatures in library, not already present.
-          const presentKeys = new Set([
-            ...s0.hand,
-            ...s0.battlefield.map(p => {
-              // resolve name → key for present-set check
-              const k = Object.keys(cards).find(ck => cards[ck].name === p.name);
-              return k;
-            }).filter(Boolean),
-          ]);
-
-          const seenLib = new Set();
-          let bestKey = null, bestScore = -1;
-          for (const ck of s0.players[0].library) {
-            if (ck === 'unknown' || seenLib.has(ck)) continue;
-            seenLib.add(ck);
-            if (presentKeys.has(ck)) continue;
-            const def = cards[ck];
-            if (!def?.subtypes?.includes('Elf')) continue;
-            const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-            if (sc > bestScore) { bestKey = ck; bestScore = sc; }
+          // Find Elves in hand that could be tutored
+          const elfKeys = [...new Set(state.hand)].filter(k =>
+            cards[k] && cards[k].subtypes && cards[k].subtypes.includes('Elf')
+          );
+          const results = [];
+          if (elfKeys.length > 0) {
+            for (const k of elfKeys) {
+              let ns = s.removeFromHand(k);
+              if (!ns) continue;
+              ns = ns.enterBattlefield(k);
+              results.push(ns.log(`Skyshroud Poacher: put ${cards[k].name} onto battlefield`));
+            }
+          } else {
+            // Approximate as card draw from library
+            s = s.playerDraws(0, 1);
+            results.push(s.log('Skyshroud Poacher: search library for an Elf'));
           }
-
-          if (!bestKey) return [];
-          const { state: ns, cardKey: found } = s0.searchLibraryFor(lk => lk === bestKey);
-          if (!found) return [];
-          const after = ns.enterBattlefield(found);
-          return [after.log(`Skyshroud Poacher: put ${cards[bestKey].name} onto battlefield`)];
+          return results;
         },
       },
     },
   },
-  fierce_empath: {
-    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
-    name: 'Fierce Empath', types:['creature'], subtypes:['Elf'], cost:'2G', power:1,toughness:1,
-    // ETB: search library for MV≥6 creature, put into hand.
-    // Implemented in GameState.enterBattlefield (deterministic: picks highest TUTOR_PRIORITY_SCORE).
-    // cards.js onEnter removed (2026-05-12) to prevent double-fire: GameState.enterBattlefield
-    // already handles the ETB for both cast and direct-enter paths.
-  },
+  fierce_empath:       { name:'Fierce Empath',              types:['creature'],subtypes:['Elf'],               cost:'2G',   power:1,toughness:1 },
   reclamation_sage: {
     name: 'Reclamation Sage', types: ['creature'], subtypes: ['Elf','Shaman'],
-    intentionalStub: true,  // [drift-detector] ETB destroy has no targets in single-player (no opponent permanents modeled)
     cost: '2G', power: 2, toughness: 1,
     // ETB: destroy target artifact or enchantment.
-    // Not modeled — the single-player solver has no opponent permanents to
-    // target.  Functionally a vanilla 2/1 for {2G} in the solver.  Card is
-    // included in the deck list for real games but the ETB destroy isn't
-    // useful for combo solving.
+    // Modeled as: if an opponent artifact/enchantment exists, remove it.
+    // For the solver this is a utility effect, not a combo piece — simplified.
   },
   scavenging_ooze: {
     name: 'Scavenging Ooze', types: ['creature'], subtypes: ['Ooze'],
@@ -4349,8 +3440,7 @@ var CARDS = {
       exile_from_gy: {
         label: '{G}: Exile a card from a graveyard, gain 1 life if creature',
         fn(state, perm) {
-          // Activated ability with no tap cost — legal on a sick Ooze.
-          // See ToDo C-33 audit.
+          if (perm.summoningSick) return [];
           const ap = state.payMana('G'); if (!ap) return [];
           // Check if any graveyard has cards
           const anyGY = state.players.some(p => p.graveyard.length > 0);
@@ -4374,31 +3464,16 @@ var CARDS = {
   },
   surrak_goreclaw: {
     name: 'Surrak and Goreclaw', types: ['creature'], subtypes: ['Human','Bear'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '4GG', power: 7, toughness: 6,
     // Other creatures have trample. Nontoken creatures get +1/+1 and haste when entering.
     // ETB haste modeled in GameState (like Concordant Crossroads for newly entering creatures).
   },
   defiler_of_vigor: {
-    externallyImplemented: true,  // [drift-detector] cost reduction + counter trigger in actions.js
     name: 'Defiler of Vigor', types: ['creature'], subtypes: ['Phyrexian','Wurm'],
     cost: '3GG', power: 6, toughness: 6,
-    // (1) Cost reduction: green permanent spells cost {G} less if you pay 2 life.
-    //     Implemented in actions.js costReductions() — always applies the {1} generic
-    //     reduction and the 2-life payment is deducted here via onCast.
-    // (2) Trigger: whenever you cast a green permanent, put +1/+1 on EACH creature.
-    //     Implemented in actions.js cast_spell section (checks for Defiler on battlefield).
-    //
-    // The 2-life additional cost is tracked here so it actually deducts life.
-    // actions.js costReductions() reduces the generic cost by 1; this onCast deducts 2 life.
-    // Net result: you save {G} and spend 2 life — exactly as Oracle text describes.
-    onCast(state) {
-      // Called when THIS card (Defiler) is cast — not when other permanents are cast.
-      // The 2-life cost for casting Defiler itself is just paying 2 life for {G} reduction.
-      // But this hook only fires on Defiler's own cast; for other green permanents
-      // the life deduction is applied in actions.js's cast_spell block.
-      return state;
-    },
+    // Additional cost: may pay 2 life instead of {G} when casting green permanents.
+    // Static: whenever you cast a green permanent, put +1/+1 on each creature you control.
+    // These are passive effects tracked by the engine context.
   },
   glademuse: {
     name: 'Glademuse', types: ['creature'], subtypes: ['Beast'], cost: '2G',
@@ -4410,7 +3485,6 @@ var CARDS = {
   },
   duskwatch_recruiter: {
     name: 'Duskwatch Recruiter', types: ['creature'], subtypes: ['Human','Warrior','Werewolf'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '1G', power: 2, toughness: 2,
     // Oracle: {2G},{T}: Look at top 3 cards, may reveal a creature and put in hand.
     //
@@ -4428,147 +3502,26 @@ var CARDS = {
     // Not modeled in the solver (triggers on opponent actions).
   },
   heartwood_storyteller:{ name:'Heartwood Storyteller',     types:['creature'],subtypes:['Treefolk'],          cost:'1GG',  power:2,toughness:3 },
-  destiny_spinner: {
-    name: 'Destiny Spinner', types:['creature','enchantment'], subtypes:['Human'], cost:'1G', power:2,toughness:2,
-    // Static 1: creature and enchantment spells can't be countered (not enforced — single-player).
-    // Static 2: {3}{G}: Target land you control becomes an X/X Elemental with trample and haste
-    //           until end of turn, where X = number of enchantments you control. It's still a land.
-    //
-    // This is the key ability for giving Elvish Reclaimer haste after Ashaya makes
-    // the land a creature (Reclaimer is already a creature; the land becomes one here
-    // to act as a sacrifice target and to gain haste via Destiny Spinner).
-    // More importantly: after Ashaya, nontoken creatures ARE lands, so targeting
-    // Elvish Reclaimer (which is a land under Ashaya) grants it haste.
-    abilities: {
-      animate_land: {
-        label: '{3}{G}: Give target land creature haste until EOT (X/X where X = enchantments)',
-        fn(state, perm) {
-          // Activated ability with no tap cost — legal on a sick Spinner.
-          // This particularly matters for the Hitzel Reclaimer-haste path:
-          // Spinner cast same turn as Reclaimer can still animate Reclaimer
-          // immediately after ETB.  See ToDo C-33 audit.
-          const ap = state.payMana('3G'); if (!ap) return [];
-          // Count enchantments you control for the X/X size
-          const x = ap.battlefield.filter(p => p.types.includes('enchantment')).length;
-          if (x === 0) return []; // 0/0 lands die immediately — no value
-          const results = [];
-          // Target any land (or any creature that is also a land under Ashaya).
-          // We snapshot target IDs before cloning so each result gets its own isolated clone.
-          const targetIds = ap.battlefield
-            .filter(p => p.is('land') && !p.summoningSick)
-            .map(p => p.id);
-          for (const tid of targetIds) {
-            // Clone per-target so mutations are isolated across sibling DFS branches.
-            const s = ap.clone();
-            s._ensureBF();
-            const tgt = s.getPermanentById(tid);
-            if (!tgt) continue;
-            // Animate: add creature type, grant haste (clear summoning sickness), set P/T.
-            tgt._ensureOwnTypes?.();
-            if (!tgt.types.includes('creature')) tgt.types = [...(tgt.types || []), 'creature'];
-            tgt.summoningSick = false;
-            tgt.power     = x;
-            tgt.toughness = x;
-            results.push(s.log(`Destiny Spinner: animate ${tgt.name} → ${x}/${x} Elemental with haste`));
-          }
-          return results;
-        },
-      },
-    },
-  },
-  chomping_changeling: { intentionalStub: true, name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
+  destiny_spinner:     { name:'Destiny Spinner',            types:['creature','enchantment'],subtypes:['Human'],cost:'1G',  power:2,toughness:2 },
+  chomping_changeling: { name:'Chomping Changeling',        types:['creature'],subtypes:['Shapeshifter'],      cost:'2G',   power:3,toughness:3 },
   lotus_cobra: {
     name: 'Lotus Cobra', types: ['creature'], subtypes: ['Snake'], cost: '1G',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     power: 2, toughness: 1,
     // Landfall: whenever a land enters, add one mana of any color.
     // This is applied in actions.js: after play_land, check for Cobra and add {G}.
     // Modeled as a pseudo-ability that the action generator fires automatically.
   },
-  nissa_animist: {
-    externallyImplemented: true,  // [drift-detector] landfall triggers in actions.js play_land section
-    name: 'Nissa, Resurgent Animist', types:['creature'], subtypes:['Elf','Scout'], cost:'2G', power:2,toughness:3,
-    // Landfall — Whenever a land enters the battlefield under your control:
-    //   • Add one mana of any color.
-    //   • If this is the second time a land entered this turn, you may look at the
-    //     top five cards, put an Elf or Elemental creature card into your hand, shuffle.
-    //
-    // The landfall mana trigger is modeled in actions.js (same location as Lotus Cobra).
-    // The tutor trigger is modeled there too: state.landfallCount tracks how many lands
-    // have entered this turn; when it hits 2 (and Nissa is on BF), the tutor fires.
-    //
-    // This card has no activated ability — all effects are landfall triggers.
-    // The tapForMana is not set (she doesn't tap for mana herself).
-    //
-    // Implementation note: the landfall triggers live in actions.js's play_land section.
-  },
+  nissa_animist:       { name:'Nissa, Resurgent Animist',   types:['creature'],subtypes:['Elf','Scout'],       cost:'2G',   power:2,toughness:3 },
   skullwinder: {
     name: 'Skullwinder', types: ['creature'], subtypes: ['Snake'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '2G', power: 1, toughness: 3,
     // Deathtouch. ETB: return target card from YOUR graveyard to hand,
     // then choose an opponent to return a card from THEIR graveyard.
     // Simplified: return top card of your graveyard to hand on ETB.
     // (Handled like Eternal Witness — same ETB pattern)
   },
-  manglehorn: {
-    name: 'Manglehorn', types: ['creature'], subtypes: ['Beast'], cost: '2G', power: 2, toughness: 2,
-    // ETB: destroy target artifact.
-    // Static: artifacts opponents control enter tapped (not modelled — no opponent).
-    onEnter(state) {
-      const artifacts = state.battlefield.filter(p =>
-        p.is('artifact') && p.name !== 'Manglehorn'
-      );
-      if (artifacts.length === 0) return state;
-      const seen = new Set();
-      const results = [state.log('Manglehorn ETB: no artifact target')];
-      for (const t of artifacts) {
-        const s = state.removeFromBattlefield(t.id, 'graveyard');
-        if (!s) continue;
-        const fp = s.fingerprint();
-        if (seen.has(fp)) continue;
-        seen.add(fp);
-        results.push(s.log(`Manglehorn ETB: destroy ${t.name}`));
-      }
-      return results.length === 1 ? results[0] : results;
-    },
-  },
-
-  warping_wail: {
-    name: 'Warping Wail', types: ['instant'], subtypes: [], cost: '1C',
-    isRemoval: true,
-    // Choose one:
-    //   • Exile target creature with power/toughness ≤ 1.
-    //   • Counter target sorcery.
-    //   • Create a 1/1 colorless Eldrazi Scion token with "Sacrifice: Add {C}".
-    // In single-player: mode 1 (exile small creature) and mode 3 (Scion token) are useful.
-    castFn(state) {
-      const results = [];
-      // Mode 1: exile creature with power ≤ 1 AND toughness ≤ 1
-      const targets = state.battlefield.filter(p =>
-        p.is('creature') && (p.power ?? 0) <= 1 && (p.toughness ?? 0) <= 1
-      );
-      for (const t of targets) {
-        const s = state.removeFromBattlefield(t.id, 'exile');
-        if (s) results.push(s.log(`Warping Wail: exile ${t.name}`));
-      }
-      // Deduplicate: multiple identical small creatures (e.g. two Llanowar Elves)
-      // produce the same resulting state when exiled.
-      const seen = new Set();
-      const deduped = results.filter(r => {
-        const fp = r.fingerprint(); if (seen.has(fp)) return false; seen.add(fp); return true;
-      });
-      // Mode 3: create 1/1 Eldrazi Scion token (sac for {C})
-      // Modelled as immediately adding {C} (the token's only practical effect in combo lines)
-      {
-        const s = state.addMana('C').log('Warping Wail: create Eldrazi Scion (sac → {C})');
-        deduped.push(s);
-      }
-      return deduped;
-    },
-  },
+  manglehorn: { name: 'Manglehorn', types: ['creature'], subtypes: ['Beast'], cost: '2G', power: 2, toughness: 2 },
   tireless_provisioner: {
-    externallyImplemented: true,  // [drift-detector] landfall trigger in actions.js play_land section
     name: 'Tireless Provisioner', types: ['creature'], subtypes: ['Elf','Scout'],
     cost: '2G', power: 3, toughness: 2,
     // Landfall: create a Food or Treasure token.
@@ -4577,60 +3530,17 @@ var CARDS = {
   },
   sowing_mycospawn: {
     name: 'Sowing Mycospawn', types: ['creature'], subtypes: ['Eldrazi','Fungus'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '3G', power: 4, toughness: 4,
-    // Oracle: When Sowing Mycospawn enters, search your library for a basic
-    // land card or Eldrazi land card, put it onto the battlefield TAPPED,
-    // then shuffle. Kicker {2}: ETB exiles target land (not modelled —
-    // no opponent permanents to target).
-    //
-    // The trigger is implemented in src/GameState.js inside enterBattlefield
-    // (search for "Sowing Mycospawn on-cast trigger") rather than as a
-    // def.onEnter here. This places it alongside the existing Hyrax /
-    // Woodcaller / Witness / Empath ETB triggers, ensuring it fires from
-    // every code path that ETBs Mycospawn — the cast dispatcher, the
-    // --battlefield bootstrap, and any test setup. A def.onEnter here would
-    // ONLY fire from the cast dispatcher in actions.js, leaving --battlefield
-    // and direct setup paths inconsistent.
+    // On cast: search library for a land, put it onto the battlefield.
+    // ETB with kicker: exile target land. Devoid (colorless).
   },
   badgermole_cub: {
     name: 'Badgermole Cub', types: ['creature'], subtypes: ['Badger','Mole'],
     cost: '1G', power: 2, toughness: 2,
-    // ETB: earthbend 1 — target land you control becomes a 0/0 creature with haste
-    //   that's still a land, then put a +1/+1 counter on it (making it 1/1).
-    //   Key use: animate Gaea's Cradle or Nykthos so they can tap for mana without
-    //   summoning sickness, and so Quirion/Scryb Ranger can bounce them via Ashaya.
+    // ETB: earthbend 1 (land becomes a 0/0+1/1 creature with haste).
     // Static: whenever you tap a creature for mana, add {G}.
-    //   Already modeled in actions.js tap_for_mana (same as Leyline of Abundance).
-    onEnter(state) {
-      // Pick the highest-value land target. Priority:
-      //   Gaea's Cradle > Nykthos > Big non-basic (Ancient Tomb) > basic Forest
-      // Under Ashaya every creature is already a land, so skip those —
-      // only target permanents that are PURELY lands (no creature type before earthbend).
-      const candidates = state.battlefield.filter(p =>
-        p.is('land') && !p.is('creature') && p.name !== 'Badgermole Cub'
-      );
-      if (candidates.length === 0) return state.log('Badgermole Cub ETB: no land target');
-
-      const priority = ["Gaea's Cradle", 'Nykthos, Shrine to Nyx', 'Ancient Tomb',
-        'Deserted Temple', 'Wirewood Lodge', 'Forest', 'Boseiju, Who Endures'];
-      const target = candidates.sort((a, b) => {
-        const ai = priority.indexOf(a.name); const bi = priority.indexOf(b.name);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      })[0];
-
-      // Clone and mutate the target land: add creature type, haste, 1/1 P/T
-      let s = state.clone();
-      s._ensureBF();
-      const tgt = s.getPermanentById(target.id);
-      if (!tgt) return state.log('Badgermole Cub ETB: target not found');
-      tgt._ensureOwnTypes?.();
-      if (!tgt.types.includes('creature')) tgt.types = [...tgt.types, 'creature'];
-      tgt.summoningSick = false; // haste
-      tgt.power     = 1;
-      tgt.toughness = 1;
-      return s.log(`Badgermole Cub ETB: earthbend ${target.name} → 1/1 creature with haste`);
-    },
+    // The static is the same as Leyline of Abundance — modeled in tap_for_mana.
+    // Earthbend is complex — stub for now.
   },
   outland_liberator: {
     name: 'Outland Liberator', types: ['creature'], subtypes: ['Human','Werewolf'],
@@ -4640,29 +3550,9 @@ var CARDS = {
       sac_destroy: {
         label: '{1}, Sacrifice: Destroy target artifact or enchantment',
         fn(state, perm) {
-          if (perm.summoningSick) return []; // summoning sickness prevents sacrificing? No —
-          // Actually sacrifice is a cost and legal on sick creatures. But this ability
-          // requires paying {1} and sacrificing, so check mana.
           const ap = state.payMana('1'); if (!ap) return [];
-          // Find targets: preferably opponent stax artifacts/enchantments on our BF
-          // (in single-player, we only have access to our own permanents to destroy).
-          // Priority: stax pieces first, then any artifact/enchantment.
-          const STAX_NAMES = new Set([
-            'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
-            'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
-            'Vexing Bauble', 'Disruptor Flute',
-          ]);
-          const targets = ap.battlefield.filter(p =>
-            p.id !== perm.id && (p.is('artifact') || p.is('enchantment'))
-          );
-          if (targets.length === 0) return []; // nothing to destroy
-          // Sacrifice self
           let s = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!s) return [];
-          // Destroy highest-priority target (stax first, then any)
-          const staxTarget = targets.find(t => STAX_NAMES.has(t.name));
-          const target = staxTarget ?? targets[0];
-          s = s.removeFromBattlefield(target.id, 'graveyard'); if (!s) return [];
-          return [s.log(`Outland Liberator: sacrifice → destroy ${target.name}`)];
+          return [s.log('Outland Liberator: sacrifice to destroy an artifact or enchantment')];
         },
       },
     },
@@ -4689,14 +3579,8 @@ var CARDS = {
           const bestKey = _bestCreatureTutorTarget(ap);
           if (!bestKey) return [];
 
-          // Protect high-value un-cast combo pieces in hand from being discarded.
-          // Same fix as Survival of the Fittest (C-9, 2026-04-30): keep protection
-          // unconditional. The previous "strip protection when no alternative exists"
-          // hack caused self-cancelling chains where Fauna Shaman discarded a card
-          // it had just tutored, burning {G} per step with no progress on the win line.
-          // If every creature in hand is a protected combo piece, return [] —
-          // the action falls through and the solver picks something more productive
-          // (e.g. casting the held creature, developing the board).
+          // Protect high-value un-cast combo pieces in hand from being discarded
+          // when other discard fodder is available (mirrors Survival of the Fittest logic).
           const PROTECT_THRESHOLD = 70;
           const protectedKeys = new Set(
             creaturesInHand.filter(k =>
@@ -4704,11 +3588,8 @@ var CARDS = {
               !ap.battlefield.some(p => NAME_TO_KEY[p.name] === k)
             )
           );
-          const effectiveProtected = protectedKeys;
-
-          // ALSO skip cards that were tutored to hand by a prior Survival/Fauna activation
-          // and never cast (sibling fix to the Survival guard, 2026-04-30 user report).
-          const freshlyTutored = _freshlyTutoredKeys(ap);
+          const hasAltDiscard = creaturesInHand.some(k => k !== bestKey && !protectedKeys.has(k));
+          const effectiveProtected = hasAltDiscard ? protectedKeys : new Set();
 
           const results = [];
           const seenDiscard = new Set();
@@ -4716,7 +3597,6 @@ var CARDS = {
             if (seenDiscard.has(discard)) continue;
             if (discard === bestKey) continue;              // don't discard what we're fetching
             if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
-            if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
             seenDiscard.add(discard);
             let s = ap.tapPermanent(perm.id); if (!s) continue;
             s = s.discardFromHand(discard); if (!s) continue;
@@ -4797,57 +3677,20 @@ var CARDS = {
     name: 'King of the Coldblood Curse', types: ['creature'], subtypes: ['Lizard','Villain'],
     cost: '2GG', power: 4, toughness: 4,
     // ETB: up to one other target creature loses all abilities and becomes a 4/4 green Lizard.
-    // Combo-relevant: can disable stax creatures (Collector Ouphe, etc.) by stripping abilities.
-    // Modeled: on ETB, if a stax creature is on the battlefield, strip its abilities
-    // by removing it from the battlefield (it becomes a vanilla 4/4 — since we don't
-    // model "creature with no abilities", the simplest correct approximation is removal
-    // from our battlefield's effective stax pool, keeping it as a vanilla creature).
-    // In practice: remove the stax creature from BF and re-enter it as a blank 4/4.
-    onEnter(state) {
-      const STAX_CREATURE_NAMES = new Set([
-        'Collector Ouphe', 'Null Rod', // artifact-ability suppression creatures
-      ]);
-      const target = state.battlefield.find(p =>
-        p.is('creature') && p.name !== 'King of the Coldblood Curse' &&
-        STAX_CREATURE_NAMES.has(p.name)
-      );
-      if (!target) return state; // no useful target — ETB is optional ("up to one")
-      // Strip abilities: remove from BF and enter as a blank 4/4 green Lizard.
-      // We keep it on the battlefield (it's still a creature) but without stax effects.
-      let s = state.removeFromBattlefield(target.id, null); // doesn't go to GY (stays as new perm)
-      if (!s) return state;
-      // Re-enter as a blank 4/4 Lizard (cardKey: king_coldblood_blank to avoid re-triggering)
-      s = s.clone(); s._ensureBF();
-      const blankId = s._nextId++;
-      const blank = new Permanent({
-        id: blankId, name: target.name + ' (Lizard 4/4)', cardKey: 'blank_lizard',
-        types: ['creature'], subtypes: ['Lizard'], tapped: target.tapped,
-        summoningSick: target.summoningSick, power: 4, toughness: 4,
-        counters: {}, abilitiesUsed: {},
-      });
-      s.battlefield = [...s.battlefield, blank];
-      return s.log(`King of the Coldblood Curse ETB: ${target.name} loses all abilities → 4/4 Lizard`);
-    },
   },
   disciple_freyalise: {
-    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Disciple of Freyalise', types: ['creature'], subtypes: ['Elf','Druid'],
     cost: '3GGG', power: 4, toughness: 4,
-    // ETB: you may sacrifice another creature. If you do, gain X life and draw X cards
-    // where X = that creature's power.
-    // Implementation in GameState.enterBattlefield: sacrifices lowest-power non-key
-    // creature (deterministic). cards.js onEnter removed (2026-05-12) to prevent
-    // double-fire when cast via actions.js.
+    // ETB: may sacrifice another creature; gain X life and draw X cards where X = power.
+    // Also has a modal land backside, but that's a double-faced card — stub the creature side.
   },
   hyrax_tower_scout: {
     name: 'Hyrax Tower Scout', types: ['creature'], subtypes: ['Human','Scout'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '2G', power: 2, toughness: 2,
     // ETB: untap target creature — handled in GameState.enterBattlefield (untaps first tapped creature).
   },
   woodcaller_automaton: {
     name: 'Woodcaller Automaton', types: ['creature','artifact'], subtypes: ['Construct'],
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Modelled at its Prototype cost {2GG} — 3/3. This is virtually always how it
     // is cast in this deck; the {10} base cost is irrelevant in practice.
     // Oracle: "When this creature enters, if you cast it, untap target land you control.
@@ -4872,8 +3715,7 @@ var CARDS = {
       look_three: {
         label: '{4}{G}: Look at top 3 cards, may put a permanent in hand',
         fn(state, perm) {
-          // Activated ability with no tap cost — legal on a sick Vanguard.
-          // See ToDo C-33 audit.
+          if (perm.summoningSick) return [];
           const ap = state.payMana('4G'); if (!ap) return [];
           let s = ap.playerDraws(0, 1);
           return [s.log('Beastrider Vanguard: look at top 3, take a permanent')];
@@ -4886,7 +3728,6 @@ var CARDS = {
 
   concordant_crossroads: {
     name: 'Concordant Crossroads', types: ['enchantment'], subtypes: [], cost: 'G',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Static: all creatures have haste (implemented as no summoning sickness on ETB in GameState).
     // No activated ability needed.
   },
@@ -4932,7 +3773,6 @@ var CARDS = {
   },
   guardian_project: {
     name: 'Guardian Project', types: ['enchantment'], subtypes: [], cost: '3G',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Draw a card when a nontoken creature enters if it doesn't share a name
     // with another creature you control or in your graveyard.
     // Modeled as: draw when any creature enters (simplified — name check skipped for solver).
@@ -4978,26 +3818,13 @@ var CARDS = {
   },
   elvish_guidance: {
     name: 'Elvish Guidance', types: ['enchantment'], subtypes: ['Aura'], cost: '2G',
-    // Enchant land. When that land is tapped for mana, it produces an additional {G}
-    // per Elf on the battlefield in addition to its normal output.
-    // Modeled: on ETB, mark the best available land with elvishGuidance=true.
-    // actions.js tapForMana then adds +elfCount {G} whenever that land taps.
+    // Enchant land. Tapping it adds {G} per Elf on the battlefield.
+    // Modeled as: +G per Elf immediately on resolution (simplified for solver).
     onEnter(state) {
-      const lands = state.battlefield.filter(p =>
-        p.is('land') && !p.is('enchantment') && !p.tapped
-      );
-      if (lands.length === 0) return state;
-      const target = lands.find(l => l.name === "Gaea's Cradle") ??
-                     lands.find(l => l.isForest) ?? lands[0];
-      const s = state.clone();
-      s._ensureBF();
-      const land = s.battlefield.find(p => p.id === target.id);
-      if (land) {
-        land.elvishGuidance = true;
-        const elfCount = state.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
-        return s.log(`Elvish Guidance attached to ${target.name} (+${elfCount}{G} per tap)`);
-      }
-      return state;
+      const elfCount = state.battlefield.filter(p => p.subtypes && p.subtypes.includes('Elf')).length;
+      let s = state;
+      for (let i = 0; i < elfCount; i++) s = s.addMana('G');
+      return s;
     },
   },
   carpet_of_flowers: {
@@ -5008,7 +3835,6 @@ var CARDS = {
   },
   root_maze: {
     name: 'Root Maze', types: ['enchantment'], subtypes: [], cost: 'G',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     // Artifacts and lands enter tapped (stax). Hostile to combo — noted.
     // Solver will not voluntarily cast this unless directed.
   },
@@ -5038,10 +3864,8 @@ var CARDS = {
           if (!bestKey) return [];
 
           // Identify creatures in hand that are key combo pieces not yet on the battlefield.
-          // Discarding e.g. Ashaya to fetch a dork loses the very piece we need to cast — and
-          // worse, doing so in the middle of a Survival CHAIN (discard X→fetch Y, then discard
-          // Y→fetch Z) just burns mana with no net change to hand composition. The protection
-          // below blocks high-value combo pieces from being discarded.
+          // We avoid offering these as discard choices when cheaper alternatives exist,
+          // since discarding e.g. Ashaya to fetch a dork loses the key piece we need to cast.
           const PROTECT_THRESHOLD = 70; // score ≥ this = high-value combo piece
           const protectedKeys = new Set(
             creaturesInHand.filter(k =>
@@ -5051,23 +3875,11 @@ var CARDS = {
               })
             )
           );
-          // PRIOR BEHAVIOUR: when no unprotected discard option existed, the protection was
-          // STRIPPED so the activation could fire anyway. This caused chain bugs: the solver
-          // would discard a creature it had just tutored (because that was now the only thing
-          // in hand), spending {G} per chain step with no progress on the win line. See user
-          // report 2026-04-30.
-          //
-          // CURRENT BEHAVIOUR: keep protection unconditionally. If every hand creature is a
-          // protected combo piece, return [] — the activation is genuinely not worth firing.
-          // The detector tests in section 46 don't go through this fn (they have their own
-          // discard-fodder check), so this is safe.
-          const effectiveProtected = protectedKeys;
-
-          // ALSO skip cards that were tutored to hand by a prior Survival/Fauna activation
-          // and never cast. Discarding them to another activation produces a self-cancelling
-          // chain (the user-reported chain bug, 2026-04-30). The score-based protection above
-          // only covers high-value pieces (≥70); this catches mid-tier chains too.
-          const freshlyTutored = _freshlyTutoredKeys(afterPay);
+          // Only suppress protected cards if there's another creature to discard instead
+          const hasAlternativeDiscard = creaturesInHand.some(k =>
+            k !== bestKey && !protectedKeys.has(k)
+          );
+          const effectiveProtected = hasAlternativeDiscard ? protectedKeys : new Set();
 
           const results = [];
           // Offer one action per creature we could discard (deduplicated by key)
@@ -5076,7 +3888,6 @@ var CARDS = {
             if (seenDiscard.has(discard)) continue;
             if (discard === bestKey) continue;              // don't discard what we're fetching
             if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
-            if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
             seenDiscard.add(discard);
             let s = afterPay.discardFromHand(discard); if (!s) continue;
             const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
@@ -5092,7 +3903,7 @@ var CARDS = {
       },
     },
   },
-  lignify: { intentionalStub: true, name: 'Lignify', types: ['enchantment'], subtypes: ['Aura','Treefolk'], cost: '1G' },
+  lignify: { name: 'Lignify', types: ['enchantment'], subtypes: ['Aura','Treefolk'], cost: '1G' },
   kenriths_transformation: {
     name: "Kenrith's Transformation", types: ['enchantment'], subtypes: ['Aura'], cost: '1G',
     // ETB: draw a card. Enchanted creature loses abilities, becomes 3/3 Elk.
@@ -5102,87 +3913,15 @@ var CARDS = {
   },
   growing_rites: {
     name: 'Growing Rites of Itlimoc', types: ['enchantment'], subtypes: ['Legendary'], cost: '2G',
-    // ETB: look at the top four cards of your library. You may reveal a creature card
-    //   from among them and put it into your hand. Put the rest on the bottom in any order.
-    // End step: if you control four or more creatures, transform into Itlimoc.
-    //
-    // Implementation via castFn so branching works with the solver's action system:
-    //   Branch A: enter Growing Rites; look at top 4; put best creature in hand (if any)
-    //   Branch B: enter Growing Rites; no creature taken (or none available)
-    //   Transform: if 4+ creatures present after resolution, flip to Itlimoc immediately
-    //              (end-step approximation — player won't cast more creatures before EOT
-    //               in a winning line, so the count is stable).
-    castFn(state) {
-      var cards = CARDS;
-
-      // Enter Growing Rites onto the battlefield
-      let base = state.enterBattlefield('growing_rites');
-      base = base.log('Cast Growing Rites of Itlimoc');
-
-      const results = [];
-
-      // ── ETB look: top 4 cards of library ─────────────────────────────────
-      const lib = base.players[0].library;
-      const top4 = lib.slice(0, 4);
-      const creatureKeys = [...new Set(top4)].filter(k => cards[k]?.types?.includes('creature'));
-
-      // Build present set to skip cards already in hand/battlefield
-      const present = new Set(base.hand);
-      for (const p of base.battlefield) {
-        const k = NAME_TO_KEY[p.name] ?? Object.keys(cards).find(ck => cards[ck].name === p.name);
-        if (k) present.add(k);
-      }
-
-      // Pick the best creature from top 4 (highest TUTOR_PRIORITY_SCORE, not already present)
-      let bestKey = null, bestScore = -1;
-      for (const ck of creatureKeys) {
-        if (present.has(ck)) continue;
-        const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (sc > bestScore) { bestKey = ck; bestScore = sc; }
-      }
-      // Fallback: if all creatures are already present, take any one from top 4
-      if (!bestKey && creatureKeys.length > 0) bestKey = creatureKeys[0];
-
-      // Branch A: put creature into hand (if one was found)
-      if (bestKey) {
-        const { state: ns, cardKey: found } = base.searchLibraryFor(k => k === bestKey);
-        if (found) {
-          let s = ns.addToHand(found);
-          s = s.log(`Growing Rites ETB: put ${cards[bestKey].name} into hand`);
-          results.push(_applyTransform(s));
-        }
-      }
-
-      // Branch B: no creature taken (always offered as an option)
-      {
-        const s = base.log('Growing Rites ETB: no creature taken');
-        results.push(_applyTransform(s));
-      }
-
-      // Deduplicate (identical top-4 composition → same result for both branches)
-      const seen = new Set();
-      return results.filter(s => {
-        const fp = s.fingerprint();
-        if (seen.has(fp)) return false;
-        seen.add(fp);
-        return true;
-      });
-
-      // Helper: if 4+ creatures on board, transform to Itlimoc immediately
-      function _applyTransform(s) {
-        const creatureCount = s.creatures().length;
-        if (creatureCount < 4) return s;
-        const self = s.getPermanent('Growing Rites of Itlimoc');
-        if (!self) return s;
-        let ts = s.removeFromBattlefield(self.id, null); // DFC transform (leaves the game zone)
-        if (!ts) return s;
-        ts = ts.enterBattlefield('itlimoc', { tapped: false });
-        ts = ts.log(`Growing Rites transforms → Itlimoc, Cradle of the Sun (${creatureCount} creatures)`);
-        return ts;
-      }
+    // ETB: look at top 4, may reveal a creature and put in hand.
+    // End step: if 4+ creatures, transform into Itlimoc.
+    // Simplified: after casting, draw a card (ETB effect) and convert if 4+ creatures.
+    onCast(state) {
+      // Draw from ETB look (simplified to card draw)
+      return state.playerDraws(0, 1);
     },
   },
-  titania_song: { intentionalStub: true, name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G' },
+  titania_song: { name: "Titania's Song", types: ['enchantment'], subtypes: [], cost: '3G' },
 
   // ─── BATTLES ─────────────────────────────────────────────────────────────
 
@@ -5190,30 +3929,36 @@ var CARDS = {
     name: 'Invasion of Ikoria', types: ['battle'], subtypes: ['Siege'], cost: 'XGG',
     // Oracle: When this Siege enters, search your library and/or graveyard for a
     // non-Human creature card with mana value X or less and put it onto the battlefield.
-    // C-23 fix: previously branched over all eligible library creatures. Now picks best.
+    // If you search your library this way, shuffle.
+    //
+    // Modelled identically to Chord of Calling / Green Sun's Zenith:
+    // castFn receives state after dispatch pays the base {G}{G} cost.
+    // Remaining mana pool total = X.
+    // Battles enter the battlefield but the solver treats them as one-shot tutors
+    // (the siege/transform back-face is not modelled — too many turns away to matter).
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
+      const results = [];
       const x = state.mana.total();
-      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def?.types.includes('creature') || !def.cost) continue;
-        if (def.subtypes?.includes('Human')) continue;
+        if (def.subtypes?.includes('Human')) continue; // non-Human only per oracle
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
         if (mv > x) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(drainMana(ns).enterBattlefield(cardKey)
+          .log(`Invasion of Ikoria X=${x} → ${def.name} (MV ${mv})`));
       }
-      if (!best) return [drainMana(state).log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
-      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [drainMana(state).log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
-      return [drainMana(ns).enterBattlefield(cardKey)
-        .log(`Invasion of Ikoria X=${x} → ${best.def.name} (MV ${best.mv})`)];
+      return results.length
+        ? results
+        : [drainMana(state).log(`Invasion of Ikoria X=${x}: no eligible non-Human creature`)];
     },
   },
 
@@ -5222,13 +3967,18 @@ var CARDS = {
   chord_of_calling: {
     name: 'Chord of Calling', types: ['instant'], subtypes: [], cost: 'XGGG',
     // Oracle: Convoke. Search library for creature with MV ≤ X, put onto battlefield.
-    // C-23 fix: previously branched over all library creatures within MV budget.
-    // Now picks the single highest-TUTOR_PRIORITY_SCORE creature.
+    // Convoke: each tapped creature pays {1} or one mana of its color.
+    // Solver: X = number of untapped creatures (convoke) + available generic mana.
+    // Treats Chord like GSZ (creature to battlefield) but with convoke economy.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
+      const results = [];
+      // castFn is called AFTER the dispatch pays the {G}{G}{G} base cost.
+      // X = mana remaining in the pool (identical pattern to Green Sun's Zenith).
+      // Convoke is implicitly handled: tapping creatures reduces the effective cost
+      // paid by the dispatch, leaving more mana in the pool as X.
       const x = state.mana.total();
-      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -5238,14 +3988,12 @@ var CARDS = {
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(drainMana(ns).enterBattlefield(cardKey)
+          .log(`Chord of Calling X=${x} → ${def.name} (MV ${mv})`));
       }
-      if (!best) return [drainMana(state).log(`Chord of Calling X=${x}: no eligible creature`)];
-      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [drainMana(state).log(`Chord of Calling X=${x}: no eligible creature`)];
-      return [drainMana(ns).enterBattlefield(cardKey)
-        .log(`Chord of Calling X=${x} → ${best.def.name} (MV ${best.mv})`)];
+      return results.length ? results : [drainMana(state).log(`Chord of Calling X=${x}: no eligible creature`)];
     },
   },
   shared_summons: {
@@ -5347,13 +4095,9 @@ var CARDS = {
     // Oracle: {0} — Search library for a green creature, put in hand.
     // At your next upkeep, pay {2}{G}{G} or lose the game.
     // pactOwed is set on the state so startNewTurn() enforces the payment.
-    //
-    // C-23 fix: previously branched over every green creature in library (~30+
-    // results). Now picks the single highest-TUTOR_PRIORITY_SCORE green creature,
-    // matching the approach of Green Sun's Zenith and Chord of Calling.
     castFn(state) {
       var cards = CARDS;
-      let best = null, bestScore = -Infinity;
+      const results = [];
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -5361,68 +4105,50 @@ var CARDS = {
         const def = cards[ck];
         if (!def || !def.types.includes('creature')) continue;
         if (!def.cost || !def.cost.includes('G')) continue; // green creatures only
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        const result = ns.addToHand(cardKey).log(`Summoner's Pact → find ${def.name}`);
+        result.pactOwed = true; // upkeep trigger: pay {2}{G}{G} next turn or lose
+        results.push(result);
       }
-      if (!best) return [state.log("Summoner's Pact: no green creature")];
-      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [state.log("Summoner's Pact: no green creature")];
-      const result = ns.addToHand(cardKey).log(`Summoner's Pact → find ${best.def.name}`);
-      result.pactOwed = true; // upkeep trigger: pay {2}{G}{G} next turn or lose
-      return [result];
+      return results.length ? results : [state.log("Summoner's Pact: no green creature")];
     },
   },
   archdruid_charm: {
     name: "Archdruid's Charm", types: ['instant'], subtypes: [], cost: 'GGG',
     // Oracle mode 1: Search library for creature or land → battlefield (if land, tapped) or hand.
     // Modes 2 (fight) and 3 (exile artifact/enchantment) not useful to model for combos.
-    // C-23 fix: previously branched over all library creatures + lands. Now picks best
-    // creature (to hand) and best land (to battlefield, tapped) — 2 results max.
+    // Solver: only implements mode 1 (the tutor mode).
     castFn(state) {
       var cards = CARDS;
-      const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
-                             'wirewood_lodge','geier_reach_sanitarium','boseiju','forest'];
-      const onBF = new Set(state.battlefield.map(p =>
-        Object.keys(cards).find(k => cards[k].name === p.name)).filter(Boolean));
-      let bestCreature = null, bestCreatureScore = -Infinity;
-      let bestLand = null;
+      const results = [];
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def) continue;
-        if (def.types.includes('creature')) {
-          const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-          if (score > bestCreatureScore) { bestCreatureScore = score; bestCreature = { ck, def }; }
-        } else if (def.types.includes('land')) {
-          const pri = LAND_PRIORITY.indexOf(ck);
-          const score = pri === -1 ? 99 : pri;
-          const alreadyPresent = onBF.has(ck);
-          if (!bestLand || score < bestLand.score || (score === bestLand.score && !alreadyPresent && bestLand.alreadyPresent)) {
-            bestLand = { ck, def, score, alreadyPresent };
-          }
-        }
-      }
-      const results = [];
-      if (bestCreature) {
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === bestCreature.ck);
-        if (cardKey) results.push(ns.addToHand(cardKey).log(`Archdruid's Charm → find ${bestCreature.def.name}`));
-      }
-      if (bestLand) {
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === bestLand.ck);
-        if (cardKey) {
+        const isCreature = def.types.includes('creature');
+        const isLand = def.types.includes('land');
+        if (!isCreature && !isLand) continue;
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        if (isLand) {
+          // Land enters battlefield tapped
           const ns2 = ns.enterBattlefield(cardKey);
-          const landPerm = ns2.battlefield.find(p => p.name === bestLand.def.name && !p.tapped);
+          const landPerm = ns2.battlefield.find(p => p.name === def.name && !p.tapped);
           if (landPerm) landPerm.tapped = true;
-          results.push(ns2.log(`Archdruid's Charm → fetch land ${bestLand.def.name} (tapped)`));
+          results.push(ns2.log(`Archdruid's Charm → fetch land ${def.name} (tapped)`));
+        } else {
+          // Creature goes to hand
+          results.push(ns.addToHand(cardKey).log(`Archdruid's Charm → find ${def.name}`));
         }
       }
       return results.length ? results : [state.log("Archdruid's Charm: nothing found")];
     },
   },
-  force_of_vigor:         { intentionalStub: true, name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
-  beast_within:           { intentionalStub: true, name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
+  force_of_vigor:         { name:'Force of Vigor',           types:['instant'],  subtypes:[], cost:'2GG'  },
+  beast_within:           { name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
   vitalize: {
     name: 'Vitalize', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle: Untap all creatures you control.
@@ -5447,12 +4173,12 @@ var CARDS = {
     // Solver: give haste to the highest-value tapped creature (removes summoning sickness).
     // The one-shot untap is modelled as immediate untap.
     castFn(state) {
+      const results = [];
       const targets = state.creatures().filter(c => c.summoningSick || c.tapped);
       if (targets.length === 0) {
+        // Still playable on any creature but minimal benefit
         return [state.log('Touch of Vitae: no useful target')];
       }
-      const seen = new Set();
-      const results = [];
       for (const target of targets) {
         let s = state.clone();
         s._ensureBF();
@@ -5460,11 +4186,7 @@ var CARDS = {
         if (!perm) continue;
         perm.summoningSick = false;
         perm.tapped = false; // immediate untap from the {0} ability
-        s = s.log(`Touch of Vitae → ${target.name} gains haste + untap`);
-        const fp = s.fingerprint();
-        if (seen.has(fp)) continue;
-        seen.add(fp);
-        results.push(s);
+        results.push(s.log(`Touch of Vitae → ${target.name} gains haste + untap`));
       }
       return results;
     },
@@ -5505,56 +4227,10 @@ var CARDS = {
       return [state.log('Infectious Bite: cast (each opponent gets a poison counter)')];
     },
   },
-  natures_claim: {
-    name: "Nature's Claim", types:['instant'], subtypes:[], cost:'G',
-    isRemoval: true,
-    // {G}: Destroy target artifact or enchantment. Its controller gains 4 life.
-    castFn(state) {
-      const targets = state.battlefield.filter(p => p.is('artifact') || p.is('enchantment'));
-      if (targets.length === 0) return [];
-      return targets.map(t => {
-        let s = state.removeFromBattlefield(t.id, 'graveyard');
-        if (!s) return null;
-        s = s.clone(); s.life = (s.life ?? 40) + 4;
-        return s.log(`Nature's Claim: destroy ${t.name}, gain 4 life`);
-      }).filter(Boolean);
-    },
-  },
-
-  ram_through: {
-    name: 'Ram Through', types:['instant'], subtypes:[], cost:'1G',
-    // {1}{G}: Target creature you control deals damage equal to its power to
-    // target creature you don't control. Trample excess to player/planeswalker.
-    // In single-player: modeled as fight-style — destroys target creature whose
-    // toughness ≤ attacker's power. Most useful to remove blockers (minimal combo use).
-    intentionalStub: true,  // [drift-detector] marks effective-stub castFn for ref/implementation_gaps.md
-    castFn(state) {
-      const attackers = state.battlefield.filter(p => p.is('creature') && (p.power ?? 0) > 0);
-      if (attackers.length === 0) return [];
-      // No opponent creatures in single-player model — return empty (no targets)
-      // but still offer the action if there are own stax creatures to consider.
-      return [];
-    },
-  },
-
-  tail_swipe: {
-    name: 'Tail Swipe', types:['instant'], subtypes:[], cost:'G',
-    // {G}: Choose target creature you control and target creature you don't control.
-    // If this spell was cast during your main phase, the creature you control gets +1/+1.
-    // Then those creatures fight.
-    // In single-player: minimal combo relevance — stub castFn.
-    intentionalStub: true,  // [drift-detector] effective-stub castFn
-    castFn(state) { return []; },
-  },
-
-  bouncers_beatdown: {
-    name: "Bouncer's Beatdown", types:['instant'], subtypes:[], cost:'2G',
-    // {2}{G}: Target creature or planeswalker takes X damage where X = greatest power
-    // among creatures you control. Costs {2} less if that permanent is black.
-    // In single-player: minimal combo relevance — stub castFn.
-    intentionalStub: true,  // [drift-detector] effective-stub castFn
-    castFn(state) { return []; },
-  },
+  natures_claim:          { name:"Nature's Claim",           types:['instant'],  subtypes:[], cost:'G'    },
+  ram_through:            { name:'Ram Through',              types:['instant'],  subtypes:[], cost:'1G'   },
+  tail_swipe:             { name:'Tail Swipe',               types:['instant'],  subtypes:[], cost:'G'    },
+  bouncers_beatdown:      { name:"Bouncer's Beatdown",       types:['instant'],  subtypes:[], cost:'2G'   },
   autumn_veil:            { name:"Autumn's Veil",            types:['instant'],  subtypes:[], cost:'G'    },
   veil_of_summer: {
     name: 'Veil of Summer', types: ['instant'], subtypes: [], cost: 'G',
@@ -5565,7 +4241,7 @@ var CARDS = {
       return [state.playerDraws(0, 1).log('Veil of Summer: draw a card')];
     },
   },
-  // warping_wail stub removed — implementation is above at warping_wail
+  warping_wail:           { name:'Warping Wail',             types:['instant'],  subtypes:[], cost:'1C'   },
   emerald_charm: {
     name: 'Emerald Charm', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle mode 1: Untap target permanent.
@@ -5637,28 +4313,26 @@ var CARDS = {
     name: 'Worldly Tutor', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle: Search library for a creature, REVEAL it, then SHUFFLE and put on TOP of library.
     // Sets state.topDecked so startNewTurn knows to draw exactly that card into hand.
-    // C-23 fix: previously branched over all library creatures. Now picks best target.
     castFn(state) {
       var cards = CARDS;
-      let best = null, bestScore = -Infinity;
+      const results = [];
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('creature')) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        // Put creature on top of library and set topDecked flag
+        const ns2 = ns.clone();
+        ns2._ensurePlayers();
+        ns2.players[0] = ns2.players[0].clone();
+        ns2.players[0].library = [cardKey, ...ns2.players[0].library];
+        ns2.topDecked = cardKey;   // startNewTurn will draw this card into hand
+        results.push(ns2.log(`Worldly Tutor → put ${def.name} on top of library`));
       }
-      if (!best) return [state.log('Worldly Tutor: no creature in library')];
-      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [state.log('Worldly Tutor: no creature in library')];
-      const ns2 = ns.clone();
-      ns2._ensurePlayers();
-      ns2.players[0] = ns2.players[0].clone();
-      ns2.players[0].library = [cardKey, ...ns2.players[0].library];
-      ns2.topDecked = cardKey;
-      return [ns2.log(`Worldly Tutor → put ${best.def.name} on top of library`)];
+      return results.length ? results : [state.log('Worldly Tutor: no creature in library')];
     },
   },
   crop_rotation: {
@@ -5666,55 +4340,42 @@ var CARDS = {
     // Oracle: As an additional cost, sacrifice a land. Search → put land onto battlefield → shuffle.
     castFn(state) {
       var cards = CARDS;
+      const results = [];
+      // Must have a land to sacrifice (additional cost)
       const lands = state.lands();
       if (lands.length === 0) return [];
+      // Generate one result per (sacrifice target, fetch target) combination.
+      // For the solver: sacrifice the least-valuable land (first non-Cradle non-Nykthos land).
+      // Sort sacrifice candidates: prefer expendable lands (not key engine lands).
       const KEEP = new Set(['gaeas_cradle','nykthos','yavimaya','wirewood_lodge','geier_reach','deserted_temple']);
       const sacrificeable = lands.filter(l => {
         const ck = Object.keys(cards).find(k => cards[k].name === l.name);
         return !KEEP.has(ck);
       });
-      const sacLand = (sacrificeable.length > 0 ? sacrificeable : lands)[0];
+      const sacrificeTargets = sacrificeable.length > 0 ? sacrificeable : lands;
+      // Use first sacrifice target (simplest; solver can explore via branching)
+      const sacLand = sacrificeTargets[0];
       const afterSac = state.removeFromBattlefield(sacLand.id, 'graveyard');
       if (!afterSac) return [];
-      // C-23 fix: pick the single highest-priority land from library.
-      // Non-basic engine lands already on the battlefield are skipped first —
-      // fetching a second Cradle is always worse than fetching a new utility land.
-      const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
-                             'wirewood_lodge','geier_reach_sanitarium','boseiju',
-                             'emergence_zone','forest'];
-      const onBF = new Set(afterSac.battlefield.map(p => {
-        return Object.keys(cards).find(k => cards[k].name === p.name);
-      }).filter(Boolean));
-      // Determine which engine lands are already present (skip duplicates)
-      const UNIQUE_LANDS = new Set(['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
-                                    'wirewood_lodge','geier_reach_sanitarium','boseiju','emergence_zone']);
-      let best = null;
       const seen = new Set();
       for (const ck of afterSac.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('land')) continue;
-        // Skip unique engine lands already on the battlefield
-        if (UNIQUE_LANDS.has(ck) && onBF.has(ck)) continue;
-        const pri = LAND_PRIORITY.indexOf(ck);
-        const score = pri === -1 ? 99 : pri;
-        if (!best || score < best.score) best = { ck, def, score };
+        const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(ns.enterBattlefield(cardKey).log(`Crop Rotation: sac ${sacLand.name} → fetch ${def.name}`));
       }
-      if (!best) return [afterSac.log('Crop Rotation: no land in library')];
-      const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [afterSac.log('Crop Rotation: no land in library')];
-      return [ns.enterBattlefield(cardKey).log('Crop Rotation: sac ' + sacLand.name + ' → fetch ' + best.def.name)];
+      return results.length ? results : [afterSac.log('Crop Rotation: no land in library')];
     },
   },
   green_suns_zenith: {
     name: "Green Sun's Zenith", types: ['sorcery'], subtypes: [], cost: 'XG',
-    // C-23 fix: previously branched over all green creatures within MV budget.
-    // Now picks the single highest-TUTOR_PRIORITY_SCORE green creature.
     castFn(state) {
       var cards = CARDS;
       const xMax = state.mana.total();
-      let best = null, bestScore = -Infinity;
+      const results = [];
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -5725,13 +4386,11 @@ var CARDS = {
         const parsed = parseCost(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > xMax) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(drainMana(ns).enterBattlefield(cardKey).log(`Green Sun's Zenith → fetch ${def.name} (MV ${mv})`));
       }
-      if (!best) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
-      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
-      return [drainMana(ns).enterBattlefield(cardKey).log(`Green Sun's Zenith → fetch ${best.def.name} (MV ${best.mv})`)];
+      return results.length ? results : [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
     },
   },
   finale_of_devastation: {
@@ -5743,22 +4402,28 @@ var CARDS = {
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
+      const results = [];
+      // With infinite mana, X is effectively unlimited. Use all available mana as X proxy.
+      // In practice the solver uses this to find Duskwatch or another finisher.
+      // castFn receives state AFTER dispatch pays the base cost — remaining mana = X.
       const x = state.mana.total();
-      // C-23 fix: pick single best target from library (highest score within MV)
-      let best = null, bestScore = -Infinity;
+      // Search library
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
-        if (!def || !def.types.includes('creature') || !def.cost) continue;
+        if (!def || !def.types.includes('creature')) continue;
+        if (!def.cost) continue;
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def, mv, src: 'library' }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(drainMana(ns).enterBattlefield(cardKey)
+          .log(`Finale of Devastation X=${x} → ${def.name} (MV ${mv}) from library`));
       }
-      // Also check graveyard for higher-priority targets
+      // Search graveyard
       for (const name of state.players[0].graveyard) {
         const ck = Object.keys(cards).find(k => cards[k].name === name);
         if (!ck || seen.has(ck) || isStax(ck)) continue;
@@ -5768,59 +4433,53 @@ var CARDS = {
         const parsed = pc(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def, mv, src: 'graveyard', name }; }
-      }
-      if (!best) return [drainMana(state).log(`Finale of Devastation X=${x}: no target`)];
-      if (best.src === 'library') {
-        const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-        if (!cardKey) return [drainMana(state).log(`Finale of Devastation X=${x}: no target`)];
-        return [drainMana(ns).enterBattlefield(cardKey)
-          .log(`Finale of Devastation X=${x} → ${best.def.name} (MV ${best.mv}) from library`)];
-      } else {
+        // Return from graveyard
         let s = state.clone();
         s._ensurePlayers();
         s.players[0] = s.players[0].clone();
-        const gyIdx = s.players[0].graveyard.indexOf(best.name);
-        if (gyIdx >= 0) s.players[0].graveyard = [...s.players[0].graveyard.slice(0,gyIdx), ...s.players[0].graveyard.slice(gyIdx+1)];
-        s = drainMana(s).enterBattlefield(best.ck);
-        return [s.log(`Finale of Devastation X=${x} → ${best.def.name} (MV ${best.mv}) from graveyard`)];
+        const gyIdx = s.players[0].graveyard.indexOf(name);
+        if (gyIdx < 0) continue;
+        s.players[0].graveyard = [...s.players[0].graveyard.slice(0,gyIdx), ...s.players[0].graveyard.slice(gyIdx+1)];
+        s = drainMana(s).enterBattlefield(ck);
+        results.push(s.log(`Finale of Devastation X=${x} → ${def.name} (MV ${mv}) from graveyard`));
       }
+      return results.length ? results : [drainMana(state).log(`Finale of Devastation X=${x}: no target`)];
     },
   },
   natural_order: {
     name: 'Natural Order', types: ['sorcery'], subtypes: [], cost: '2GG',
     // Oracle: Sacrifice a green creature as additional cost. Search → any green creature onto BF → shuffle.
-    // C-23 fix: previously branched over all green library creatures. Now picks best target.
     castFn(state) {
       var cards = CARDS;
+      const results = [];
       const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
                             'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
       const greenCreatures = state.creatures().filter(c => {
         const ck = Object.keys(cards).find(k => cards[k].name === c.name);
-        return cards[ck]?.cost?.includes('G');
+        const def = ck ? cards[ck] : null;
+        return def?.cost?.includes('G');
       });
       if (greenCreatures.length === 0) return [];
       const expendable = greenCreatures.filter(c => !KEEP.has(c.name));
       const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
       const afterSac = state.removeFromBattlefield(sacCreature.id, 'graveyard');
       if (!afterSac) return [];
+      // Resolve sacCreature's card key once for duplicate-fetch filtering
       const sacCreatureKey = Object.keys(cards).find(k => cards[k].name === sacCreature.name) ?? null;
-      let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of afterSac.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
+        // Never fetch the same card that was just sacrificed — it's always a net-zero play.
         if (sacCreatureKey && ck === sacCreatureKey) continue;
         const def = cards[ck];
-        if (!def || !def.types.includes('creature') || !def.cost?.includes('G')) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def }; }
+        if (!def || !def.types.includes('creature')) continue;
+        if (!def.cost?.includes('G')) continue;
+        const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(ns.enterBattlefield(cardKey).log(`Natural Order: sac ${sacCreature.name} → fetch ${def.name}`));
       }
-      if (!best) return [afterSac.log('Natural Order: no green creature in library')];
-      const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [afterSac.log('Natural Order: no green creature in library')];
-      return [ns.enterBattlefield(cardKey).log(`Natural Order: sac ${sacCreature.name} → fetch ${best.def.name}`)];
+      return results.length ? results : [afterSac.log('Natural Order: no green creature in library')];
     },
   },
   eldritch_evolution: {
@@ -5833,125 +4492,80 @@ var CARDS = {
     // to maximise the target MV ceiling. A 1-drop dork (MV 1) lets us fetch
     // MV ≤ 3. A 2-drop lets us fetch MV ≤ 4. A 3-drop lets us fetch MV ≤ 5
     // (Ashaya, Temur Sabertooth, etc.).
-    //
-    // PERF NOTE (2026-04-30): the inner loop previously called
-    // `afterSac.searchLibraryFor(k => k === ck)` per eligible target, doing a
-    // redundant state.clone every iteration. With 7 creatures on bf and ~30
-    // eligible targets that's 7 × 30 = 210 redundant clones per call. The
-    // optimisation: do `enterBattlefield(ck)` (which clones internally) then
-    // patch the library on that clone via copy-on-write. Same story as
-    // Nature's Rhythm above. Empirically halves the per-call cost.
-    //
-    // PERF NOTE (2026-05-07 C-23): the previous version branched over every
-    // valid library creature for each sacrifice candidate — producing up to
-    // 192 child states in hands with 5 sac candidates × 40 eligible targets.
-    // In BFS this causes exponential blowup. Fix: for each sac candidate,
-    // pick only the single best fetch target (highest TUTOR_PRIORITY_SCORE
-    // within MV ≤ sacMV+2) — mirrors how Green Sun's Zenith and Chord of
-    // Calling are modelled. The solver is still correct because it explores
-    // every sac candidate; the branching is now O(unique sac names) ≤ 6.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
       const results = [];
 
+      // Must have at least one creature to sacrifice
       const creatures = state.creatures();
       if (creatures.length === 0) return [];
 
-      // Pre-build a NAME → key map
-      const nameToKey = new Map();
-      for (const k of Object.keys(cards)) {
-        const d = cards[k];
-        if (d?.name) nameToKey.set(d.name, k);
-      }
-
-      // Pre-scan library once for all eligible creatures, scored by priority.
-      // Key: cardKey → { def, mv, score } for eligible fetch targets.
-      const libraryCreatures = [];
-      const seenLib = new Set();
-      for (const ck of state.players[0].library) {
-        if (seenLib.has(ck) || ck === 'unknown') continue;
-        seenLib.add(ck);
-        const def = cards[ck];
-        if (!def?.types.includes('creature') || !def.cost) continue;
-        const parsed = pc(def.cost);
-        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        libraryCreatures.push({ ck, def, mv, score });
-      }
-      // Sort descending by score so the first valid candidate is always the best.
-      libraryCreatures.sort((a, b) => b.score - a.score);
-
+      // For each sacrificeable creature, generate targets reachable from that sacrifice
+      // Use NAME_TO_KEY for O(1) lookups (pre-built in actions.js)
       const seen_sac = new Set();
       for (const sacPerm of creatures) {
+        // Avoid duplicate sacrifice choices (e.g. two Llanowar Elves)
         if (seen_sac.has(sacPerm.name)) continue;
         seen_sac.add(sacPerm.name);
 
-        const sacKey = nameToKey.get(sacPerm.name);
+        // Determine sacrificed creature's MV
+        const sacKey = Object.keys(cards).find(k => cards[k].name === sacPerm.name);
         const sacDef = sacKey ? cards[sacKey] : null;
         if (!sacDef?.cost) continue;
         const sacParsed = pc(sacDef.cost);
         const sacMV = sacParsed.generic + Object.values(sacParsed.colored).reduce((a, b) => a + b, 0);
+
+        // X = 2 + sacrificed MV
         const maxMV = sacMV + 2;
 
+        // Sacrifice the creature
         const afterSac = state.removeFromBattlefield(sacPerm.id, 'graveyard');
         if (!afterSac) continue;
 
-        // Pick the highest-priority valid target in library (first after sort).
-        // Skip the sacrificed creature itself and STAX cards.
-        const best = libraryCreatures.find(({ ck, mv }) =>
-          mv <= maxMV && ck !== sacKey && !isStax(ck)
-        );
-        if (!best) continue;
-        const { ck, def, mv: fetchMV } = best;
-
-        let ns = afterSac.enterBattlefield(ck);
-        ns._ensurePlayers();
-        ns.players[0] = ns.players[0].clone();
-        const idx = ns.players[0].library.indexOf(ck);
-        if (idx !== -1) {
-          ns.players[0].library = [
-            ...ns.players[0].library.slice(0, idx),
-            ...ns.players[0].library.slice(idx + 1),
-          ];
+        // Search library for creatures with MV ≤ maxMV
+        const seen_target = new Set();
+        for (const ck of afterSac.players[0].library) {
+          if (seen_target.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+          seen_target.add(ck);
+          // Never fetch the same card that was just sacrificed — it's always a net-zero
+          // or losing play (lose one permanent, gain one identical permanent = wasted spell).
+          if (sacKey && ck === sacKey) continue;
+          const def = cards[ck];
+          if (!def || !def.types.includes('creature')) continue;
+          if (!def.cost) continue;
+          const parsed = pc(def.cost);
+          const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+          if (mv > maxMV) continue;
+          const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === ck);
+          if (!cardKey) continue;
+          // Put onto battlefield, exile Eldritch Evolution (it exiles itself per oracle)
+          let ns2 = ns.enterBattlefield(cardKey);
+          ns2 = ns2.addToGraveyard(0, 'Eldritch Evolution'); // simplify: treat as graveyard
+          results.push(ns2.log(
+            `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${mv})`
+          ));
         }
-        ns.players[0].graveyard = [...ns.players[0].graveyard, 'Eldritch Evolution'];
-        results.push(ns.log(
-          `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${fetchMV})`
-        ));
       }
       return results;
     },
   },
   sylvan_scrying: {
     name: 'Sylvan Scrying', types: ['sorcery'], subtypes: [], cost: '1G',
-    // C-23 fix: previously branched over all lands in library (~20 results).
-    // Now picks the single highest-priority land not already on the battlefield.
     castFn(state) {
       var cards = CARDS;
-      const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
-                             'wirewood_lodge','geier_reach_sanitarium','boseiju',
-                             'emergence_zone','forest'];
-      const UNIQUE_LANDS = new Set(['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
-                                    'wirewood_lodge','geier_reach_sanitarium','boseiju','emergence_zone']);
-      const onBF = new Set(state.battlefield.map(p =>
-        Object.keys(cards).find(k => cards[k].name === p.name)).filter(Boolean));
-      let best = null;
+      const results = [];
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('land')) continue;
-        if (UNIQUE_LANDS.has(ck) && onBF.has(ck)) continue;
-        const pri = LAND_PRIORITY.indexOf(ck);
-        const score = pri === -1 ? 99 : pri;
-        if (!best || score < best.score) best = { ck, def, score };
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(ns.addToHand(cardKey).log(`Sylvan Scrying → find ${def.name}`));
       }
-      if (!best) return [state.log('Sylvan Scrying: no land in library')];
-      const { state: ns, cardKey } = state.searchLibraryFor(k => k === best.ck);
-      if (!cardKey) return [state.log('Sylvan Scrying: no land in library')];
-      return [ns.addToHand(cardKey).log(`Sylvan Scrying → find ${best.def.name}`)];
+      return results.length ? results : [state.log('Sylvan Scrying: no land in library')];
     },
   },
   natures_rhythm: {
@@ -5959,21 +4573,12 @@ var CARDS = {
     // Oracle: Search library for creature with MV ≤ X → battlefield. Shuffle.
     // Harmonize: recastable from graveyard (ignored for solver simplicity).
     // Essentially a second Green Sun's Zenith — same implementation.
-    //
-    // PERF NOTE (2026-04-30): eliminated redundant state.clone per target.
-    // PERF NOTE (2026-05-07 C-23b): like Eldritch Evolution, this previously
-    // branched over every library creature with MV ≤ X. With X=3 and 15+
-    // eligible candidates that creates a 15-way fan-out per cast. Fixed to
-    // select only the single highest-TUTOR_PRIORITY_SCORE target, matching
-    // Green Sun's Zenith / Chord of Calling / Eldritch Evolution behaviour.
     castFn(state) {
       var cards = CARDS;
       var { parseCost: pc } = _GSM;
+      const results = [];
+      // castFn receives state AFTER dispatch pays the base cost — remaining mana = X.
       const x = state.mana.total();
-
-      // Build sorted eligible list once (descending score) and pick the best.
-      let best = null;
-      let bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -5981,26 +4586,14 @@ var CARDS = {
         const def = cards[ck];
         if (!def || !def.types.includes('creature') || !def.cost) continue;
         const parsed = pc(def.cost);
-        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
         if (mv > x) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def, mv }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(drainMana(ns).enterBattlefield(cardKey)
+          .log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`));
       }
-
-      if (!best) return [drainMana(state).log(`Nature's Rhythm X=${x}: no eligible creature`)];
-
-      const { ck, def, mv } = best;
-      let ns = drainMana(state).enterBattlefield(ck);
-      ns._ensurePlayers();
-      ns.players[0] = ns.players[0].clone();
-      const idx = ns.players[0].library.indexOf(ck);
-      if (idx !== -1) {
-        ns.players[0].library = [
-          ...ns.players[0].library.slice(0, idx),
-          ...ns.players[0].library.slice(idx + 1),
-        ];
-      }
-      return [ns.log(`Nature's Rhythm X=${x} → ${def.name} (MV ${mv})`)];
+      return results.length ? results : [drainMana(state).log(`Nature's Rhythm X=${x}: no eligible creature`)];
     },
   },
   turntimber_symbiosis: {
@@ -6008,88 +4601,28 @@ var CARDS = {
     // Oracle: Look at top 7 cards, put a creature onto battlefield, rest on bottom.
     // Simplified: treat as a tutor for any creature in library (non-deterministic top-7
     // ignored; in a 99-card deck the best creature is effectively always in top 7).
-    // C-23b: select only the highest-priority target — prevents O(library) fan-out.
-    //
-    // DFC land back: Turntimber, Serpentine Wood — {T}: Add {G}; enters tapped unless
-    // you pay 3 life. Playable as a land drop from hand via handAbilities.
+    // Fetches the highest-priority missing combo piece.
     castFn(state) {
       var cards = CARDS;
-      let best = null, bestScore = -Infinity;
+      const results = [];
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
         seen.add(ck);
         const def = cards[ck];
         if (!def || !def.types.includes('creature')) continue;
-        const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-        if (score > bestScore) { bestScore = score; best = { ck, def }; }
+        const { state: ns, cardKey } = state.searchLibraryFor(k => k === ck);
+        if (!cardKey) continue;
+        results.push(ns.enterBattlefield(cardKey)
+          .log(`Turntimber Symbiosis → ${def.name}`));
       }
-      if (!best) return [state.log('Turntimber Symbiosis: no creature found')];
-      const { ck, def } = best;
-      let ns = state.enterBattlefield(ck);
-      ns._ensurePlayers();
-      ns.players[0] = ns.players[0].clone();
-      const idx = ns.players[0].library.indexOf(ck);
-      if (idx !== -1) {
-        ns.players[0].library = [
-          ...ns.players[0].library.slice(0, idx),
-          ...ns.players[0].library.slice(idx + 1),
-        ];
-      }
-      return [ns.log(`Turntimber Symbiosis → ${def.name}`)];
-    },
-    handAbilities: {
-      play_as_land: {
-        label: 'Play Turntimber, Serpentine Wood (land side, tapped or pay 3 life)',
-        fn(state, cardKey) {
-          if (state.landDrops <= 0) return null;
-          const s0 = state.removeFromHand(cardKey); if (!s0) return null;
-          const s1 = s0.clone(); s1.landDrops--;
-          // Prefer tapped (no cost) as default — the untapped branch costs 3 life
-          // and the solver's heuristic will handle the tradeoff.
-          // Return the tapped branch (safe default).
-          const sB = s1.enterBattlefield('turntimber_land', { tapped: true });
-          return sB.log('Play Turntimber, Serpentine Wood → enters tapped');
-        },
-      },
+      return results.length ? results : [state.log('Turntimber Symbiosis: no creature found')];
     },
   },
-
-  // Turntimber, Serpentine Wood — back face of Turntimber Symbiosis DFC
-  // Entered directly via the handAbility above or via enterBattlefield('turntimber_land').
-  turntimber_land: {
-    name: 'Turntimber, Serpentine Wood', types: ['land'], subtypes: ['Forest'], cost: null,
-    tapForMana: simpleTap('{G}', [['G', 1]]),
-  },
-
-  bridgeworks_battle: {
-    name: 'Bridgeworks Battle', types: ['sorcery'], subtypes: [], cost: '2G',
-    intentionalStub: true,  // fight effect targets opponent creatures — not modeled
-    // DFC land back: Tanglespan Bridgeworks — same pattern as Turntimber Symbiosis.
-    // {T}: Add {G}. Enters tapped unless 3 life paid.
-    handAbilities: {
-      play_as_land: {
-        label: 'Play Tanglespan Bridgeworks (land side, enters tapped)',
-        fn(state, cardKey) {
-          if (state.landDrops <= 0) return null;
-          const s0 = state.removeFromHand(cardKey); if (!s0) return null;
-          const s1 = s0.clone(); s1.landDrops--;
-          const sB = s1.enterBattlefield('tanglespan_bridgeworks', { tapped: true });
-          return sB.log('Play Tanglespan Bridgeworks → enters tapped');
-        },
-      },
-    },
-  },
-
-  // Tanglespan Bridgeworks — back face of Bridgeworks Battle DFC
-  tanglespan_bridgeworks: {
-    name: 'Tanglespan Bridgeworks', types: ['land'], subtypes: ['Forest'], cost: null,
-    tapForMana: simpleTap('{G}', [['G', 1]]),
-  },
+  bridgeworks_battle:     { name:'Bridgeworks Battle',       types:['sorcery'],  subtypes:[], cost:'2G'   },
 
   // ─── Yeva commander ───────────────────────────────────────────────────────
   yeva: {
-    externallyImplemented: true,  // [drift-detector] flash + flash-grant in actions.js canCastNow()
     name: 'Yeva, Nature\'s Herald',
     types: ['creature'], subtypes: ['Elf', 'Shaman'],
     cost: '2GG', power: 4, toughness: 4,
@@ -6319,36 +4852,6 @@ function ashayaOut(state) {
   return hasPerm(state, 'Ashaya, Soul of the Wild');
 }
 
-// True if some non-Ranger nontoken creature on the battlefield can tap to add
-// at least 1 green mana right now (untapped, no summoning sickness, and
-// `tapForMana` produces a state with at least 1 more green pip in the pool).
-//
-// Used by the mana-neutral Ashaya+Ranger detector (combos 1 & 41): the
-// Ranger-bounce loop is mana-neutral on its own, but it requires *some*
-// other creature able to tap for {G} per cycle to fund the Ranger recast.
-// If no such creature exists, the loop cannot iterate even once.
-//
-// Implementation note: cards.js's `tapForMana(state, perm)` returns an array
-// of successor states (each representing one option for the tap); we
-// compare the green count in each successor's mana pool to the original
-// state's pool. If any option produces ≥1 net green, the creature qualifies.
-function hasGreenTapper(state) {
-  const beforeG = state.mana?.G ?? 0;
-  return state.creatures().some(c => {
-    if (c.tapped || c.summoningSick) return false;
-    if (c.name === 'Quirion Ranger' || c.name === 'Scryb Ranger') return false;
-    if (c.name === 'Ashaya, Soul of the Wild') return false; // Ashaya is the combo piece
-    const def = CARDS[c.cardKey];
-    if (!def?.tapForMana) return false;
-    let successors;
-    try { successors = def.tapForMana(state, c) || []; } catch { return false; }
-    for (const s2 of successors) {
-      if (((s2.mana?.G ?? 0) - beforeG) >= 1) return true;
-    }
-    return false;
-  });
-}
-
 // ── Detector list ─────────────────────────────────────────────────────────
 
 var DETECTORS = [
@@ -6396,7 +4899,7 @@ var DETECTORS = [
   },
 
   {
-    name: 'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]',
+    name: 'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)',
     description:
       'With Ashaya, Scryb Ranger is a Forest and bounces itself to untap the mana dork. ' +
       'Recast Scryb Ranger for {1G}. Net +{G}/cycle with dork producing ≥3G. ' +
@@ -6422,43 +4925,6 @@ var DETECTORS = [
           default: return false;
         }
       });
-    },
-  },
-
-  // ══════════════════════════════════════════════════════════════════════════
-  //  ASHAYA + RANGER (Quirion or Scryb) — MANA-NEUTRAL ETB LOOP  (COMBO 1, 41)
-  //
-  //  When the available mana dork only produces 1G (e.g. Llanowar Elves), the
-  //  Ranger-bounce loop produces zero net mana but generates infinite ETB,
-  //  landfall (each Forest-Ranger entry), LTB, and storm count. This is
-  //  exactly what decklist_combos.txt #1 and #41 describe under "Results:".
-  //
-  //  Why two detectors? The mana-POSITIVE variants above fire when the dork
-  //  is large enough to fund the Ranger's recast cost ({G} for Quirion,
-  //  {1G} for Scryb). When the dork is small, the loop is still meaningful
-  //  for win conditions that consume ETBs (Beast Whisperer cascade, Lotus
-  //  Cobra landfall mana, Tireless Provisioner tokens, etc.) — it just
-  //  doesn't make infinite raw mana on its own.
-  //
-  //  Strict superset relationship: every state where a positive Ashaya+
-  //  Ranger detector fires ALSO satisfies this neutral one. The detector
-  //  priority order in DETECTORS.sort() ensures the positive variants run
-  //  first, so this neutral detector only "wins" the priority race when
-  //  no positive variant qualifies — which is precisely when we want it.
-  // ══════════════════════════════════════════════════════════════════════════
-  {
-    name: 'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]',
-    loopType: LOOP_TYPE.MANA_NEUTRAL_ETB,
-    description:
-      'With Ashaya, Quirion or Scryb Ranger is a Forest and bounces itself to ' +
-      'untap any creature. Recast costs {G}/{1G}; if the available green tapper ' +
-      'produces only {G}, the loop is mana-neutral but generates infinite ETB / ' +
-      'landfall / LTB / storm. Combo 1 (Quirion) and combo 41 (Scryb + Joraga) ' +
-      'both reduce to this base form.',
-    check(state) {
-      if (!ashayaOut(state)) return false;
-      if (!quirionAvailable(state) && !scrybAvailable(state)) return false;
-      return hasGreenTapper(state);
     },
   },
 
@@ -6886,7 +5352,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]',
+    name: 'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22]',
     description:
       "With a haste enabler, bounced creatures re-enter with haste and can tap immediately. " +
       "Enablers: Concordant Crossroads, Thousand-Year Elixir, Surrak and Goreclaw. " +
@@ -6926,7 +5392,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]',
+    name: 'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 57]',
     description:
       "Hyrax ETB untaps the mana dork. Sabertooth bounces Hyrax ({1G}), recast ({2G}). " +
       "Total loop cost {4G}+{1}. Need dork producing ≥5G. " +
@@ -6972,7 +5438,6 @@ var DETECTORS = [
           case 'Circle of Dreams Druid':      return creatureCount(state) >= 5;
           case 'Elvish Archdruid':            return elfCount(state) >= 5;
           case 'Wirewood Channeler':          return elfCount(state) >= 5;
-          case "Karametra's Acolyte":         return devotionG(state) >= 5;
           case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 5; // Combo 38: break-even at 5
           case 'Topiary Lecturer':            return (p.power || 0) >= 5; // same break-even logic
@@ -7010,13 +5475,9 @@ var DETECTORS = [
       if (!hasPerm(state, 'Earthcraft')) return false;
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false; // ability must not be exhausted this turn
-      // Earthcraft requires a BASIC land target — Ashaya creatures are Forests but not basic.
-      // l.basic is not a Permanent field; use the card definition's isBasic flag instead.
-      // l.name === 'Forest' is a reliable fallback since 'Forest' is the only named basic
-      // land in this decklist, but cards[l.cardKey]?.isBasic is the canonical check.
-      var cards = CARDS;
+      // Earthcraft requires a BASIC land target — Ashaya creatures are Forests but not basic
       const hasBasicForest = state.lands().some(l =>
-        l.name === 'Forest' || cards[l.cardKey]?.isBasic
+        (l.name === 'Forest' || (l.subtypes && l.subtypes.includes('Forest') && l.basic))
       );
       if (!hasBasicForest) return false;
       // Need a mana dork (other than Ranger) to net positive
@@ -7821,33 +6282,18 @@ var WIN_CONDITIONS = [
     check(state) {
       if (!inHandOrField(state, 'Geier Reach Sanitarium', 'geier_reach')) return false;
       if (!inHandOrField(state, 'Endurance', 'endurance')) return false;
-      // [O-5] Helper: is an instant in hand?  Instants are not on the battlefield;
-      // they're cast from hand at the moment of use.  Beast Within and Legolas's
-      // Quick Reflexes are the kill-spells required by the Kogla and Ashaya
-      // variants — without them, the variant can't actually fire even though
-      // the creatures are present.
-      const inHand = (key) => state.hand && state.hand.includes(key);
-
       // Need a way to bounce/remove Endurance after its ETB is on the stack
       const hasBouncer =
-        // Temur variant: Sabertooth bounces Endurance directly with its activated
-        // ability ({1G}) — no kill spell needed because Endurance returns to hand.
+        // Temur variant: Sabertooth bounces Endurance
         inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
-        // Kogla variant: Endurance is killed (via Beast Within or LQR) while its
-        // ETB is on the stack.  Eternal Witness then returns Endurance from
-        // graveyard.  Kogla bounces Witness.  REQUIRES a kill spell.
+        // Kogla variant: Kogla bounces Eternal Witness, Witness returns Endurance
         (inHandOrField(state, 'Kogla, the Titan Ape', 'kogla') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness') &&
-         (inHand('beast_within') || inHand('legolas_quick_reflexes'))) ||
-        // Ashaya variant: Ranger bounces Endurance (Endurance is a Forest via
-        // Ashaya).  LQR's tap-trigger damages Endurance + Ranger to kill them
-        // while ETBs are on stack.  REQUIRES Legolas's Quick Reflexes in hand
-        // — Ashaya/Ranger alone cannot kill Endurance, and the variant's
-        // graveyard-reset trick fundamentally depends on the kill effect.
+         inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
+        // Ashaya variant: Ranger bounces Endurance (Endurance is a Forest via Ashaya),
+        // LQR provides tap-damage to kill Endurance while ETB on stack
         (inHandOrField(state, 'Ashaya, Soul of the Wild', 'ashaya') &&
          (inHandOrField(state, 'Quirion Ranger', 'quirion_ranger') ||
-          inHandOrField(state, 'Scryb Ranger', 'scryb_ranger')) &&
-         inHand('legolas_quick_reflexes'));
+          inHandOrField(state, 'Scryb Ranger', 'scryb_ranger')));
       if (!hasBouncer) return false;
       // Need a way to untap Geier Reach each cycle (any land untapper in the combo already handles this)
       const hasUntapper =
@@ -7867,20 +6313,13 @@ var WIN_CONDITIONS = [
       if (!hasPerm(state, 'Geier Reach Sanitarium')) return false;
       // Endurance must be in hand or on field (it gets cast as part of the sequence)
       if (!inHandOrField(state, 'Endurance', 'endurance')) return false;
-      // [O-5] Same kill-spell requirement as check() above.  The Kogla and
-      // Ashaya variants need Beast Within or Legolas's Quick Reflexes in hand
-      // to actually execute — without it, the variant is structurally
-      // incomplete even when all creatures are on the battlefield.
-      const inHand = (key) => state.hand && state.hand.includes(key);
       // Bouncer must be on battlefield
       const bouncerReady =
         hasPerm(state, 'Temur Sabertooth') ||
         (hasPerm(state, 'Kogla, the Titan Ape') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness') &&
-         (inHand('beast_within') || inHand('legolas_quick_reflexes'))) ||
+         inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
         (hasPerm(state, 'Ashaya, Soul of the Wild') &&
-         (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger')) &&
-         inHand('legolas_quick_reflexes'));
+         (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger')));
       return bouncerReady;
     },
   },
@@ -8299,36 +6738,15 @@ var WIN_CONDITIONS = [
 
 /**
  * Check whether an infinite-mana combo is assembled.
- * Returns { achieved, name, description, loopType } or null.
- *
- * `loopType` is one of LOOP_TYPE.* values describing what the loop produces
- * (mana-positive, mana-neutral ETB/draw/LTB/storm). Used by checkVictory to
- * select win conditions whose prerequisites match the loop output.
+ * Returns { achieved, name, description } or null.
  */
-/**
- * Check whether an infinite-mana combo is assembled.
- * Returns { achieved, name, description, loopType } or null.
- *
- * `loopType` is one of LOOP_TYPE.* values describing what the loop produces
- * (mana-positive, mana-neutral ETB/draw/LTB/storm). Used by checkVictory to
- * select win conditions whose prerequisites match the loop output.
- *
- * [E11] Optional `present` (Set<string>) — when provided, detectors whose
- * prefilter rejects against this Set are skipped without calling check(),
- * cutting the per-node detector loop on hands that lack each combo's
- * required pieces. Caller must pass the post-equiv-expanded hand∪BF Set
- * (Solver.analyzeState() builds this; pass `analysis.present`).
- * When `present` is omitted, all detectors run (legacy behaviour).
- */
-function checkCombos(state, present) {
+function checkCombos(state) {
   for (const detector of DETECTORS) {
-    if (!_passesPrefilter(detector, present)) continue;
     if (detector.check(state)) {
       return {
         achieved:    true,
         name:        detector.name,
         description: detector.description,
-        loopType:    detector.loopType,  // O-1 wiring: forwarded to checkVictory
       };
     }
   }
@@ -8341,49 +6759,17 @@ function checkCombos(state, present) {
  *
  * The solver should call this instead of checkCombos so that it only declares
  * victory when the board can actually end the game, not merely loop forever.
- *
- * O-1 wiring: each WIN_CONDITION may declare `requiresLoopType` — an array of
- * LOOP_TYPE values it accepts. Default is [MANA_POSITIVE] (matches today's
- * behaviour: virtually every finisher needs infinite mana to pay activation
- * costs). The Draw Library win additionally accepts MANA_NEUTRAL_DRAW because
- * the loop itself draws the deck without needing extra mana.
- *
- * If a detector fires with loopType that no win condition accepts, checkVictory
- * returns the "infinite mana assembled but no win" sentinel — same as before,
- * preserving existing behaviour for unused loop types.
- *
- * [E11] Optional `present` (Set<string>) — same contract as checkCombos: if
- * provided, win conditions whose prefilter rejects against `present` are
- * skipped. Also forwarded to the inner checkCombos call when no pre-computed
- * `_infiniteMana` is supplied.
  */
-function checkVictory(state, _infiniteMana, present) {
+function checkVictory(state, _infiniteMana) {
   // [E3] Accept pre-computed checkCombos result to avoid redundant call in hot path.
-  // [E11] Forward `present` to the lazy checkCombos call so the inner detector
-  // loop also benefits from the prefilter when checkVictory is called standalone.
-  const infiniteMana = _infiniteMana !== undefined ? _infiniteMana : checkCombos(state, present);
+  const infiniteMana = _infiniteMana !== undefined ? _infiniteMana : checkCombos(state);
   if (!infiniteMana) return null;
-
-  // Loop type from the firing detector. If undefined (e.g. caller passed in a
-  // pre-computed result from older code), default to MANA_POSITIVE so the
-  // existing behaviour is preserved.
-  const detectorLoopType = infiniteMana.loopType ?? LOOP_TYPE.MANA_POSITIVE;
 
   // Two-pass: prefer fully-deployed wins (stop the search) over
   // undeployed wins (pieces in hand, need setup steps).
   let bestUndeployed = null;
 
   for (const wc of WIN_CONDITIONS) {
-    // O-1 wiring: skip win conditions whose prerequisites don't match the
-    // loop type that fired. Default = [MANA_POSITIVE] (today's behaviour).
-    // We use the cached `_acceptedLoopTypes` Set stamped at module load.
-    if (!wc._acceptedLoopTypes.has(detectorLoopType)) continue;
-
-    // [E11] Prefilter on the present set — skips wcs whose required keys
-    // are not in the hand∪BF (post-equiv-expansion). Falls through to
-    // wc.check(state) when no prefilter is registered for this wc.
-    if (!_passesPrefilter(wc, present)) continue;
-
     if (!wc.check(state)) continue;
 
     const deployed = typeof wc.deployed === 'function' ? wc.deployed(state) : true;
@@ -8438,7 +6824,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Green Mana (Ashaya + Quirion Ranger + Badgermole Cub + Creature Dork)':['ashaya','quirion_ranger','badgermole_cub'],
   'Infinite Green Mana (Survival/Fauna Shaman → Ashaya + Ranger + Big Dork)':     ['survival_fittest','ashaya','quirion_ranger'],
   'Infinite Green Mana (Ashaya + Quirion Ranger + Mana Dork ≥2G)':               ['ashaya','quirion_ranger'],
-  'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]':                 ['ashaya','scryb_ranger'],
+  'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)':                 ['ashaya','scryb_ranger'],
   "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":            ['ashaya','hope_tender','gaeas_cradle'],
   'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':   ['ashaya','hope_tender','circle_of_dreams_druid'],
   'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':                   ['ashaya','hope_tender','marwyn'],
@@ -8484,251 +6870,6 @@ for (const d of [...DETECTORS, ...WIN_CONDITIONS]) {
   d.requiredKeys = DETECTOR_REQUIRED_KEYS[d.name] ?? [];
 }
 
-// ── [E11] Hot-path prefilter for checkCombos / checkVictory ───────────────
-//
-// Per-detector "provably required" key gate, evaluated against the caller's
-// pre-built `present` Set (hand ∪ battlefield, post-equiv-expansion). The
-// prefilter MUST be a necessary condition for the detector's check() to
-// return true — i.e. if prefilter rejects, check() is guaranteed to also
-// reject. We hand-audit each entry against the corresponding `.check()`
-// source above; detectors NOT in the table run unconditionally (safe
-// default — same as old behaviour).
-//
-// Schema per entry: { all: string[], any: string[][] }
-//   all  = every key listed must be in `present` (post equiv-expansion)
-//   any  = each inner array is a disjunction; at least one of its keys
-//          must be in `present`
-//
-// Equivalence groups (FUNCTIONAL_EQUIVALENTS) are already expanded into
-// `present` by Solver.analyzeState() before checkCombos is called, so
-// e.g. listing 'temur_sabertooth' here also matches a board with Kogla,
-// and 'quirion_ranger' matches a board with Scryb Ranger. This is the
-// one place the prefilter intentionally relaxes — it's correct because
-// every check() that names one of these names also accepts the other
-// via the same equiv groups (verified by audit).
-//
-// CORRECTNESS NOTES (per-detector, with the line in check() that justifies):
-//
-// • Ashaya+QR/Scryb mana-dork detectors:  ashayaOut() AND quirionAvailable()
-//     ⇒ ashaya + quirion_ranger (≡ scryb_ranger via equiv group).
-// • Ashaya+Hope Tender variants:           ashayaOut() AND permReady('Hope Tender')
-//     ⇒ ashaya + hope_tender. The third piece (Cradle/Circle/Marwyn/Selvala/
-//     Nykthos) is not a hard prefilter requirement here — listing every
-//     variant separately keeps the prefilter strict.
-// • Earthcraft+Ashaya+QR:                  earthcraft + ashaya + quirion_ranger.
-// • Hyrax+Temur:                           temur_sabertooth + hyrax_tower_scout.
-// • Hyrax+Kogla:                           kogla + hyrax_tower_scout (Hyrax can
-//     be in hand or on field; both go into `present`).
-// • Tireless Provisioner+Ashaya+Ranger:    ashayaOut() AND tireless_provisioner +
-//     either ranger.
-// • Argothian Elder+Wirewood Lodge:        (argothian_elder OR ley_weaver) AND
-//     wirewood_lodge — equiv-grouped, so 'argothian_elder' suffices.
-// • Argothian Elder + Maze of Ith:         argothian_elder + maze_of_ith.
-// • Defiler win:                           defiler_of_vigor + (any ranger / bouncer / symbiote).
-// • Hitzel:                                geier_reach + endurance + (Temur OR (Kogla+EW)
-//     OR (Ashaya + (QR OR Scryb))). The post-equiv `present` accepts Kogla
-//     for `temur_sabertooth`, but the Ashaya+Ranger third variant breaks the
-//     temur_sabertooth requirement. Use an `any` group instead.
-// • Mikokoro:                              mikokoro + eternal_witness +
-//     (temur OR kogla) [equiv-grouped] + (noxious_revival OR elvish_reclaimer
-//     OR crop_rotation). Note: Reclaimer must be on BF in check(), but it is
-//     in `present` if on BF, so listing the key is sufficient.
-// • Win: Defiler:                          defiler_of_vigor.
-// • Win: Duskwatch / Finale / Bite:        single key, simple inclusion test.
-// • Win: Tutor for Finisher:               NO prefilter — too many disjunctive
-//     paths through tutors, draw engines, ETB chains, and a topDecked check.
-// • Win: Draw Library:                     NO prefilter — accepts Beast Whisperer
-//     OR Glademuse, each gated by additional bouncer/ranger requirements that
-//     are easier to encode as the existing check.
-// • Selvala + Quirion/Scryb + Power≥2:     selvala + quirion_ranger.
-// • Selvala+Cloudstone+Symbiote:           selvala + cloudstone_curio + wirewood_symbiote.
-// • Marwyn/Selvala + EW + Temur/Kogla + Vitalize/Charm: 4 keys all required, the
-//     spell is required in hand specifically — but `present` Set already covers
-//     hand. Use an `any` group for vitalize/emerald_charm.
-// • Survival/Fauna→Ashaya+Ranger:          survival_fittest (or fauna_shaman, but
-//     this detector specifically gates on Survival per its check) + ashaya +
-//     quirion_ranger. Conservative: only require ashaya + quirion_ranger.
-// • Beast Whisperer / Glademuse Draw:      beast_whisperer (or glademuse, but
-//     the detector at line 1386 specifically requires Beast Whisperer for the
-//     mana-neutral draw; Glademuse is documented but not gated). Conservative:
-//     require beast_whisperer for prefilter.
-// • Ashaya+Ranger neutral (combos 1, 41):  ashaya + (quirion_ranger OR scryb_ranger,
-//     equiv-grouped, so `quirion_ranger` alone in `all` is sufficient AFTER
-//     equiv-expansion) + a green tapper. Conservative: require ashaya + ranger;
-//     do NOT enumerate green tappers.
-// • Destiny Spinner+Ashaya+Ranger+Big:     destiny_spinner + ashaya + quirion_ranger.
-// • Ashaya+Magus+Source:                   ashaya + magus_of_the_candelabra.
-// • Ashaya+Argothian/Ley:                  ashaya + argothian_elder (equiv).
-// • Selvala+Quirion+Power:                 selvala + quirion_ranger.
-// • Kogla+Acolyte:                         kogla + karametra_acolyte.
-// • Temur+Symbiote+Circle:                 temur_sabertooth + wirewood_symbiote +
-//     circle_of_dreams_druid.
-// • Temur+Symbiote+Selvala:                temur_sabertooth + wirewood_symbiote +
-//     selvala.
-// • Temur+Haste+Dork:                      temur_sabertooth + (concordant_crossroads
-//     OR thousand_year_elixir OR surrak_goreclaw).
-// • Woodcaller+Temur:                      temur_sabertooth + woodcaller_automaton.
-// • Ashaya+QR+Arbor Elf:                   ashaya + quirion_ranger + arbor_elf.
-// • Ashaya+QR+Arbor Elf+Yavimaya:          ashaya + quirion_ranger + arbor_elf +
-//     yavimaya.
-// • Ashaya+QR+Badgermole:                  ashaya + quirion_ranger + badgermole_cub.
-//
-// If a detector is missing from this table, it falls through and runs
-// unconditionally — same as the pre-prefilter baseline. Adding entries is
-// purely additive and reversible.
-var _DETECTOR_PREFILTER = {
-  // Ashaya + Ranger family
-  'Infinite Green Mana (Ashaya + Quirion Ranger + Mana Dork ≥2G)':
-    { all: ['ashaya', 'quirion_ranger'] },
-  'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]':
-    { all: ['ashaya', 'scryb_ranger'] },
-  'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]':
-    { all: ['ashaya', 'quirion_ranger'] },  // equiv-expanded: covers Scryb Ranger too
-  'Infinite Green Mana (Ashaya + Quirion Ranger + Badgermole Cub + Creature Dork)':
-    { all: ['ashaya', 'quirion_ranger', 'badgermole_cub'] },
-  'Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Enchanted Land)':
-    { all: ['ashaya', 'quirion_ranger', 'arbor_elf'] },
-  'Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Yavimaya + Big Land)':
-    { all: ['ashaya', 'quirion_ranger', 'arbor_elf', 'yavimaya'] },
-  'Infinite Mana (Earthcraft + Ashaya + Quirion Ranger + Basic Forest)  [Combo Summary #4]':
-    { all: ['earthcraft', 'ashaya', 'quirion_ranger'] },
-  'Infinite Green Mana (Survival/Fauna Shaman → Ashaya + Ranger + Big Dork)':
-    { all: ['ashaya', 'quirion_ranger', 'survival_fittest'] },
-  'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)':
-    { all: ['ashaya', 'destiny_spinner', 'quirion_ranger'] },
-  'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]':
-    { all: ['ashaya', 'tireless_provisioner', 'quirion_ranger'] },
-
-  // Ashaya + Hope Tender family
-  "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":
-    { all: ['ashaya', 'hope_tender', 'gaeas_cradle'] },
-  'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':
-    { all: ['ashaya', 'hope_tender', 'circle_of_dreams_druid'] },
-  'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':
-    { all: ['ashaya', 'hope_tender', 'marwyn'] },
-  'Infinite Mana (Ashaya + Hope Tender + Selvala)  [COMBO 56]':
-    { all: ['ashaya', 'hope_tender', 'selvala'] },
-  'Infinite Mana (Ashaya + Hope Tender + Nykthos, devotion ≥4)  [COMBO 45]':
-    { all: ['ashaya', 'hope_tender', 'nykthos'] },
-
-  // Ashaya + Argothian Elder / Magus
-  'Infinite Mana (Ashaya + Argothian Elder / Ley Weaver)  [COMBO 6, 24]':
-    { all: ['ashaya', 'argothian_elder'] },  // equiv-grouped with ley_weaver
-  'Infinite Mana (Ashaya + Magus of the Candelabra + Source ≥3G)  [COMBO 32, 34, 36, 43, 47, 52, 60, 62]':
-    { all: ['ashaya', 'magus_of_the_candelabra'] },
-
-  // Argothian Elder + Wirewood Lodge / Maze of Ith (no Ashaya)
-  'Infinite Mana (Argothian Elder + Wirewood Lodge + Big Land)  [COMBO 40, 31, 42, 46]':
-    { all: ['argothian_elder', 'wirewood_lodge'] },  // equiv-grouped with ley_weaver
-  'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':
-    { all: ['argothian_elder', 'maze_of_ith'] },
-
-  // Selvala + Ranger / Cloudstone variants
-  'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':
-    { all: ['selvala', 'quirion_ranger'] },
-  'Infinite Mana (Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf)  [COMBO 53, 54, 55]':
-    { all: ['selvala', 'cloudstone_curio', 'wirewood_symbiote'] },
-
-  // Kogla + Acolyte (combo 2)
-  "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥6)  [COMBO 2]":
-    { all: ['kogla', 'karametra_acolyte'],
-      any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
-
-  // Temur Sabertooth + various engines
-  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid)  [COMBO 4, 5, 17]':
-    { all: ['temur_sabertooth', 'wirewood_symbiote', 'circle_of_dreams_druid'] },
-  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
-    { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
-  'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]':
-    { all: ['temur_sabertooth'],
-      any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
-  'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]':
-    { all: ['temur_sabertooth', 'hyrax_tower_scout'] },
-  'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]':
-    { all: ['kogla', 'hyrax_tower_scout'] },
-  'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
-    { all: ['temur_sabertooth', 'woodcaller_automaton'] },
-
-  // Marwyn / Selvala + Eternal Witness + Temur/Kogla + Vitalize/Charm
-  'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]':
-    { all: ['marwyn', 'eternal_witness', 'temur_sabertooth'],
-      any: [['vitalize', 'emerald_charm']] },
-  'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]':
-    { all: ['marwyn', 'eternal_witness', 'kogla'],
-      any: [['vitalize', 'emerald_charm']] },
-  'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]':
-    { all: ['selvala', 'eternal_witness', 'temur_sabertooth'],
-      any: [['vitalize', 'emerald_charm']] },
-  'Infinite Mana (Selvala + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 44]':
-    { all: ['selvala', 'eternal_witness', 'kogla'],
-      any: [['vitalize', 'emerald_charm']] },
-
-  // Beast Whisperer draw engine (mana-neutral)
-  'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':
-    { all: ['beast_whisperer'] },
-
-  // ── Win Conditions ──────────────────────────────────────────────────────
-  "Win: Geier Reach Sanitarium Mill (Hitzel's Sequence)":
-    { all: ['geier_reach', 'endurance'],
-      // 3 variants: Temur, Kogla+Witness, Ashaya+Ranger
-      any: [['temur_sabertooth', 'kogla', 'ashaya']] },
-  'Win: Duskwatch Recruiter (find all creatures)':
-    { all: ['duskwatch_recruiter'] },
-  'Win: Finale of Devastation X≥10':
-    { all: ['finale_of_devastation'] },
-  'Win: Infectious Bite (poison counters)':
-    { all: ['infectious_bite'] },
-  'Win: Mikokoro Mill Line':
-    { all: ['mikokoro', 'eternal_witness'],
-      any: [['temur_sabertooth', 'kogla'],
-            ['noxious_revival', 'elvish_reclaimer', 'crop_rotation']] },
-  'Win: Defiler of Vigor (infinite +1/+1 counters)':
-    { all: ['defiler_of_vigor'],
-      any: [['quirion_ranger', 'scryb_ranger', 'temur_sabertooth', 'kogla', 'wirewood_symbiote']] },
-  // 'Win: Tutor for Finisher' and 'Win: Draw Library' have too many disjunctive
-  // paths to safely prefilter — they fall through and run unconditionally.
-};
-
-// Stamp _prefilterAll / _prefilterAny on each detector at load.
-// Detectors not in _DETECTOR_PREFILTER get null prefilters (match-all behaviour).
-for (const d of [...DETECTORS, ...WIN_CONDITIONS]) {
-  const pf = _DETECTOR_PREFILTER[d.name];
-  d._prefilterAll = pf?.all ?? null;
-  d._prefilterAny = pf?.any ?? null;
-}
-
-/**
- * [E11] Test whether the caller's `present` Set satisfies a detector's
- * prefilter requirements. Returns true when:
- *   - the detector has no prefilter (always run), OR
- *   - every key in `_prefilterAll` is in `present`, AND
- *   - for every group in `_prefilterAny`, at least one key is in `present`.
- * `present` is the post-equiv-expanded hand∪battlefield Set built by
- * Solver.analyzeState() — keep that contract or this filter can wrongly
- * skip detectors. When `present` is null/undefined, returns true (no skip).
- */
-function _passesPrefilter(detector, present) {
-  if (!present) return true;
-  const all = detector._prefilterAll;
-  if (all) {
-    for (let i = 0; i < all.length; i++) {
-      if (!present.has(all[i])) return false;
-    }
-  }
-  const any = detector._prefilterAny;
-  if (any) {
-    for (let i = 0; i < any.length; i++) {
-      const group = any[i];
-      let hit = false;
-      for (let j = 0; j < group.length; j++) {
-        if (present.has(group[j])) { hit = true; break; }
-      }
-      if (!hit) return false;
-    }
-  }
-  return true;
-}
-
 // [E4] Sort DETECTORS by empirical hit frequency so checkCombos short-circuits
 // on the most common combos first.  Measured across the full test suite:
 //   #1  Ashaya + Quirion Ranger           ~64 K hits
@@ -8745,13 +6886,6 @@ var _DETECTOR_PRIORITY = new Map([
   ['Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Enchanted Land)',                                   2],
   ['Infinite Mana (Ashaya + Magus of the Candelabra + Source ≥3G)  [COMBO 32, 34, 36, 43, 47, 52, 60, 62]',     3],
   ['Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)',                                                  4],
-  // The mana-neutral Ashaya+Ranger detector is a STRICT SUPERSET of every
-  // more-specific Ashaya+Ranger detector (mana-positive variants, Earthcraft,
-  // Lotus Cobra, Tireless Provisioner). It must run last so the more
-  // informative classification wins the priority race. We use a priority
-  // higher than the unlisted-detector default (999) so this runs after every
-  // detector that doesn't have an explicit priority entry.
-  ['Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]',                               9999],
 ]);
 DETECTORS.sort((a, b) => {
   const pa = _DETECTOR_PRIORITY.get(a.name) ?? 999;
@@ -8782,33 +6916,8 @@ for (const det of DETECTORS) {
   if (det.loopType) continue; // detector already declared
   det.loopType = _NEUTRAL_DETECTOR_TYPES.get(det.name) ?? LOOP_TYPE.MANA_POSITIVE;
 }
-
-// ── Win-condition acceptance stamping (O-1 wiring) ────────────────────────
-// Each win condition declares which detector loopType(s) satisfy its
-// prerequisites. Default = MANA_POSITIVE only — virtually every finisher
-// (Hitzel's, Duskwatch, Finale, Mikokoro, etc.) needs infinite mana to pay
-// per-iteration costs. The Draw Library win additionally accepts
-// MANA_NEUTRAL_DRAW because the loop itself draws the deck (Beast Whisperer
-// triggers on creature casts paid for with the same {G} the loop recovers).
-//
-// To opt a future win condition in to a non-default loop type, declare
-// `requiresLoopType: ['mana_positive', 'mana_neutral_etb']` on the win
-// condition object — the array is normalized to a Set here.
-var _DEFAULT_WC_REQUIRES = [LOOP_TYPE.MANA_POSITIVE];
-var _WIN_CONDITION_LOOP_TYPES = new Map([
-  ['Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)',
-   [LOOP_TYPE.MANA_POSITIVE, LOOP_TYPE.MANA_NEUTRAL_DRAW]],
-]);
 for (const wc of WIN_CONDITIONS) {
   if (!wc.loopType) wc.loopType = LOOP_TYPE.WIN_CONDITION;
-  // Author can override via `requiresLoopType` on the object literal; otherwise
-  // fall back to the override map, otherwise MANA_POSITIVE.
-  const requires =
-    wc.requiresLoopType ??
-    _WIN_CONDITION_LOOP_TYPES.get(wc.name) ??
-    _DEFAULT_WC_REQUIRES;
-  wc.requiresLoopType = Array.isArray(requires) ? requires : [requires];
-  wc._acceptedLoopTypes = new Set(wc.requiresLoopType); // cached for the hot path
 }
 
 var _COM = { checkCombos, checkVictory };
@@ -8948,9 +7057,8 @@ function smartTutorTarget(state, allResults) {
  */
 function artifactAbilitiesSuppressed(state) {
   return (
-    state.hasStax('Null Rod') ||
-    state.hasStax('Collector Ouphe') ||
-    state.hasStax("Titania's Song")  // converts artifacts to vanilla creatures — no abilities
+    state.hasPermanent('Null Rod') ||
+    state.hasPermanent('Collector Ouphe')
   );
 }
 
@@ -8959,7 +7067,7 @@ function artifactAbilitiesSuppressed(state) {
  * Returns 0 or 1.
  */
 function thornTax(state, def) {
-  if (!state.hasStax('Thorn of Amethyst')) return 0;
+  if (!state.hasPermanent('Thorn of Amethyst')) return 0;
   if (def.types.includes('creature')) return 0;
   return 1;
 }
@@ -8990,36 +7098,30 @@ function shepherdProtects(state, def) {
  * Bypassed when Allosaurus Shepherd is on the battlefield and the spell is green.
  */
 function chaliceBlocks(state, def) {
-  if (!state.hasStax('Chalice of the Void')) return false;
-  if (shepherdProtects(state, def)) return false;
+  if (!state.hasPermanent('Chalice of the Void')) return false;
+  if (shepherdProtects(state, def)) return false; // green spells can't be countered
   var { parseCost: _pc } = _GSM;
   const parsed = def._parsedCost ?? _pc(def.cost);
   const cmc = parsed.generic + Object.values(parsed.colored).reduce((a,b) => a+b, 0);
-
-  // Check own Chalice (with charge counters matching CMC)
-  const ownChalice = state.battlefield.some(p =>
-    p.name === 'Chalice of the Void' && (p.chargeCounters ?? 1) === cmc
+  return state.battlefield.some(p =>
+    p.name === 'Chalice of the Void' &&
+    (p.chargeCounters ?? 1) === cmc
   );
-  if (ownChalice) return true;
-
-  // Check opponent Chalice — use parameter if set ('Chalice of the Void@2' = X=2)
-  // Default to X=1 if no parameter (most common in cedh: chalice at 1)
-  if (state.opponentStax?.has('Chalice of the Void') || state.opponentStaxParam?.('Chalice of the Void') !== null) {
-    const param = state.opponentStaxParam?.('Chalice of the Void');
-    // param is the X value as a string (e.g. '1', '2') or null for plain entry
-    if (param !== null) {
-      const x = parseInt(param, 10);
-      return !isNaN(x) && cmc === x;
-    }
-    // No parameter → default opponent Chalice at X=1 (most impactful)
-    return cmc === 1;
-  }
-  return false;
 }
 
+/**
+ * Returns true if a Vexing Bauble on the battlefield would counter the spell.
+ * Vexing Bauble counters any spell cast for 0 mana (no mana spent),
+ * regardless of CMC. This hits Summoner's Pact ({0}), Lotus Petal ({0}),
+ * Chrome Mox ({0}), and Mox Diamond ({0}).
+ * Bypassed when Allosaurus Shepherd is on the battlefield and the spell is green.
+ * Note: Summoner's Pact, Lotus Petal, Chrome Mox and Mox Diamond have no {G}
+ * in their cost, so Shepherd does NOT protect them from Vexing Bauble.
+ */
 function vexingBaubleBlocks(state, def, effectiveCostStr) {
-  if (!state.hasStax('Vexing Bauble')) return false;
-  if (shepherdProtects(state, def)) return false;
+  if (!state.hasPermanent('Vexing Bauble')) return false;
+  if (shepherdProtects(state, def)) return false; // green spells can't be countered
+  // A spell is cast for 0 mana when the effective cost resolves to nothing.
   var { parseCost: _pc } = _GSM;
   const parsed = _pc(effectiveCostStr);
   const totalMana = parsed.generic + Object.values(parsed.colored).reduce((a,b) => a+b, 0);
@@ -9027,10 +7129,7 @@ function vexingBaubleBlocks(state, def, effectiveCostStr) {
 }
 function trinisphereMin(state) {
   const t = state.battlefield.find(p => p.name === 'Trinisphere' && !p.tapped);
-  // Also check opponent stax — opponent's Trinisphere is always active (not tapped by you)
-  if (t) return 3;
-  if (state.opponentStax?.has('Trinisphere')) return 3;
-  return 0;
+  return t ? 3 : 0;
 }
 
 /**
@@ -9187,20 +7286,7 @@ function generateActions(state, _presentHint = null) {
           if (!ns) return null;
           ns = ns.clone();
           ns.landDrops--;
-
-          // Shifting Woodland enters tapped unless there is already a Forest
-          // (any permanent with Forest subtype) or Ashaya on the battlefield.
-          // Ashaya makes all creatures Forests; Yavimaya gives everything Forest subtype.
-          if (cardKey === 'shifting_woodland') {
-            const hasForest = s.battlefield.some(p =>
-              p.subtypes?.includes('Forest') ||
-              p.name === 'Ashaya, Soul of the Wild' ||
-              p.name === 'Yavimaya, Cradle of Growth'
-            );
-            ns = ns.enterBattlefield(cardKey, { tapped: !hasForest });
-          } else {
-            ns = ns.enterBattlefield(cardKey);
-          }
+          ns = ns.enterBattlefield(cardKey);
           ns = ns.log(`Play ${def.name}`);
 
           // ── Landfall triggers ─────────────────────────────────────────────
@@ -9274,18 +7360,6 @@ function generateActions(state, _presentHint = null) {
         if (fromHand0) {
           const allResults = def.castFn(fromHand0);
           if (allResults && allResults.length > 0) {
-            // Removal spells (isRemoval: true) bypass the combo-target filter —
-            // they offer all valid targets regardless of combo relevance.
-            if (def.isRemoval) {
-              for (const r of allResults) {
-                actions.push({
-                  type: 'cast_spell', label: `Cast ${def.name}: ${r.history[r.history.length-1]?.msg ?? ''}`,
-                  apply: (_s) => r,
-                });
-              }
-              continue;
-            }
-
             const needed = missingComboCards(state, _present);
 
             // [E2] Reuse _present (passed in or built once above) for redundancy
@@ -9469,34 +7543,11 @@ function generateActions(state, _presentHint = null) {
           ns = ns.playerDraws(0, 1);
         }
 
-        // Defiler of Vigor: whenever you cast a green permanent spell,
-        // put a +1/+1 counter on EACH creature you control.
-        // The {G} cost reduction (pay 2 life instead) is handled in costReductions();
-        // here we deduct the 2-life additional cost from life total.
-        const _isGreenPerm = def.cost?.includes('G') &&
-          (def.types.includes('creature') || def.types.includes('enchantment') ||
-           def.types.includes('artifact') || def.types.includes('planeswalker'));
-        if (ns.hasPermanent('Defiler of Vigor') && _isGreenPerm) {
-          ns.life -= 2;
-          ns = ns.log(`Defiler of Vigor: pay 2 life for {G} reduction (life: ${ns.life})`);
-          ns._ensureBF();
-          for (const p of ns.battlefield) {
-            if (p.types.includes('creature')) {
-              p.power     = (p.power     || 0) + 1;
-              p.toughness = (p.toughness || 0) + 1;
-            }
-          }
-          ns = ns.log('Defiler of Vigor: +1/+1 counter on each creature');
-        }
-
         // onEnter hook: Auras and cards with immediate resolution effects
         if (entersBattlefield && def.onEnter && typeof def.onEnter === 'function') {
           const entered = ns.getPermanent(def.name);
           const after = def.onEnter(ns, entered);
-          // onEnter may return a single state, an array of branching states, or null.
-          // The cast_spell action must return a single state — take the first branch.
-          // Cards that need full branching (Growing Rites, Disciple) use castFn instead.
-          if (after) ns = Array.isArray(after) ? after[0] : after;
+          if (after) ns = after;
         }
 
         // Surrak and Goreclaw: nontoken creatures entering get +1/+1 and haste
@@ -9556,30 +7607,6 @@ function generateActions(state, _presentHint = null) {
     }
   }
 
-  // ── 3c. Graveyard activated abilities (e.g. Eternalize) ──────────────────
-  {
-    const gy = state.players?.[0]?.graveyard ?? [];
-    const seenGY = new Set();
-    for (const cardName of gy) {
-      if (seenGY.has(cardName)) continue; seenGY.add(cardName);
-      const key = NAME_TO_KEY[cardName];
-      const def = key ? CARDS[key] : null;
-      if (!def?.graveyardAbilities) continue;
-      for (const [, ability] of Object.entries(def.graveyardAbilities)) {
-        actions.push({
-          type:     'graveyard_ability',
-          label:    `${cardName} (GY): ${ability.label}`,
-          priority: 40,
-          apply(_s) {
-            const results = ability.fn(_s, cardName);
-            if (!results || results.length === 0) return null;
-            return results[0];
-          },
-        });
-      }
-    }
-  }
-
   // ── 4. Tap permanents for mana ────────────────────────────────────────────
   for (const perm of state.battlefield) {
     if (perm.tapped) continue;
@@ -9597,143 +7624,51 @@ function generateActions(state, _presentHint = null) {
     // (but not by Null Rod/Collector Ouphe since it's a land ability).
     if (perm.name === 'Dryad Arbor' && perm.summoningSick) continue;
 
-    // Pre-check: get all mana options now. Most cards return exactly 1 result.
-    // Some (Fanatic ferocious, Nykthos devotion) return multiple — generate one
-    // action per option so the solver can independently explore each branch.
-    const preResults = def.tapForMana(state, perm);
-    if (!preResults.length) continue;
+    // Pre-check: skip permanents whose tapForMana produces nothing when untapped.
+    // This suppresses no-op actions (e.g. Maze of Ith, which has tapForMana: () => []).
+    if (!def.tapForMana(state, perm).length) continue;
 
-    // Shared bonus-application helper (Leyline, Badgermole, Auras)
-    function applyTapBonuses(ns, live) {
-      if (def.types.includes('creature')) {
-        if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
-        if (ns.hasPermanent('Badgermole Cub') && perm.name !== 'Badgermole Cub') ns = ns.addMana('G');
-      }
-      if (live.types.includes('land')) {
-        const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
-        if (sprawl) ns = ns.addMana('G');
-        const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
-        if (wildG) ns = ns.addMana('G');
-        if (live.elvishGuidance) {
-          const elfCount = ns.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
-          for (let i = 0; i < elfCount; i++) ns = ns.addMana('G');
+    actions.push({
+      type: 'tap_for_mana',
+      label: `Tap ${perm.name} for mana`,
+      priority: 7,
+      apply(s) {
+        const live = s.getPermanentById(perm.id);
+        if (!live || live.tapped) return null;
+        if (def.types.includes('creature') && live.summoningSick) return null;
+        const results = def.tapForMana(s, live);
+        if (!results.length) return null;
+        let ns = results[0];
+        // Leyline of Abundance: whenever you tap a creature for mana, add {G}
+        if (def.types.includes('creature') && ns.hasPermanent('Leyline of Abundance')) {
+          ns = ns.addMana('G');
         }
-      }
-      return ns;
-    }
-
-    if (preResults.length === 1) {
-      // Common case: single option — one action, no label disambiguation needed.
-      actions.push({
-        type: 'tap_for_mana',
-        label: `Tap ${perm.name} for mana`,
-        priority: 7,
-        apply(s) {
-          const live = s.getPermanentById(perm.id);
-          if (!live || live.tapped) return null;
-          if (def.types.includes('creature') && live.summoningSick) return null;
-          const results = def.tapForMana(s, live);
-          if (!results.length) return null;
-          return applyTapBonuses(results[0], live);
-        },
-      });
-    } else {
-      // Multi-option case (ferocious, devotion variants, etc.): one action per result.
-      // Label includes the result's last history message so the solver log is readable.
-      for (let ri = 0; ri < preResults.length; ri++) {
-        const resultIndex = ri;
-        const optionMsg = preResults[ri].history[preResults[ri].history.length - 1]?.msg ?? `option ${ri}`;
-        actions.push({
-          type: 'tap_for_mana',
-          label: `Tap ${perm.name} for mana: ${optionMsg}`,
-          priority: 7,
-          apply(s) {
-            const live = s.getPermanentById(perm.id);
-            if (!live || live.tapped) return null;
-            if (def.types.includes('creature') && live.summoningSick) return null;
-            const results = def.tapForMana(s, live);
-            if (resultIndex >= results.length) return null;
-            return applyTapBonuses(results[resultIndex], live);
-          },
-        });
-      }
-    }
-  }
-
-  // ── 4b. Agatha's Soul Cauldron — grafted activated abilities ────────────────
-  // When Agatha's Cauldron exiles a creature, it sets cauldronAbilityKey on the
-  // creature that received the +1/+1 counter. All creatures with +1/+1 counters
-  // (counters > 0) that have a cauldronAbilityKey get to use that card's
-  // tapForMana as an additional tap action.
-  //
-  // Most combo-relevant case: exile Priest of Titania → countered creatures
-  // tap for G×elves instead of their base mana ability.
-  //
-  // Only fires if Agatha's Cauldron is on the battlefield (the static requires it).
-  if (state.hasPermanent("Agatha's Soul Cauldron")) {
-    for (const perm of state.battlefield) {
-      if (perm.tapped || perm.summoningSick) continue;
-      if (!perm.cauldronAbilityKey) continue;
-      // Cauldron grants abilities to creatures with +1/+1 counters
-      const hasCounter = perm.counters && (
-        typeof perm.counters === 'number' ? perm.counters > 0
-          : Object.values(perm.counters).some(v => v > 0)
-      );
-      if (!hasCounter) continue;
-      const graftedDef = CARDS[perm.cauldronAbilityKey];
-      if (!graftedDef?.tapForMana) continue;
-      // Pre-check: grafted ability actually produces mana in current state
-      if (!graftedDef.tapForMana(state, perm).length) continue;
-
-      const capturedPerm = perm;
-      const capturedGraftedDef = graftedDef;
-      actions.push({
-        type: 'tap_for_mana',
-        label: `Tap ${perm.name} for mana (${graftedDef.name} ability via Cauldron)`,
-        priority: 7,
-        apply(s) {
-          const live = s.getPermanentById(capturedPerm.id);
-          if (!live || live.tapped || live.summoningSick) return null;
-          const results = capturedGraftedDef.tapForMana(s, live);
-          if (!results.length) return null;
-          let ns = results[0];
-          // Leyline / Badgermole bonuses apply to creature tap-for-mana
-          if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
-          if (ns.hasPermanent('Badgermole Cub') && capturedPerm.name !== 'Badgermole Cub') {
-            ns = ns.addMana('G');
-          }
-          return ns;
-        },
-      });
-    }
+        // Badgermole Cub: whenever you tap a creature for mana, add {G}
+        if (def.types.includes('creature') && ns.hasPermanent('Badgermole Cub') &&
+            perm.name !== 'Badgermole Cub') {
+          ns = ns.addMana('G');
+        }
+        // Utopia Sprawl: only the one enchanted Forest gets +{G} when it taps.
+        // Match by permanent ID stored on the Sprawl at ETB — not "any Forest".
+        if (live.types.includes('land')) {
+          const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
+          if (sprawl) ns = ns.addMana('G');
+          // Wild Growth: same single-land model
+          const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
+          if (wildG) ns = ns.addMana('G');
+        }
+        return ns;
+      },
+    });
   }
 
   // ── 5. Activated abilities ────────────────────────────────────────────────
-  // Helper: get the Disruptor Flute named card (own or opponent)
-  const fluteNamedCards = new Set();
-  for (const p of state.battlefield) {
-    if (p.name === 'Disruptor Flute' && p.namedCard) fluteNamedCards.add(p.namedCard);
-  }
-  // Opponent Disruptor Flute: 'Disruptor Flute@<CardName>'
-  for (const entry of (state.opponentStax ?? [])) {
-    if (entry.startsWith('Disruptor Flute@')) {
-      fluteNamedCards.add(entry.slice('Disruptor Flute@'.length).trim());
-    }
-  }
-
   for (const perm of state.battlefield) {
     const def = CARDS[perm.cardKey];
     if (!def?.abilities) continue;
 
-    // Null Rod / Collector Ouphe / Titania's Song: suppress ALL artifact activated abilities
+    // Null Rod / Collector Ouphe: suppress ALL artifact activated abilities
     if (def.types.includes('artifact') && artifactAbilitiesSuppressed(state)) continue;
-
-    // Disruptor Flute: abilities of the named permanent cost {3} more.
-    // We model this as: if this permanent's name is named by Flute, skip the ability
-    // unless the state has at least {3} extra mana above the ability's own cost.
-    // Simpler model: mark abilities of named permanents as "costs {3} extra" by
-    // pre-checking whether payMana('3') would succeed alongside the ability's own cost.
-    const fluteBlocked = fluteNamedCards.has(perm.name);
 
     for (const [abilKey, ability] of Object.entries(def.abilities)) {
       // Once-per-turn abilities: skip if already used this turn
@@ -9741,15 +7676,7 @@ function generateActions(state, _presentHint = null) {
 
       if (typeof ability.fn !== 'function') continue;
 
-      // Disruptor Flute: pre-pay the extra {3} before running the ability fn
-      let preState = state;
-      if (fluteBlocked) {
-        const afterFlute = state.payMana('3');
-        if (!afterFlute) continue; // can't afford the Flute tax
-        preState = afterFlute;
-      }
-
-      const raw = ability.fn(preState, perm);
+      const raw = ability.fn(state, perm);
       const results = raw === null || raw === undefined
         ? []
         : Array.isArray(raw) ? raw : [raw];
@@ -9851,13 +7778,10 @@ function generateActions(state, _presentHint = null) {
         ns.isOpponentTurn = true;
         // Mana drains between phases
         ns.mana = ns.mana.constructor ? new ns.mana.constructor() : ns.mana;
-        // Seedborn Muse: untap all permanents during each other player's untap step.
-        // Exerted creatures (abilitiesUsed.exert_two_lands) skip this untap — they
-        // are promised not to untap until your NEXT untap step.
+        // Seedborn Muse: untap all permanents during each other player's untap step
         if (ns.hasPermanent('Seedborn Muse')) {
           ns._ensureBF();
           for (const p of ns.battlefield) {
-            if (p.abilitiesUsed?.exert_two_lands) continue; // skip exerted
             p.tapped = false;
             p.abilitiesUsed = {};
           }
@@ -10053,40 +7977,6 @@ for (const group of FUNCTIONAL_EQUIVALENTS) {
   for (const k of group) _equivGroupOf.set(k, group);
 }
 
-// ── [E11] buildPresentSet ────────────────────────────────────────────────
-// Returns a Set<string> of card keys representing what the active player
-// has access to right now: hand ∪ battlefield ∪ (topDecked, optionally),
-// expanded via FUNCTIONAL_EQUIVALENTS (so e.g. Kogla on board adds
-// 'temur_sabertooth' to the set, since they slot into the same combos).
-//
-// Factored out of analyzeState so the Solver hot path can build it ONCE per
-// node, then reuse it for: checkCombos (as the [E11] prefilter input),
-// checkVictory ([E11] prefilter), generateActions ([E2] missingComboCards
-// reuse), and analyzeState (this same Set fed back in).
-function buildPresentSet(state) {
-  const present = new Set(state.hand);
-  for (const p of state.battlefield) {
-    const ck = NAME_TO_KEY[p.name];
-    if (ck) present.add(ck);
-  }
-  // topDecked counts as 'will be in hand next turn'
-  if (state.topDecked) present.add(state.topDecked);
-
-  // Expand present set via FUNCTIONAL_EQUIVALENTS (same logic that was inline
-  // in analyzeState).  [E8] Two-pass: collect additions first, then apply —
-  // avoids [...present] array allocation while iterating a Set we're adding to.
-  let _equivAdditions = null;
-  for (const k of present) {
-    const grp = _equivGroupOf.get(k);
-    if (grp) {
-      if (!_equivAdditions) _equivAdditions = [];
-      for (const m of grp) { if (!present.has(m)) _equivAdditions.push(m); }
-    }
-  }
-  if (_equivAdditions) for (const m of _equivAdditions) present.add(m);
-  return present;
-}
-
 // ── #2 analyzeState ───────────────────────────────────────────────────────
 // Returns { present: Set<string>, minMissing: number }
 //
@@ -10102,15 +7992,33 @@ function buildPresentSet(state) {
 // 2 missing creatures, only the first costs 1 — the second costs 2.
 // This correctly handles the Crop Rotation case: 1 land use, missing ashaya
 // (creature) + something else → the creature piece costs 2 even with a land tutor.
-//
-// [E11] Optional `_present`: when supplied, skips rebuilding the present Set.
-// Caller (Solver hot path) builds it once via buildPresentSet() then passes it
-// here AND to checkCombos for the prefilter — no double work.
-function analyzeState(state, _infiniteMana, _present) {
+function analyzeState(state, _infiniteMana) {
   // [E3] _infiniteMana: pre-computed checkCombos(state) result from the caller,
   // passed in to avoid calling checkCombos a second time inside this function.
-  // [E11] _present: pre-built (and equiv-expanded) Set from buildPresentSet().
-  const present = _present ?? buildPresentSet(state);
+  const present = new Set(state.hand);
+  for (const p of state.battlefield) {
+    const ck = NAME_TO_KEY[p.name];
+    if (ck) present.add(ck);
+  }
+  // topDecked counts as 'will be in hand next turn'
+  if (state.topDecked) present.add(state.topDecked);
+
+  // Expand present set via FUNCTIONAL_EQUIVALENTS: if any member of an
+  // equivalence group is present, treat ALL members as present for combo-
+  // distance purposes.  E.g. having temur_sabertooth satisfies any combo
+  // requiring kogla, preventing an off-by-one in minMissing that kept dead
+  // branches alive when the hand held a functional equivalent.
+  // [E8] Two-pass: collect additions first, then apply — avoids [...present]
+  // array allocation while iterating a Set that we're adding to.
+  let _equivAdditions = null;
+  for (const k of present) {
+    const grp = _equivGroupOf.get(k);
+    if (grp) {
+      if (!_equivAdditions) _equivAdditions = [];
+      for (const m of grp) { if (!present.has(m)) _equivAdditions.push(m); }
+    }
+  }
+  if (_equivAdditions) for (const m of _equivAdditions) present.add(m);
 
   const base = _tutorCounts(state);
 
@@ -10147,31 +8055,7 @@ function analyzeState(state, _infiniteMana, _present) {
       // Use pre-computed result if available, otherwise call checkCombos once.
       const fired = (_infiniteMana !== undefined) ? _infiniteMana : checkCombos(state);
       if (fired) break;
-      // [E14] Fast path: when the caller already knows no combo fires globally
-      // (_infiniteMana === null, which the Solver always passes from its hot
-      // path via the [E3] pre-computed value), we can skip the rest of the
-      // outer loop entirely. Reasoning:
-      //   • The cost=0 fallback fires on >98% of states in profiled solves.
-      //     Continuing the loop iterates 50–94 more entries, almost all of
-      //     which short-circuit at `cost++ >= minMissing` after 1–2 inner
-      //     iterations — but that's still ~3% of total search time wasted.
-      //   • If _infiniteMana === null, NO combo fires globally. So no
-      //     subsequent COMBO_REQUIRED_KEYS entry can hit the `if (fired)
-      //     break` — they all fall back to minMissing=1.
-      //   • minMissing only goes DOWN inside the loop, and 1 is the minimum
-      //     reachable value here (cost=0 + no firing → set 1; cost>0 entries
-      //     can't lower minMissing below 1 since each non-present piece adds
-      //     at least 1 cost).
-      //   • Therefore minMissing=1 is the final answer and the remaining
-      //     outer iterations are pure waste.
-      // When _infiniteMana === undefined (caller didn't pre-compute), we
-      // CONSERVATIVELY keep iterating — a later combo might fire even if
-      // this one didn't, since `fired = checkCombos(state)` only checked
-      // once at this point. This branch shouldn't happen in the Solver hot
-      // path (which always pre-computes), but keeps the function correct
-      // when called standalone.
       minMissing = 1;
-      if (_infiniteMana === null) break;
     }
   }
 
@@ -10226,49 +8110,19 @@ function score(state, depth) {
 //
 //  A) Search-spell penalty (+2000 per castable tutor in hand):
 //     Forces "cast tutor now" strictly before "do other things first".
-//     Without this, the DFS explores all N! orderings of "when to cast
-//     the tutor", causing ~10× state explosion.
+//     Penalty is 2× the per-missing-piece unit (1000) so it dominates the
+//     combo-distance signal. Without this, the DFS explores all N! orderings
+//     of "when to cast the tutor", causing ~10× state explosion.
 //
 //  B) topDecked bonus (−500 if a combo piece is on top of library):
 //     After a tutor resolves, the target is topDecked. Strongly prefers passing
 //     to draw the tutored piece over continuing to do other things first.
-//
-//  C) Turn penalty (+10000 per turn beyond the first):
-//     Hard partition: every turn-1 child sorts before every turn-2 child.
-//
-// [C-32] minMissing was previously included as `minMissing * 1000` here —
-// but instrumentation during the C-31 work showed minMissing is essentially
-// flat (=1) on >99% of states explored during search on Ashaya hands.
-// On tutor-heavy hands the value DOES vary (regime 2 — no combo's pieces
-// fully present), but in those cases canReachCombo's pruning is the
-// active mechanism, not heuristic ordering.  Either way, the
-// `minMissing * 1000` term in heuristic provides no discrimination
-// between siblings on the dominant hot path: it's a near-constant offset
-// that just shifts every child's score by the same amount.
-//
-// Confirmed by experiment: removing the term leaves state counts
-// unchanged on every benched hand (default 8400, arbor_elf 19561,
-// priest 27728, tutor-heavy 51024, eladamri 3810) and on every
-// locked-in test in the suite — proving it provided no useful ordering
-// signal.  Documented as zero-impact code cleanup; minMissing is still
-// computed and used by canReachCombo for hard pruning.
-//
-// Future work: a richer "combo readiness" signal (counting unready pieces
-// — tapped/sick/in-hand — of partly-assembled combos) showed early signs
-// of meaningfully reducing state counts (default 8400 → ~6077 in a quick
-// experiment) but needs careful per-bench validation and weight tuning
-// before shipping.  See the [readiness-signal] item under Open ideas in
-// ToDo.md for follow-up.
 function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefined, _searchSpellWins = undefined) {
   // [E3] Use pre-computed checkCombos result when available.
-  // The minMissing===0 short-circuit still fires when the caller has detected
-  // a firing combo on this state — push it to the front of the queue.
   const fired = (_infiniteMana !== undefined) ? _infiniteMana : (minMissing === 0 ? checkCombos(state) : null);
   if (minMissing === 0 && fired) return -1_000_000 - state.mana.total();
 
-  // [C-32] Base score: just floating mana.  minMissing*1000 was dropped —
-  // see function-level note.
-  let h = -state.mana.total();
+  let h = minMissing * 1000 - state.mana.total();
 
   // A) Search-spell penalty — disabled in exhaustive mode so every ordering is explored.
   //
@@ -10427,23 +8281,8 @@ class Solver {
     if (state.youLost()) { this.pruned++; return; }
 
     // Score pruning (DFS-only, disabled in exhaustive mode)
-    //
-    // [E13 / C-29] In allLines mode, use strict `>` so sibling branches with
-    // score == bestScore are still explored.  Pre-fix, the `>=` cutoff dropped
-    // tied-score winning leaves once the first one was found, silently
-    // under-reporting the line count.  In single-best mode we keep `>=` —
-    // ties are equivalent for "an optimal line", and the stricter prune keeps
-    // search space bounded on tutor-heavy hands.
-    //
-    // Note: score is monotone-non-decreasing along any DFS path
-    // (depth*10 dominates -mana.total() deltas), so a state at score s
-    // cannot produce wins at score < s.  Therefore `>` is sufficient (we
-    // only miss ties at this exact score, which `>` admits).
     const s = score(state, depth);
-    if (!this.opts.exhaustive) {
-      const cut = this.opts.allLines ? (s > this.bestScore) : (s >= this.bestScore);
-      if (cut) { this.pruned++; return; }
-    }
+    if (!this.opts.exhaustive && s >= this.bestScore) { this.pruned++; return; }
 
     // Dedup: full fingerprint including mana (mana affects what actions are available)
     const fp = state.fingerprint();
@@ -10451,25 +8290,15 @@ class Solver {
     if (prev !== undefined && prev <= depth) { this.pruned++; return; }
     this.visited.set(fp, depth);
 
-    // [E11] Build the present Set ONCE for this node, then thread it through
-    // every checkCombos / checkVictory / analyzeState / generateActions call so
-    // the per-detector prefilter can short-circuit without rebuilding the Set.
-    // The Set is hand∪BF post-equiv-expansion; see Solver.buildPresentSet.
-    const present = buildPresentSet(state);
-
     // [E3] Compute checkCombos ONCE per node and reuse in analyzeState,
     // checkVictory, canReachCombo, and heuristic — eliminates 3+ redundant calls.
-    // [E11] Pass `present` so checkCombos can skip detectors whose required
-    // keys aren't in hand∪BF — modest wins on most hands, larger on tutor-heavy
-    // (we measure ~10–25% reduction in detector .check() calls).
-    const infiniteMana = checkCombos(state, present);
+    const infiniteMana = checkCombos(state);
 
     // #2: Build present-set + minMissing once for this node (pass pre-computed result)
-    // [E11] Pass `present` so analyzeState skips its own (identical) build.
-    const analysis = analyzeState(state, infiniteMana, present);
+    const analysis = analyzeState(state, infiniteMana);
 
-    // Combo/victory check (pass pre-computed infiniteMana + present for prefilter)
-    const combo = checkVictory(state, infiniteMana, present);
+    // Combo/victory check (pass pre-computed infiniteMana)
+    const combo = checkVictory(state, infiniteMana);
     if (combo) {
       // #1: Reconstruct path only on win
       const node = { state, parent: parentNode };
@@ -10501,12 +8330,9 @@ class Solver {
       catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
       if (!next) continue;
 
-      // [E11] Build the child's present Set first, then pass it through both
-      // checkCombos (prefilter) and analyzeState (skip rebuild).
-      const childPresent = buildPresentSet(next);
       // [E3] Compute child's infiniteMana once, reuse in analyzeState + canReachCombo + heuristic
-      const childInfiniteMana = checkCombos(next, childPresent);
-      const childAnalysis = analyzeState(next, childInfiniteMana, childPresent);
+      const childInfiniteMana = checkCombos(next);
+      const childAnalysis = analyzeState(next, childInfiniteMana);
       // Fix #4: prune unreachable children before they enter the sort list
       if (!this.opts.exhaustive) {
         const childTurns = this.opts.maxTurns - next.turn;
@@ -10556,8 +8382,6 @@ class Solver {
     };
 
     enqueue({ state: initialState, parent: null, depth: 0 });
-    // [E10] Mark the root as visited so children cannot dedupe back to it.
-    this.visited.set(initialState.fingerprint(), 0);
 
     for (let turn = 1; turn <= this.opts.maxTurns; turn++) {
       const q = queues[turn];
@@ -10574,23 +8398,14 @@ class Solver {
         if (state.youLost())            continue;
         if (depth > this.opts.maxDepth) continue;
 
-        // [E10] Note: the visited check used to live HERE (before child
-        // generation). It is now done at enqueue time below — that's the
-        // only correct place to dedupe in BFS, because dequeue-time dedup
-        // wastes budget on each duplicate before discarding it. Fingerprints
-        // are stable between enqueue and dequeue (the state object is not
-        // mutated while sitting in the queue), so a single check at enqueue
-        // is sufficient.
-
-        // [E11] Build present once for this BFS node, share with checkCombos
-        // (prefilter), checkVictory (prefilter), analyzeState (skip rebuild),
-        // and generateActions ([E2] missingComboCards reuse).
-        const present = buildPresentSet(state);
+        // Full fingerprint including mana
+        const fp = state.fingerprint();
+        if (this.visited.has(fp)) continue;
+        this.visited.set(fp, depth);
 
         // [E3] Compute checkCombos once per BFS node, reuse in checkVictory + children
-        // [E11] Pass present to enable detector prefilter.
-        const infiniteMana = checkCombos(state, present);
-        const combo = checkVictory(state, infiniteMana, present);
+        const infiniteMana = checkCombos(state);
+        const combo = checkVictory(state, infiniteMana);
         if (combo) {
           if (combo.deployed) {
             this._recordWin(reconstructPath(node), combo, score(state, depth));
@@ -10608,8 +8423,7 @@ class Solver {
         // Generate and heuristic-sort children, routing each to the correct
         // turn queue (same turn = stays here; pass turn = next turn's queue)
         // [E2] Build present Set once for this node; share with generateActions + children.
-        // [E11] present already built above; pass into analyzeState to skip rebuild.
-        const nodeAnalysis = analyzeState(state, infiniteMana, present);
+        const nodeAnalysis = analyzeState(state, infiniteMana);
         const actions = generateActions(state, nodeAnalysis.present);
         const children = [];
         for (const action of actions) {
@@ -10617,37 +8431,14 @@ class Solver {
           try { next = action.apply(state); }
           catch (e) { continue; }
           if (!next || next.turn > this.opts.maxTurns) continue;
-          // [E11] Per-child present set + prefilter — same pattern as DFS.
-          const childPresent = buildPresentSet(next);
           // [E3] Compute child's infiniteMana once, reuse in analyzeState + canReachCombo + heuristic
-          const childInfiniteMana = checkCombos(next, childPresent);
-          const ca = analyzeState(next, childInfiniteMana, childPresent);
+          const childInfiniteMana = checkCombos(next);
+          const ca = analyzeState(next, childInfiniteMana);
           const childTurnsLeft = this.opts.maxTurns - next.turn;
           if (!this.opts.exhaustive && childTurnsLeft >= 0 && !canReachCombo(next, childTurnsLeft + 1, ca, childInfiniteMana)) {
             this.pruned++;
             continue;
           }
-          // [E10] Duplicate-state pruning at enqueue time, not dequeue time.
-          // Without this, two siblings whose action-orderings reach the same
-          // state both get enqueued, then both get dequeued (each costing a
-          // budget tick), then the second one gets discarded. Empirically on
-          // the user-reported BFS hang (sowing_mycospawn,natures_rhythm,
-          // boseiju,eldritch_evolution + 7-creature board) this halved the
-          // budget waste — 50% of dequeued states were duplicates.
-          //
-          // The previous version of this check lived at dequeue time. Moving
-          // it to enqueue time is correct because state fingerprints are
-          // stable between enqueue and dequeue: the state object is not
-          // mutated while sitting in the queue (state.clone is the only way
-          // to derive a new state, and clone always produces a fresh
-          // identity). The root is added to `visited` once at the top of
-          // _bfs so its children cannot dedupe back to it.
-          const childFp = next.fingerprint();
-          if (this.visited.has(childFp)) {
-            this.pruned++;
-            continue;
-          }
-          this.visited.set(childFp, depth + 1);
           children.push({ next, h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana) });
         }
         if (children.length > 1) children.sort((a, b) => a.h - b.h);
@@ -10860,8 +8651,7 @@ function assembleWin(state) {
         const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
         if (found) {
           s = ns.enterBattlefield(found);
-          // summoningSick not cleared: assembleWin never invokes Duskwatch's tap ability;
-          // it's handled entirely by WIN_CONDITIONS. Sickness state is irrelevant here.
+          s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
           steps.push('Cast Woodland Bellower → ETB: fetch Duskwatch Recruiter onto battlefield');
         }
       } else if (inHand('fierce_empath') && inLibrary('woodland_bellower')) {
@@ -10877,7 +8667,7 @@ function assembleWin(state) {
             const { state: ns2, cardKey: dw } = searchFor('duskwatch_recruiter');
             if (dw) {
               s = ns2.enterBattlefield(dw);
-              // summoningSick not cleared — see note at Woodland Bellower path above.
+              s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
               steps.push('Cast Woodland Bellower → ETB: fetch Duskwatch Recruiter onto battlefield');
             }
           }
@@ -10907,7 +8697,7 @@ function assembleWin(state) {
             const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
             if (found) {
               s = ns.enterBattlefield(found);
-              // summoningSick not cleared — see note at Woodland Bellower path above.
+              s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
               steps.push(step);
             }
           } else {
@@ -10935,7 +8725,7 @@ function assembleWin(state) {
           const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
           if (found) {
             s = ns.enterBattlefield(found);
-            // summoningSick not cleared — see note at Woodland Bellower path above.
+            s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
             steps.push(step);
             break;
           }
@@ -10955,37 +8745,20 @@ function assembleWin(state) {
   if (inHand('duskwatch_recruiter') && !onField('Duskwatch Recruiter')) {
     s = s.removeFromHand('duskwatch_recruiter');
     s = s.enterBattlefield('duskwatch_recruiter');
-    // summoningSick not cleared: assembleWin represents Duskwatch activations as
-    // narrative steps rather than state-machine taps, so sickness state is irrelevant.
-    // Duskwatch's {2G},{T} ability is handled by WIN_CONDITIONS, not by this state.
+    s.battlefield.find(p => p.name === 'Duskwatch Recruiter').summoningSick = false;
     steps.push('Cast Duskwatch Recruiter (infinite mana available)');
   }
 
   // ── Step 2: Activate Duskwatch to find key creatures from library ──────
-  // Target priority: pieces needed for Hitzel's Sequence.
-  // Temur Sabertooth and Kogla are functional equivalents — only ONE bounce
-  // engine is required. Prefer Temur (simpler variant, no EW needed in loop).
-  // If Kogla is chosen instead, Eternal Witness is also needed for its loop.
+  // Target priority: pieces needed for Hitzel's Sequence
+  const HITZEL_CREATURES = [
+    { key: 'endurance',        name: 'Endurance' },
+    { key: 'eternal_witness',  name: 'Eternal Witness' },
+    { key: 'temur_sabertooth', name: 'Temur Sabertooth' },
+    { key: 'kogla',            name: 'Kogla, the Titan Ape' },
+  ];
 
   if (onField('Duskwatch Recruiter')) {
-    // Determine which bounce engine to use (prefer whatever is already available)
-    const hasBounceEngine = onField('Temur Sabertooth') || inHand('temur_sabertooth') ||
-                            onField('Kogla, the Titan Ape') || inHand('kogla');
-    const useKogla = !hasBounceEngine
-      ? !inLibrary('temur_sabertooth') && inLibrary('kogla') // Temur not in lib, Kogla is
-      : (onField('Kogla, the Titan Ape') || inHand('kogla')) &&
-        !onField('Temur Sabertooth') && !inHand('temur_sabertooth');
-
-    const HITZEL_CREATURES = [
-      { key: 'endurance',        name: 'Endurance' },
-      // Only fetch EW if using Kogla variant (EW is part of Kogla's loop)
-      ...(useKogla ? [{ key: 'eternal_witness', name: 'Eternal Witness' }] : []),
-      // Fetch the chosen bounce engine if not already available
-      ...(hasBounceEngine ? [] : useKogla
-        ? [{ key: 'kogla', name: 'Kogla, the Titan Ape' }]
-        : [{ key: 'temur_sabertooth', name: 'Temur Sabertooth' }]),
-    ];
-
     for (const { key, name } of HITZEL_CREATURES) {
       if (onField(name) || inHand(key)) continue; // already available
       if (inLibrary(key)) {
@@ -11123,72 +8896,21 @@ function assembleWin(state) {
               s = ns2.addToHand(sacFound);
               const sacName = CARDS[sacFound]?.name ?? sacFound;
               steps.push(`Activate Duskwatch Recruiter → find ${sacName} (sacrifice fodder)`);
-              // Cast the expendable creature (becomes Forest under Ashaya).
-              // [C-33 cleanup] No need to clear summoningSick — sacrificing a
-              // creature is a cost (not an activated ability), and is legal
-              // on a sick creature.  The sac target's only purpose is to be
-              // sacrificed for Reclaimer's {2}{T}.
+              // Cast the expendable creature (becomes Forest under Ashaya)
               s = s.removeFromHand(sacFound);
               s = s.enterBattlefield(sacFound);
+              const sacPerm = s.battlefield[s.battlefield.length - 1];
+              if (sacPerm) sacPerm.summoningSick = false;
               steps.push(`Cast ${sacName} (sacrifice fodder — becomes Forest under Ashaya)`);
             }
           }
 
-          // Cast Elvish Reclaimer (infinite mana available)
+          // Cast Elvish Reclaimer
           s = s.removeFromHand(found);
           s = s.enterBattlefield(found);
-          steps.push('Cast Elvish Reclaimer (infinite mana available)');
-
-          // ── O-10: Grant Elvish Reclaimer haste via a real enabler ────────
-          // Under Ashaya, Reclaimer is a Forest land-creature. We need to give
-          // it haste so it can activate the same turn it's cast.
-          // Priority: cheapest/simplest enabler first.
           const reclPerm = s.battlefield.find(p => p.name === 'Elvish Reclaimer');
-          let hasteGranted = false;
-
-          // 1. Global haste already on field (Concordant Crossroads, Thousand-Year Elixir,
-          //    Surrak and Goreclaw) — Reclaimer enters without summoning sickness.
-          const GLOBAL_HASTE = ['Concordant Crossroads','Thousand-Year Elixir','Surrak and Goreclaw'];
-          if (!hasteGranted && GLOBAL_HASTE.some(n => onField(n))) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            const enablerName = GLOBAL_HASTE.find(n => onField(n));
-            steps.push(`${enablerName}: Elvish Reclaimer enters with haste`);
-            hasteGranted = true;
-          }
-
-          // 2. Destiny Spinner on field — {3}{G}: animate Reclaimer (land under Ashaya) → haste
-          if (!hasteGranted && onField('Destiny Spinner') && onField('Ashaya, Soul of the Wild')) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            const enchCount = s.battlefield.filter(p => p.types.includes('enchantment')).length;
-            steps.push(`Destiny Spinner: {3}{G} → animate Elvish Reclaimer (land under Ashaya) → ${enchCount}/${enchCount} Elemental with haste`);
-            hasteGranted = true;
-          }
-
-          // 3. Badgermole Cub — ETB earthbend targets a creature-land → haste
-          if (!hasteGranted && (onField('Badgermole Cub') || inHand('badgermole_cub') || inLibrary('badgermole_cub'))) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            if (!onField('Badgermole Cub')) {
-              if (!inHand('badgermole_cub') && inLibrary('badgermole_cub')) {
-                if (onField('Duskwatch Recruiter')) {
-                  const { state: nsBc, cardKey: bcFound } = searchFor('badgermole_cub');
-                  if (bcFound) { s = nsBc.addToHand(bcFound); steps.push('Activate Duskwatch Recruiter → find Badgermole Cub'); }
-                }
-              }
-              if (inHand('badgermole_cub')) {
-                s = s.removeFromHand('badgermole_cub');
-                s = s.enterBattlefield('badgermole_cub');
-              }
-            }
-            steps.push('Badgermole Cub ETB (earthbend): target Elvish Reclaimer → gets haste');
-            hasteGranted = true;
-          }
-
-          // 4. Fallback — note that a haste enabler is needed but not yet available.
-          //    (The win line is still valid — this documents the gap for the pilot.)
-          if (!hasteGranted) {
-            if (reclPerm) reclPerm.summoningSick = false; // allow activation to proceed
-            steps.push('(Need haste enabler for Elvish Reclaimer: Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)');
-          }
+          if (reclPerm) reclPerm.summoningSick = false;
+          steps.push('Cast Elvish Reclaimer (infinite mana available)');
 
           // Activate: sacrifice the expendable creature-Forest to fetch Geier Reach
           const sacTarget = sacCreatureKey
@@ -11204,35 +8926,6 @@ function assembleWin(state) {
               if (gr) {
                 s = ns4.enterBattlefield(gr);
                 steps.push(`Elvish Reclaimer: sacrifice ${sacTarget.name} → fetch Geier Reach Sanitarium`);
-
-                // ── O-10: Identify the Sanitarium untap configuration ──────
-                // Geier Reach must be untapped repeatedly to mill the table.
-                // Detect which untap method is available and document the loop.
-                const ashayaOnField = onField('Ashaya, Soul of the Wild');
-                let untapMethod = null;
-
-                if (onField('Magus of the Candelabra') && ashayaOnField) {
-                  untapMethod = 'Magus of the Candelabra: {X},{T} → untap Geier Reach Sanitarium (land under Ashaya)';
-                } else if (onField('Temur Sabertooth') && (onField('Woodcaller Automaton') || inHand('woodcaller_automaton') || inLibrary('woodcaller_automaton'))) {
-                  untapMethod = 'Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop';
-                } else if ((onField('Scryb Ranger') || inHand('scryb_ranger')) && ashayaOnField) {
-                  untapMethod = 'Scryb Ranger: return Forest to hand → untap Geier Reach Sanitarium (Forest under Ashaya)';
-                } else if ((onField('Quirion Ranger') || inHand('quirion_ranger')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Quirion Ranger + Destiny Spinner: Ranger untaps Geier Reach (animated land-creature under Ashaya)';
-                } else if ((onField('Hyrax Tower Scout') || inHand('hyrax_tower_scout')) && onField('Destiny Spinner') && ashayaOnField) {
-                  untapMethod = 'Hyrax Tower Scout + Destiny Spinner: Scout ETB untaps Geier Reach (animated creature-land)';
-                } else if ((onField('Argothian Elder') || inHand('argothian_elder')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Argothian Elder + Destiny Spinner: Elder untaps Geier Reach (animated creature-land)';
-                } else if ((onField('Wirewood Symbiote') || inHand('wirewood_symbiote')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Wirewood Symbiote + Destiny Spinner: return Elf → untap Geier Reach (animated creature-land)';
-                }
-
-                if (untapMethod) {
-                  steps.push(`Untap method: ${untapMethod}`);
-                  steps.push('{2}: Activate Geier Reach Sanitarium (hold priority) → Untap Geier Reach → Repeat to mill entire library');
-                } else {
-                  steps.push('(Need untap for Geier Reach Sanitarium: Magus of the Candelabra, Woodcaller+Temur, Scryb Ranger+Ashaya, etc.)');
-                }
               }
             }
           }
@@ -11246,19 +8939,10 @@ function assembleWin(state) {
   }
 
   // ── Step 5: Cast remaining Hitzel pieces ───────────────────────────────
-  // Only one bounce engine (Temur OR Kogla) is needed — cast whichever is
-  // in hand. If both somehow ended up in hand (e.g. pre-existing game state),
-  // prefer Temur (simpler variant). Never cast both.
-  const bounceEngineOnField = onField('Temur Sabertooth') || onField('Kogla, the Titan Ape');
-  const bounceEngineChosen = bounceEngineOnField ? null
-    : inHand('temur_sabertooth') ? 'temur_sabertooth'
-    : inHand('kogla')            ? 'kogla'
-    : null;
-
   const CAST_ORDER = [
-    ...(bounceEngineChosen ? [{ key: bounceEngineChosen,
-        name: bounceEngineChosen === 'temur_sabertooth' ? 'Temur Sabertooth' : 'Kogla, the Titan Ape' }] : []),
-    { key: 'endurance', name: 'Endurance' },
+    { key: 'temur_sabertooth', name: 'Temur Sabertooth' },
+    { key: 'kogla',            name: 'Kogla, the Titan Ape' },
+    { key: 'endurance',        name: 'Endurance' },
   ];
 
   for (const { key, name } of CAST_ORDER) {
@@ -11266,11 +8950,7 @@ function assembleWin(state) {
     if (!inHand(key)) continue;
     s = s.removeFromHand(key);
     s = s.enterBattlefield(key);
-    // [C-33 cleanup] No need to clear summoningSick.  Endurance's ETB
-    // triggers on enter regardless of sickness; Temur and Kogla both have
-    // bounce abilities at {1G} (no tap cost) which after C-33 are correctly
-    // legal on a sick creature.  Earlier code cleared sick here as a cheat
-    // around the over-restrictive sickness check in Temur's bounce_creature.
+    s.battlefield.find(p => p.name === name).summoningSick = false;
     steps.push(`Cast ${name} (infinite mana available)`);
   }
 
@@ -11381,73 +9061,6 @@ function assembleWin(state) {
   if (terminalWin) {
     steps.push('');
     steps.push(`✓ Terminal win assembled: ${victory.winCondition}`);
-
-    // ── O-5: Emit Hitzel's Sequence hold-priority execution steps ─────────
-    if (victory.winCondition?.includes('Mill') || victory.winCondition?.includes('Geier Reach')) {
-      const hasTemur   = onField('Temur Sabertooth');
-      const hasKogla   = onField('Kogla, the Titan Ape');
-      const hasAshaya  = onField('Ashaya, Soul of the Wild');
-      const hasQR      = onField('Quirion Ranger') || onField('Scryb Ranger');
-      const hasLQR     = onField("Legolas's Quick Reflexes") || inHand('legolas_quick_reflexes');
-      const hasMagus   = onField('Magus of the Candelabra');
-      const hasEndurance = onField('Endurance') || inHand('endurance');
-      const hasGeier   = onField('Geier Reach Sanitarium');
-
-      steps.push('');
-      steps.push('── Hitzel\'s Sequence (hold-priority execution) ──');
-
-      if (hasTemur) {
-        steps.push('Variant: Temur Sabertooth');
-        steps.push('  1. Cast Endurance, pass priority.');
-        steps.push('  2. Endurance ETB trigger goes on the stack — hold priority.');
-        steps.push('  3. {1}{G}: Temur Sabertooth bounces Endurance to hand.');
-        steps.push('  4. {2}: Activate Geier Reach Sanitarium — hold priority.');
-        if (hasMagus && hasAshaya) {
-          steps.push('  5. {X},{T}: Magus of the Candelabra untaps Geier Reach Sanitarium.');
-        } else if (hasQR && hasAshaya) {
-          const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
-          steps.push(`  5. ${rangerName}: return self (Forest land under Ashaya) → untap Geier Reach Sanitarium.`);
-        } else {
-          steps.push('  5. Untap Geier Reach Sanitarium via available untap method.');
-        }
-        steps.push('  6. {2}: Activate Geier Reach Sanitarium again — hold priority. Repeat from step 5.');
-        steps.push('  7. Pass priority — let Endurance ETB resolve (resets all graveyards to libraries).');
-        steps.push('  8. Recast Endurance, repeat from step 2.');
-        steps.push('  → Each opponent draws and discards repeatedly until their library is empty = mill win.');
-      } else if (hasKogla) {
-        steps.push('Variant: Kogla, the Titan Ape + Eternal Witness');
-        steps.push('  1. Cast Endurance, pass priority.');
-        steps.push('  2. Endurance ETB on stack — hold priority.');
-        steps.push('  3. Cast Beast Within targeting Endurance (Endurance dies, ETB still on stack).');
-        steps.push('  4. Cast Eternal Witness → return Endurance to hand.');
-        steps.push('  5. {1}{G}: Kogla bounces Eternal Witness to hand.');
-        steps.push('  6. Recast Eternal Witness → return Beast Within to hand.');
-        steps.push('  7. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
-        steps.push('  8. Let Endurance ETB resolve. Recast Endurance. Repeat.');
-      } else if (hasAshaya && hasQR && hasLQR) {
-        const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
-        steps.push("Variant: Ashaya + Ranger (Legolas's Quick Reflexes)");
-        steps.push("  1. Cast Legolas's Quick Reflexes targeting the tap/untap creature (infinite trigger).");
-        steps.push('  2. Cast Endurance, pass priority.');
-        steps.push('  3. First ETB goes on stack — hold priority.');
-        steps.push(`  4. ${rangerName}: bounce Endurance → it goes to hand. Recast Endurance.`);
-        steps.push('  5. Second ETB goes on stack — hold priority.');
-        steps.push('  6. Use LQR creature tap to deal lethal damage to Endurance and Ranger.');
-        steps.push('  7. Resolve Second ETB (resets graveyard → library, returns Endurance + Ranger).');
-        steps.push('  8. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
-        steps.push('  9. Resolve First ETB. Recast Ranger. Recast Endurance. Repeat from step 3.');
-      } else {
-        steps.push('  Execute Hitzel\'s Sequence: cast Endurance → hold priority → activate');
-        steps.push('  Geier Reach Sanitarium repeatedly → let ETB resolve → repeat for mill win.');
-      }
-
-      if (!hasEndurance) {
-        steps.push('  ⚠ Endurance is not yet in hand or on field — fetch via Duskwatch Recruiter first.');
-      }
-      if (!hasGeier) {
-        steps.push('  ⚠ Geier Reach Sanitarium is not on field — Elvish Reclaimer fetch required first.');
-      }
-    }
   }
 
   if (steps.length === 0) return null;
@@ -12744,13 +10357,6 @@ self.onmessage = function(e) {
       turn: 1, landDrops: d.landDrops??1, life: d.life||40,
       ...(libraryKeys ? { library: libraryKeys } : { librarySize: Math.max(0,d.librarySize||99) }),
       graveyard: graveyardNames,
-      // Bug fix: forward opponent stax names from the payload.  Without this,
-      // the Solver tab silently ignored Thorn / Trinisphere / Chalice / Vexing
-      // Bauble / Disruptor Flute toggled in the Goldfish Stax tab — the worker
-      // path is the production solver path, so the inline runSolver fix alone
-      // never took effect for users.  Constructor will derive _hasSTAX from
-      // any cost-affecting entries (see GameState.js).
-      opponentStax: Array.isArray(d.opponentStax) ? d.opponentStax : [],
     });
     const bfNames = d.battlefield || [];
     const permIdByBfIdx = new Map();
