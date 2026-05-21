@@ -208,6 +208,27 @@ var TUTOR_PRIORITY_SCORE = {
 // ── Functional equivalents ────────────────────────────────────────────────
 // Within each group, having any one member satisfies all combos that use any
 // other member (they play the same role in the combo engine).
+//
+// ⚠ Magus of the Candelabra is intentionally NOT grouped with argothian_elder /
+// ley_weaver, even though all three untap lands.  The distinction matters:
+//
+//   Argothian Elder / Ley Weaver: {T}: Untap two target lands.  FREE — no mana cost.
+//   Magus of the Candelabra:      {X},{T}: Untap X target lands.  Costs {X} mana.
+//
+// The Wirewood Lodge loops (combos 40, 31, 42, 46) and Maze of Ith loops rely on
+// Elder/Weaver's FREE activation:
+//   Tap big land → Elder untaps Lodge + big land (free) → Lodge untaps Elder ({G}).
+// Magus cannot substitute here — paying {G}{G} for X=2 would cost more mana than
+// Lodge + big land returns net, breaking the loop.
+//
+// Under Ashaya, Magus *does* enable its own loops (combos 32, 34, 36, 43, 47, 52,
+// 60, 62), but those are correctly modelled as separate routing tuples:
+//   ['ashaya','magus_of_the_candelabra']  (combo_data.js line 40)
+//   ['magus_of_the_candelabra','gaeas_cradle']  (combo_data.js line 170)
+//
+// Adding Magus to the argothian_elder group would cause buildPresentSet to expand
+// Magus → argothian_elder, making the Lodge/Maze routing tuples appear satisfied
+// when they are not — a false-positive in analyzeState and canReachCombo.
 var FUNCTIONAL_EQUIVALENTS = [
   new Set(['temur_sabertooth', 'kogla']),
   new Set(['quirion_ranger', 'scryb_ranger']),
@@ -1697,6 +1718,32 @@ class GameState {
         if (oppOuphe) {
           s = s.removeFromOpponentStax('Collector Ouphe');
           s = s.log(`King of the Coldblood Curse ETB: opponent's Collector Ouphe loses all abilities`);
+        }
+      }
+    }
+
+    // Scrapshooter ETB: Gift a card — if gift was promised, destroy target artifact or enchantment.
+    // Modeled deterministically: promise the gift (and destroy stax) whenever a valid target exists.
+    // Opponent drawing a card (the gift) is not modeled (no opponent hand state).
+    if (!skipETB && cardKey === 'scrapshooter') {
+      const STAX_TARGETS = new Set([
+        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+        'Vexing Bauble', 'Disruptor Flute',
+      ]);
+      const staxTarget = s.battlefield.find(p =>
+        (p.is('artifact') || p.is('enchantment')) &&
+        p.name !== 'Scrapshooter' && STAX_TARGETS.has(p.name)
+      );
+      if (staxTarget) {
+        s = s.removeFromBattlefield(staxTarget.id, 'graveyard');
+        if (s) s = s.log(`Scrapshooter ETB (gift promised): destroy ${staxTarget.name}`);
+      } else {
+        const oppTarget = [...s.opponentStax].find(e => STAX_TARGETS.has(e.split('@')[0].trim()));
+        if (oppTarget) {
+          const oppName = oppTarget.split('@')[0].trim();
+          s = s.removeFromOpponentStax(oppName);
+          s = s.log(`Scrapshooter ETB (gift promised): destroy opponent's ${oppName}`);
         }
       }
     }
@@ -4757,6 +4804,17 @@ var CARDS = {
         },
       },
     },
+  },
+  scrapshooter: {
+    externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
+    name: 'Scrapshooter', types: ['creature'], subtypes: ['Raccoon','Archer'],
+    cost: '1GG', power: 3, toughness: 3,
+    // Gift a card (promise opponent a gift → they draw a card when this enters).
+    // Reach.
+    // ETB (if gift was promised): destroy target artifact or enchantment an opponent controls.
+    // Modeled deterministically: if a stax artifact/enchantment is present, promise the gift
+    // and destroy it (opponent draw not modeled). If no stax target, cast without gift promise.
+    // Implemented in GameState.enterBattlefield — same stax-removal pattern as Reclamation Sage.
   },
   fauna_shaman: {
     name: 'Fauna Shaman', types: ['creature'], subtypes: ['Elf','Shaman'],
@@ -8250,6 +8308,55 @@ var WIN_CONDITIONS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  SCRAPSHOOTER MILL — bounce Scrapshooter infinitely to force opponent draws
+  //
+  //  With infinite mana + Scrapshooter + Temur Sabertooth (or Kogla + Eternal Witness):
+  //  Each iteration: cast Scrapshooter with gift promised → opponent draws a card.
+  //  Bounce Scrapshooter back to hand and repeat.
+  //  After infinite iterations the opponent's library is empty.
+  //  On their next draw step (or next forced draw) they lose.
+  //
+  //  Temur Sabertooth variant:
+  //    1. Cast Scrapshooter with gift promised → opponent draws a card.
+  //    2. Pay {1G}: Temur bounces Scrapshooter back to hand.
+  //    3. Repeat with infinite mana.
+  //
+  //  Kogla + Eternal Witness variant (Scrapshooter is not a Human so Kogla can't
+  //  bounce it directly):
+  //    1. Cast Scrapshooter with gift promised → opponent draws.
+  //    2. Sacrifice or let Scrapshooter die; Eternal Witness ETB returns it to hand.
+  //    3. Pay {1G}: Kogla bounces Eternal Witness (Human) back to hand.
+  //    4. Repeat: cast Witness → ETB returns Scrapshooter → cast Scrapshooter with gift.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Win: Scrapshooter Mill (infinite gift draw)',
+    description:
+      "With infinite mana, loop Scrapshooter's Gift ETB to force an opponent to draw a card each iteration. " +
+      "Temur variant: cast Scrapshooter with gift (opponent draws), Temur bounces it ({1G}), repeat. " +
+      "Kogla+Witness variant: cast Scrapshooter with gift (opponent draws), Eternal Witness returns it from GY, Kogla bounces Witness ({1G}), repeat. " +
+      "After infinite iterations opponent's library is exhausted — they lose on their next draw.",
+    check(state) {
+      if (!inHandOrField(state, 'Scrapshooter', 'scrapshooter')) return false;
+      // Temur can directly bounce Scrapshooter (any creature)
+      const hasTemur = inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth');
+      // Kogla variant: Kogla bounces Eternal Witness (Human), Witness returns Scrapshooter from GY
+      const hasKoglaVariant =
+        inHandOrField(state, 'Kogla, the Titan Ape', 'kogla') &&
+        inHandOrField(state, 'Eternal Witness', 'eternal_witness');
+      return hasTemur || hasKoglaVariant;
+    },
+    deployed(state) {
+      if (!inHandOrField(state, 'Scrapshooter', 'scrapshooter')) return false;
+      const bouncerReady =
+        hasPerm(state, 'Temur Sabertooth') ||
+        (hasPerm(state, 'Kogla, the Titan Ape') &&
+         inHandOrField(state, 'Eternal Witness', 'eternal_witness'));
+      return bouncerReady;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  BEAST WHISPERER / GLADEMUSE + INFINITE CREATURE LOOP
   //  → Draw entire library → find finisher
   //
@@ -8721,6 +8828,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Win: Finale of Devastation X≥10':                                             ['finale_of_devastation'],
   'Win: Infectious Bite (poison counters)':                                      ['infectious_bite'],
   'Win: Mikokoro Mill Line':                                                     ['mikokoro'],
+  'Win: Scrapshooter Mill (infinite gift draw)':                                 ['scrapshooter'],
   'Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)':             ['beast_whisperer'],
   'Win: Tutor for Finisher (infinite mana + creature tutor)':                    ['finale_of_devastation'],
   'Win: Defiler of Vigor (infinite +1/+1 counters)':                             ['defiler_of_vigor'],
@@ -8929,6 +9037,9 @@ var _DETECTOR_PREFILTER = {
     { all: ['mikokoro', 'eternal_witness'],
       any: [['temur_sabertooth', 'kogla'],
             ['noxious_revival', 'elvish_reclaimer', 'crop_rotation']] },
+  'Win: Scrapshooter Mill (infinite gift draw)':
+    { all: ['scrapshooter'],
+      any: [['temur_sabertooth', 'kogla']] },
   'Win: Defiler of Vigor (infinite +1/+1 counters)':
     { all: ['defiler_of_vigor'],
       any: [['quirion_ranger', 'scryb_ranger', 'temur_sabertooth', 'kogla', 'wirewood_symbiote']] },
