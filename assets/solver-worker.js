@@ -8308,51 +8308,122 @@ var WIN_CONDITIONS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  SCRAPSHOOTER MILL — bounce Scrapshooter infinitely to force opponent draws
+  //  SCRAPSHOOTER MILL — loop Scrapshooter's Gift ETB to mill opponents
   //
-  //  With infinite mana + Scrapshooter + Temur Sabertooth (or Kogla + Eternal Witness):
-  //  Each iteration: cast Scrapshooter with gift promised → opponent draws a card.
-  //  Bounce Scrapshooter back to hand and repeat.
-  //  After infinite iterations the opponent's library is empty.
-  //  On their next draw step (or next forced draw) they lose.
+  //  With infinite mana, cast Scrapshooter with gift promised each loop so the
+  //  opponent draws a card. After infinite iterations their library is empty.
   //
   //  Temur Sabertooth variant:
-  //    1. Cast Scrapshooter with gift promised → opponent draws a card.
-  //    2. Pay {1G}: Temur bounces Scrapshooter back to hand.
-  //    3. Repeat with infinite mana.
+  //    Cast Scrapshooter (gift → opponent draws). Pay {1G}: Temur bounces it.
+  //    Repeat with infinite mana.
   //
-  //  Kogla + Eternal Witness variant (Scrapshooter is not a Human so Kogla can't
-  //  bounce it directly):
-  //    1. Cast Scrapshooter with gift promised → opponent draws.
-  //    2. Sacrifice or let Scrapshooter die; Eternal Witness ETB returns it to hand.
-  //    3. Pay {1G}: Kogla bounces Eternal Witness (Human) back to hand.
-  //    4. Repeat: cast Witness → ETB returns Scrapshooter → cast Scrapshooter with gift.
+  //  Cloudstone Curio variant:
+  //    Alternate casting Scrapshooter and any other creature. Each ETB triggers
+  //    Cloudstone to return the other creature to hand. Repeat.
+  //
+  //  ── Kogla + Witness + Beast Within ──────────────────────────────────────
+  //  1. Cast Scrapshooter with gift → opponent draws. Scrapshooter on BF.
+  //  2. Beast Within targets Scrapshooter → Scrapshooter to GY, opponent gets Beast token.
+  //  3. Cast Eternal Witness → ETB returns Beast Within to hand.
+  //  4. Kogla {1G}: bounces Witness to hand.
+  //  5. Cast Eternal Witness → ETB returns Scrapshooter to hand.
+  //  6. Kogla {1G}: bounces Witness to hand. Loop.
+  //  (Two Witness casts per cycle. BW can be in hand OR graveyard — Witness recurs from GY.)
+  //
+  //  ── Kogla + Witness + Legolas's Quick Reflexes ──────────────────────────
+  //  LQR gives Scrapshooter "whenever this creature becomes tapped, deal damage
+  //  equal to its power to a target creature." Scrapshooter taps targeting itself
+  //  → deals 3 to itself → dies to GY. Same two-Witness pattern:
+  //  1. Cast Scrapshooter with gift → opponent draws. Scrapshooter on BF.
+  //  2. Cast LQR on Scrapshooter → Scrapshooter taps, deals 3 to itself → dies to GY.
+  //  3. Cast Eternal Witness → ETB returns LQR to hand.
+  //  4. Kogla {1G}: bounces Witness to hand.
+  //  5. Cast Eternal Witness → ETB returns Scrapshooter to hand.
+  //  6. Kogla {1G}: bounces Witness to hand. Loop.
+  //  (LQR can be in hand OR graveyard — Witness recurs from GY.)
+  //
+  //  ── Kogla + Witness + Ashaya + Crop Rotation ────────────────────────────
+  //  Ashaya makes Scrapshooter a Forest land on BF. Crop Rotation sacrifices it.
+  //  1. Cast Scrapshooter with gift → opponent draws.
+  //  2. Crop Rotation: sacrifice Scrapshooter (Forest via Ashaya) → fetch any land.
+  //  3. Cast Eternal Witness → ETB returns Crop Rotation to hand.
+  //  4. Kogla {1G}: bounces Witness to hand.
+  //  5. Cast Eternal Witness → ETB returns Scrapshooter to hand.
+  //  6. Kogla {1G}: bounces Witness to hand. Loop.
+  //  (Two Witness casts per cycle. Crop Rotation can be in hand OR graveyard.)
+  //
+  //  ── Kogla + Witness + Ashaya + Reclaimer + Ranger ───────────────────────
+  //  Ashaya makes Scrapshooter a Forest land. Reclaimer sacrifices it ({2},{T}).
+  //  Reclaimer taps each activation so needs a Ranger to untap it each cycle.
+  //  Ranger returns itself to hand (as the Forest cost) → untaps Reclaimer → recast.
+  //  1. Cast Scrapshooter with gift → opponent draws.
+  //  2. Reclaimer: {2},{T}, sacrifice Scrapshooter (Forest via Ashaya) → Scrapshooter to GY.
+  //  3. Cast Eternal Witness → ETB returns Scrapshooter to hand.
+  //  4. Kogla {1G}: bounces Witness to hand.
+  //  5. Quirion/Scryb Ranger: return itself to hand (as Forest cost) → untaps Reclaimer.
+  //  6. Recast Ranger. Loop.
+  //  (One Witness cast per cycle; Reclaimer stays on BF; Ranger handles its own untap.)
   // ══════════════════════════════════════════════════════════════════════════
 
   {
     name: 'Win: Scrapshooter Mill (infinite gift draw)',
     description:
-      "With infinite mana, loop Scrapshooter's Gift ETB to force an opponent to draw a card each iteration. " +
-      "Temur variant: cast Scrapshooter with gift (opponent draws), Temur bounces it ({1G}), repeat. " +
-      "Kogla+Witness variant: cast Scrapshooter with gift (opponent draws), Eternal Witness returns it from GY, Kogla bounces Witness ({1G}), repeat. " +
-      "After infinite iterations opponent's library is exhausted — they lose on their next draw.",
+      "With infinite mana, loop Scrapshooter's Gift ETB to force opponents to draw infinitely. " +
+      "Temur: bounce Scrapshooter ({1G}), repeat. " +
+      "Cloudstone Curio: alternate casting Scrapshooter and another creature. " +
+      "Kogla+Witness+BW: BW kills Scrapshooter; two Witness casts (Kogla bounces between) recur BW then Scrapshooter (BW can be in hand or GY). " +
+      "Kogla+Witness+LQR: LQR tap-kills Scrapshooter (3 damage to itself); same two-Witness pattern (LQR can be in hand or GY). " +
+      "Kogla+Witness+Ashaya+CropRot: Crop Rotation sacs Scrapshooter (Forest via Ashaya); two-Witness pattern (CropRot can be in hand or GY). " +
+      "Kogla+Witness+Ashaya+Reclaimer+Ranger: Reclaimer sacs Scrapshooter; one Witness recurs it; Ranger returns itself to untap Reclaimer.",
     check(state) {
       if (!inHandOrField(state, 'Scrapshooter', 'scrapshooter')) return false;
-      // Temur can directly bounce Scrapshooter (any creature)
-      const hasTemur = inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth');
-      // Kogla variant: Kogla bounces Eternal Witness (Human), Witness returns Scrapshooter from GY
-      const hasKoglaVariant =
+      const inHand = (key) => state.hand && state.hand.includes(key);
+
+      // Temur: unlimited direct bounce of any creature
+      if (inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth')) return true;
+
+      // Cloudstone Curio: triggers on every creature ETB, no per-turn limit
+      if (hasPerm(state, 'Cloudstone Curio')) return true;
+
+      // Kogla+Witness engine: Kogla bounces Witness (Human) for {1G}
+      const hasKoglaWitness =
         inHandOrField(state, 'Kogla, the Titan Ape', 'kogla') &&
         inHandOrField(state, 'Eternal Witness', 'eternal_witness');
-      return hasTemur || hasKoglaVariant;
+      if (hasKoglaWitness) {
+        const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
+        const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
+        const hasRanger  =
+          hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+        // BW/LQR: in hand OR graveyard — Witness recurs them from GY each loop
+        if (inHand('beast_within') || gy.includes('Beast Within') ||
+            inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes")) return true;
+        // Crop Rotation: in hand OR graveyard (Ashaya required)
+        if (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) return true;
+        // Reclaimer sacs Scrapshooter as a land (Ashaya required); Ranger untaps Reclaimer each cycle
+        if (hasAshaya && hasRanger &&
+            inHandOrField(state, 'Elvish Reclaimer', 'elvish_reclaimer')) return true;
+      }
+
+      return false;
     },
     deployed(state) {
       if (!inHandOrField(state, 'Scrapshooter', 'scrapshooter')) return false;
-      const bouncerReady =
-        hasPerm(state, 'Temur Sabertooth') ||
-        (hasPerm(state, 'Kogla, the Titan Ape') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness'));
-      return bouncerReady;
+      const inHand = (key) => state.hand && state.hand.includes(key);
+      const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
+
+      if (hasPerm(state, 'Temur Sabertooth')) return true;
+      if (hasPerm(state, 'Cloudstone Curio')) return true;
+      if (hasPerm(state, 'Kogla, the Titan Ape') &&
+          inHandOrField(state, 'Eternal Witness', 'eternal_witness')) {
+        const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
+        const hasRanger  =
+          hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+        if (inHand('beast_within') || gy.includes('Beast Within') ||
+            inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes")) return true;
+        if (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) return true;
+        if (hasAshaya && hasRanger && hasPerm(state, 'Elvish Reclaimer')) return true;
+      }
+      return false;
     },
   },
 
@@ -9039,7 +9110,7 @@ var _DETECTOR_PREFILTER = {
             ['noxious_revival', 'elvish_reclaimer', 'crop_rotation']] },
   'Win: Scrapshooter Mill (infinite gift draw)':
     { all: ['scrapshooter'],
-      any: [['temur_sabertooth', 'kogla']] },
+      any: [['temur_sabertooth', 'cloudstone_curio', 'kogla']] },
   'Win: Defiler of Vigor (infinite +1/+1 counters)':
     { all: ['defiler_of_vigor'],
       any: [['quirion_ranger', 'scryb_ranger', 'temur_sabertooth', 'kogla', 'wirewood_symbiote']] },
