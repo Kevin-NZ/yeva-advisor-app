@@ -203,6 +203,33 @@ var TUTOR_PRIORITY_SCORE = {
   'invasion_of_ikoria': 72,
   // Ulvenwald Oddity: haste creature, useful in loops that need immediate tap
   'ulvenwald_oddity': 38,
+  // ── New cards 2026 ──────────────────────────────────────────────────────
+  // Draw-engine creatures (high value — draw cards in combo turns)
+  'soul_of_the_harvest': 44,   // 6/6 draw-on-enter; similar to Beast Whisperer role
+  'primordial_sage': 43,        // draw on creature-cast; non-Elf 4/5 body
+  'voice_of_many': 36,          // 3/3 draw on ETB (1 card in 1v1)
+  'elvish_visionary': 34,       // 1/1 ETB draw — cheap cantrip Elf body
+  'llanowar_visionary': 33,     // 2/2 ETB draw + tap {G} — mana + card advantage
+  'timeless_witness': 32,       // ETB graveyard return (Eternal Witness twin)
+  'heart_warden': 28,           // 1/1 dork with {2}, sac: draw
+  // Draw artifact
+  "lifecrafters_bestiary": 30,  // draw on creature-cast for {G}; synergistic in loops
+  // Mana dorks (medium priority — useful ramp but not combo-critical)
+  'llanowar_tribe': 37,         // {G}{G}{G} dork — premium ramp
+  'somberwald_sage': 35,        // {G}{G}{G} restricted dork
+  'ilysian_caryatid': 27,       // 0/3 any-color dork (ferocious: 2x)
+  'paradise_druid': 26,         // 2/1 any-color dork (hexproof while untapped)
+  'leafkin_druid': 25,          // 0/3 ferocious: {G}{G}
+  'whisperer_of_the_wilds': 24, // ferocious: {G}{G}
+  'druid_of_the_cowl': 22,      // 1/2 plain {G} dork
+  'armored_scrapgorger': 20,    // GY-hate dork (situational)
+  'wose_pathfinder': 21,        // scales with Forests
+  // Lands
+  'havenwood_battleground': 29, // sac for {G}{G}{G} — strong burst mana
+  'tranquil_thicket': 23,       // Forest cycling land — cycle or tap
+  'tangled_florahedron': 24,    // MDFC: creature dork or Forest land
+  // Sorcery
+  'uncage_the_menagerie': 31,   // searches up to X creatures of MV X — strong tutor
 };
 
 // ── Functional equivalents ────────────────────────────────────────────────
@@ -1525,6 +1552,74 @@ class GameState {
       ];
       const ck = NAME_TO_KEY[cardName] ?? Object.keys(cards).find(k => cards[k].name === cardName);
       if (ck) s = s.addToHand(ck);
+    }
+
+    // Elvish Visionary ETB: draw a card when it enters.
+    if (!skipETB && cardKey === 'elvish_visionary') {
+      s = s.playerDraws(0, 1);
+    }
+
+    // Llanowar Visionary ETB: draw a card when it enters.
+    if (!skipETB && cardKey === 'llanowar_visionary') {
+      s = s.playerDraws(0, 1);
+    }
+
+    // Voice of Many ETB: draw a card for each opponent who controls fewer creatures than you.
+    // In 1v1 commander: draw 1 if you control more creatures than the opponent (always true
+    // in a typical combo position with a board). Simplified: draw 1.
+    if (!skipETB && cardKey === 'voice_of_many') {
+      s = s.playerDraws(0, 1);
+    }
+
+    // Soul of the Harvest ETB: whenever another nontoken creature enters, draw a card.
+    // The ETB itself doesn't draw (it's the new Soul entering, and Soul doesn't trigger its own).
+    // The trigger fires when OTHER nontoken creatures enter while Soul is on battlefield.
+    // This is handled in the cast_spell action (below) and here for when Soul itself enters —
+    // no draw for Soul itself (as per oracle). Subsequent creatures are handled in actions.js.
+
+    // Timeless Witness ETB: return target card from graveyard to hand.
+    // Identical logic to Eternal Witness.
+    if (!skipETB && cardKey === 'timeless_witness' && s.players[0].graveyard.length > 0) {
+      // Skip ETB return for Eternalize tokens (isToken is set)
+      const newPerm = s.battlefield[s.battlefield.length - 1];
+      if (!newPerm?.isToken) {
+        const gy = s.players[0].graveyard;
+        const present = new Set(s.hand);
+        for (const p of s.battlefield) {
+          const ck = NAME_TO_KEY[p.name];
+          if (ck) present.add(ck);
+        }
+        let bestIdx = -1, bestMissing = Infinity;
+        for (let i = 0; i < gy.length; i++) {
+          const ck = NAME_TO_KEY[gy[i]];
+          if (!ck) continue;
+          for (const required of COMBO_REQUIRED_KEYS) {
+            if (!required.includes(ck)) continue;
+            const missing = required.filter(k => !present.has(k)).length;
+            if (missing < bestMissing) { bestMissing = missing; bestIdx = i; }
+          }
+        }
+        const targetIdx = bestIdx >= 0 ? bestIdx : 0;
+        const cardName = gy[targetIdx];
+        s._ensurePlayers();
+        s.players[0] = s.players[0].clone();
+        s.players[0].graveyard = [
+          ...s.players[0].graveyard.slice(0, targetIdx),
+          ...s.players[0].graveyard.slice(targetIdx + 1),
+        ];
+        const ck = NAME_TO_KEY[cardName] ?? Object.keys(cards).find(k => cards[k].name === cardName);
+        if (ck) s = s.addToHand(ck);
+      }
+    }
+
+    // Havenwood Battleground enters tapped.
+    if (cardKey === 'havenwood_battleground') {
+      perm.tapped = true;
+    }
+
+    // Tranquil Thicket enters tapped.
+    if (cardKey === 'tranquil_thicket') {
+      perm.tapped = true;
     }
 
     // Regal Force ETB: draw a card for each green creature you control
@@ -3214,6 +3309,43 @@ var CARDS = {
     },
   },
 
+  havenwood_battleground: {
+    name: 'Havenwood Battleground', types: ['land'], subtypes: [], cost: null,
+    // Enters tapped. {T}: Add {G}. {T}, Sacrifice: Add {G}{G}{G}.
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+    abilities: {
+      sac_for_mana: {
+        label: '{T}, Sacrifice Havenwood Battleground: Add {G}{G}{G}',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          let s = state.tapPermanent(perm.id); if (!s) return [];
+          s = s.removeFromBattlefield(perm.id, 'graveyard');
+          if (!s) return [];
+          s = s.addMana('G'); s = s.addMana('G'); s = s.addMana('G');
+          return [s.log('Havenwood Battleground: {T}, sacrifice → {G}{G}{G}')];
+        },
+      },
+    },
+  },
+
+  tranquil_thicket: {
+    name: 'Tranquil Thicket', types: ['land'], subtypes: ['Forest'], cost: null,
+    // Enters tapped. {T}: Add {G}. Cycling {G}: discard, draw a card.
+    isForest: true,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+    handAbilities: {
+      cycling: {
+        label: 'Cycling {G}: Discard Tranquil Thicket → draw a card',
+        fn(state, cardKey) {
+          const ap = state.payMana('G'); if (!ap) return [];
+          let s = ap.discardFromHand(cardKey); if (!s) return [];
+          s = s.playerDraws(0, 1);
+          return [s.log('Cycling Tranquil Thicket → draw a card')];
+        },
+      },
+    },
+  },
+
   // ─── ARTIFACTS ───────────────────────────────────────────────────────────
 
   sol_ring: { name: 'Sol Ring', types: ['artifact'], subtypes: [], cost: '1', tapForMana: simpleTap('{C}{C}', [['C',2]]) },
@@ -3463,6 +3595,15 @@ var CARDS = {
         },
       },
     },
+  },
+
+  lifecrafters_bestiary: {
+    name: "Lifecrafter's Bestiary", types: ['artifact'], subtypes: [], cost: '3',
+    // At the beginning of your upkeep, scry 1.
+    // Whenever you cast a creature spell, you may pay {G}. If you do, draw a card.
+    // Scry is not tracked in the solver (no library order manipulation).
+    // The draw trigger is modeled in actions.js cast_spell (pay {G} draw a card).
+    externallyImplemented: true,  // [drift-detector] draw trigger in actions.js cast_spell
   },
 
   // ─── CREATURES — Mana Dorks ───────────────────────────────────────────────
@@ -3880,6 +4021,244 @@ var CARDS = {
     // The tap ability is below.
     externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     tapForMana: simpleTap('{any}',[['G',1]]),
+  },
+
+  // ─── NEW MANA DORKS (added 2026) ─────────────────────────────────────────
+
+  druid_of_the_cowl: {
+    name: 'Druid of the Cowl', types: ['creature'], subtypes: ['Elf', 'Druid'],
+    cost: '1G', power: 1, toughness: 2,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+  },
+
+  llanowar_tribe: {
+    name: 'Llanowar Tribe', types: ['creature'], subtypes: ['Elf', 'Druid'],
+    cost: 'GGG', power: 3, toughness: 3,
+    tapForMana: simpleTap('{G}{G}{G}', [['G', 3]]),
+  },
+
+  paradise_druid: {
+    name: 'Paradise Druid', types: ['creature'], subtypes: ['Elf', 'Druid'],
+    cost: '1G', power: 2, toughness: 1,
+    // Hexproof while untapped (not tracked in solver), {T}: Add one mana of any color.
+    tapForMana: simpleTap('{any}', [['G', 1]]),
+  },
+
+  leafkin_druid: {
+    name: 'Leafkin Druid', types: ['creature'], subtypes: ['Elemental', 'Druid'],
+    cost: '1G', power: 0, toughness: 3,
+    // {T}: Add {G}. If you control 4+ creatures, add {G}{G} instead.
+    // Leafkin Druid itself counts.
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const s = state.tapPermanent(perm.id); if (!s) return [];
+      const creatureCount = s.creatures().length;
+      const amt = creatureCount >= 4 ? 2 : 1;
+      let ns = s;
+      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      return [ns.log(`Tap Leafkin Druid → {G}x${amt} (${creatureCount} creatures)`)];
+    },
+  },
+
+  ilysian_caryatid: {
+    name: 'Ilysian Caryatid', types: ['creature'], subtypes: ['Plant'],
+    cost: '1G', power: 0, toughness: 3,
+    // {T}: Add one mana of any color. If you control a creature with power 4+, add two mana instead.
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const s = state.tapPermanent(perm.id); if (!s) return [];
+      const hasPower4 = s.creatures().some(c => (c.power ?? 0) >= 4);
+      const amt = hasPower4 ? 2 : 1;
+      let ns = s;
+      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      return [ns.log(`Tap Ilysian Caryatid → {G}x${amt}${hasPower4 ? ' (ferocious)' : ''}`)];
+    },
+  },
+
+  whisperer_of_the_wilds: {
+    name: 'Whisperer of the Wilds', types: ['creature'], subtypes: ['Human', 'Druid'],
+    cost: '1G', power: 1, toughness: 2,
+    // {T}: Add {G}. Ferocious — {T}: Add {G}{G} if you control a creature with power 4+.
+    // Both are mana abilities. Model: always produces the better amount.
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const s = state.tapPermanent(perm.id); if (!s) return [];
+      const hasPower4 = s.creatures().some(c => (c.power ?? 0) >= 4);
+      const amt = hasPower4 ? 2 : 1;
+      let ns = s;
+      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      return [ns.log(`Tap Whisperer of the Wilds → {G}x${amt}${hasPower4 ? ' (ferocious)' : ''}`)];
+    },
+  },
+
+  wose_pathfinder: {
+    name: 'Wose Pathfinder', types: ['creature'], subtypes: ['Treefolk', 'Scout'],
+    cost: '1G', power: 1, toughness: 2,
+    // {T}: Add {G} for each Forest you control.
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const s = state.tapPermanent(perm.id); if (!s) return [];
+      const forests = s.lands().filter(l => l.isForest || l.subtypes?.includes('Forest')).length;
+      if (forests === 0) return [];  // no Forests → no mana, suppress action
+      let ns = s;
+      for (let i = 0; i < forests; i++) ns = ns.addMana('G');
+      return [ns.log(`Tap Wose Pathfinder → {G}x${forests} (${forests} Forests)`)];
+    },
+  },
+
+  armored_scrapgorger: {
+    name: 'Armored Scrapgorger', types: ['creature'], subtypes: ['Squirrel'],
+    cost: '1G', power: 2, toughness: 2,
+    // {T}: Exile up to two target cards from a single graveyard. Add {G} for each artifact exiled.
+    // Modeled as a mana ability — taps to exile opponents' artifacts from graveyard for {G} each.
+    // Simplified: if any artifact names are in graveyard, exile up to 2 for {G}{G};
+    // otherwise tap for {0} (still useful to exile combo pieces from opponent's GY).
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const s = state.tapPermanent(perm.id); if (!s) return [];
+      // Check our own graveyard for artifact cards to exile
+      var cards = CARDS;
+      const gy = s.players[0].graveyard ?? [];
+      const artifactIndices = [];
+      for (let i = 0; i < gy.length && artifactIndices.length < 2; i++) {
+        const ck = NAME_TO_KEY[gy[i]];
+        const def = ck ? cards[ck] : null;
+        if (def?.types.includes('artifact')) artifactIndices.push(i);
+      }
+      const manaAmt = artifactIndices.length;
+      if (manaAmt === 0) {
+        // No artifacts to exile — still legal (exile 0 nonartifact cards, produce 0 mana)
+        // Skip as unhelpful: return [] so the solver doesn't waste actions
+        return [];
+      }
+      // Exile up to 2 artifact cards from graveyard
+      let ns = s.clone(); ns._ensurePlayers();
+      ns.players[0] = ns.players[0].clone();
+      const newGY = [...ns.players[0].graveyard];
+      for (let j = artifactIndices.length - 1; j >= 0; j--) {
+        newGY.splice(artifactIndices[j], 1);
+      }
+      ns.players[0].graveyard = newGY;
+      for (let i = 0; i < manaAmt; i++) ns = ns.addMana('G');
+      return [ns.log(`Tap Armored Scrapgorger: exile ${manaAmt} artifact(s) → {G}x${manaAmt}`)];
+    },
+  },
+
+  somberwald_sage: {
+    name: 'Somberwald Sage', types: ['creature'], subtypes: ['Human', 'Druid'],
+    cost: '2G', power: 1, toughness: 1,
+    // {T}: Add three mana in any combination of colors. Spend only on creature spells.
+    // The restriction (creature-only mana) is not modeled in the mana pool,
+    // but the solver primarily casts creatures so this is functionally correct.
+    tapForMana: simpleTap('{G}{G}{G}', [['G', 3]]),
+  },
+
+  // ─── NEW DRAW-ENGINE CREATURES (added 2026) ───────────────────────────────
+
+  elvish_visionary: {
+    name: 'Elvish Visionary', types: ['creature'], subtypes: ['Elf', 'Shaman'],
+    cost: '1G', power: 1, toughness: 1,
+    // ETB: draw a card.
+    // Handled in GameState.enterBattlefield.
+    externallyImplemented: true,  // ETB draw in GameState.enterBattlefield
+  },
+
+  llanowar_visionary: {
+    name: 'Llanowar Visionary', types: ['creature'], subtypes: ['Elf', 'Druid'],
+    cost: '1GG', power: 2, toughness: 2,
+    // ETB: draw a card. {T}: Add {G}.
+    externallyImplemented: true,  // ETB draw in GameState.enterBattlefield
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+  },
+
+  heart_warden: {
+    name: 'Heart Warden', types: ['creature'], subtypes: ['Elf', 'Druid'],
+    cost: '1G', power: 1, toughness: 1,
+    // {T}: Add {G}. / {2}, Sacrifice: Draw a card.
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+    abilities: {
+      sac_draw: {
+        label: '{2}, Sacrifice Heart Warden: Draw a card',
+        fn(state, perm) {
+          const ap = state.payMana('2'); if (!ap) return [];
+          let s = ap.removeFromBattlefield(perm.id, 'graveyard');
+          if (!s) return [];
+          s = s.playerDraws(0, 1);
+          return [s.log('Heart Warden: {2}, sacrifice → draw a card')];
+        },
+      },
+    },
+  },
+
+  tangled_florahedron: {
+    name: 'Tangled Florahedron', types: ['creature'], subtypes: ['Elemental'],
+    cost: '1G', power: 1, toughness: 1,
+    // Front face: {T}: Add {G}.
+    // Back face (land): Tangled Vale — enters tapped, {T}: Add {G}.
+    // Modeled: creature face only (land face handled via handAbilities).
+    tapForMana: simpleTap('{G}', [['G', 1]]),
+    handAbilities: {
+      play_as_land: {
+        label: 'Play Tangled Florahedron as land (Tangled Vale, enters tapped)',
+        fn(state, cardKey) {
+          if (state.landDrops <= 0) return [];
+          let s = state.removeFromHand(cardKey); if (!s) return [];
+          s = s.clone(); s.landDrops--;
+          // Enters tapped as "Tangled Vale" — represented as the florahedron perm with tapped:true
+          s = s.enterBattlefield(cardKey, { tapped: true, asLand: true });
+          // Mark the perm as land face so it doesn't have summoning sickness
+          const landPerm = s.battlefield[s.battlefield.length - 1];
+          if (landPerm) {
+            landPerm.summoningSick = false;
+            landPerm.asLand = true;
+            // Add Forest subtype so Wose Pathfinder etc. count it
+            if (!landPerm.subtypes.includes('Forest')) landPerm.subtypes.push('Forest');
+            landPerm.isForest = true;
+          }
+          return [s.log('Play Tangled Vale (land face, enters tapped)')];
+        },
+      },
+    },
+  },
+
+  voice_of_many: {
+    name: 'Voice of Many', types: ['creature'], subtypes: ['Elf', 'Warrior'],
+    cost: '2GG', power: 3, toughness: 3,
+    // ETB: draw a card for each opponent who controls fewer creatures than you.
+    // In 1v1 (commander), draw 1 if you have more creatures than opponent.
+    // Simplified: always draw 1 (opponent is assumed to have fewer creatures in typical combo lines).
+    externallyImplemented: true,  // ETB draw in GameState.enterBattlefield
+  },
+
+  timeless_witness: {
+    name: 'Timeless Witness', types: ['creature'], subtypes: ['Human', 'Shaman'],
+    cost: '2GG', power: 2, toughness: 2,
+    // ETB: return target card from graveyard to hand.
+    // Eternalize {4}{G}{G}: exile from GY, create 4/4 Zombie token copy.
+    externallyImplemented: true,  // ETB return in GameState.enterBattlefield
+    graveyardAbilities: {
+      eternalize: {
+        label: '{4}{G}{G}: Eternalize — exile from graveyard → 4/4 Zombie Human Shaman token',
+        fn(state, cardName) {
+          const ap = state.payMana('4GG'); if (!ap) return [];
+          let s = ap.clone(); s._ensurePlayers();
+          s.players[0] = s.players[0].clone();
+          const idx = s.players[0].graveyard.indexOf(cardName);
+          if (idx < 0) return [];
+          s.players[0].graveyard = [...s.players[0].graveyard];
+          s.players[0].graveyard.splice(idx, 1);
+          s = s.clone(); s.exile = [...(s.exile ?? []), cardName];
+          // Enter as 4/4 token (use timeless_witness key; ETB will still fire for graveyard return)
+          s = s.enterBattlefield('timeless_witness', { power: 4, toughness: 4, isToken: true });
+          const token = s.battlefield[s.battlefield.length - 1];
+          if (token) {
+            token.power = 4; token.toughness = 4; token.isToken = true;
+            token.summoningSick = false;
+          }
+          return [s.log('Timeless Witness: Eternalize → 4/4 Zombie Human Shaman token')];
+        },
+      },
+    },
   },
 
   // ─── CREATURES — Untappers ────────────────────────────────────────────────
@@ -5031,6 +5410,22 @@ var CARDS = {
     },
   },
 
+  // ─── CREATURES — Draw-Engine (added 2026) ────────────────────────────────
+
+  primordial_sage: {
+    name: 'Primordial Sage', types: ['creature'], subtypes: ['Spirit'],
+    cost: '4GG', power: 4, toughness: 5,
+    // Whenever you cast a creature spell, you may draw a card.
+    externallyImplemented: true,  // [drift-detector] draw trigger in actions.js cast_spell
+  },
+
+  soul_of_the_harvest: {
+    name: 'Soul of the Harvest', types: ['creature'], subtypes: ['Elemental'],
+    cost: '4GG', power: 6, toughness: 6,
+    // Trample. Whenever another nontoken creature you control enters, you may draw a card.
+    externallyImplemented: true,  // [drift-detector] draw trigger in GameState.enterBattlefield
+  },
+
   // ─── ENCHANTMENTS ────────────────────────────────────────────────────────
 
   concordant_crossroads: {
@@ -5438,6 +5833,51 @@ var CARDS = {
   },
 
   // ─── INSTANTS & SORCERIES ────────────────────────────────────────────────
+
+  uncage_the_menagerie: {
+    name: 'Uncage the Menagerie', types: ['sorcery'], subtypes: [], cost: 'XGG',
+    // Search your library for up to X creatures with different names that each have mana value X.
+    // Reveal them, put them into your hand, then shuffle.
+    // Strategy: at X=2 find 2 different MV-2 creatures (mana dorks, utility);
+    //           at X=3 find combo pieces; at X=4+ find high-impact creatures.
+    // We pick the top TUTOR_PRIORITY_SCORE creatures of exactly that MV.
+    castFn(state) {
+      var cards = CARDS;
+      var { parseCost: pc } = _GSM;
+      const x = state.mana.total();
+      if (x < 1) return [drainMana(state).log('Uncage the Menagerie: X=0, no creatures found')];
+
+      // Find all unique creatures in library with mana value exactly X
+      const candidates = [];
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (!def?.types.includes('creature') || !def.cost) continue;
+        const parsed = pc(def.cost);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+        if (mv !== x) continue;
+        candidates.push({ ck, def, score: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
+      }
+      // Sort by score descending, take up to X
+      candidates.sort((a, b) => b.score - a.score);
+      const picks = candidates.slice(0, x);
+
+      if (picks.length === 0) {
+        return [drainMana(state).log(`Uncage the Menagerie X=${x}: no MV-${x} creatures in library`)];
+      }
+
+      // Add all picked cards to hand
+      let s = drainMana(state);
+      for (const { ck } of picks) {
+        const { state: ns, cardKey: found } = s.searchLibraryFor(k => k === ck);
+        if (found) { s = ns.addToHand(found); }
+      }
+      const names = picks.map(p => p.def.name).join(', ');
+      return [s.log(`Uncage the Menagerie X=${x} → ${names}`)];
+    },
+  },
 
   chord_of_calling: {
     name: 'Chord of Calling', types: ['instant'], subtypes: [], cost: 'XGGG',
@@ -9901,6 +10341,35 @@ function generateActions(state, _presentHint = null) {
         // Guardian Project: draw when unique creature enters
         if (isCreature && ns.hasPermanent('Guardian Project')) {
           ns = ns.playerDraws(0, 1);
+        }
+
+        // Primordial Sage: whenever you cast a creature spell, you may draw a card.
+        // "May" — always draw (optimal in solver context).
+        if (isCreature && ns.hasPermanent('Primordial Sage')) {
+          const sage = ns.getPermanent('Primordial Sage');
+          if (!sage.summoningSick) ns = ns.playerDraws(0, 1);
+        }
+
+        // Soul of the Harvest: whenever another nontoken creature you control enters, draw a card.
+        // The entering creature must be nontoken. Soul itself doesn't trigger on its own ETB.
+        if (isCreature && ns.hasPermanent('Soul of the Harvest')) {
+          const soul = ns.getPermanent('Soul of the Harvest');
+          if (!soul.summoningSick) {
+            // The creature just entered — check it's the one that entered, not Soul itself
+            const entered = ns.battlefield[ns.battlefield.length - 1];
+            if (entered && entered.name !== 'Soul of the Harvest' && !entered.isToken) {
+              ns = ns.playerDraws(0, 1);
+            }
+          }
+        }
+
+        // Lifecrafter's Bestiary: whenever you cast a creature spell, you may pay {G} → draw.
+        if (isCreature && ns.hasPermanent("Lifecrafter's Bestiary")) {
+          const paid = ns.payMana('G');
+          if (paid) {
+            ns = paid.playerDraws(0, 1);
+            ns = ns.log("Lifecrafter's Bestiary: pay {G} → draw a card");
+          }
         }
 
         // Defiler of Vigor: whenever you cast a green permanent spell,
