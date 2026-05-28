@@ -203,6 +203,17 @@ var TUTOR_PRIORITY_SCORE = {
   'invasion_of_ikoria': 72,
   // Ulvenwald Oddity: haste creature, useful in loops that need immediate tap
   'ulvenwald_oddity': 38,
+  // ── New cards 2026 batch 2 ───────────────────────────────────────────────
+  'magus_of_the_order':         72,  // Natural Order on a stick — top-tier tutor
+  'return_of_the_wildspeaker':  48,  // draw greatestPower cards — huge refill
+  'incubation_druid':           38,  // 3-mana dork when adapted; high combo value
+  'quest_for_renewal':          36,  // Seedborn Muse for creatures — very strong in loops
+  'kamahls_will':               34,  // mass removal of opponent stax
+  'generous_patron':            30,  // ETB support + draw on counter placement
+  'ulvenwald_tracker':          22,  // fight stax threats
+  'reclaim':                    28,  // instant-speed tutor-to-top from GY
+  'vines_of_vastwood':          15,  // protection + pump; low combo relevance
+
   // ── New cards 2026 ──────────────────────────────────────────────────────
   // Draw-engine creatures (high value — draw cards in combo turns)
   'soul_of_the_harvest': 44,   // 6/6 draw-on-enter; similar to Beast Whisperer role
@@ -1552,6 +1563,32 @@ class GameState {
       ];
       const ck = NAME_TO_KEY[cardName] ?? Object.keys(cards).find(k => cards[k].name === cardName);
       if (ck) s = s.addToHand(ck);
+    }
+
+    // Generous Patron ETB: support 2 — put a +1/+1 counter on each of up to 2 other creatures.
+    // Priority: Incubation Druid first (enables 3-mana mode), then any creature.
+    // No opponent draw trigger modelled (no opponent creatures in solo solver).
+    if (!skipETB && cardKey === 'generous_patron') {
+      s._ensureBF();
+      const targets = s.battlefield.filter(p =>
+        p.is('creature') && p.id !== perm.id && !p.summoningSick
+      );
+      // Prefer Incubation Druid (adapt trigger), else biggest/first creatures
+      targets.sort((a, b) => {
+        if (a.cardKey === 'incubation_druid') return -1;
+        if (b.cardKey === 'incubation_druid') return 1;
+        return (b.power ?? 0) - (a.power ?? 0);
+      });
+      const toSupport = targets.slice(0, 2);
+      for (const t of toSupport) {
+        const live = s.getPermanentById(t.id);
+        if (live) {
+          live.counters = { ...live.counters, '+1/+1': (live.counters?.['+1/+1'] ?? 0) + 1 };
+          // +1/+1 counter also raises power/toughness
+          live.power = (live.power ?? 0) + 1;
+          live.toughness = (live.toughness ?? 0) + 1;
+        }
+      }
     }
 
     // Elvish Visionary ETB: draw a card when it enters.
@@ -5412,6 +5449,140 @@ var CARDS = {
 
   // ─── CREATURES — Draw-Engine (added 2026) ────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // New creatures (2026 batch 2)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  incubation_druid: {
+    name: 'Incubation Druid', types: ['creature'], subtypes: ['Elf', 'Druid'],
+    cost: '1G', power: 0, toughness: 2,
+    // {T}: Add one mana of any type a land you control could produce.
+    // If Incubation Druid has a +1/+1 counter → add THREE mana instead.
+    // Adapt {3}{G}{G}: if no counters, put three +1/+1 counters on it.
+    // Modelled: mana amount depends on whether perm.counters['+1/+1'] >= 1.
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const s = state.tapPermanent(perm.id); if (!s) return [];
+      const hasCounter = (perm.counters?.['+1/+1'] ?? 0) >= 1;
+      const amt = hasCounter ? 3 : 1;
+      let ns = s;
+      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      return [ns.log(`Tap Incubation Druid → {G}x${amt}${hasCounter ? ' (adapted)' : ''}`)];
+    },
+    abilities: {
+      adapt: {
+        label: '{3}{G}{G}: Adapt 3 — put three +1/+1 counters on Incubation Druid',
+        fn(state, perm) {
+          // Adapt only fires if the creature has no +1/+1 counters yet
+          if ((perm.counters?.['+1/+1'] ?? 0) > 0) return [];
+          const ap = state.payMana('3GG'); if (!ap) return [];
+          const s = ap.clone(); s._ensureBF();
+          const live = s.getPermanentById(perm.id); if (!live) return [];
+          live.counters = { ...live.counters, '+1/+1': 3 };
+          return [s.log('Incubation Druid: Adapt 3 → three +1/+1 counters')];
+        },
+      },
+    },
+  },
+
+  generous_patron: {
+    name: 'Generous Patron', types: ['creature'], subtypes: ['Elf', 'Advisor'],
+    cost: '2G', power: 1, toughness: 4,
+    // ETB: support 2 (put a +1/+1 counter on each of up to 2 other creatures).
+    // Whenever you put one or more counters on a creature you don't control, draw.
+    // In single-player solver we model ETB: put +1/+1 counters on up to 2 own creatures
+    // to grow dorks (especially Incubation Druid). No opponent trigger in solo mode.
+    // ETB draw wired in GameState.enterBattlefield.
+    externallyImplemented: true,  // [drift-detector] ETB support + counter trigger in GameState
+  },
+
+  magus_of_the_order: {
+    name: 'Magus of the Order', types: ['creature'], subtypes: ['Human', 'Wizard'],
+    cost: '2GG', power: 2, toughness: 2,
+    // {G}, {T}, Sacrifice a green creature: Search library → any green creature onto BF.
+    // Functionally identical to Natural Order.
+    abilities: {
+      natural_order_effect: {
+        label: '{G}, {T}, Sacrifice a green creature: tutor any green creature onto battlefield',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const ap = state.payMana('G'); if (!ap) return [];
+          const s = ap.tapPermanent(perm.id); if (!s) return [];
+          var cards = CARDS;
+          // Find a green creature to sacrifice (prefer the least-valuable one)
+          const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
+                                'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
+          const greenCreatures = s.creatures().filter(c => {
+            const ck = NAME_TO_KEY[c.name];
+            return cards[ck]?.cost?.includes('G');
+          });
+          if (greenCreatures.length === 0) return [];
+          const expendable = greenCreatures.filter(c => !KEEP.has(c.name));
+          const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
+          const afterSac = s.removeFromBattlefield(sacCreature.id, 'graveyard');
+          if (!afterSac) return [];
+          const sacKey = NAME_TO_KEY[sacCreature.name];
+          // Find best green creature in library
+          let best = null, bestScore = -Infinity;
+          const seen = new Set();
+          for (const ck of afterSac.players[0].library) {
+            if (seen.has(ck) || ck === 'unknown') continue;
+            seen.add(ck);
+            if (ck === sacKey) continue;
+            const def = cards[ck];
+            if (!def?.types.includes('creature') || !def.cost?.includes('G')) continue;
+            const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+            if (score > bestScore) { bestScore = score; best = { ck, def }; }
+          }
+          if (!best) return [];
+          const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === best.ck);
+          if (!cardKey) return [];
+          return [ns.enterBattlefield(cardKey).log(
+            `Magus of the Order: sac ${sacCreature.name} → ${best.def.name}`)];
+        },
+      },
+    },
+  },
+
+  ulvenwald_tracker: {
+    name: 'Ulvenwald Tracker', types: ['creature'], subtypes: ['Human', 'Shaman'],
+    cost: 'G', power: 1, toughness: 1,
+    // {1}{G}, {T}: Target creature you control fights another target creature.
+    // In the solver this is useful to remove opponent threats via stax — but since
+    // we model a 1v1 board with no opponent creatures by default, the main use is
+    // killing collector_ouphe / stax pieces. We model it as: fight an opponent stax creature
+    // using our biggest creature, removing it from the board.
+    abilities: {
+      fight: {
+        label: '{1}{G}, {T}: A creature you control fights target creature',
+        fn(state, perm) {
+          if (perm.tapped || perm.summoningSick) return [];
+          const ap = state.payMana('1G'); if (!ap) return [];
+          const s = ap.tapPermanent(perm.id); if (!s) return [];
+          // Find opponent stax creatures — tracked as opponentStax permanents
+          var cards = CARDS;
+          const staxPerms = s.battlefield.filter(p =>
+            p.controller === 'opponent' || STAX_CARDS.has(p.cardKey)
+          );
+          if (staxPerms.length === 0) return [];
+          // Pick our biggest creature to fight with
+          const ourCreatures = s.creatures().filter(c => c.id !== perm.id);
+          if (ourCreatures.length === 0) return [];
+          const fighter = ourCreatures.reduce((a, b) => (a.power ?? 0) >= (b.power ?? 0) ? a : b);
+          const target = staxPerms[0];
+          let ns = s.clone();
+          // Remove stax target if fighter power >= target toughness
+          const tgt = ns.getPermanentById(target.id);
+          const ftgt = ns.getPermanentById(fighter.id);
+          if (tgt && ftgt && (ftgt.power ?? 0) >= (tgt.toughness ?? tgt.power ?? 1)) {
+            ns = ns.removeFromBattlefield(target.id, 'graveyard') ?? ns;
+          }
+          return [ns.log(`Ulvenwald Tracker: ${fighter.name} fights ${target.name}`)];
+        },
+      },
+    },
+  },
+
   primordial_sage: {
     name: 'Primordial Sage', types: ['creature'], subtypes: ['Spirit'],
     cost: '4GG', power: 4, toughness: 5,
@@ -5427,6 +5598,16 @@ var CARDS = {
   },
 
   // ─── ENCHANTMENTS ────────────────────────────────────────────────────────
+
+  quest_for_renewal: {
+    name: 'Quest for Renewal', types: ['enchantment'], subtypes: [], cost: 'G',
+    // Whenever a non-attacking creature you control becomes tapped, add a quest counter.
+    // With 4+ counters: untap all creatures during each opponent's untap step.
+    // Counter accumulation: modelled as an ability that fires in actions.js when any
+    // creature taps for mana (tracked via perm.abilitiesUsed).
+    // The untap effect is identical to Seedborn Muse (creatures only, not lands).
+    externallyImplemented: true,  // [drift-detector] counter tracking + untap in actions.js
+  },
 
   concordant_crossroads: {
     name: 'Concordant Crossroads', types: ['enchantment'], subtypes: [], cost: 'G',
@@ -5833,6 +6014,123 @@ var CARDS = {
   },
 
   // ─── INSTANTS & SORCERIES ────────────────────────────────────────────────
+
+  reclaim: {
+    name: 'Reclaim', types: ['instant'], subtypes: [], cost: 'G',
+    // Put target card from your graveyard on top of your library.
+    // Modelled: find the highest-priority card in graveyard, set state.topDecked.
+    // On the next draw (startNewTurn) that card comes to hand.
+    castFn(state) {
+      const gy = state.players[0]?.graveyard ?? [];
+      if (gy.length === 0) return [drainMana(state).log('Reclaim: graveyard empty')];
+      // Pick the highest-priority card from the graveyard
+      let bestName = null, bestScore = -Infinity;
+      for (const name of gy) {
+        const ck = NAME_TO_KEY[name];
+        const score = (ck ? (TUTOR_PRIORITY_SCORE[ck] ?? 0) : 0);
+        if (score > bestScore) { bestScore = score; bestName = name; }
+      }
+      if (!bestName) bestName = gy[0];
+      const ck = NAME_TO_KEY[bestName];
+      // Remove from graveyard
+      let s = drainMana(state); s = s.clone(); s._ensurePlayers();
+      s.players[0] = s.players[0].clone();
+      const idx = s.players[0].graveyard.indexOf(bestName);
+      if (idx < 0) return [];
+      s.players[0].graveyard = [
+        ...s.players[0].graveyard.slice(0, idx),
+        ...s.players[0].graveyard.slice(idx + 1),
+      ];
+      // Place on top of library (topDecked draws it next turn)
+      if (ck) {
+        s.topDecked = ck;
+      } else {
+        // Unknown key: prepend to library
+        s.players[0] = s.players[0].clone();
+        s.players[0].library = [bestName, ...s.players[0].library];
+      }
+      return [s.log(`Reclaim: put ${bestName} on top of library`)];
+    },
+  },
+
+  return_of_the_wildspeaker: {
+    name: 'Return of the Wildspeaker', types: ['instant'], subtypes: [], cost: '4G',
+    // Choose one:
+    //   Draw cards equal to greatest power among non-Human creatures you control.
+    //   Non-Human creatures you control get +3/+3 until end of turn.
+    // Solver always picks the draw mode (better for finding combo pieces).
+    // Yeva is an Elf Shaman (non-Human), so she DOES count (power 4).
+    castFn(state) {
+      const nonHumans = state.creatures().filter(c => !c.subtypes?.includes('Human'));
+      const greatestPower = nonHumans.reduce((max, c) => Math.max(max, c.power ?? 0), 0);
+      let s = drainMana(state);
+      if (greatestPower <= 0) {
+        return [s.log('Return of the Wildspeaker: no non-Human creatures, draw 0')];
+      }
+      s = s.playerDraws(0, greatestPower);
+      return [s.log(`Return of the Wildspeaker: draw ${greatestPower} (greatest power)`)];
+    },
+  },
+
+  kamahls_will: {
+    name: "Kamahl's Will", types: ['sorcery'], subtypes: [], cost: '3G',
+    // Choose one or both:
+    //   Animate target lands as 1/1 Elemental creatures with haste until EOT.
+    //   Destroy all nonland permanents not controlled by a player who controls a Forest.
+    // Solver: use for mass removal of opponent stax/threats (second mode).
+    // Land animation is largely irrelevant in the solver (no attacking).
+    castFn(state) {
+      // Destroy all nonland permanents on opponent side (those tagged controller:'opponent'
+      // or STAX_CARDS). We control a Forest (Yavimaya or actual Forest), so our perms survive.
+      const toDestroy = state.battlefield.filter(p =>
+        p.controller === 'opponent' || STAX_CARDS.has(p.cardKey)
+      );
+      let s = drainMana(state);
+      for (const p of toDestroy) {
+        s = s.removeFromBattlefield(p.id, 'graveyard') ?? s;
+      }
+      const msg = toDestroy.length > 0
+        ? `Kamahl's Will: destroy ${toDestroy.map(p => p.name).join(', ')}`
+        : "Kamahl's Will: no opponent nonland permanents to destroy";
+      return [s.log(msg)];
+    },
+  },
+
+  vines_of_vastwood: {
+    name: 'Vines of Vastwood', types: ['instant'], subtypes: [], cost: 'G',
+    // Kicker {G}: also give target creature +4/+4 until EOT.
+    // Base: target creature can't be targeted by opponents this turn (hexproof-like).
+    // In the solver, base protection is not mechanically tracked. Kicked version
+    // pumps a creature — useful for pushing Wose Pathfinder mana or Ilysian/Leafkin.
+    // We always kick (spend 2G total) when we have the extra mana, for the +4/+4.
+    castFn(state) {
+      const results = [];
+      var cards = CARDS;
+      // Base mode: 1G — no mechanical effect in solver (protection not tracked)
+      {
+        const s = drainMana(state);
+        results.push(s.log('Vines of Vastwood: grant protection (base, no pump)'));
+      }
+      // Kicked mode: GG — +4/+4 on our biggest creature (Yeva is a valid target — Elf Shaman, not Human)
+      {
+        const kicked = state.payMana('G'); // extra G on top of base G already paid via castFn
+        if (kicked) {
+          const creatures = kicked.creatures();
+          if (creatures.length > 0) {
+            const target = creatures.reduce((a, b) => (a.power ?? 0) >= (b.power ?? 0) ? a : b);
+            const s = kicked.clone(); s._ensureBF();
+            const live = s.getPermanentById(target.id);
+            if (live) {
+              live.power = (live.power ?? 0) + 4;
+              live.toughness = (live.toughness ?? 0) + 4;
+            }
+            results.push(drainMana(s).log(`Vines of Vastwood (kicked): +4/+4 on ${target.name}`));
+          }
+        }
+      }
+      return results;
+    },
+  },
 
   uncage_the_menagerie: {
     name: 'Uncage the Menagerie', types: ['sorcery'], subtypes: [], cost: 'XGG',
@@ -10506,6 +10804,20 @@ function generateActions(state, _presentHint = null) {
     const preResults = def.tapForMana(state, perm);
     if (!preResults.length) continue;
 
+    // Quest for Renewal: when a non-attacking creature taps for mana, add a quest counter.
+    // We add the counter whenever a creature tapForMana fires on YOUR turn.
+    function addQuestCounter(ns) {
+      if (ns.isOpponentTurn) return ns;
+      if (!ns.hasPermanent('Quest for Renewal')) return ns;
+      const questPerm = ns.getPermanent('Quest for Renewal');
+      if (!questPerm) return ns;
+      ns = ns.clone(); ns._ensureBF();
+      const live = ns.getPermanentById(questPerm.id);
+      if (!live) return ns;
+      live.counters = { ...live.counters, quest: (live.counters?.quest ?? 0) + 1 };
+      return ns;
+    }
+
     // Shared bonus-application helper (Leyline, Badgermole, Auras)
     function applyTapBonuses(ns, live) {
       if (def.types.includes('creature')) {
@@ -10537,7 +10849,7 @@ function generateActions(state, _presentHint = null) {
           if (def.types.includes('creature') && live.summoningSick) return null;
           const results = def.tapForMana(s, live);
           if (!results.length) return null;
-          return applyTapBonuses(results[0], live);
+          return addQuestCounter(applyTapBonuses(results[0], live));
         },
       });
     } else {
@@ -10556,7 +10868,7 @@ function generateActions(state, _presentHint = null) {
             if (def.types.includes('creature') && live.summoningSick) return null;
             const results = def.tapForMana(s, live);
             if (resultIndex >= results.length) return null;
-            return applyTapBonuses(results[resultIndex], live);
+            return addQuestCounter(applyTapBonuses(results[resultIndex], live));
           },
         });
       }
@@ -10754,6 +11066,22 @@ function generateActions(state, _presentHint = null) {
         ns.isOpponentTurn = true;
         // Mana drains between phases
         ns.mana = ns.mana.constructor ? new ns.mana.constructor() : ns.mana;
+        // Quest for Renewal: untap all creatures (not lands) on opponent turns.
+        // Triggered when Quest has 4+ quest counters.
+        if (ns.hasPermanent('Quest for Renewal')) {
+          const questPerm = ns.getPermanent('Quest for Renewal');
+          const questCounters = questPerm?.counters?.quest ?? 0;
+          if (questCounters >= 4) {
+            ns._ensureBF();
+            for (const p of ns.battlefield) {
+              if (!p.is('creature')) continue;
+              if (p.abilitiesUsed?.exert_two_lands) continue;
+              p.tapped = false;
+              p.abilitiesUsed = {};
+            }
+          }
+        }
+
         // Seedborn Muse: untap all permanents during each other player's untap step.
         // Exerted creatures (abilitiesUsed.exert_two_lands) skip this untap — they
         // are promised not to untap until your NEXT untap step.
