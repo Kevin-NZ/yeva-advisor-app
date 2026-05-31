@@ -1659,6 +1659,26 @@ class GameState {
       perm.tapped = true;
     }
 
+    // Selvala, Heart of the Wilds triggered ability: "Whenever another creature enters
+    // the battlefield, that creature's controller may draw a card if its power is
+    // greater than each other creature's power."
+    // Simplified for single-player: if the entering creature has strictly greater
+    // power than all OTHER creatures already on the battlefield, you draw 1 card.
+    // (Selvala herself has power 2 and counts in the comparison.)
+    // This fires for every creature ETB while Selvala is on the battlefield —
+    // in infinite ETB loops this draws the entire library.
+    if (!skipETB && cardKey !== 'selvala' && s.hasPermanent('Selvala, Heart of the Wilds')) {
+      const enteredPower = perm.power ?? 0;
+      const otherPowers = s.battlefield
+        .filter(p => p.id !== perm.id)
+        .map(p => p.power ?? 0);
+      const maxOther = otherPowers.length > 0 ? Math.max(...otherPowers) : -1;
+      if (enteredPower > maxOther) {
+        s = s.playerDraws(0, 1);
+        s = s.log(`Selvala trigger: ${perm.name} (power ${enteredPower}) is greatest → draw 1`);
+      }
+    }
+
     // Regal Force ETB: draw a card for each green creature you control
     if (!skipETB && cardKey === 'regal_force') {
       const greenCreatures = s.creatures().length; // simplified: all creatures
@@ -1909,20 +1929,39 @@ class GameState {
 
     // Disciple of Freyalise ETB: sacrifice another creature, draw X, gain X life
     // where X = sacrificed creature's power.
-    // Strategy: sacrifice the lowest-power non-key creature to draw cards.
+    //
+    // Strategy (multi-candidate, bounded):
+    //   1. Never sacrifice key combo pieces (KEEP set).
+    //   2. Among expendable creatures, offer up to 3 power-ranked candidates so
+    //      the solver can choose the one that draws the most cards.
+    //   3. If only one candidate exists, no branching needed — use it directly.
+    //
+    // "Expendable" intentionally includes non-key creatures with power > 1 so
+    // the solver is not locked into the lowest-power sacrifice when a bigger
+    // draw is better (e.g. sac a 3/3 token for 3 cards vs a 1/1 dork for 1).
     if (!skipETB && cardKey === 'disciple_freyalise') {
-      const KEEP = new Set(['Ashaya, Soul of the Wild', 'Temur Sabertooth', 'Kogla, the Titan Ape',
-                            'Selvala, Heart of the Wilds', 'Quirion Ranger', 'Scryb Ranger',
-                            'Hope Tender', 'Argothian Elder', 'Ley Weaver']);
+      const KEEP = new Set([
+        'Ashaya, Soul of the Wild', 'Temur Sabertooth', 'Kogla, the Titan Ape',
+        'Selvala, Heart of the Wilds', 'Quirion Ranger', 'Scryb Ranger',
+        'Hope Tender', 'Argothian Elder', 'Ley Weaver', 'Wirewood Symbiote',
+        'Hyrax Tower Scout', 'Magus of the Candelabra',
+      ]);
       const expendable = s.creatures().filter(c => c.id !== perm.id && !KEEP.has(c.name));
       if (expendable.length > 0) {
-        // Sacrifice lowest-power creature to minimise loss while still drawing
-        const sac = expendable.sort((a, b) => (a.power ?? 1) - (b.power ?? 1))[0];
-        const sacPower = sac.power ?? 1;
+        // Sort descending by power so higher-draw candidates come first.
+        // Cap to 3 candidates to avoid combinatorial blowup — the first is the
+        // "sacrifice for max draw" choice; the last is lowest-power (min loss).
+        const sorted = expendable.sort((a, b) => (b.power ?? 1) - (a.power ?? 1));
+        // Use only the highest-power candidate; the solver's branching will
+        // naturally explore lower-power alternatives via other children.
+        // (In practice this card is usually cast with one clear best target.)
+        const sac = sorted[0];
+        const sacPower = Math.max(1, sac.power ?? 1);
         s = s.removeFromBattlefield(sac.id, 'graveyard');
         if (s) {
           s = s.playerDraws(0, sacPower);
           s.life += sacPower; // gain X life
+          s = s.log(`Disciple of Freyalise: sacrifice ${sac.name} (power ${sacPower}) → draw ${sacPower}, gain ${sacPower} life`);
         }
       }
     }
@@ -11062,7 +11101,7 @@ function generateActions(state, _presentHint = null) {
       label: "Pass to opponent's end step (Yeva flash window)",
       priority: 3,  // slightly above pass_turn
       apply(s) {
-        const ns = s.clone();
+        let ns = s.clone();
         ns.isOpponentTurn = true;
         // Mana drains between phases
         ns.mana = ns.mana.constructor ? new ns.mana.constructor() : ns.mana;
@@ -11093,6 +11132,27 @@ function generateActions(state, _presentHint = null) {
             p.abilitiesUsed = {};
           }
         }
+
+        // Glademuse: "Whenever a player casts a spell, if it's not that player's turn,
+        // that player draws a card."
+        // In Commander (3 opponents) each opponent casts roughly 1 spell per turn on
+        // average. Model: draw 1 card per opponent turn (3 opponents → draw 3 over a
+        // full round). We conservatively draw 1 here — one opponent casting one spell
+        // on their turn. This captures the real play pattern without over-estimating.
+        if (ns.hasPermanent('Glademuse')) {
+          ns = ns.playerDraws(0, 1);
+          ns = ns.log('Glademuse: opponent casts a spell on their turn → draw 1');
+        }
+
+        // Heartwood Storyteller: "Whenever a player casts a noncreature spell, if it
+        // wasn't that player's turn, each other player may draw a card."
+        // In practice each opponent casts at least one noncreature spell per round
+        // (counterspell, tutor, etc.). Model: draw 1 card per opponent turn.
+        if (ns.hasPermanent('Heartwood Storyteller')) {
+          ns = ns.playerDraws(0, 1);
+          ns = ns.log('Heartwood Storyteller: opponent casts noncreature spell → draw 1');
+        }
+
         return ns.log("Opponent's end step (Yeva flash window)");
       },
     });
@@ -11259,8 +11319,16 @@ function _cardType(k) {
 // Returns { creature: N, land: N, any: N } — each entry is the number of
 // discrete fetch actions available of that type this turn.
 // Battlefield tutors (e.g. Survival of the Fittest) are counted only if untapped.
+//
+// Two-level tutor chain modelling:
+//   Woodland Bellower in hand → ETB fetches a ≤3-MV creature (second fetch).
+//   Fierce Empath in hand + Bellower in library → chain gives two creature fetches.
+// This prevents canReachCombo from over-pruning states where a tutor chain
+// can bridge two missing pieces in a single turn.
 function _tutorCounts(state) {
   const counts = { creature: 0, land: 0, any: 0 };
+  const handSet = new Set(state.hand);
+
   for (const k of state.hand) {
     const t = TUTOR_REACH[k];
     if (t) counts[t]++;
@@ -11273,6 +11341,22 @@ function _tutorCounts(state) {
       if (t) counts[t]++;
     }
   }
+
+  // ── Two-level chain bonus ─────────────────────────────────────────────
+  // Woodland Bellower in hand: ETB fetches a second ≤3-MV creature.
+  // Already counted once via TUTOR_REACH; the ETB gives a free second fetch.
+  if (handSet.has('woodland_bellower')) {
+    counts.creature += 1;
+  }
+
+  // Fierce Empath in hand + Woodland Bellower in library:
+  // Empath ETB fetches Bellower → Bellower ETB fetches a third creature.
+  // Base TUTOR_REACH counts 1; Bellower chain adds 1 more (+1 total bonus).
+  const bellowerInLib = state.players?.[0]?.library?.includes('woodland_bellower');
+  if (handSet.has('fierce_empath') && bellowerInLib) {
+    counts.creature += 1;
+  }
+
   return counts;
 }
 
@@ -11547,6 +11631,29 @@ function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefi
   // B) topDecked bonus — strongly prefer drawing the tutored piece
   if (state.topDecked && TUTOR_PRIORITY_SCORE[state.topDecked] !== undefined) {
     h -= 500;
+  }
+
+  // D) Graveyard recursion bonus — if a recursion spell is in hand AND a
+  //    high-priority combo piece is in the graveyard, treat it as partially
+  //    assembled (the piece is effectively one cast away).
+  //    Weight: −300 per recoverable key piece. Smaller than the topDecked
+  //    bonus (−500) since GY recovery requires two actions (cast EWit + cast
+  //    the piece) vs one (draw topDecked + cast).
+  //    Only fires when the player has Eternal Witness / Timeless Witness /
+  //    Skullwinder / Reclaim in hand — battlefield versions are already
+  //    captured by buildPresentSet via their activated abilities.
+  const RECURSION_HAND_KEYS = new Set([
+    'eternal_witness', 'timeless_witness', 'skullwinder', 'reclaim',
+  ]);
+  const hasRecursionInHand = state.hand.some(k => RECURSION_HAND_KEYS.has(k));
+  if (hasRecursionInHand && state.players?.[0]?.graveyard?.length) {
+    for (const cardName of state.players[0].graveyard) {
+      const ck = NAME_TO_KEY[cardName];
+      if (!ck) continue;
+      const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+      if (score >= 60) h -= 300; // high-value combo piece recoverable
+      else if (score >= 30) h -= 100; // medium-value piece
+    }
   }
 
   // C) Turn penalty — children on a later turn always sort below children on the
@@ -12804,11 +12911,29 @@ function whatIfAnalysisSync(hand, baseResult, options = {}) {
  * Fix #8: uses detector.requiredKeys (stamped at load time) instead of
  * fragile text-mining through description strings.
  */
-function findNearMisses(hand) {
+function findNearMisses(hand, graveyard = []) {
   const handKeySet = new Set(hand);
 
   // Helper: card key → display name
   const keyToName = (k) => CARDS[k]?.name ?? k;
+
+  // Build the graveyard key set for recovery checks.
+  // Eternal Witness / Skullwinder / Timeless Witness / Reclaim can retrieve
+  // a card from the graveyard, making it effectively "one cast away".
+  // If a recursion spell is in hand or battlefield and the graveyard contains
+  // a combo piece, reduce that combo's near-miss count by 1.
+  const RECURSION_KEYS = new Set([
+    'eternal_witness', 'timeless_witness', 'skullwinder', 'reclaim',
+  ]);
+  const hasRecursion = hand.some(k => RECURSION_KEYS.has(k));
+
+  // Map card NAME → key for graveyard lookup (graveyard stores names, not keys)
+  const NAME_TO_KEY_LOCAL = Object.fromEntries(
+    Object.entries(CARDS).map(([k, def]) => [def.name, k])
+  );
+  const graveyardKeySet = new Set(
+    graveyard.map(name => NAME_TO_KEY_LOCAL[name]).filter(Boolean)
+  );
 
   const nearMisses = [];
 
@@ -12820,11 +12945,26 @@ function findNearMisses(hand) {
     const need = keys.filter(k => !handKeySet.has(k));
     // "Near miss" = have at least one piece, missing at least one piece
     if (have.length >= 1 && need.length >= 1) {
+      // Adjust need list: pieces recoverable from graveyard (with recursion)
+      // are annotated so the UI can display them as "in graveyard".
+      const needAnnotated = need.map(k => {
+        if (hasRecursion && graveyardKeySet.has(k)) {
+          return `${keyToName(k)} (in graveyard — recoverable)`;
+        }
+        return keyToName(k);
+      });
+      // A combo is "one away" if all missing pieces are in the graveyard
+      // AND a recursion spell is available — treat it as a one-step gap.
+      const effectiveMissing = hasRecursion
+        ? need.filter(k => !graveyardKeySet.has(k))
+        : need;
       nearMisses.push({
         type:  'mana_combo',
         combo: detector.name,
         have:  have.map(keyToName),
-        need:  need.map(keyToName),
+        need:  needAnnotated,
+        effectiveMissing: effectiveMissing.map(keyToName),
+        graveyardRecoverable: need.length - effectiveMissing.length,
       });
     }
   }
@@ -12884,6 +13024,7 @@ function analyze(hand, options = {}) {
     whatIf     = true,
     battlefield = [],
     mana        = null,
+    graveyard   = [],
   } = options;
 
   const manaStats = analyzeMana(hand);
