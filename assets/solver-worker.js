@@ -42,6 +42,7 @@ var COMBO_REQUIRED_KEYS = [
   ['ashaya','hope_tender','circle_of_dreams_druid'],       // 50
   ['ashaya','hope_tender','selvala'],                      // 56
   ['ashaya','hope_tender','nykthos'],                      // 45
+  ['ashaya','hope_tender','shang_chi'],                    // 63
   ['ashaya','marwyn'],                                     // 26 (Scryb+Marwyn), 61
   ['ashaya','wirewood_channeler'],                         // 49 (Scryb+Channeler), 62
 
@@ -71,10 +72,17 @@ var COMBO_REQUIRED_KEYS = [
   ['concordant_crossroads','temur_sabertooth','selvala'],                // 10
   ['concordant_crossroads','temur_sabertooth','karametra_acolyte'],      // 20
 
-  // Temur Sabertooth + Selvala (combos 22, 29, 37)
-  ['selvala','temur_sabertooth','surrak_goreclaw'],         // 22
+  // Temur Sabertooth + Selvala (combos 29, 37)
   ['selvala','temur_sabertooth','thousand_year_elixir'],    // 29
   ['karametra_acolyte','temur_sabertooth','thousand_year_elixir'], // 37
+
+  // Temur Sabertooth + Shang-Chi as haste enabler (SC replaces Crossroads/Elixir/Surrak)
+  ['shang_chi','temur_sabertooth','circle_of_dreams_druid'], // 9 variant
+  ['shang_chi','temur_sabertooth','selvala'],                 // 10/22/29 variant
+  ['shang_chi','temur_sabertooth','karametra_acolyte'],       // 20/37 variant
+
+  // Kogla + Acolyte + Shang-Chi as haste enabler (combo 2 variant)
+  ['shang_chi','kogla','karametra_acolyte'],                  // 2 variant
 
   // Wirewood Symbiote + Selvala (combo 53–55 use Cloudstone; keep base)
   ['wirewood_symbiote','selvala'],                         // broad coverage
@@ -4950,7 +4958,7 @@ var CARDS = {
   surrak_goreclaw: {
     name: 'Surrak and Goreclaw', types: ['creature'], subtypes: ['Human','Bear'],
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
-    cost: '4GG', power: 7, toughness: 6,
+    cost: '4GG', power: 6, toughness: 5,
     // Other creatures have trample. Nontoken creatures get +1/+1 and haste when entering.
     // ETB haste modeled in GameState (like Concordant Crossroads for newly entering creatures).
   },
@@ -7182,6 +7190,34 @@ var CARDS = {
   },
 
   // ─── Other legendaries ────────────────────────────────────────────────────
+
+  shang_chi: {
+    name: 'Shang Chi, Master of Kung Fu',
+    types: ['creature'], subtypes: ['Human', 'Warrior', 'Hero'],
+    cost: '1G', power: 2, toughness: 2,
+    // Static 1: You may activate abilities of creatures you control as though
+    //           those creatures had haste.
+    //   → Implemented in actions.js: when Shang-Chi is on the battlefield, the
+    //     summoningSick guard is bypassed for creature tap-for-mana AND for
+    //     creature activated abilities.
+    // Static 2 is the tap ability below.
+    //
+    // {T}: Add two mana of any one color; spend this mana only to activate
+    //      abilities of creature sources.  Simplified to {G}{G} for mono-green.
+    tapForMana(state, perm) {
+      // Tapped guard only — summoningSick is intentionally omitted.
+      // The static ability applies to Shang-Chi himself too, so the actions.js
+      // loop already bypasses summoning sickness before calling tapForMana.
+      if (perm.tapped) return [];
+      let s = state.tapPermanent(perm.id);
+      if (!s) return [];
+      s = s.addMana('G');
+      s = s.addMana('G');
+      s = s.log(`Tap Shang Chi → {G}{G} (for creature abilities)`);
+      return [s];
+    },
+  },
+
   nylea_keen_eyed: {
     name: 'Nylea, Keen-Eyed',
     types: ['enchantment', 'creature'], subtypes: ['God'],
@@ -7679,6 +7715,37 @@ var DETECTORS = [
   },
 
   {
+    // COMBO 63: Ashaya + Hope Tender + Shang-Chi, Master of Kung Fu
+    // Under Ashaya, Hope Tender and Shang-Chi are both Forest lands.
+    // Shang-Chi's static ("activate abilities of creatures you control as though
+    // they had haste") fires immediately on ETB — no external haste enabler needed.
+    // Loop: tap Shang-Chi for {G}{G}. Pay {1}, exert Tender → untap Tender + Shang-Chi.
+    // Net: +{G} per cycle. Tender targets itself as one of the two lands (it is a land
+    // under Ashaya), so it immediately untaps after the exert tap.
+    // No creature count requirement — Shang-Chi always produces exactly {G}{G}.
+    name: 'Infinite Mana (Ashaya + Hope Tender + Shang-Chi)  [COMBO 63]',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      'With Ashaya, Hope Tender and Shang-Chi are Forest lands. ' +
+      "Shang-Chi's static grants haste for activated abilities immediately on ETB. " +
+      'Loop: Tap Shang-Chi for {G}{G}. Pay {1}, exert Tender → untap Tender + Shang-Chi. ' +
+      'Net +{G}/cycle, infinite green mana. ' +
+      'NOTE: Shang-Chi\'s mana is restricted — it may only be spent to activate abilities ' +
+      'of creature sources (not to cast creatures or spells). Use a creature with a mana ' +
+      'ability (e.g. Selvala, Karametra\'s Acolyte) to convert to unrestricted mana.',
+    check(state) {
+      if (!ashayaOut(state)) return false;
+      // Shang-Chi just needs to be present — static fires even while summoning-sick
+      if (!state.battlefield.some(p => p.cardKey === 'shang_chi')) return false;
+      // Tender must be untapped; sick is OK because Shang-Chi grants haste for abilities
+      if (!state.battlefield.some(p => p.cardKey === 'hope_tender' && !p.tapped)) return false;
+      // Shang-Chi must also be untapped (he's the mana source)
+      if (!state.battlefield.some(p => p.cardKey === 'shang_chi' && !p.tapped)) return false;
+      return true;
+    },
+  },
+
+  {
     // COMBO 45: Ashaya + Hope Tender + Nykthos
     // Nykthos costs {2} to activate, produces G×devotion.
     // Exert Tender → untap Tender + Nykthos. Total cost {2}+{1}={3}. Need devotion ≥4.
@@ -7906,7 +7973,8 @@ var DETECTORS = [
     description:
       "Tap Acolyte for G×devotion. Pay {1G}, Kogla bounces Acolyte (Human). " +
       "Recast Acolyte {3G}. Total cost {5G}+{1}. Net positive at devotion ≥6. " +
-      "Requires a haste enabler (Concordant Crossroads / Thousand-Year Elixir / Surrak and Goreclaw) " +
+      "Requires a haste enabler (Concordant Crossroads / Thousand-Year Elixir / " +
+      "Surrak and Goreclaw / Shang-Chi, Master of Kung Fu) " +
       "so Acolyte can tap again immediately after recast.",
     check(state) {
       if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
@@ -7916,12 +7984,14 @@ var DETECTORS = [
       if (!acolyte) return false;
       // After Kogla bounces Acolyte and she is recast, she enters with summoning sickness
       // and cannot tap her mana ability again without a haste enabler.
-      // Thousand-Year Elixir: "You may activate abilities of creatures you control as though
-      // those creatures had haste." — explicitly covers activated abilities like Acolyte's tap.
+      // Thousand-Year Elixir and Shang-Chi: "You may activate abilities of creatures you
+      // control as though those creatures had haste." — explicitly covers activated
+      // abilities like Acolyte's tap.
       const hasHaste =
         hasPerm(state, 'Concordant Crossroads') ||
         hasPerm(state, 'Thousand-Year Elixir') ||
-        hasPerm(state, 'Surrak and Goreclaw');
+        hasPerm(state, 'Surrak and Goreclaw') ||
+        state.battlefield.some(p => p.cardKey === 'shang_chi');
       if (!hasHaste) return false;
       return devotionG(state) >= 6;
     },
@@ -7968,26 +8038,32 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]',
+    name: 'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]',
     description:
       "With a haste enabler, bounced creatures re-enter with haste and can tap immediately. " +
-      "Enablers: Concordant Crossroads, Thousand-Year Elixir, Surrak and Goreclaw. " +
-      "Circle (≥6 creatures), Selvala (power ≥7), Karametra's Acolyte (devotion ≥7).",
+      "Enablers: Concordant Crossroads, Thousand-Year Elixir, Surrak and Goreclaw, " +
+      "Shang-Chi, Master of Kung Fu. " +
+      "Circle (≥6 creatures), Selvala (greatest power ≥7), Karametra's Acolyte (devotion ≥7). " +
+      "NOTE: Surrak and Goreclaw (6/5) acts as haste enabler only — Selvala taps for 6 with " +
+      "Surrak as the only big creature, which is break-even (cost 6). Need another creature " +
+      "with power ≥7 for Selvala to produce a net-positive loop.",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       const hasElixir = hasPerm(state, 'Thousand-Year Elixir');
+      const hasShangChi = state.battlefield.some(p => p.cardKey === 'shang_chi');
       const hasHaste =
         hasPerm(state, 'Concordant Crossroads') ||
         hasElixir ||
-        hasPerm(state, 'Surrak and Goreclaw');
+        hasPerm(state, 'Surrak and Goreclaw') ||
+        hasShangChi;
       if (!hasHaste) return false;
       // Check each haste-loop variant
       if (permReady(state, 'Circle of Dreams Druid') && creatureCount(state) >= 6) return true;
       if (greatestPower(state) >= 7 &&
           state.battlefield.some(p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return true;
-      // Thousand-Year Elixir lets Acolyte tap even with summoning sickness —
-      // skip the SS check when Elixir is the haste enabler (Combo 37).
-      // Concordant Crossroads and Surrak and Goreclaw grant haste, which also removes
+      // Thousand-Year Elixir and Shang-Chi let Acolyte tap even with summoning sickness —
+      // skip the SS check when either is the haste enabler (Combo 29, 37).
+      // Concordant Crossroads and Surrak and Goreclaw grant full haste, also removing
       // the summoning sickness restriction on tapping for abilities.
       const acolyteReady = state.battlefield.some(p =>
         p.name === "Karametra's Acolyte" && !p.tapped &&
@@ -10337,6 +10413,11 @@ function generateActions(state, _presentHint = null) {
   const flashThisTurn     = state.flashThisTurn ?? false;
   const isOpponentTurn    = state.isOpponentTurn ?? false;
 
+  // Shang-Chi static: "You may activate abilities of creatures you control as
+  // though those creatures had haste."  Active as soon as Shang-Chi is on the
+  // battlefield — the static applies even while he himself is summoning-sick.
+  const shangChiActive = state.battlefield.some(p => p.cardKey === 'shang_chi');
+
   /**
    * Returns true if this card can be cast right now given the turn phase.
    * Lands are handled separately. Instants are always ok. Creatures with
@@ -10415,8 +10496,11 @@ function generateActions(state, _presentHint = null) {
           ns = ns.log(`Play ${def.name}`);
 
           // ── Landfall triggers ─────────────────────────────────────────────
+          // Triggered abilities fire regardless of summoning sickness —
+          // the summoningSick guard that was here was incorrect.
+          // Note: Shang-Chi's static only grants haste for *activated*
+          // abilities, not triggered ones — so it is irrelevant here.
           for (const perm of ns.battlefield) {
-            if (perm.summoningSick) continue;
             if (perm.name === 'Lotus Cobra') ns = ns.addMana('G');
             if (perm.name === 'Tireless Provisioner') ns = ns.addMana('G');
             if (perm.name === 'Nissa, Resurgent Animist') {
@@ -10829,8 +10913,11 @@ function generateActions(state, _presentHint = null) {
     // Null Rod / Collector Ouphe suppresses artifact mana abilities
     if (def.types.includes('artifact') && artifactAbilitiesSuppressed(state)) continue;
 
-    // Creatures with tap-for-mana need to not be summoning sick
-    if (def.types.includes('creature') && perm.summoningSick) continue;
+    // Creatures with tap-for-mana need to not be summoning sick —
+    // UNLESS Shang-Chi is active (grants haste for creature activated abilities).
+    // Dryad Arbor's tap is a land mana ability (not an activated ability), so
+    // Shang-Chi does NOT help it; the Arbor check below still applies.
+    if (def.types.includes('creature') && perm.summoningSick && !shangChiActive) continue;
 
     // Dryad Arbor is a land creature — tap ability is a land mana ability,
     // NOT an activated ability, so it IS suppressed by summoning sickness
@@ -10840,7 +10927,12 @@ function generateActions(state, _presentHint = null) {
     // Pre-check: get all mana options now. Most cards return exactly 1 result.
     // Some (Fanatic ferocious, Nykthos devotion) return multiple — generate one
     // action per option so the solver can independently explore each branch.
-    const preResults = def.tapForMana(state, perm);
+    // When Shang-Chi is active and the creature is sick, clear sickness for the
+    // pre-check so simpleTap and other tapForMana fns don't bail out early.
+    const permForPreCheck = (shangChiActive && perm.summoningSick && def.types.includes('creature'))
+      ? Object.assign(Object.create(Object.getPrototypeOf(perm)), perm, { summoningSick: false })
+      : perm;
+    const preResults = def.tapForMana(state, permForPreCheck);
     if (!preResults.length) continue;
 
     // Quest for Renewal: when a non-attacking creature taps for mana, add a quest counter.
@@ -10885,8 +10977,13 @@ function generateActions(state, _presentHint = null) {
         apply(s) {
           const live = s.getPermanentById(perm.id);
           if (!live || live.tapped) return null;
-          if (def.types.includes('creature') && live.summoningSick) return null;
-          const results = def.tapForMana(s, live);
+          // Shang-Chi active = simply present on battlefield (sickness irrelevant)
+          const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
+          if (def.types.includes('creature') && live.summoningSick && !scActive) return null;
+          const liveForAbil = (scActive && live.summoningSick && def.types.includes('creature'))
+            ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false })
+            : live;
+          const results = def.tapForMana(s, liveForAbil);
           if (!results.length) return null;
           return addQuestCounter(applyTapBonuses(results[0], live));
         },
@@ -10904,8 +11001,12 @@ function generateActions(state, _presentHint = null) {
           apply(s) {
             const live = s.getPermanentById(perm.id);
             if (!live || live.tapped) return null;
-            if (def.types.includes('creature') && live.summoningSick) return null;
-            const results = def.tapForMana(s, live);
+            const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
+            if (def.types.includes('creature') && live.summoningSick && !scActive) return null;
+            const liveForAbil = (scActive && live.summoningSick && def.types.includes('creature'))
+              ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false })
+              : live;
+            const results = def.tapForMana(s, liveForAbil);
             if (resultIndex >= results.length) return null;
             return addQuestCounter(applyTapBonuses(results[resultIndex], live));
           },
@@ -10926,7 +11027,8 @@ function generateActions(state, _presentHint = null) {
   // Only fires if Agatha's Cauldron is on the battlefield (the static requires it).
   if (state.hasPermanent("Agatha's Soul Cauldron")) {
     for (const perm of state.battlefield) {
-      if (perm.tapped || perm.summoningSick) continue;
+      // Shang-Chi grants haste for creature activated abilities — bypass sickness
+      if (perm.tapped || (perm.summoningSick && !shangChiActive)) continue;
       if (!perm.cauldronAbilityKey) continue;
       // Cauldron grants abilities to creatures with +1/+1 counters
       const hasCounter = perm.counters && (
@@ -10937,7 +11039,11 @@ function generateActions(state, _presentHint = null) {
       const graftedDef = CARDS[perm.cauldronAbilityKey];
       if (!graftedDef?.tapForMana) continue;
       // Pre-check: grafted ability actually produces mana in current state
-      if (!graftedDef.tapForMana(state, perm).length) continue;
+      // Use a sickness-cleared perm for the pre-check when Shang-Chi is active
+      const permForCheck = (shangChiActive && perm.summoningSick)
+        ? Object.assign(Object.create(Object.getPrototypeOf(perm)), perm, { summoningSick: false })
+        : perm;
+      if (!graftedDef.tapForMana(state, permForCheck).length) continue;
 
       const capturedPerm = perm;
       const capturedGraftedDef = graftedDef;
@@ -10947,8 +11053,14 @@ function generateActions(state, _presentHint = null) {
         priority: 7,
         apply(s) {
           const live = s.getPermanentById(capturedPerm.id);
-          if (!live || live.tapped || live.summoningSick) return null;
-          const results = capturedGraftedDef.tapForMana(s, live);
+          if (!live || live.tapped) return null;
+          // Shang-Chi active = simply present (sickness does not matter)
+          const scNowActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
+          if (live.summoningSick && !scNowActive) return null;
+          const liveForAbil = (scNowActive && live.summoningSick)
+            ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false })
+            : live;
+          const results = capturedGraftedDef.tapForMana(s, liveForAbil);
           if (!results.length) return null;
           let ns = results[0];
           // Leyline / Badgermole bonuses apply to creature tap-for-mana
@@ -10995,6 +11107,16 @@ function generateActions(state, _presentHint = null) {
 
       if (typeof ability.fn !== 'function') continue;
 
+      // Shang-Chi static: creatures may activate abilities as though they had haste.
+      // Pass a cloned perm with summoningSick=false so ability fns see no sickness.
+      // Only applies to creature permanents (not artifacts, enchantments, etc.).
+      let permForAbility = perm;
+      if (shangChiActive && def.types.includes('creature') && perm.summoningSick) {
+        permForAbility = Object.create(Object.getPrototypeOf(perm));
+        Object.assign(permForAbility, perm);
+        permForAbility.summoningSick = false;
+      }
+
       // Disruptor Flute: pre-pay the extra {3} before running the ability fn
       let preState = state;
       if (fluteBlocked) {
@@ -11003,7 +11125,7 @@ function generateActions(state, _presentHint = null) {
         preState = afterFlute;
       }
 
-      const raw = ability.fn(preState, perm);
+      const raw = ability.fn(preState, permForAbility);
       const results = raw === null || raw === undefined
         ? []
         : Array.isArray(raw) ? raw : [raw];
