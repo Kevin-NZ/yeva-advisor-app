@@ -42,7 +42,8 @@ var COMBO_REQUIRED_KEYS = [
   ['ashaya','hope_tender','circle_of_dreams_druid'],       // 50
   ['ashaya','hope_tender','selvala'],                      // 56
   ['ashaya','hope_tender','nykthos'],                      // 45
-  ['ashaya','hope_tender','shang_chi'],                    // 63
+  ['ashaya','hope_tender','shang_chi'],                    // 63 (detector disabled — restricted mana only)
+  ['ashaya','hope_tender','shang_chi','formidable_speaker'], // 64
   ['ashaya','marwyn'],                                     // 26 (Scryb+Marwyn), 61
   ['ashaya','wirewood_channeler'],                         // 49 (Scryb+Channeler), 62
 
@@ -358,7 +359,7 @@ var DEFAULT_DECKLIST = [
   'collector_ouphe','crop_rotation','delighted_halfling','deserted_temple',
   'destiny_spinner','disciple_freyalise','dryad_arbor','duskwatch_recruiter',
   'earthcraft','eladamri','eldritch_evolution','elvish_archdruid',
-  'elvish_guidance','elvish_harbinger','elvish_mystic','elvish_reclaimer',
+  'shang_chi','elvish_harbinger','elvish_mystic','elvish_reclaimer',
   'elvish_spirit_guide','emergence_zone','endurance','eternal_witness',
   'fanatic_of_rhonas','fauna_shaman','fierce_empath','force_of_vigor',
   'forest','forest','forest','forest','forest','forest','forest','forest','forest','forest',
@@ -2518,9 +2519,15 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
       const bounceable = state.battlefield.filter(p => filterFn(p));
       for (const target of bounceable) {
         const creaturesCanUntap = state.creatures().filter(c => c.id !== target.id && c.tapped);
+        // Only offer "untap self" when bouncing another Elf if the symbiote/ranger
+        // is itself tapped — untapping an already-untapped permanent is a no-op and
+        // produces a misleading/wasteful action.
+        const selfUntapOption = (target.id !== perm.id && perm.tapped)
+          ? [{ ...perm, _isSelf: true }]
+          : [];
         const untapTargets = target.id === perm.id
           ? creaturesCanUntap
-          : [...creaturesCanUntap, { ...perm, _isSelf: true }];
+          : [...creaturesCanUntap, ...selfUntapOption];
         if (untapTargets.length === 0) continue;
         for (const ut of untapTargets) {
           let s = state;
@@ -4515,6 +4522,9 @@ var CARDS = {
       untap_permanent: {
         label: '{1}, {T}: Untap another target permanent',
         fn(state, perm) {
+          // summoningSick guard: Shang-Chi's static bypasses this via the section 5
+          // permForAbility clone (sets summoningSick=false before calling fn).
+          // Without SC on board the clone is not built and this guard correctly blocks.
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('1'); if (!ap) return [];
           const seen = new Set();
@@ -6892,7 +6902,15 @@ var CARDS = {
       });
       if (greenCreatures.length === 0) return [];
       const expendable = greenCreatures.filter(c => !KEEP.has(c.name));
-      const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
+      const pool = expendable.length > 0 ? expendable : greenCreatures;
+      // Sacrifice the LEAST combo-relevant creature (lowest tutor priority score)
+      // so high-value pieces like Priest of Titania are preserved on the battlefield.
+      const cardKeyOf = c => Object.keys(cards).find(k => cards[k].name === c.name);
+      const sacCreature = pool.reduce((best, c) => {
+        const score = TUTOR_PRIORITY_SCORE[cardKeyOf(c)] ?? 0;
+        const bestScore = TUTOR_PRIORITY_SCORE[cardKeyOf(best)] ?? 0;
+        return score < bestScore ? c : best;
+      });
       const afterSac = state.removeFromBattlefield(sacCreature.id, 'graveyard');
       if (!afterSac) return [];
       const sacCreatureKey = Object.keys(cards).find(k => cards[k].name === sacCreature.name) ?? null;
@@ -7716,32 +7734,76 @@ var DETECTORS = [
 
   {
     // COMBO 63: Ashaya + Hope Tender + Shang-Chi, Master of Kung Fu
-    // Under Ashaya, Hope Tender and Shang-Chi are both Forest lands.
-    // Shang-Chi's static ("activate abilities of creatures you control as though
-    // they had haste") fires immediately on ETB — no external haste enabler needed.
-    // Loop: tap Shang-Chi for {G}{G}. Pay {1}, exert Tender → untap Tender + Shang-Chi.
-    // Net: +{G} per cycle. Tender targets itself as one of the two lands (it is a land
-    // under Ashaya), so it immediately untaps after the exert tap.
-    // No creature count requirement — Shang-Chi always produces exactly {G}{G}.
-    name: 'Infinite Mana (Ashaya + Hope Tender + Shang-Chi)  [COMBO 63]',
+    // DISABLED: Although the loop generates net +{G} per cycle, Shang-Chi's mana
+    // is restricted — "spend this mana only to activate abilities of creature sources."
+    // It cannot cast creatures or spells, so the accumulated mana cannot reach a
+    // game-winning state on its own. The detector was causing false-positive win
+    // condition triggers that required unrestricted mana.
+    // Left here for documentation; check() always returns false.
+    name: 'Infinite Mana (Ashaya + Hope Tender + Shang-Chi) — DISABLED',
     loopType: LOOP_TYPE.MANA_POSITIVE,
     description:
+      'DISABLED — Shang-Chi\'s {T}:{G}{G} is restricted to activating creature abilities ' +
+      'only, so the loop cannot generate unrestricted mana needed to win. ' +
       'With Ashaya, Hope Tender and Shang-Chi are Forest lands. ' +
-      "Shang-Chi's static grants haste for activated abilities immediately on ETB. " +
       'Loop: Tap Shang-Chi for {G}{G}. Pay {1}, exert Tender → untap Tender + Shang-Chi. ' +
-      'Net +{G}/cycle, infinite green mana. ' +
-      'NOTE: Shang-Chi\'s mana is restricted — it may only be spent to activate abilities ' +
-      'of creature sources (not to cast creatures or spells). Use a creature with a mana ' +
-      'ability (e.g. Selvala, Karametra\'s Acolyte) to convert to unrestricted mana.',
+      'Net +{G}/cycle, but restricted mana only.',
+    check(_state) {
+      return false; // disabled — restricted mana cannot reach a win condition
+    },
+  },
+
+  {
+    // COMBO 64: Ashaya + Shang-Chi + Hope Tender + Formidable Speaker + mana source
+    //
+    // Under Ashaya, all creatures are Forest lands. SC's static grants haste for
+    // activated abilities to all creatures (including itself and Formidable Speaker).
+    //
+    // Loop (mana source must start or end each cycle tapped):
+    //   1. Tap SC → +{G}{G} (restricted to creature abilities).
+    //   2. Pay {1} (restricted), exert Tender → untap Tender + SC.
+    //   3. Tap SC → +{G}{G} (restricted).
+    //   4. Pay {1} (restricted), exert Tender → untap Tender + SC.
+    //   5. Pay {1} (restricted), tap Formidable → untap the mana source.
+    //   6. Pay {1} (restricted), exert Tender → untap Tender + Formidable.
+    //   7. Tap mana source → +{G} (UNRESTRICTED land mana ability under Ashaya).
+    //   Repeat.
+    //
+    // Mana accounting per cycle:
+    //   Restricted in:  +2G (step1) + 2G (step3) = +4G
+    //   Restricted out: -1G (step2) - 1G (step4) - 1G (step5) - 1G (step6) = -4G
+    //   Net restricted: 0G
+    //   Unrestricted:   +1G (step7, any creature/land that taps for mana under Ashaya)
+    //   Net unrestricted: +1G per cycle → INFINITE UNRESTRICTED MANA.
+    //
+    // Requirements:
+    //   - Ashaya on board (makes all creatures Forest lands)
+    //   - SC present (grants haste for abilities to all, including Formidable while sick)
+    //   - Hope Tender untapped (can exert multiple times per turn)
+    //   - Formidable Speaker untapped ({1},{T}: untap another target permanent)
+    //   - At least one other tappable mana source (creature or land) — under Ashaya
+    //     even a Llanowar Elves becomes a land and its tap is a mana ability.
+    name: 'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      'With Ashaya, all creatures are Forest lands. SC grants haste for activated abilities. ' +
+      'Loop: Tap SC twice (exerting Tender each time to untap SC). ' +
+      'Tap Formidable to untap the mana source; exert Tender to untap Tender + Formidable. ' +
+      'Tap mana source for unrestricted mana. Net: +1G unrestricted per cycle. ' +
+      'Mana source can be any creature or land (Ashaya makes creatures into mana-producing lands).',
     check(state) {
       if (!ashayaOut(state)) return false;
-      // Shang-Chi just needs to be present — static fires even while summoning-sick
-      if (!state.battlefield.some(p => p.cardKey === 'shang_chi')) return false;
-      // Tender must be untapped; sick is OK because Shang-Chi grants haste for abilities
-      if (!state.battlefield.some(p => p.cardKey === 'hope_tender' && !p.tapped)) return false;
-      // Shang-Chi must also be untapped (he's the mana source)
       if (!state.battlefield.some(p => p.cardKey === 'shang_chi' && !p.tapped)) return false;
-      return true;
+      if (!state.battlefield.some(p => p.cardKey === 'hope_tender' && !p.tapped)) return false;
+      if (!state.battlefield.some(p => p.cardKey === 'formidable_speaker' && !p.tapped)) return false;
+      // Need at least one other tappable mana source (untapped or will be cycled in by Formidable).
+      // Under Ashaya, any untapped creature with a tap-for-mana ability qualifies.
+      // We check for any untapped creature or land other than the core four pieces.
+      const coreKeys = new Set(['ashaya','shang_chi','hope_tender','formidable_speaker']);
+      const hasManaSource = state.battlefield.some(p =>
+        !coreKeys.has(p.cardKey) && p.is('creature') || (p.is('land') && !p.is('creature'))
+      );
+      return hasManaSource;
     },
   },
 
@@ -12871,7 +12933,7 @@ function assembleWin(state) {
           steps.push('  5. Untap Geier Reach Sanitarium via available untap method.');
         }
         steps.push('  6. {2}: Activate Geier Reach Sanitarium again — hold priority. Repeat from step 5.');
-        steps.push('  7. Pass priority — let Endurance ETB resolve (resets all graveyards to libraries).');
+        steps.push('  7. Pass priority — let Endurance ETB resolve (resets our graveyard back to library).');
         steps.push('  8. Recast Endurance, repeat from step 2.');
         steps.push('  → Each opponent draws and discards repeatedly until their library is empty = mill win.');
       } else if (hasKogla) {
