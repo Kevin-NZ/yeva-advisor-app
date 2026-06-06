@@ -250,6 +250,21 @@ var TUTOR_PRIORITY_SCORE = {
   'tangled_florahedron': 24,    // MDFC: creature dork or Forest land
   // Sorcery
   'uncage_the_menagerie': 31,   // searches up to X creatures of MV X — strong tutor
+
+  // ── Key engines missing from priority table ──────────────────────────────
+  // These had score 0, causing Natural Order to sacrifice them before basic mana dorks.
+  // Scores calibrated relative to similar-role cards already in the table.
+  'eternal_witness':     55,  // recurs GSZ/Vitalize/combo pieces — critical engine
+  'yisan':               55,  // tutors by CMC, runs standalone combo lines
+  'survival_fittest':    50,  // strong creature tutor, enables assembling combos
+  'fauna_shaman':        48,  // key creature tutor (repeatable Worldly Tutor)
+  'formidable_speaker':  45,  // COMBO 64 key piece (Ashaya+SC+Tender loop)
+  'elvish_harbinger':    42,  // fetches specific elves, enables elf-chain lines
+  'regal_force':         38,  // major draw engine in creature-heavy boards
+  'seedborn_muse':       38,  // untaps all permanents on opponents' turns
+  'elvish_reclaimer':    35,  // fetches Cradle, Yavimaya, Nykthos
+  'glademuse':           30,  // draw on opponent spells — useful card advantage
+  'heartwood_storyteller': 30, // draw on non-creature spells — group symmetry
 };
 
 // ── Functional equivalents ────────────────────────────────────────────────
@@ -359,7 +374,7 @@ var DEFAULT_DECKLIST = [
   'collector_ouphe','crop_rotation','delighted_halfling','deserted_temple',
   'destiny_spinner','disciple_freyalise','dryad_arbor','duskwatch_recruiter',
   'earthcraft','eladamri','eldritch_evolution','elvish_archdruid',
-  'shang_chi','elvish_harbinger','elvish_mystic','elvish_reclaimer',
+  'elvish_guidance','elvish_harbinger','elvish_mystic','elvish_reclaimer',
   'elvish_spirit_guide','emergence_zone','endurance','eternal_witness',
   'fanatic_of_rhonas','fauna_shaman','fierce_empath','force_of_vigor',
   'forest','forest','forest','forest','forest','forest','forest','forest','forest','forest',
@@ -2092,6 +2107,16 @@ class GameState {
     const idx = s.hand.indexOf(cardKey);
     if (idx === -1) return null;
     s.hand = [...s.hand.slice(0, idx), ...s.hand.slice(idx + 1)];
+    return s;
+  }
+
+  /** Shuffle a card key back into the library (e.g. Green Sun's Zenith). */
+  addToLibrary(cardKey) {
+    const s = this.clone();
+    s._ensurePlayers();
+    s.players[0] = s.players[0].clone();
+    // Insert at a random position — modelled as the end (solver treats library as unordered).
+    s.players[0].library = [...s.players[0].library, cardKey];
     return s;
   }
 
@@ -6809,6 +6834,7 @@ var CARDS = {
   },
   green_suns_zenith: {
     name: "Green Sun's Zenith", types: ['sorcery'], subtypes: [], cost: 'XG',
+    reshufflesIntoLibrary: true, // oracle: "Shuffle Green Sun's Zenith into its owner's library"
     // C-23 fix: previously branched over all green creatures within MV budget.
     // Now picks the single highest-TUTOR_PRIORITY_SCORE green creature.
     castFn(state) {
@@ -7023,7 +7049,7 @@ var CARDS = {
             ...ns.players[0].library.slice(idx + 1),
           ];
         }
-        ns.players[0].graveyard = [...ns.players[0].graveyard, 'Eldritch Evolution'];
+        ns.players[0].exile = [...(ns.players[0].exile ?? []), 'eldritch_evolution'];
         results.push(ns.log(
           `Eldritch Evolution: sac ${sacPerm.name} (MV ${sacMV}) → fetch ${def.name} (MV ${fetchMV})`
         ));
@@ -8019,8 +8045,9 @@ var DETECTORS = [
   //
   //  Acolyte is a Human Druid. Kogla: {1G}: Return target Human → Kogla gains indestr.
   //  Loop: Tap Acolyte for G×devotion. Pay {1G} Kogla bounce. Recast Acolyte {3G}.
-  //  Total cost: {1G}+{3G}+{1}={5G}. Net at devotion ≥6.
-  //  PRE (canonical): devotion ≥6.
+  //  Total cost per loop: {1G} + {3G} = 6 mana. Net at devotion ≥7 (+1G per cycle).
+  //  Devotion=6 is break-even (0 net mana) — not infinite mana.
+  //  PRE (canonical): devotion ≥7.
   //
   //  ⚠ HASTE REQUIREMENT: After Kogla bounces Acolyte and she is recast, she enters
   //  with summoning sickness and CANNOT tap for mana again without a haste enabler.
@@ -8031,10 +8058,10 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥6)  [COMBO 2]",
+    name: "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]",
     description:
       "Tap Acolyte for G×devotion. Pay {1G}, Kogla bounces Acolyte (Human). " +
-      "Recast Acolyte {3G}. Total cost {5G}+{1}. Net positive at devotion ≥6. " +
+      "Recast Acolyte {3G}. Total cost 6G (bounce {1G} + recast {3G}). Net positive at devotion ≥7. " +
       "Requires a haste enabler (Concordant Crossroads / Thousand-Year Elixir / " +
       "Surrak and Goreclaw / Shang-Chi, Master of Kung Fu) " +
       "so Acolyte can tap again immediately after recast.",
@@ -8055,7 +8082,7 @@ var DETECTORS = [
         hasPerm(state, 'Surrak and Goreclaw') ||
         state.battlefield.some(p => p.cardKey === 'shang_chi');
       if (!hasHaste) return false;
-      return devotionG(state) >= 6;
+      return devotionG(state) >= 7;
     },
   },
 
@@ -9790,7 +9817,7 @@ var DETECTOR_REQUIRED_KEYS = {
   // 'Infinite Green Mana (Nykthos + Land Untapper + High Devotion)' removed —
   // one-shot untappers (Deserted Temple, Hope Tender, Magus) do not loop with Nykthos alone.
   'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':      ['selvala','quirion_ranger'],
-  "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥6)  [COMBO 2]":        ['kogla','karametra_acolyte'],
+  "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":        ['kogla','karametra_acolyte'],
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote','circle_of_dreams_druid'],
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22]': ['temur_sabertooth','concordant_crossroads'],
   'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 57]': ['hyrax_tower_scout','temur_sabertooth'],
@@ -9971,7 +9998,7 @@ var _DETECTOR_PREFILTER = {
     { all: ['selvala', 'cloudstone_curio', 'wirewood_symbiote'] },
 
   // Kogla + Acolyte (combo 2)
-  "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥6)  [COMBO 2]":
+  "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":
     { all: ['kogla', 'karametra_acolyte'],
       any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
 
@@ -10693,7 +10720,8 @@ function generateActions(state, _presentHint = null) {
 
             for (const resultState of sorted.slice(0, maxBranches)) {
               const msg = resultState.history[resultState.history.length - 1]?.msg ?? `Cast ${def.name}`;
-              const spellGoesToGraveyard = def.types.includes('instant') || def.types.includes('sorcery');
+              const spellGoesToGraveyard = (def.types.includes('instant') || def.types.includes('sorcery'))
+                && !def.reshufflesIntoLibrary;
 
               // ── Capture planned decisions for deterministic replay ─────────
               // Extract the fetched card key from the planned result message.
@@ -10734,6 +10762,7 @@ function generateActions(state, _presentHint = null) {
                     if (found) {
                       let result = afterSearch.enterBattlefield(found);
                       if (spellGoesToGraveyard) result = result.addToGraveyard(0, def.name);
+                      if (def.reshufflesIntoLibrary) result = result.addToLibrary(cardKey);
                       return result.log(msg);
                     }
                     // Target not in library — fall through to standard path
@@ -10749,6 +10778,9 @@ function generateActions(state, _presentHint = null) {
                   let result = matched ?? smartTutorTarget(s, res);
                   if (result && spellGoesToGraveyard) {
                     result = result.addToGraveyard(0, def.name);
+                  }
+                  if (result && def.reshufflesIntoLibrary) {
+                    result = result.addToLibrary(cardKey);
                   }
                   return result;
                 },
@@ -10966,6 +10998,19 @@ function generateActions(state, _presentHint = null) {
     }
   }
 
+  // ── Disruptor Flute: named card's activated abilities cost {3} more ─────────
+  // Built here (before section 4) because mana abilities in section 4 are also
+  // activated abilities and should be taxed when the named card is targeted.
+  const fluteNamedCards = new Set();
+  for (const p of state.battlefield) {
+    if (p.name === 'Disruptor Flute' && p.namedCard) fluteNamedCards.add(p.namedCard);
+  }
+  for (const entry of (state.opponentStax ?? [])) {
+    if (entry.startsWith('Disruptor Flute@')) {
+      fluteNamedCards.add(entry.slice('Disruptor Flute@'.length).trim());
+    }
+  }
+
   // ── 4. Tap permanents for mana ────────────────────────────────────────────
   for (const perm of state.battlefield) {
     if (perm.tapped) continue;
@@ -10974,6 +11019,10 @@ function generateActions(state, _presentHint = null) {
 
     // Null Rod / Collector Ouphe suppresses artifact mana abilities
     if (def.types.includes('artifact') && artifactAbilitiesSuppressed(state)) continue;
+
+    // Disruptor Flute: if this creature's name is targeted, its tap-for-mana
+    // ability (an activated ability) costs {3} more. Skip if we can't afford it.
+    if (fluteNamedCards.has(perm.name) && !state.payMana('3')) continue;
 
     // Creatures with tap-for-mana need to not be summoning sick —
     // UNLESS Shang-Chi is active (grants haste for creature activated abilities).
@@ -11039,6 +11088,11 @@ function generateActions(state, _presentHint = null) {
         apply(s) {
           const live = s.getPermanentById(perm.id);
           if (!live || live.tapped) return null;
+          // Disruptor Flute: pay {3} extra for named creature's activated ability
+          const flutedNames = new Set();
+          for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
+          for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
+          if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
           // Shang-Chi active = simply present on battlefield (sickness irrelevant)
           const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
           if (def.types.includes('creature') && live.summoningSick && !scActive) return null;
@@ -11052,7 +11106,6 @@ function generateActions(state, _presentHint = null) {
       });
     } else {
       // Multi-option case (ferocious, devotion variants, etc.): one action per result.
-      // Label includes the result's last history message so the solver log is readable.
       for (let ri = 0; ri < preResults.length; ri++) {
         const resultIndex = ri;
         const optionMsg = preResults[ri].history[preResults[ri].history.length - 1]?.msg ?? `option ${ri}`;
@@ -11063,6 +11116,10 @@ function generateActions(state, _presentHint = null) {
           apply(s) {
             const live = s.getPermanentById(perm.id);
             if (!live || live.tapped) return null;
+            const flutedNames = new Set();
+            for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
+            for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
+            if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
             const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
             if (def.types.includes('creature') && live.summoningSick && !scActive) return null;
             const liveForAbil = (scActive && live.summoningSick && def.types.includes('creature'))
@@ -11137,17 +11194,7 @@ function generateActions(state, _presentHint = null) {
   }
 
   // ── 5. Activated abilities ────────────────────────────────────────────────
-  // Helper: get the Disruptor Flute named card (own or opponent)
-  const fluteNamedCards = new Set();
-  for (const p of state.battlefield) {
-    if (p.name === 'Disruptor Flute' && p.namedCard) fluteNamedCards.add(p.namedCard);
-  }
-  // Opponent Disruptor Flute: 'Disruptor Flute@<CardName>'
-  for (const entry of (state.opponentStax ?? [])) {
-    if (entry.startsWith('Disruptor Flute@')) {
-      fluteNamedCards.add(entry.slice('Disruptor Flute@'.length).trim());
-    }
-  }
+  // (fluteNamedCards already built above before section 4)
 
   for (const perm of state.battlefield) {
     const def = CARDS[perm.cardKey];
