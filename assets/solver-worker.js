@@ -14353,6 +14353,19 @@ self.onmessage = function(e) {
     return;
   }
 
+  // ── simGradeAnalyze: run simGradeHand off the main thread ──────────────────
+  // Payload: { type:'simGradeAnalyze', hand:[names], deckCards:[names], n, maxTurns }
+  // Response: { type:'simGradeResult', result:{winPct, avgTurn, label, breakdown} }
+  if (d.type === 'simGradeAnalyze') {
+    try {
+      const result = simGradeHand(d.hand || [], d.deckCards || [], d.n || 10, d.maxTurns || 20);
+      self.postMessage({ type: 'simGradeResult', result });
+    } catch(err) {
+      self.postMessage({ type: 'simGradeResult', result: null, error: err.message });
+    }
+    return;
+  }
+
   try {
     const sickSet   = new Set(d.sickCards   || []);
     const tappedSet = new Set(d.tappedCards || []);
