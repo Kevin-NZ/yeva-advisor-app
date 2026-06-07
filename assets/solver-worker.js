@@ -2259,7 +2259,7 @@ class GameState {
     if (s.topDecked !== null) {
       const topCard = s.topDecked;
       s.topDecked = null;
-      _ensurePlayers()
+      s._ensurePlayers();
       s.players[0] = s.players[0].draw(1);
       // [E6] Insert sorted
       const h = s.hand; let lo = 0, hi = h.length;
@@ -2267,7 +2267,7 @@ class GameState {
       s.hand = [...h.slice(0, lo), topCard, ...h.slice(lo)];
     } else if (s.drawForTurn && s.players[0].library.length > 0) {
       const drawnKey = s.players[0].library[0];
-      _ensurePlayers()
+      s._ensurePlayers();
       s.players[0] = s.players[0].draw(1);
       if (drawnKey && drawnKey !== 'unknown') {
         // [E6] Insert sorted
