@@ -7236,7 +7236,7 @@ var CARDS = {
   // ─── Other legendaries ────────────────────────────────────────────────────
 
   shang_chi: {
-    name: 'Shang Chi, Master of Kung Fu',
+    name: 'Shang-Chi, Master of Kung Fu',
     types: ['creature'], subtypes: ['Human', 'Warrior', 'Hero'],
     cost: '1G', power: 2, toughness: 2,
     // Static 1: You may activate abilities of creatures you control as though
@@ -7257,7 +7257,7 @@ var CARDS = {
       if (!s) return [];
       s = s.addMana('G');
       s = s.addMana('G');
-      s = s.log(`Tap Shang Chi → {G}{G} (for creature abilities)`);
+      s = s.log(`Tap Shang-Chi → {G}{G} (for creature abilities)`);
       return [s];
     },
   },
@@ -14331,6 +14331,24 @@ self.onmessage = function(e) {
       self.postMessage({ type: 'criticalityResult', removeKey, cardName, criticality, turnsWithout, baseTurn });
     } catch(err) {
       self.postMessage({ type: 'criticalityResult', removeKey: d.removeKey, cardName: d.removeKey, criticality: 'essential', turnsWithout: Infinity, baseTurn: d.baseTurn, error: err.message });
+    }
+    return;
+  }
+
+  // ── mulliganCutAnalyze: "Going to 6?" cut advisor — runs off main thread ──
+  // Payload: { type:'mulliganCutAnalyze', hand:[names], maxTurns, maxDepth, maxStates }
+  // Response: { type:'mulliganCutResult', baseTurn, baseCombo, cuts:[{cutKey,cutName,turn6,combo6,impact,turnDelta}] }
+  if (d.type === 'mulliganCutAnalyze') {
+    try {
+      const handKeys = (d.hand || []).map(n => _nameMap[n]).filter(Boolean);
+      const result = mulliganCutAdvisor(handKeys, {
+        maxTurns:  d.maxTurns  || 4,
+        maxDepth:  d.maxDepth  || 40,
+        maxStates: d.maxStates || 150000,
+      });
+      self.postMessage({ type: 'mulliganCutResult', baseTurn: result.baseTurn, baseCombo: result.baseCombo, cuts: result.cuts });
+    } catch(err) {
+      self.postMessage({ type: 'mulliganCutResult', baseTurn: Infinity, baseCombo: null, cuts: [], error: err.message });
     }
     return;
   }
