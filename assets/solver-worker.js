@@ -846,6 +846,10 @@ class GameState {
     this.turn          = data.turn        ?? 1;
     this.phase         = data.phase       ?? 'main1';
     this.landDrops     = data.landDrops   ?? 1;
+    // landsPlayedThisTurn: incremented each time a land is played from hand.
+    // Reset to 0 at the start of each turn. Used by Nissa, Resurgent Animist
+    // to detect the second land entering each turn (and other future triggers).
+    this.landsPlayedThisTurn = data.landsPlayedThisTurn ?? 0;
     this.hand          = data.hand        ? [...data.hand].sort() : []; // [E6] kept sorted
     this.battlefield   = data.battlefield
       ? data.battlefield.map(p => p instanceof Permanent ? p : new Permanent(p))
@@ -1081,6 +1085,7 @@ class GameState {
     s.turn          = this.turn;
     s.phase         = this.phase;
     s.landDrops     = this.landDrops;
+    s.landsPlayedThisTurn = this.landsPlayedThisTurn;
     s.hand          = [...this.hand];
     s.battlefield   = this.battlefield;     // shared (COW)
     s.mana          = this.mana.clone();
@@ -1136,6 +1141,7 @@ class GameState {
     s.turn          = this.turn;
     s.phase         = this.phase;
     s.landDrops     = this.landDrops;
+    s.landsPlayedThisTurn = this.landsPlayedThisTurn;
     s.hand          = this.hand;            // shared (no mutation after log)
     s.battlefield   = this.battlefield;     // shared
     s.mana          = this.mana;            // shared
@@ -1237,7 +1243,11 @@ class GameState {
       const { player, cardKey } = s.players[0].drawCard();
       s.players[0] = player;
       if (cardKey && cardKey !== 'unknown') {
-        s.hand = [...s.hand, cardKey];
+        // [E6] Insert in sorted position to maintain hand invariant (same as addToHand)
+        const h = s.hand;
+        let lo = 0, hi = h.length;
+        while (lo < hi) { const mid = (lo + hi) >>> 1; if (h[mid] <= cardKey) lo = mid + 1; else hi = mid; }
+        s.hand = [...h.slice(0, lo), cardKey, ...h.slice(lo)];
       }
     }
     return s;
@@ -2147,7 +2157,7 @@ class GameState {
     const s = this.clone();
     s.turn++;
     s.landDrops = 1;
-    s.mana = new ManaPool();
+    s.landsPlayedThisTurn = 0;
     s.storm = 0;
     s.isOpponentTurn = false;
     s.flashThisTurn  = false;
@@ -2406,8 +2416,9 @@ class GameState {
                '|L:' + this.landDrops + '|P:' + players + '|CZ:' + cmd +
                (this.flashThisTurn  ? '|FL' : '') +
                (this.pactOwed       ? '|PC' : '') +
+               (this.landsPlayedThisTurn > 0 ? '|LP:' + this.landsPlayedThisTurn : '') +
                (this.isOpponentTurn ? '|OT' : '') +
-               (this.opponentStax?.length ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
+               ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
                (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
     return this._fp;
   }
@@ -10216,7 +10227,6 @@ var NAME_TO_KEY = Object.fromEntries(
   Object.entries(CARDS).map(([k, v]) => [v.name, k])
 );
 
-// ── STAX cards — never cast, never tutored ────────────────────────────────
 // [E7] Reverse index: cardKey -> [{idx, total}] mapping each card to the combos
 // that require it. Built once at load time so missingComboCards() can find
 // "one-card-away" combos without scanning all COMBO_REQUIRED_KEYS every call.
@@ -10563,11 +10573,16 @@ function generateActions(state, _presentHint = null) {
         label: `Play ${def.name}`,
         priority: 10,
         apply(s) {
-          const isSecondLand = s.landDrops === 0; // already used first drop
+          // isSecondLand: true when this is the second (or later) land entered
+          // this turn. Tracked via landsPlayedThisTurn which is incremented here
+          // and reset to 0 in startNewTurn(). Previous check `s.landDrops === 0`
+          // was always false (outer guard requires landDrops > 0 to reach apply()).
+          const isSecondLand = s.landsPlayedThisTurn >= 1;
           let ns = s.removeFromHand(cardKey);
           if (!ns) return null;
           ns = ns.clone();
           ns.landDrops--;
+          ns.landsPlayedThisTurn = (ns.landsPlayedThisTurn ?? 0) + 1;
 
           // Shifting Woodland enters tapped unless there is already a Forest
           // (any permanent with Forest subtype) or Ashaya on the battlefield.
@@ -10815,10 +10830,10 @@ function generateActions(state, _presentHint = null) {
 
         // ── On-cast / on-enter triggers ────────────────────────────────────
 
-        // Beast Whisperer: draw a card when you cast a creature spell
+        // Beast Whisperer: draw a card when you cast a creature spell.
+        // Triggered ability — fires regardless of summoning sickness.
         if (isCreature && ns.hasPermanent('Beast Whisperer')) {
-          const bw = ns.getPermanent('Beast Whisperer');
-          if (!bw.summoningSick) ns = ns.playerDraws(0, 1);
+          ns = ns.playerDraws(0, 1);
         }
 
         // Topiary Lecturer — Increment trigger:
@@ -10859,22 +10874,18 @@ function generateActions(state, _presentHint = null) {
         }
 
         // Primordial Sage: whenever you cast a creature spell, you may draw a card.
-        // "May" — always draw (optimal in solver context).
+        // Triggered ability — fires regardless of summoning sickness.
         if (isCreature && ns.hasPermanent('Primordial Sage')) {
-          const sage = ns.getPermanent('Primordial Sage');
-          if (!sage.summoningSick) ns = ns.playerDraws(0, 1);
+          ns = ns.playerDraws(0, 1);
         }
 
         // Soul of the Harvest: whenever another nontoken creature you control enters, draw a card.
+        // Triggered ability — fires regardless of summoning sickness.
         // The entering creature must be nontoken. Soul itself doesn't trigger on its own ETB.
         if (isCreature && ns.hasPermanent('Soul of the Harvest')) {
-          const soul = ns.getPermanent('Soul of the Harvest');
-          if (!soul.summoningSick) {
-            // The creature just entered — check it's the one that entered, not Soul itself
-            const entered = ns.battlefield[ns.battlefield.length - 1];
-            if (entered && entered.name !== 'Soul of the Harvest' && !entered.isToken) {
-              ns = ns.playerDraws(0, 1);
-            }
+          const entered = ns.battlefield[ns.battlefield.length - 1];
+          if (entered && entered.name !== 'Soul of the Harvest' && !entered.isToken) {
+            ns = ns.playerDraws(0, 1);
           }
         }
 
