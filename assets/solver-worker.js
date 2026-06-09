@@ -577,7 +577,14 @@ class Player {
     if (p._sizeOnly) {
       p._libSize += gyLen;
     } else {
-      p.library = [...p.library, ...p.graveyard.map(() => 'unknown')];
+      // Graveyard stores display names; library stores card keys.
+      // Resolve each name back to its key via NAME_TO_KEY so Elixir-recovered
+      // cards are playable/tutorable by the solver.  Names that can't be
+      // resolved (unknown cards, any token names not filtered by Fix 5) fall
+      // back to 'unknown' so they still count toward library size.
+      // Lazy-require to avoid a circular dependency at module load time.
+      const gyKeys = p.graveyard.map(name => NAME_TO_KEY[name] ?? 'unknown');
+      p.library = [...p.library, ...gyKeys];
     }
     p.graveyard = [];
     return p;
@@ -767,6 +774,7 @@ class Permanent {
     this.counters      = data.counters    ?? {};
     this.power         = data.power;
     this.toughness     = data.toughness;
+    this.isToken       = data.isToken     ?? false;
   }
 
   is(type) { return this.types.includes(type.toLowerCase()); }
@@ -789,7 +797,7 @@ class Permanent {
     p.counters      = this.counters;
     p.power         = this.power;
     p.toughness     = this.toughness;
-    // Custom fields set by card ETB hooks
+    if (this.isToken) p.isToken = this.isToken;
     if (this.imprintedColor  !== undefined) p.imprintedColor  = this.imprintedColor;
     if (this.enchantedLandId !== undefined) p.enchantedLandId = this.enchantedLandId;
     if (this.elvishGuidance)                p.elvishGuidance  = this.elvishGuidance;
@@ -2096,8 +2104,14 @@ class GameState {
     const [removed] = s.battlefield.splice(idx, 1);
     s._permNames = null;  // invalidate cache
     if (zone === 'graveyard' || zone === 'exile') s._ensurePlayers();
-    if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
-    if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
+    // Tokens cease to exist when they leave the battlefield — they never go to
+    // the graveyard or exile.  Sending a token name to putInGraveyard would
+    // pollute the graveyard with un-recurable token entries (e.g. "Elf Warrior
+    // Token"), wasting fingerprint bytes and cluttering EWit target lists.
+    if (!removed.isToken) {
+      if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
+      if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
+    }
     // Recompute _hasSTAX from BOTH our battlefield AND opponent stax.
     // Bug fix (2026-05-05): previously this only checked our battlefield, so
     // sacrificing/destroying any of our permanents would silently turn off
@@ -10426,10 +10440,14 @@ function costReductions(state, def) {
 
   for (const perm of state.battlefield) {
     const permDef = CARDS[perm.cardKey];
-    // Emerald Medallion: green spells cost {1} less
+    // Emerald Medallion: green spells cost {1} less.
+    // A "green spell" is any spell with {G} in its mana cost — colour identity,
+    // not card type.  The previous check also included `|| def.types.includes('creature')`
+    // which incorrectly discounted colourless creatures.  There are no non-green
+    // creatures in this deck today, but the rule must be correct for future cards.
     if (permDef?.costReduction?.color === 'G') {
       const cost = def.cost || '';
-      if (cost.includes('G') || def.types.includes('creature')) {
+      if (cost.includes('G')) {
         genericReduction += permDef.costReduction.amount;
       }
     }
@@ -10854,16 +10872,22 @@ function generateActions(state, _presentHint = null) {
             const parsed   = parseCost(effectiveCost(s, def));
             const manaSpent = parsed.generic +
               Object.values(parsed.colored).reduce((a, b) => a + b, 0);
-            for (const lec of lecturers) {
-              // Increment fires if mana spent > power OR > toughness.
-              // Equivalent to: mana spent > min(power, toughness).
-              // e.g. a 2/3 Lecturer triggers on CMC 3 because 3 > 2 (power).
+            // Own the battlefield BEFORE mutating — calling ns.log() inside the loop
+            // would create a COW-shared battlefield, and subsequent iterations would
+            // mutate the shared array, corrupting both the pre-log and post-log states.
+            // Instead: own once, mutate all lecturers, then emit a single log line.
+            ns._ensureBF();
+            const incremented = [];
+            for (const lec of ns.battlefield.filter(p => precastLecturerIds.has(p.id))) {
               const threshold = Math.min(lec.power || 1, lec.toughness || 1);
               if (manaSpent > threshold) {
                 lec.power     = (lec.power     || 1) + 1;
                 lec.toughness = (lec.toughness || 1) + 1;
-                ns = ns.log(`Topiary Lecturer Increment → ${lec.power}/${lec.toughness}`);
+                incremented.push(`${lec.name} → ${lec.power}/${lec.toughness}`);
               }
+            }
+            if (incremented.length > 0) {
+              ns = ns.log(`Topiary Lecturer Increment: ${incremented.join(', ')}`);
             }
           }
         }
@@ -10928,8 +10952,11 @@ function generateActions(state, _presentHint = null) {
           if (after) ns = Array.isArray(after) ? after[0] : after;
         }
 
-        // Surrak and Goreclaw: nontoken creatures entering get +1/+1 and haste
+        // Surrak and Goreclaw: nontoken creatures entering get haste (summoningSick = false).
+        // ns may be the result of onEnter returning a log() state — COW-shared battlefield.
+        // Must call _ensureBF() before mutating to avoid writing through the shared array.
         if (isCreature && ns.hasPermanent('Surrak and Goreclaw')) {
+          ns._ensureBF();
           const entered = ns.battlefield[ns.battlefield.length - 1];
           if (entered && entered.name !== 'Surrak and Goreclaw') {
             entered.summoningSick = false;
@@ -11345,8 +11372,11 @@ function generateActions(state, _presentHint = null) {
       apply(s) {
         let ns = s.clone();
         ns.isOpponentTurn = true;
-        // Mana drains between phases
-        ns.mana = ns.mana.constructor ? new ns.mana.constructor() : ns.mana;
+        // Mana drains between phases — always construct a fresh ManaPool.
+        // Previously used `new ns.mana.constructor()` which is fragile if
+        // ManaPool ever gains required constructor arguments.
+        var { ManaPool: _MP } = _GSM;
+        ns.mana = new _MP();
         // Quest for Renewal: untap all creatures (not lands) on opponent turns.
         // Triggered when Quest has 4+ quest counters.
         if (ns.hasPermanent('Quest for Renewal')) {
