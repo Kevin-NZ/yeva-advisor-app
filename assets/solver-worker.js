@@ -13516,7 +13516,7 @@ function assembleWin(state) {
     // executions are valid ways to run the loop (they deny opponents
     // response windows), not requirements — Endurance just needs a fresh
     // cast when our library runs low.
-    if (victory.winCondition?.includes('Mill') || victory.winCondition?.includes('Geier Reach')) {
+    if (victory.winCondition === "Win: Geier Reach Sanitarium Mill (Hitzel's Sequence)") {
       const hasTemur   = onField('Temur Sabertooth');
       const hasKogla   = onField('Kogla, the Titan Ape');
       const hasAshaya  = onField('Ashaya, Soul of the Wild');
@@ -13658,8 +13658,275 @@ function assembleWin(state) {
       if (!hasGeier) {
         steps.push('  ⚠ Geier Reach Sanitarium is not on field — Elvish Reclaimer fetch required first.');
       }
+
+    // ── Emit Scrapshooter Mill execution steps ────────────────────────────
+    // Mirrors the Hitzel re-buy variants: Scrapshooter's "gift" ETB forces an
+    // opponent to draw a card each time it enters. Loop = whatever
+    // bounces/recurs Scrapshooter for another ETB.
+    } else if (victory.winCondition === 'Win: Scrapshooter Mill (infinite gift draw)') {
+      const hasTemur   = onField('Temur Sabertooth');
+      const hasCurio   = onField('Cloudstone Curio');
+      const hasKogla   = onField('Kogla, the Titan Ape');
+      const hasAshaya  = onField('Ashaya, Soul of the Wild');
+      const hasQR      = onField('Quirion Ranger') || onField('Scryb Ranger');
+      const hasScrapshooter = onField('Scrapshooter') || inHand('scrapshooter');
+
+      steps.push('');
+      steps.push('── Scrapshooter Mill (execution) ──');
+      steps.push("Each cast: promise the gift to an opponent — when Scrapshooter enters, that opponent draws a card.");
+
+      if (hasTemur) {
+        steps.push('Variant: Temur Sabertooth');
+        steps.push('  1. Cast Scrapshooter, promising the gift to an opponent — they draw a card.');
+        steps.push('  2. {1}{G}: Temur Sabertooth bounces Scrapshooter to hand.');
+        steps.push('  3. Recast Scrapshooter (gift again). Repeat.');
+        steps.push('  → Rotate the gift target each cycle so every opponent eventually mills out.');
+      } else if (hasCurio) {
+        steps.push('Variant: Cloudstone Curio');
+        steps.push('  1. Cast Scrapshooter, promising the gift — opponent draws a card. ETB triggers Cloudstone Curio:');
+        steps.push('     return another creature you control to hand.');
+        steps.push('  2. Cast that creature — its ETB triggers Curio: return Scrapshooter to hand.');
+        steps.push('  3. Recast Scrapshooter (gift again). Repeat from step 1.');
+      } else if (hasKogla) {
+        const hasBW       = inHand('beast_within') || inGraveyard('Beast Within');
+        const hasLQRAny   = onField("Legolas's Quick Reflexes") || inHand('legolas_quick_reflexes') || inGraveyard("Legolas's Quick Reflexes");
+        const hasCropRot  = hasAshaya && (inHand('crop_rotation') || inGraveyard('Crop Rotation'));
+        const hasReclaimer = hasAshaya && hasQR && onField('Elvish Reclaimer');
+
+        if (hasBW || hasLQRAny) {
+          const killSpell = hasBW ? 'Beast Within' : "Legolas's Quick Reflexes";
+          steps.push(`Variant: Kogla, the Titan Ape + Eternal Witness + ${killSpell}`);
+          steps.push('  1. Cast Scrapshooter, promising the gift — opponent draws a card.');
+          if (hasBW) {
+            steps.push("  2. Cast Beast Within targeting Scrapshooter — it dies (opponent gets a 3/3 Beast token).");
+          } else {
+            steps.push("  2. Legolas's Quick Reflexes: Scrapshooter's tap-trigger deals damage equal to its power to itself — it dies.");
+          }
+          steps.push(`  3. Cast Eternal Witness → return ${killSpell} to hand.`);
+          steps.push('  4. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push('  5. Recast Eternal Witness → return Scrapshooter to hand.');
+          steps.push('  6. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push('  7. Recast Scrapshooter (gift again). Repeat from step 2.');
+        } else if (hasCropRot) {
+          steps.push('Variant: Kogla + Eternal Witness + Ashaya + Crop Rotation');
+          steps.push('  1. Cast Scrapshooter, promising the gift — opponent draws a card.');
+          steps.push('  2. Under Ashaya, Scrapshooter is a Forest land. Cast Crop Rotation: sacrifice');
+          steps.push('     Scrapshooter as the additional cost → fetch any land.');
+          steps.push('  3. Cast Eternal Witness → return Crop Rotation to hand.');
+          steps.push('  4. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push('  5. Recast Eternal Witness → return Scrapshooter to hand.');
+          steps.push('  6. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push('  7. Recast Scrapshooter (gift again). Repeat from step 2.');
+        } else if (hasReclaimer) {
+          const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
+          steps.push(`Variant: Kogla + Eternal Witness + Ashaya + Elvish Reclaimer + ${rangerName}`);
+          steps.push('  1. Cast Scrapshooter, promising the gift — opponent draws a card.');
+          steps.push('  2. {2},{T}: Elvish Reclaimer sacrifices Scrapshooter (a Forest land under Ashaya) →');
+          steps.push('     search for a land.');
+          steps.push('  3. Cast Eternal Witness → return Scrapshooter to hand.');
+          steps.push('  4. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push(`  5. ${rangerName}: return ITSELF (a Forest under Ashaya) to hand → untap Elvish Reclaimer.`);
+          steps.push(`  6. Recast ${rangerName} (new object — fresh once-per-turn activation).`);
+          steps.push('  7. Recast Scrapshooter (gift again). Repeat from step 2.');
+        } else {
+          steps.push('Variant: Kogla, the Titan Ape + Eternal Witness');
+          steps.push('  (Needs a removal method for Scrapshooter: Beast Within / LQR,');
+          steps.push('   or under Ashaya: Crop Rotation, or Elvish Reclaimer + Ranger.)');
+        }
+      } else {
+        steps.push('  Loop Scrapshooter\'s gift ETB with any available bounce/recur engine: cast');
+        steps.push('  Scrapshooter (gift → opponent draws), bounce/recur it, recast, repeat.');
+      }
+
+      if (!hasScrapshooter) {
+        steps.push('  ⚠ Scrapshooter is not yet in hand or on field — fetch via Duskwatch Recruiter first.');
+      }
+
+    // ── Emit Mikokoro Mill Line execution steps ───────────────────────────
+    } else if (victory.winCondition === 'Win: Mikokoro Mill Line') {
+      const hasTemur = onField('Temur Sabertooth');
+      const bouncerName = hasTemur ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+      const hasCropRot  = inHand('crop_rotation') || inGraveyard('Crop Rotation');
+      const hasRevival  = inHand('noxious_revival') || inGraveyard('Noxious Revival');
+      const hasReclaimer = onField('Elvish Reclaimer');
+
+      steps.push('');
+      steps.push('\u2500\u2500 Mikokoro Mill Line (execution) \u2500\u2500');
+      steps.push('  1. {2},{T}: Activate Mikokoro, Center of the Sea \u2014 each player draws a card. Hold priority.');
+      if (hasCropRot) {
+        steps.push('  2. Cast Crop Rotation: sacrifice Mikokoro as the additional cost \u2192 fetch any land.');
+        steps.push('     Mikokoro goes to the graveyard.');
+      } else if (hasReclaimer) {
+        steps.push('  2. {2},{T}: Elvish Reclaimer sacrifices Mikokoro (a land) \u2192 search for a land.');
+        steps.push('     Mikokoro goes to the graveyard.');
+      } else {
+        steps.push('  2. Sacrifice Mikokoro (Crop Rotation, or Elvish Reclaimer if Crop Rotation is unavailable)');
+        steps.push('     to fetch any land. Mikokoro goes to the graveyard.');
+      }
+      if (hasRevival) {
+        steps.push('  3. Cast Noxious Revival ({G/P}, can pay 2 life instead of {G}): put Mikokoro from the');
+        steps.push('     graveyard on top of your library.');
+        steps.push('  4. Cast Eternal Witness \u2192 return Crop Rotation (or whichever sac effect was used) to hand.');
+        steps.push(`  5. {1}{G}: ${bouncerName} bounces Eternal Witness to hand.`);
+        steps.push('  6. Recast Eternal Witness \u2192 return Noxious Revival to hand.');
+        steps.push(`  7. {1}{G}: ${bouncerName} bounces Eternal Witness to hand.`);
+        steps.push("  8. Mikokoro's own draw (step 1) draws it back into your hand from atop your library.");
+        steps.push('  9. Replay Mikokoro (land drop) and repeat from step 1.');
+        steps.push('  \u2192 Each activation makes every player draw \u2014 opponents mill out before you do.');
+      } else {
+        steps.push('  \u26a0 Noxious Revival not found \u2014 Mikokoro is stuck in the graveyard after step 2.');
+        steps.push('     Cast or recover Noxious Revival ({G/P}, or pay 2 life) to put Mikokoro on top of');
+        steps.push('     your library, then loop Eternal Witness (bounced by ' + bouncerName + ') to recur');
+        steps.push('     the sacrifice spell + Noxious Revival, drawing Mikokoro back via its own');
+        steps.push('     activation each cycle (step 1 makes you draw too).');
+        steps.push('     Note: Elvish Reclaimer alone cannot return Mikokoro from the graveyard \u2014 it only');
+        steps.push('     sacrifices it as a land. Noxious Revival (or an equivalent effect) is required.');
+      }
+      if (!onField('Mikokoro, Center of the Sea')) {
+        steps.push('  \u26a0 Mikokoro is not yet on the battlefield \u2014 fetch and play it as a land first.');
+      }
+
+    // ── Emit Duskwatch Recruiter execution steps ──────────────────────────
+    } else if (victory.winCondition === 'Win: Duskwatch Recruiter (find all creatures)') {
+      steps.push('');
+      steps.push('── Duskwatch Recruiter Sequence (execution) ──');
+      steps.push('  1. {2}{G},{T}: Look at the top 3 cards of your library — put a creature card into your hand.');
+      steps.push('  2. Untap Duskwatch Recruiter (any repeatable untap method available — e.g. the same');
+      steps.push('     engine producing your infinite mana, Hope Tender, or Magus of the Candelabra) and');
+      steps.push('     repeat until every creature in your library is in hand.');
+      steps.push('  3. Cast every found creature (Yeva grants flash to green creatures).');
+      const hasGeierForDW = onField('Geier Reach Sanitarium') || inHand('geier_reach') || inGraveyard('Geier Reach Sanitarium');
+      const hasEnduranceForDW = onField('Endurance') || inHand('endurance') || inGraveyard('Endurance');
+      if (hasGeierForDW || hasEnduranceForDW) {
+        steps.push('  4. Once Geier Reach Sanitarium, Endurance, and a re-buy engine (Temur Sabertooth /');
+        steps.push("     Kogla, the Titan Ape) are all in hand or on field, execute Hitzel's Sequence");
+        steps.push('     (see steps above for the variant matching your board).');
+      } else {
+        steps.push('  4. Among the creatures found: Endurance, Temur Sabertooth or Kogla, the Titan Ape, and');
+        steps.push("     Eternal Witness set up Hitzel's Sequence (with Geier Reach Sanitarium played as a land).");
+      }
+      steps.push('  5. Alternatively: find Beast Whisperer to draw your entire deck, or any other finisher');
+      steps.push('     (Finale of Devastation, Infectious Bite).');
+
+    // ── Emit Draw Library execution steps ─────────────────────────────────
+    } else if (victory.winCondition === 'Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)') {
+      steps.push('');
+      steps.push('── Draw Library (execution) ──');
+      if (onField('Beast Whisperer') || inHand('beast_whisperer')) {
+        steps.push('  Beast Whisperer: whenever you cast a creature spell, draw a card.');
+        if (onField('Ashaya, Soul of the Wild') &&
+            (onField('Quirion Ranger') || onField('Scryb Ranger'))) {
+          const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
+          steps.push(`  1. ${rangerName}: return ITSELF (a Forest under Ashaya) to hand, untapping any creature.`);
+          steps.push(`  2. Recast ${rangerName} — Beast Whisperer triggers: draw a card.`);
+        } else if (onField('Temur Sabertooth') || onField('Kogla, the Titan Ape')) {
+          const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+          steps.push(`  1. {1}{G}: ${bouncerName} bounces a creature you control to hand.`);
+          steps.push('  2. Recast that creature — Beast Whisperer triggers: draw a card.');
+        } else {
+          steps.push('  1. With infinite mana, repeatedly bounce and recast any creature you control.');
+          steps.push('  2. Each recast triggers Beast Whisperer: draw a card.');
+        }
+        steps.push('  3. Repeat with infinite mana until your entire library is in hand.');
+        steps.push("  4. Cast Finale of Devastation, Infectious Bite, or assemble Hitzel's Sequence with");
+        steps.push('     everything now in hand.');
+      } else {
+        steps.push("  Glademuse: whenever an opponent casts a spell, draw a card.");
+        steps.push('  1. With infinite mana available, pass the turn (Yeva grants flash, so the whole hand');
+        steps.push('     can still be deployed at instant speed on opponents\' turns).');
+        steps.push("  2. Each opponent's spell draws you a card — by the time it's your turn again,");
+        steps.push('     your library is empty and a finisher is in hand.');
+        steps.push('  3. Cast the finisher found at instant speed (Yeva grants flash).');
+      }
+
+    // ── Emit Tutor for Finisher execution steps ───────────────────────────
+    } else if (victory.winCondition === 'Win: Tutor for Finisher (infinite mana + creature tutor)') {
+      steps.push('');
+      steps.push('── Tutor for Finisher (execution) ──');
+      steps.push('  1. Activate or cast the available tutor (see steps above) to find a creature.');
+      steps.push('  2. Find Duskwatch Recruiter specifically if possible — its repeatable activated ability');
+      steps.push('     ({2}{G},{T}: look at top 3, take a creature) finds every remaining creature in your');
+      steps.push('     library with infinite mana and any untap method.');
+      steps.push("  3. Cast all found creatures, then assemble Hitzel's Sequence (Geier Reach Sanitarium +");
+      steps.push('     Endurance + Temur Sabertooth/Kogla), Finale of Devastation X≥10, or Infectious Bite');
+      steps.push('     as the pieces allow.');
+
+    // ── Emit Defiler of Vigor execution steps ─────────────────────────────
+    } else if (victory.winCondition === 'Win: Defiler of Vigor (infinite +1/+1 counters)') {
+      steps.push('');
+      steps.push('── Defiler of Vigor (execution) ──');
+      steps.push('  Defiler of Vigor: whenever you cast a green permanent spell, put a +1/+1 counter on');
+      steps.push("  each creature you control. Defiler also lets you pay 2 life instead of any {G} in a");
+      steps.push('  permanent spell\'s cost, accelerating any of the loops below.');
+      if (onField('Ashaya, Soul of the Wild') &&
+          (onField('Quirion Ranger') || onField('Scryb Ranger'))) {
+        const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
+        steps.push(`  1. ${rangerName}: return ITSELF (a Forest under Ashaya) to hand, untapping a mana dork.`);
+        steps.push(`  2. Recast ${rangerName} — a green permanent spell, so Defiler triggers: every creature`);
+        steps.push('     you control gets a +1/+1 counter.');
+      } else if (onField('Temur Sabertooth') || onField('Kogla, the Titan Ape')) {
+        const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+        steps.push(`  1. {1}{G}: ${bouncerName} bounces a green creature you control to hand.`);
+        steps.push('  2. Recast it — Defiler triggers: every creature you control gets a +1/+1 counter.');
+      } else if (onField('Wirewood Symbiote')) {
+        steps.push('  1. Wirewood Symbiote: return a 1-mana Elf to hand, untapping a mana dork.');
+        steps.push('  2. Recast the Elf — Defiler triggers: every creature you control gets a +1/+1 counter.');
+      } else {
+        steps.push('  1. Loop any bounce-and-recast of a green permanent with infinite mana.');
+        steps.push('  2. Each recast is a green permanent spell — Defiler triggers: every creature you');
+        steps.push('     control gets a +1/+1 counter.');
+      }
+      steps.push('  3. Repeat with infinite mana — every creature you control gets arbitrarily large.');
+      steps.push('  4. Attack with your team for lethal damage.');
+
+    // ── Emit Commander Damage (Great Oak Guardian) execution steps ────────
+    } else if (victory.winCondition === 'Win: Commander Damage (Great Oak Guardian + infinite mana → Yeva lethal)') {
+      const hasTemurGOG = onField('Temur Sabertooth');
+      const hasCurioGOG = onField('Cloudstone Curio');
+
+      steps.push('');
+      steps.push('── Commander Damage via Great Oak Guardian (execution) ──');
+      steps.push('  1. Cast Great Oak Guardian (Flash) targeting yourself — your creatures (including');
+      steps.push('     Yeva, Nature\'s Herald) get +2/+2 until end of turn and untap.');
+      if (hasTemurGOG) {
+        steps.push('  2. {1}{G}: Temur Sabertooth bounces Great Oak Guardian to hand.');
+        steps.push('  3. Recast Great Oak Guardian ({5}{G}) targeting yourself again. Repeat from step 1.');
+      } else if (hasCurioGOG) {
+        steps.push('  2. ETB triggers Cloudstone Curio: return another creature you control to hand.');
+        steps.push('  3. Cast that creature — its ETB triggers Curio: return Great Oak Guardian to hand.');
+        steps.push('     Recast it (Flash) targeting yourself again. Repeat from step 1.');
+      } else {
+        steps.push('  2. Bounce and recast Great Oak Guardian (Temur Sabertooth or Cloudstone Curio) and');
+        steps.push('     repeat, targeting yourself each time.');
+      }
+      steps.push("  4. Yeva's power becomes arbitrarily large — every +2/+2 lasts until end of turn and");
+      steps.push('     stacks with the others.');
+      steps.push('  5. Attack with Yeva for 21+ commander damage — opponent loses (CR 903.10a).');
+      steps.push('  ⚠ Maze of Ith stops this — prevented combat damage isn\'t dealt, so commander-damage');
+      steps.push('     tracking does not increment.');
+
+    // ── Emit Ulvenwald Tracker Fight Loop execution steps ─────────────────
+    } else if (victory.winCondition === 'Win: Ulvenwald Tracker Fight Loop (clear opponent board)') {
+      const hasElixir = onField('Thousand-Year Elixir');
+      const scActive  = onField('Shang-Chi, Master of Kung Fu');
+
+      steps.push('');
+      steps.push('── Ulvenwald Tracker Fight Loop (execution) ──');
+      steps.push('  1. {1}{G},{T}: Ulvenwald Tracker — your biggest creature fights target creature an');
+      steps.push('     opponent controls. The opposing creature dies.');
+      if (hasElixir) {
+        steps.push('  2. {1},{T}: Thousand-Year Elixir untaps Ulvenwald Tracker.');
+      } else if (scActive) {
+        steps.push("  2. Shang-Chi's static lets Ulvenwald Tracker activate again as though it had haste —");
+        steps.push('     untap Tracker via your existing untap engine.');
+      } else {
+        steps.push('  2. Untap Ulvenwald Tracker via Thousand-Year Elixir or Shang-Chi\'s haste engine.');
+      }
+      steps.push('  3. Repeat until every creature your opponents control is destroyed.');
+      steps.push('  4. Attack with your unblocked board for lethal damage.');
     }
   }
+
 
   if (steps.length === 0) return null;
 
