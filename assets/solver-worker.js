@@ -374,7 +374,7 @@ var DEFAULT_DECKLIST = [
   'collector_ouphe','crop_rotation','delighted_halfling','deserted_temple',
   'destiny_spinner','disciple_freyalise','dryad_arbor','duskwatch_recruiter',
   'earthcraft','eladamri','eldritch_evolution','elvish_archdruid',
-  'elvish_guidance','elvish_harbinger','elvish_mystic','elvish_reclaimer',
+  'shang_chi','elvish_harbinger','elvish_mystic','elvish_reclaimer',
   'elvish_spirit_guide','emergence_zone','endurance','eternal_witness',
   'fanatic_of_rhonas','fauna_shaman','fierce_empath','force_of_vigor',
   'forest','forest','forest','forest','forest','forest','forest','forest','forest','forest',
@@ -1152,6 +1152,19 @@ class GameState {
     s.landsPlayedThisTurn = this.landsPlayedThisTurn;
     s.hand          = this.hand;            // shared (no mutation after log)
     s.battlefield   = this.battlefield;     // shared
+    // [perf] Propagate COW ownership flags so the next _ensureBF()/_ensurePlayers()
+    // call on this state does NOT re-clone unnecessarily.  Without these, both
+    // flags are undefined (falsy) in the log result, making every subsequent
+    // _ensureBF() trigger a full deep-clone even though the battlefield was
+    // already owned immediately before log() was called.  Measured impact:
+    // ~11x slower _ensureBF() on a 10-perm battlefield when flags are missing.
+    s._bfOwned      = this._bfOwned;
+    s._plOwned      = this._plOwned;
+    // [perf] Propagate the hasPermanent() name-cache.  log() shares the same
+    // battlefield array, so the cache is still valid — no rebuild needed.
+    // Without this, every hasPermanent() call after any action (which ends in
+    // log()) rebuilds the Set from scratch (~4x slower per call).
+    s._permNames    = this._permNames;
     s.mana          = this.mana;            // shared
     s.storm         = this.storm;
     s.comboAchieved = this.comboAchieved;
@@ -11285,20 +11298,62 @@ function generateActions(state, _presentHint = null) {
         const oncePerTurn = ability.label?.includes('once per turn') ||
                             ability.label?.includes('Activate only once');
 
+        // Capture everything needed for deterministic replay at apply-time.
+        // We capture abilKey, perm.id, fluteBlocked, and the result index (i)
+        // so apply(_s) can re-run from the live state rather than returning
+        // the stale planning result.  The planning result is kept only for
+        // label extraction (history message).
+        //
+        // Bug C fix: previously `apply(_s)` returned `result` directly (a
+        // state built from the planning-time `preState = state.payMana('3')`).
+        // If apply() is ever called with a different mana pool than generation
+        // (BFS, REPL, or any future multi-pass use), the Flute tax payment
+        // would reflect the wrong pool.  Re-running from _s is correct and
+        // costs negligible overhead since ability.fn() is cheap.
+        const capturedAbilKey  = abilKey;
+        const capturedPermId   = perm.id;
+        const capturedFluteBlk = fluteBlocked;
+        const capturedIdx      = i;
+        const capturedOPT      = oncePerTurn;
+
         actions.push({
           type: 'ability',
           label: `${perm.name}: ${ability.label ?? abilKey}` +
                  (results.length > 1 ? ` [opt ${i + 1}/${results.length} : ${result.history.at(-1).msg}]` : ''),
           priority: 6,
           apply(_s) {
-            if (!oncePerTurn) return result;
-            // Mark ability used on the perm in the result state
-            const ns = result.clone();
-            ns._ensureBF();
-            const livePerm = ns.getPermanentById(perm.id);
-            if (livePerm) {
-              livePerm.abilitiesUsed = { ...livePerm.abilitiesUsed, [abilKey]: true };
+            // Re-pay Flute tax from live state if required.
+            let liveState = _s;
+            if (capturedFluteBlk) {
+              liveState = _s.payMana('3');
+              if (!liveState) return null;
             }
+            // Re-run the ability fn from the live state.
+            // Each ability.fn enforces its own guards (tapped, summoningSick, abilitiesUsed).
+            // We must NOT add an outer summoningSick check here — some non-tap abilities
+            // (e.g. Quirion Ranger bounce) work while the creature is sick, and a blanket
+            // guard would silently block them (regression: lost the T2 Thorn solution).
+            // The only exception: Shang-Chi bypasses sickness for ALL creature abilities.
+            // Mirror the same bypass that action-generation applies at planning time.
+            const livePerm = liveState.getPermanentById(capturedPermId);
+            if (!livePerm) return null;
+            const scLive = liveState.battlefield.some(p => p.cardKey === 'shang_chi');
+            const livePermForAbil = (scLive && livePerm.summoningSick && def.types.includes('creature'))
+              ? Object.assign(Object.create(Object.getPrototypeOf(livePerm)), livePerm, { summoningSick: false })
+              : livePerm;
+            const liveRaw = ability.fn(liveState, livePermForAbil);
+            const liveResults = liveRaw === null || liveRaw === undefined
+              ? [] : Array.isArray(liveRaw) ? liveRaw : [liveRaw];
+            const liveResult = liveResults[capturedIdx] ?? null;
+            if (!liveResult) return null;
+            if (!capturedOPT) return liveResult;
+            // once-per-turn: mark the ability used on the perm in the result state.
+            // (Many ability fns already call markAbilityUsed internally; this is
+            // belt-and-suspenders for any that rely on the outer marking only.)
+            const ns = liveResult.clone();
+            ns._ensureBF();
+            const lp = ns.getPermanentById(capturedPermId);
+            if (lp) lp.abilitiesUsed = { ...lp.abilitiesUsed, [capturedAbilKey]: true };
             return ns;
           },
         });
