@@ -7487,8 +7487,23 @@ function permReady(state, name) {
   return state.battlefield.some(p => p.name === name && !p.tapped && !p.summoningSick);
 }
 
+// True if the named creature's tap-activated ability can fire right now.
+// Shang-Chi bypasses summoning sickness for tap abilities — a sick creature
+// can still tap for mana or use a tap-activated ability when SC is on board.
+function permReadyOrSCActive(state, name) {
+  const scActive = state.battlefield.some(p => p.cardKey === 'shang_chi');
+  return state.battlefield.some(p =>
+    p.name === name && !p.tapped && (!p.summoningSick || scActive)
+  );
+}
+
 function permUntapped(state, name) {
   return state.battlefield.some(p => p.name === name && !p.tapped);
+}
+
+// True if Shang-Chi is on the battlefield (granting haste to tap abilities of all creatures).
+function shangChiActive(state) {
+  return state.battlefield.some(p => p.cardKey === 'shang_chi');
 }
 
 function creatureCount(state) {
@@ -7537,8 +7552,10 @@ function ashayaOut(state) {
 // state's pool. If any option produces ≥1 net green, the creature qualifies.
 function hasGreenTapper(state) {
   const beforeG = state.mana?.G ?? 0;
+  const scActive = shangChiActive(state);
   return state.creatures().some(c => {
-    if (c.tapped || c.summoningSick) return false;
+    if (c.tapped) return false;
+    if (c.summoningSick && !scActive) return false;
     if (c.name === 'Quirion Ranger' || c.name === 'Scryb Ranger') return false;
     if (c.name === 'Ashaya, Soul of the Wild') return false; // Ashaya is the combo piece
     const def = CARDS[c.cardKey];
@@ -7580,8 +7597,9 @@ var DETECTORS = [
       // Cradle needs ≥2 creatures to net positive after the {1} Tender activation cost.
       if (permReady(state, 'Hope Tender') && cradleUntapped(state) && creatureCount(state) >= 2) return true;
 
+      const scActive = shangChiActive(state);
       return state.battlefield.some(p => {
-        if (p.summoningSick) return false;
+        if (p.summoningSick && !scActive) return false;
         switch (p.name) {
           case 'Priest of Titania':           return elfCount(state) >= 2;
           case 'Circle of Dreams Druid':      return creatureCount(state) >= 2;
@@ -7610,8 +7628,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!scrybAvailable(state)) return false; // Scryb-specific: Quirion alone does not qualify
+      const scActive = shangChiActive(state);
       return state.battlefield.some(p => {
-        if (p.summoningSick) return false;
+        if (p.summoningSick && !scActive) return false;
         switch (p.name) {
           case 'Priest of Titania':           return elfCount(state) >= 3;
           case 'Circle of Dreams Druid':      return creatureCount(state) >= 3;
@@ -7698,10 +7717,13 @@ var DETECTORS = [
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state)) return false;
       if (!hasPerm(state, 'Badgermole Cub')) return false;
-      // Need any non-sick creature (other than Badgermole itself) with a tapForMana
+      const scActive = shangChiActive(state);
+      // Need any non-sick creature (other than Badgermole itself) with a tapForMana.
+      // Shang-Chi bypasses summoning sickness for tap abilities.
       return state.battlefield.some(p => {
         if (p.name === 'Badgermole Cub') return false;
-        if (p.tapped || p.summoningSick) return false;
+        if (p.tapped) return false;
+        if (p.summoningSick && !scActive) return false;
         if (!p.types || !p.types.includes('creature')) return false;
         const def = CARDS[p.cardKey];
         return typeof def?.tapForMana === 'function';
@@ -7772,7 +7794,7 @@ var DETECTORS = [
       if (!ashayaOut(state)) return false;
       if (!permReady(state, 'Hope Tender')) return false;
       const marwyn = state.battlefield.find(
-        p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
+        p => p.name === 'Marwyn, the Nurturer' && !p.tapped && (!p.summoningSick || shangChiActive(state))
       );
       if (!marwyn) return false;
       return (marwyn.power || 0) >= 2;
@@ -7792,7 +7814,7 @@ var DETECTORS = [
       if (!ashayaOut(state)) return false;
       if (!permReady(state, 'Hope Tender')) return false;
       const selvala = state.battlefield.find(
-        p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped && (!p.summoningSick || shangChiActive(state))
       );
       if (!selvala) return false;
       return greatestPower(state) >= 3;
@@ -7932,14 +7954,15 @@ var DETECTORS = [
       "Selvala needs power ≥4 (costs {G} to activate, so must produce ≥4G).",
     check(state) {
       if (!ashayaOut(state)) return false;
-      if (!permReady(state, 'Magus of the Candelabra')) return false;
+      if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
       // The loop costs {G}{G} to prime (Magus X=2 activation).
       // The mana source must be untapped to start the cycle, OR ≥2G must be
       // floating (so we can pay Magus first, then untap source via Magus).
       // Simplest correct check: require the source to be untapped.
       // (If all mana was spent, there is nothing to start the loop with.)
       return state.battlefield.some(p => {
-        if (p.tapped || p.summoningSick) return false;  // source must be ready
+        if (p.tapped) return false;
+        if (p.summoningSick && !shangChiActive(state)) return false;  // source must be ready
         switch (p.name) {
           case "Gaea's Cradle":
           case 'Itlimoc, Cradle of the Sun':
@@ -8069,7 +8092,8 @@ var DETECTORS = [
       "With Ashaya, Ranger bounces itself. Without Ashaya, needs a Forest land.",
     check(state) {
       const selvala = state.battlefield.find(
-        p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!selvala) return false;
       if (greatestPower(state) < 2) return false;
@@ -8271,6 +8295,105 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  TEMUR SABERTOOTH + SHANG-CHI + TAP-DORK (BOUNCE-RECAST LOOP)
+  //
+  //  Shang-Chi's static: "You may activate abilities of creatures you control
+  //  as though those creatures had haste."
+  //  This means a creature with a tap-activated mana ability can tap for mana
+  //  the same turn it enters — even after being bounced and recast by Temur.
+  //
+  //  Loop:
+  //   1. Tap dork for mana.
+  //   2. Pay {1G}, Temur bounces dork to hand.
+  //   3. Recast dork (enters with summoning sickness, but Shang-Chi bypasses it).
+  //   4. Tap dork again immediately. Repeat.
+  //
+  //  Loop cost = {1G}(Temur) + recast cost of dork.
+  //  Net positive when dork produces more mana than loop cost.
+  //
+  //  Selvala {1GG} (recast 3G total; loop cost = 1G+3G = 4G):  power ≥ 5
+  //  Priest/Archdruid/Channeler {2G} (loop cost = 1G+3G = 4G): elves ≥ 5
+  //  Circle of Dreams Druid {GGG} (loop cost = 1G+4G = 5G):    creatures ≥ 6
+  //  Acolyte {3G} (loop cost = 1G+4G = 5G):                    devotion ≥ 6
+  //  Marwyn {2G} (loop cost = 1G+3G = 4G):                     power ≥ 5
+  //
+  //  NOTE: Shang-Chi himself is a 2/2 contributing to creature/elf counts but
+  //  NOT an Elf, so he does not help elf-count thresholds directly.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)',
+    description:
+      "Shang-Chi lets a freshly-recast tap-dork activate immediately (bypasses summoning sickness). " +
+      "Temur Sabertooth bounces dork ({1G}), dork is recast and taps for mana right away. " +
+      "Loop cost = {1G}(Temur) + recast cost. " +
+      "Selvala (power ≥5): loop cost 4G, produces ≥5G. " +
+      "Priest/Archdruid/Channeler (≥5 elves): loop cost 4G, produces ≥5G. " +
+      "Circle (≥6 creatures): loop cost 5G, produces ≥6G. " +
+      "Acolyte (devotion ≥6): loop cost 5G, produces ≥6G. " +
+      "Marwyn (power ≥5): loop cost 4G, produces ≥5G.",
+    check(state) {
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      if (!state.battlefield.some(p => p.cardKey === 'shang_chi')) return false;
+      // The dork must be on the battlefield (untapped; it may or may not be sick —
+      // Shang-Chi bypasses sickness for the tap ability).
+      return state.battlefield.some(p => {
+        if (p.tapped) return false;
+        switch (p.name) {
+          case 'Selvala, Heart of the Wilds':  return greatestPower(state) >= 5;
+          case 'Priest of Titania':            return elfCount(state) >= 5;
+          case 'Elvish Archdruid':             return elfCount(state) >= 5;
+          case 'Wirewood Channeler':           return elfCount(state) >= 5;
+          case 'Circle of Dreams Druid':       return creatureCount(state) >= 6;
+          case "Karametra's Acolyte":          return devotionG(state) >= 6;
+          case 'Marwyn, the Nurturer':         return (p.power || 0) >= 5;
+          case 'Topiary Lecturer':             return (p.power || 0) >= 5;
+          default: return false;
+        }
+      });
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  KOGLA + SHANG-CHI + TAP-DORK (BOUNCE-RECAST LOOP)
+  //
+  //  Kogla bounces Humans for {1G}. With Shang-Chi, the recast Human can tap
+  //  for mana immediately, bypassing summoning sickness.
+  //
+  //  Kogla bounces Humans only. Human tap-dorks in this deck:
+  //    Karametra's Acolyte (Human Druid) — tap for devotion×G
+  //    Hope Tender (Human Druid) — covered by Ashaya loops, not modelled here
+  //    Ley Weaver (Human Druid) — covered by Elder/Weaver loops, not here
+  //
+  //  Practical loop: Kogla + Shang-Chi + Karametra's Acolyte
+  //  Loop cost = {1G}(Kogla) + {3G}(Acolyte recast) = 5G total.
+  //  Net positive when Acolyte produces ≥6G → devotion ≥ 6.
+  //
+  //  NOTE: Selvala, Marwyn, and Priest of Titania are all Elves — NOT Humans.
+  //  Kogla cannot bounce them. They are excluded from this detector.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)',
+    description:
+      "Shang-Chi lets a freshly-recast Human tap-dork activate immediately. " +
+      "Kogla bounces Human dork ({1G}), dork is recast and taps right away. " +
+      "Kogla bounces Humans only — Selvala, Marwyn, and Priest of Titania are Elves, not Humans. " +
+      "Karametra's Acolyte ({3G} recast): loop cost 5G, devotion ≥6 produces ≥6G (net +1G).",
+    check(state) {
+      if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
+      if (!state.battlefield.some(p => p.cardKey === 'shang_chi')) return false;
+      // Karametra's Acolyte is the only Human tap-dork with sufficient mana output.
+      // Loop cost: {1G}(Kogla) + {3G}(Acolyte recast) = 5G. Need devotion ≥6 to net +1G.
+      const acolyte = state.battlefield.find(
+        p => p.name === "Karametra's Acolyte" && !p.tapped
+      );
+      if (!acolyte) return false;
+      return devotionG(state) >= 6;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  EARTHCRAFT + ASHAYA + QUIRION RANGER  (Combo Summary #4)
   //
   //  Earthcraft oracle: "Tap an untapped creature: Untap target BASIC land."
@@ -8340,7 +8463,7 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
-      if (!permReady(state, 'Arbor Elf')) return false;
+      if (!permReadyOrSCActive(state, 'Arbor Elf')) return false;
       // Need an enchanted Forest producing ≥2G (Wild Growth or Utopia Sprawl attached)
       const hasSprawl = state.battlefield.some(p =>
         (p.cardKey === 'wild_growth' || p.cardKey === 'utopia_sprawl') &&
@@ -8379,7 +8502,7 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
-      if (!permReady(state, 'Arbor Elf')) return false;
+      if (!permReadyOrSCActive(state, 'Arbor Elf')) return false;
       if (!hasPerm(state, 'Yavimaya, Cradle of Growth')) return false;
       // Gaea's Cradle untapped + ≥2 creatures → produces ≥2G, net +1G after Ranger {G}
       if (cradleUntapped(state) && creatureCount(state) >= 2) return true;
@@ -8410,7 +8533,8 @@ var DETECTORS = [
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       if (!symbioteAvailable(state)) return false; // ability must not be exhausted this turn
       const selvala = state.battlefield.find(
-        p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!selvala) return false;
       if (greatestPower(state) < 6) return false;
@@ -8449,7 +8573,8 @@ var DETECTORS = [
       if (!hasPerm(state, 'Cloudstone Curio')) return false;
       if (!symbioteAvailable(state)) return false; // ability must not be exhausted this turn
       const selvala = state.battlefield.find(
-        p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!selvala) return false;
       if (greatestPower(state) < 4) return false;
@@ -8500,7 +8625,8 @@ var DETECTORS = [
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       if (!hasPerm(state, 'Eternal Witness')) return false;
       const marwyn = state.battlefield.find(
-        p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
+        p => p.name === 'Marwyn, the Nurturer' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!marwyn || (marwyn.power || 0) < 7) return false;
       return (state.hand && (
@@ -8523,7 +8649,8 @@ var DETECTORS = [
       if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
       if (!hasPerm(state, 'Eternal Witness')) return false;
       const marwyn = state.battlefield.find(
-        p => p.name === 'Marwyn, the Nurturer' && !p.summoningSick
+        p => p.name === 'Marwyn, the Nurturer' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!marwyn || (marwyn.power || 0) < 8) return false;
       return (state.hand && (
@@ -8546,7 +8673,8 @@ var DETECTORS = [
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       if (!hasPerm(state, 'Eternal Witness')) return false;
       const selvala = state.battlefield.find(
-        p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!selvala) return false;
       if (greatestPower(state) < 8) return false;
@@ -8570,7 +8698,8 @@ var DETECTORS = [
       if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
       if (!hasPerm(state, 'Eternal Witness')) return false;
       const selvala = state.battlefield.find(
-        p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick
+        p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!selvala) return false;
       if (greatestPower(state) < 9) return false;
@@ -8636,7 +8765,8 @@ var DETECTORS = [
       // Fauna Shaman: has tap cost — must not be tapped or sick.
       const hasSurvival = hasPerm(state, 'Survival of the Fittest');
       const faunaReady  = state.battlefield.some(
-        p => p.name === 'Fauna Shaman' && !p.tapped && !p.summoningSick
+        p => p.name === 'Fauna Shaman' && !p.tapped &&
+             (!p.summoningSick || shangChiActive(state))
       );
       if (!hasSurvival && !faunaReady) return false;
 
@@ -8767,9 +8897,10 @@ var DETECTORS = [
       // Works with any creature that has tapForMana (e.g. Llanowar Elves, Birds, Dryad Arbor).
       // Only applies with QR (Scryb needs ≥3G total; Badgermole only adds 1G to a 1G dork → 2G).
       if (ashayaOnBF && hasQR && libSet.has('badgermole_cub')) {
-        // Need an existing creature dork on BF (not sick, not Badgermole itself)
+        // Need an existing creature dork on BF (not sick unless SC active, not Badgermole itself)
         const hasExistingDork = state.battlefield.some(p => {
-          if (p.name === 'Badgermole Cub' || p.tapped || p.summoningSick) return false;
+          if (p.name === 'Badgermole Cub' || p.tapped) return false;
+          if (p.summoningSick && !shangChiActive(state)) return false;
           if (!p.types?.includes('creature')) return false;
           return typeof CARDS[p.cardKey]?.tapForMana === 'function';
         });
@@ -8789,7 +8920,8 @@ var DETECTORS = [
       // Two activations: fetch Ashaya → fetch Badgermole → cast both → existing dork now ≥2G.
       if (ashayaInLib && hasQR && libSet.has('badgermole_cub')) {
         const hasExistingDork = state.battlefield.some(p => {
-          if (p.name === 'Badgermole Cub' || p.tapped || p.summoningSick) return false;
+          if (p.name === 'Badgermole Cub' || p.tapped) return false;
+          if (p.summoningSick && !shangChiActive(state)) return false;
           if (!p.types?.includes('creature')) return false;
           return typeof CARDS[p.cardKey]?.tapForMana === 'function';
         });
@@ -8863,14 +8995,16 @@ var DETECTORS = [
       "Nykthos: devotion ≥3 (produces ≥3G minus 2 activation = ≥1G net). " +
       "No Ashaya required.",
     check(state) {
-      if (!permReady(state, 'Argothian Elder') && !permReady(state, 'Ley Weaver')) return false;
+      if (!permReadyOrSCActive(state, 'Argothian Elder') && !permReadyOrSCActive(state, 'Ley Weaver')) return false;
       if (!permUntapped(state, 'Maze of Ith')) return false;
       // Gaea's Cradle (or Itlimoc): needs ≥1 creature other than Elder/Weaver
       // (Elder/Weaver itself is a creature and counts toward Cradle's tap value,
       //  but we need ≥2 total creatures so the Cradle produces ≥2G covering
       //  Elder's tap + Maze's tap; Elder itself is creature #1, need ≥1 more.)
+      const scActive = shangChiActive(state);
       const elderOrWeaverCount = state.battlefield.filter(p =>
-        (p.name === 'Argothian Elder' || p.name === 'Ley Weaver') && !p.tapped && !p.summoningSick
+        (p.name === 'Argothian Elder' || p.name === 'Ley Weaver') &&
+        !p.tapped && (!p.summoningSick || scActive)
       ).length;
       if (cradleUntapped(state) && creatureCount(state) >= elderOrWeaverCount + 1) return true;
       // Nykthos: {2},{T} → adds devotion×G. Needs devotion ≥3 to net after {2} cost.
@@ -8924,8 +9058,10 @@ var DETECTORS = [
       if (quirionAvailable(state)) return true;
       // Scryb Ranger ({1G} recast): need a creature producing ≥2G to cover {1} extra.
       if (scrybAvailable(state)) {
+        const scActive = shangChiActive(state);
         return state.battlefield.some(p => {
-          if (p.tapped || p.summoningSick) return false;
+          if (p.tapped) return false;
+          if (p.summoningSick && !scActive) return false;
           switch (p.name) {
             case 'Priest of Titania':           return elfCount(state) >= 2;
             case 'Circle of Dreams Druid':      return creatureCount(state) >= 2;
@@ -9076,67 +9212,100 @@ var WIN_CONDITIONS = [
   // ══════════════════════════════════════════════════════════════════════════
   //  HITZEL'S SEQUENCE — Geier Reach Sanitarium mill
   //
-  //  With infinite mana + Endurance (ETB held on stack) + Temur Sabertooth or Kogla:
-  //  Each iteration: Geier Reach forces all players to draw, then discard.
-  //  Endurance's ETB (unresolved on stack) resets opponents' graveyards to libraries
-  //  each loop. Eventually every opponent must draw from an empty library and loses.
+  //  CORRECTED MODEL (2026-06-11): Geier Reach Sanitarium is the essential
+  //  piece — {2},{T}: each player draws a card, then discards a card.  With
+  //  infinite mana + a repeatable Sanitarium untap, every activation shrinks
+  //  every player's library by 1.  Opponents' graveyards are NEVER recycled,
+  //  so each opponent eventually attempts to draw from an empty library and
+  //  loses.
   //
-  //  Temur Sabertooth variant (simplest):
-  //    1. Cast Endurance — ETB goes on stack, hold priority.
-  //    2. Pay {2}, Sabertooth bounces Endurance (back to hand).
-  //    3. Pay {2}, activate Geier Reach — each player draws + discards.
-  //    4. Untap Geier Reach (via the existing infinite-mana untap method). Repeat.
-  //    At end: let Endurance's ETB resolve → opponents' yards → library bottoms.
-  //    Repeat until all opponents have empty libraries, then activate Geier Reach once more.
+  //  Endurance's role: its ETB targets US, putting OUR graveyard (the
+  //  accumulated Geier Reach discards) on the bottom of OUR library, so we
+  //  don't deck ourselves first.  Each fresh Endurance cast extends our
+  //  activation budget by roughly our current library size.  Budget math:
+  //  initial library ≈ 80–90; activations needed ≈ largest opponent library
+  //  (~90–95).  ONE fresh Endurance cast (≈ 2× initial budget) is normally
+  //  ample; re-buy engines (bouncers / sac+Witness loops) buy additional
+  //  recycles as insurance and let an Endurance already stranded on the
+  //  battlefield be recast.
   //
-  //  Kogla + Eternal Witness variant:
-  //    Kogla bounces Eternal Witness (Human), Witness ETB returns Endurance to hand.
-  //    Kills Endurance with Beast Within or LQR while ETB is on stack; same Geier Reach loop.
+  //  Endurance does NOT need its ETB held on the stack — it just needs to be
+  //  castable when our library runs low (it has Flash).  The hold-priority
+  //  sequences documented in ref/decklist_combos.txt are valid EXECUTIONS
+  //  (they deny opponents response windows), not requirements.
   // ══════════════════════════════════════════════════════════════════════════
 
   {
     name: "Win: Geier Reach Sanitarium Mill (Hitzel's Sequence)",
     description:
       "With infinite mana, loop Geier Reach Sanitarium ({2},{T}: each player draws + discards). " +
-      "Endurance's ETB held on stack resets opponents' graveyards to their libraries each cycle. " +
-      "Eventually each opponent must draw from an empty library and loses. " +
-      "Temur variant: bounce Endurance with Sabertooth, activate Geier Reach, untap, repeat. " +
-      "Kogla variant: kill Endurance with Beast Within/LQR while ETB on stack, Witness returns it, Kogla bounces Witness. " +
-      "Ashaya variant: LQR gives tap-damage to looping creature, bounce Endurance with Ranger, " +
-      "kill Endurance+Ranger with tap triggers, Second ETB resets graveyard, Duskwatch finds pieces, repeat. " +
-      "Final stack: [Endurance ETB (bottom)] → [Geier Reach draw+discard] × N (top). " +
-      "Resolves top-down until opponents are decked.",
+      "Opponents' graveyards are never recycled — each opponent eventually draws from an empty library and loses. " +
+      "Endurance's ETB targets US: it puts OUR graveyard back on the bottom of OUR library so we don't deck first; " +
+      "cast it (Flash) whenever our library runs low — one fresh cast roughly doubles our activation budget. " +
+      "Re-buy engines for extra recycles / recasting a battlefield-stranded Endurance: " +
+      "Temur: bounce Endurance with Sabertooth. " +
+      "Ashaya+Ranger: a Ranger bounces Endurance-as-Forest (once per turn per Ranger — recasts are rare). " +
+      "Kogla+Witness: get Endurance to the graveyard (Beast Within/LQR, hand or graveyard; or under Ashaya: Crop Rotation, or Elvish Reclaimer+Ranger), Witness returns it, Kogla bounces Witness. " +
+      "Cloudstone Curio: alternate casting Endurance and any other creature. " +
+      "Hold-priority stack executions (see ref/decklist_combos.txt) are valid ways to run the loop, not requirements.",
     check(state) {
       if (!inHandOrField(state, 'Geier Reach Sanitarium', 'geier_reach')) return false;
-      if (!inHandOrField(state, 'Endurance', 'endurance')) return false;
-      // [O-5] Helper: is an instant in hand?  Instants are not on the battlefield;
-      // they're cast from hand at the moment of use.  Beast Within and Legolas's
-      // Quick Reflexes are the kill-spells required by the Kogla and Ashaya
-      // variants — without them, the variant can't actually fire even though
-      // the creatures are present.
       const inHand = (key) => state.hand && state.hand.includes(key);
+      const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
+      const hasAshaya = inHandOrField(state, 'Ashaya, Soul of the Wild', 'ashaya');
+      const hasRanger =
+        inHandOrField(state, 'Quirion Ranger', 'quirion_ranger') ||
+        inHandOrField(state, 'Scryb Ranger', 'scryb_ranger');
+      const hasKoglaWitness =
+        inHandOrField(state, 'Kogla, the Titan Ape', 'kogla') &&
+        inHandOrField(state, 'Eternal Witness', 'eternal_witness');
 
-      // Need a way to bounce/remove Endurance after its ETB is on the stack
-      const hasBouncer =
-        // Temur variant: Sabertooth bounces Endurance directly with its activated
-        // ability ({1G}) — no kill spell needed because Endurance returns to hand.
+      const witnessAvail = inHandOrField(state, 'Eternal Witness', 'eternal_witness');
+
+      // ── Endurance availability ──────────────────────────────────────────
+      // Endurance refills OUR library (ETB: our graveyard → bottom of our
+      // library).  We need at least one fresh cast available when our library
+      // runs low.  Sources of a fresh cast:
+      //   • Endurance in hand (castable directly — it has Flash), or
+      //   • Endurance in graveyard + Eternal Witness available (one-shot
+      //     Witness ETB recovers it to hand).
+      const enduranceFreshCast =
+        inHand('endurance') ||
+        (gy.includes('Endurance') && witnessAvail);
+
+      // ── Re-buy engines ───────────────────────────────────────────────────
+      // Return a battlefield-stranded Endurance to hand (its ETB already
+      // spent) for another cast, and provide extra recycles as insurance.
+      // Only REQUIRED when Endurance is exclusively on the battlefield.
+      const hasRebuy =
+        // Temur: bounce Endurance directly with {1}{G} (no tap, unlimited).
         inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
-        // Kogla variant: Endurance is killed (via Beast Within or LQR) while its
-        // ETB is on the stack.  Eternal Witness then returns Endurance from
-        // graveyard.  Kogla bounces Witness.  REQUIRES a kill spell.
-        (inHandOrField(state, 'Kogla, the Titan Ape', 'kogla') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness') &&
-         (inHand('beast_within') || inHand('legolas_quick_reflexes'))) ||
-        // Ashaya variant: Ranger bounces Endurance (Endurance is a Forest via
-        // Ashaya).  LQR's tap-trigger damages Endurance + Ranger to kill them
-        // while ETBs are on stack.  REQUIRES Legolas's Quick Reflexes in hand
-        // — Ashaya/Ranger alone cannot kill Endurance, and the variant's
-        // graveyard-reset trick fundamentally depends on the kill effect.
-        (inHandOrField(state, 'Ashaya, Soul of the Wild', 'ashaya') &&
-         (inHandOrField(state, 'Quirion Ranger', 'quirion_ranger') ||
-          inHandOrField(state, 'Scryb Ranger', 'scryb_ranger')) &&
-         inHand('legolas_quick_reflexes'));
-      if (!hasBouncer) return false;
+        // Cloudstone Curio: alternate casting Endurance and any other
+        // creature; each ETB returns the other to hand.  (Same acceptance
+        // level as the Scrapshooter Mill detector — custom-library card.)
+        hasPerm(state, 'Cloudstone Curio') ||
+        // Ashaya + Ranger: a Ranger returns Endurance-as-Forest to hand.
+        // "Once each turn" per Ranger object is plenty — recasts are rare
+        // (one per ~library-size Geier Reach activations).  No LQR needed:
+        // the kill-spell dance in ref/decklist_combos.txt variant 3 is one
+        // valid execution, not a requirement.
+        (hasAshaya && hasRanger) ||
+        // Kogla + Witness family: get Endurance into the graveyard, Witness
+        // returns it, Kogla bounces Witness (a Human) for {1}{G}.
+        (hasKoglaWitness && (
+          // Kill spells, hand or graveyard (two-Witness pattern recurs them).
+          inHand('beast_within') || gy.includes('Beast Within') ||
+          inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes") ||
+          // Crop Rotation (instant) sacrifices Endurance-as-Forest under Ashaya.
+          (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) ||
+          // Elvish Reclaimer ({2},{T}) sacs Endurance-as-Forest under Ashaya;
+          // a Ranger returns ITSELF to untap Reclaimer, then is recast.
+          (hasAshaya && hasRanger &&
+           inHandOrField(state, 'Elvish Reclaimer', 'elvish_reclaimer'))
+        ));
+
+      const enduranceOnField = hasPerm(state, 'Endurance');
+      if (!(enduranceFreshCast || (enduranceOnField && hasRebuy))) return false;
       // Need a way to untap Geier Reach each cycle (any land untapper in the combo already handles this)
       const hasUntapper =
         hasPerm(state, 'Argothian Elder') ||
@@ -9148,28 +9317,37 @@ var WIN_CONDITIONS = [
         hasPerm(state, 'Scryb Ranger');
       return hasUntapper;
     },
-    // deployed: all Hitzel pieces are on the battlefield and ready to execute.
+    // deployed: Hitzel pieces are on the battlefield and ready to execute.
     // When this returns false, the solver keeps searching to show setup steps.
     deployed(state) {
       // Geier Reach must be on battlefield (not just in hand — it's a land, needs to be played)
       if (!hasPerm(state, 'Geier Reach Sanitarium')) return false;
-      // Endurance must be in hand or on field (it gets cast as part of the sequence)
-      if (!inHandOrField(state, 'Endurance', 'endurance')) return false;
-      // [O-5] Same kill-spell requirement as check() above.  The Kogla and
-      // Ashaya variants need Beast Within or Legolas's Quick Reflexes in hand
-      // to actually execute — without it, the variant is structurally
-      // incomplete even when all creatures are on the battlefield.
       const inHand = (key) => state.hand && state.hand.includes(key);
-      // Bouncer must be on battlefield
-      const bouncerReady =
+      const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
+      const witnessAvail = inHandOrField(state, 'Eternal Witness', 'eternal_witness');
+      // Fresh Endurance cast available (hand, or graveyard via one-shot
+      // Witness ETB) → deployed with no re-buy engine required.
+      if (inHand('endurance')) return true;
+      if (gy.includes('Endurance') && witnessAvail) return true;
+      // Endurance stranded on the battlefield (ETB spent) → need an on-field
+      // re-buy engine to return it to hand for another cast.
+      if (!hasPerm(state, 'Endurance')) return false;
+      const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
+      const hasRanger =
+        hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+      const koglaWitnessReady =
+        hasPerm(state, 'Kogla, the Titan Ape') && witnessAvail;
+      const rebuyReady =
         hasPerm(state, 'Temur Sabertooth') ||
-        (hasPerm(state, 'Kogla, the Titan Ape') &&
-         inHandOrField(state, 'Eternal Witness', 'eternal_witness') &&
-         (inHand('beast_within') || inHand('legolas_quick_reflexes'))) ||
-        (hasPerm(state, 'Ashaya, Soul of the Wild') &&
-         (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger')) &&
-         inHand('legolas_quick_reflexes'));
-      return bouncerReady;
+        hasPerm(state, 'Cloudstone Curio') ||
+        (hasAshaya && hasRanger) ||
+        (koglaWitnessReady && (
+          inHand('beast_within') || gy.includes('Beast Within') ||
+          inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes") ||
+          (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) ||
+          (hasAshaya && hasRanger && hasPerm(state, 'Elvish Reclaimer'))
+        ));
+      return rebuyReady;
     },
   },
 
@@ -9632,14 +9810,18 @@ var WIN_CONDITIONS = [
     // win from the current state. With infinite mana, any tutor in hand is
     // immediately castable — so it counts as deployed.
     deployed(state) {
-      // Hitzel's Sequence already fully deployed on BF
+      // Hitzel's Sequence already fully deployed on BF.
+      // Corrected model: Endurance in hand (fresh cast available) needs no
+      // re-buy engine; a battlefield-stranded Endurance needs one (Temur,
+      // Kogla+Witness, or Ashaya+Ranger).
       const hitzelDeployed = hasPerm(state, 'Geier Reach Sanitarium') &&
-        inHandOrField(state, 'Endurance', 'endurance') &&
-        (hasPerm(state, 'Temur Sabertooth') ||
-         (hasPerm(state, 'Kogla, the Titan Ape') &&
-          inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
-         (hasPerm(state, 'Ashaya, Soul of the Wild') &&
-          (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))));
+        ((state.hand && state.hand.includes('endurance')) ||
+         (hasPerm(state, 'Endurance') &&
+          (hasPerm(state, 'Temur Sabertooth') ||
+           (hasPerm(state, 'Kogla, the Titan Ape') &&
+            inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
+           (hasPerm(state, 'Ashaya, Soul of the Wild') &&
+            (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))))));
       if (hitzelDeployed) return true;
 
       // Infectious Bite in hand
@@ -9698,6 +9880,57 @@ var WIN_CONDITIONS = [
     },
     deployed(state) {
       return hasPerm(state, 'Defiler of Vigor');
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ULVENWALD TRACKER FIGHT LOOP — clear all opponent creatures
+  //
+  //  With infinite mana + Ulvenwald Tracker + a haste/untap enabler + any
+  //  creature with power ≥ 1:
+  //
+  //  Thousand-Year Elixir variant:
+  //    1. Pay {1}{G}, tap Tracker → your biggest creature fights an opponent's
+  //       creature. Opponent's creature dies (your creature has arbitrarily high
+  //       power via any infinite-mana pump, or just has enough power already).
+  //    2. Pay {1}, tap Elixir → untap Tracker.
+  //    3. Repeat → kill every opponent creature.
+  //    Net cost per loop: {2}{G} (covered by infinite mana).
+  //
+  //  Shang-Chi variant (replaces Elixir):
+  //    Shang-Chi's static grants haste and acts as an untap engine via his
+  //    own tap ability + Hope Tender exert loop. No Elixir needed.
+  //
+  //  Result: infinite fights → board wipe of all opponent creatures →
+  //  attack with your arbitrarily large board for lethal.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Win: Ulvenwald Tracker Fight Loop (clear opponent board)',
+    description:
+      "With infinite mana, tap Ulvenwald Tracker ({1}{G},{T}) to fight an opponent's creature " +
+      "using your biggest creature. Untap Tracker via Thousand-Year Elixir ({1},{T}) or " +
+      "Shang-Chi's haste engine. Repeat to kill every opponent creature. " +
+      "Attack with your board for lethal.",
+    check(state) {
+      if (!hasPerm(state, 'Ulvenwald Tracker')) return false;
+      // Need an untap / haste enabler for the Tracker
+      const hasUntapper =
+        hasPerm(state, 'Thousand-Year Elixir') ||
+        hasPerm(state, 'Shang-Chi, Master of Kung Fu');
+      if (!hasUntapper) return false;
+      // Need at least one other creature to fight with (power ≥ 1)
+      const fighter = state.creatures().find(
+        c => c.name !== 'Ulvenwald Tracker' && (c.power ?? 0) >= 1
+      );
+      return !!fighter;
+    },
+    deployed(state) {
+      if (!hasPerm(state, 'Ulvenwald Tracker')) return false;
+      const hasUntapper =
+        hasPerm(state, 'Thousand-Year Elixir') ||
+        hasPerm(state, 'Shang-Chi, Master of Kung Fu');
+      return hasUntapper;
     },
   },
 
@@ -9877,7 +10110,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
   'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)':                ['destiny_spinner','ashaya','quirion_ranger'],
   'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':                 ['beast_whisperer'],
-  'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance','temur_sabertooth'],
+  'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance'],
   'Win: Duskwatch Recruiter (find all creatures)':                              ['duskwatch_recruiter'],
   'Win: Finale of Devastation X≥10':                                             ['finale_of_devastation'],
   'Win: Infectious Bite (poison counters)':                                      ['infectious_bite'],
@@ -10058,6 +10291,12 @@ var _DETECTOR_PREFILTER = {
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
     { all: ['temur_sabertooth', 'woodcaller_automaton'] },
 
+  // Shang-Chi bounce-recast loops (new)
+  'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':
+    { all: ['temur_sabertooth', 'shang_chi'] },
+  'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':
+    { all: ['kogla', 'shang_chi'] },
+
   // Marwyn / Selvala + Eternal Witness + Temur/Kogla + Vitalize/Charm
   'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]':
     { all: ['marwyn', 'eternal_witness', 'temur_sabertooth'],
@@ -10078,9 +10317,10 @@ var _DETECTOR_PREFILTER = {
 
   // ── Win Conditions ──────────────────────────────────────────────────────
   "Win: Geier Reach Sanitarium Mill (Hitzel's Sequence)":
-    { all: ['geier_reach', 'endurance'],
-      // 3 variants: Temur, Kogla+Witness, Ashaya+Ranger
-      any: [['temur_sabertooth', 'kogla', 'ashaya']] },
+    // Geier Reach only: Endurance may be in the GRAVEYARD (Witness recovery),
+    // which `present` (hand∪battlefield) cannot see, and no re-buy engine is
+    // required when Endurance is in hand — so neither can be prefiltered.
+    { all: ['geier_reach'] },
   'Win: Duskwatch Recruiter (find all creatures)':
     { all: ['duskwatch_recruiter'] },
   'Win: Finale of Devastation X≥10':
@@ -12824,6 +13064,29 @@ function assembleWin(state) {
             hasteGranted = true;
           }
 
+          // 1b. Shang-Chi, Master of Kung Fu — static: "You may activate
+          //     abilities of creatures you control as though those creatures
+          //     had haste."  Reclaimer's {2},{T} sac ability is exactly such an
+          //     activation, so a summoning-sick Reclaimer can use it while
+          //     Shang-Chi is on the field.  Unlike Crossroads/Elixir/Surrak,
+          //     Shang-Chi IS in the default decklist, making this the most
+          //     common real-game enabler.  If he's in hand, cast him
+          //     ({1}{G} — infinite mana available).  Bonus: his {T}: add two
+          //     restricted mana legally pays Reclaimer's {2} and Kogla's
+          //     {1}{G} (creature-source abilities) — though NOT Geier Reach's
+          //     {2},{T}, which is a land-source ability.
+          if (!hasteGranted && (onField('Shang-Chi, Master of Kung Fu') || inHand('shang_chi'))) {
+            if (!onField('Shang-Chi, Master of Kung Fu') && inHand('shang_chi')) {
+              s = s.removeFromHand('shang_chi');
+              s = s.enterBattlefield('shang_chi');
+              steps.push('Cast Shang-Chi, Master of Kung Fu (infinite mana available)');
+            }
+            const reclNow = s.battlefield.find(p => p.name === 'Elvish Reclaimer');
+            if (reclNow) reclNow.summoningSick = false;
+            steps.push("Shang-Chi, Master of Kung Fu: activate Elvish Reclaimer's ability as though it had haste");
+            hasteGranted = true;
+          }
+
           // 2. Destiny Spinner on field — {3}{G}: animate Reclaimer (land under Ashaya) → haste
           if (!hasteGranted && onField('Destiny Spinner') && onField('Ashaya, Soul of the Wild')) {
             if (reclPerm) reclPerm.summoningSick = false;
@@ -12855,7 +13118,7 @@ function assembleWin(state) {
           //    (The win line is still valid — this documents the gap for the pilot.)
           if (!hasteGranted) {
             if (reclPerm) reclPerm.summoningSick = false; // allow activation to proceed
-            steps.push('(Need haste enabler for Elvish Reclaimer: Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)');
+            steps.push('(Need haste enabler for Elvish Reclaimer: Shang-Chi static, Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)');
           }
 
           // Activate: sacrifice the expendable creature-Forest to fetch Geier Reach
@@ -12923,10 +13186,24 @@ function assembleWin(state) {
     : inHand('kogla')            ? 'kogla'
     : null;
 
+  // Corrected Hitzel model: Endurance is the recyclable resource that
+  // refills OUR library — it is cast DURING the loop when our library runs
+  // low, not as setup.  Pre-casting it to the battlefield only makes sense
+  // when a re-buy engine exists to return it to hand; otherwise it would be
+  // stranded (ETB spent, no way back) and the simple-execution loop expects
+  // it in hand.  So only pre-cast Endurance when a re-buy engine is present.
+  const enduranceRebuyAvailable =
+    onField('Temur Sabertooth') || inHand('temur_sabertooth') ||
+    onField('Cloudstone Curio') ||
+    (onField('Ashaya, Soul of the Wild') &&
+     (onField('Quirion Ranger') || onField('Scryb Ranger'))) ||
+    ((onField('Kogla, the Titan Ape') || inHand('kogla')) &&
+     (onField('Eternal Witness') || inHand('eternal_witness')));
+
   const CAST_ORDER = [
     ...(bounceEngineChosen ? [{ key: bounceEngineChosen,
         name: bounceEngineChosen === 'temur_sabertooth' ? 'Temur Sabertooth' : 'Kogla, the Titan Ape' }] : []),
-    { key: 'endurance', name: 'Endurance' },
+    ...(enduranceRebuyAvailable ? [{ key: 'endurance', name: 'Endurance' }] : []),
   ];
 
   for (const { key, name } of CAST_ORDER) {
@@ -13050,7 +13327,13 @@ function assembleWin(state) {
     steps.push('');
     steps.push(`✓ Terminal win assembled: ${victory.winCondition}`);
 
-    // ── O-5: Emit Hitzel's Sequence hold-priority execution steps ─────────
+    // ── Emit Hitzel's Sequence execution steps ─────────────────────────────
+    // Corrected model: Geier Reach is the mill engine; Endurance refills OUR
+    // library (ETB: our graveyard → bottom of our library) so we don't deck
+    // first.  Opponents' graveyards are never recycled.  Hold-priority stack
+    // executions are valid ways to run the loop (they deny opponents
+    // response windows), not requirements — Endurance just needs a fresh
+    // cast when our library runs low.
     if (victory.winCondition?.includes('Mill') || victory.winCondition?.includes('Geier Reach')) {
       const hasTemur   = onField('Temur Sabertooth');
       const hasKogla   = onField('Kogla, the Titan Ape');
@@ -13062,7 +13345,7 @@ function assembleWin(state) {
       const hasGeier   = onField('Geier Reach Sanitarium');
 
       steps.push('');
-      steps.push('── Hitzel\'s Sequence (hold-priority execution) ──');
+      steps.push('── Hitzel\'s Sequence (execution) ──');
 
       if (hasTemur) {
         steps.push('Variant: Temur Sabertooth');
@@ -13083,15 +13366,68 @@ function assembleWin(state) {
         steps.push('  8. Recast Endurance, repeat from step 2.');
         steps.push('  → Each opponent draws and discards repeatedly until their library is empty = mill win.');
       } else if (hasKogla) {
-        steps.push('Variant: Kogla, the Titan Ape + Eternal Witness');
+        // Pick the removal method that takes Endurance off the battlefield
+        // while its ETB is on the stack.  Priority: kill spells (the
+        // classically documented variant), then Crop Rotation, then
+        // Elvish Reclaimer + Ranger (both Ashaya-dependent).
+        const hasBW       = inHand('beast_within') || inGraveyard('Beast Within');
+        const hasLQRAny   = hasLQR || inGraveyard("Legolas's Quick Reflexes");
+        const hasCropRot  = hasAshaya && (inHand('crop_rotation') || inGraveyard('Crop Rotation'));
+        const hasReclaimer = hasAshaya && hasQR && onField('Elvish Reclaimer');
+
+        if (hasBW || hasLQRAny) {
+          const killSpell = hasBW ? 'Beast Within' : "Legolas's Quick Reflexes";
+          steps.push('Variant: Kogla, the Titan Ape + Eternal Witness');
+          steps.push('  1. Cast Endurance, pass priority.');
+          steps.push('  2. Endurance ETB on stack — hold priority.');
+          if (hasBW) {
+            steps.push('  3. Cast Beast Within targeting Endurance (Endurance dies, ETB still on stack).');
+          } else {
+            steps.push("  3. Legolas's Quick Reflexes on the tap/untap creature: tap-trigger deals lethal to Endurance (ETB still on stack).");
+          }
+          steps.push('  4. Cast Eternal Witness → return Endurance to hand.');
+          steps.push('  5. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push(`  6. Recast Eternal Witness → return ${killSpell} to hand (if it must recur).`);
+          steps.push('  7. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
+          steps.push('  8. Let Endurance ETB resolve. Recast Endurance. Repeat.');
+        } else if (hasCropRot) {
+          steps.push('Variant: Kogla + Eternal Witness + Ashaya + Crop Rotation');
+          steps.push('  1. Cast Endurance, pass priority.');
+          steps.push('  2. Endurance ETB on stack — hold priority. Under Ashaya, Endurance is a Forest land.');
+          steps.push('  3. Cast Crop Rotation (instant): sacrifice Endurance as the additional cost → fetch any land.');
+          steps.push('  4. Cast Eternal Witness → return Endurance to hand.');
+          steps.push('  5. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push('  6. Recast Eternal Witness → return Crop Rotation to hand.');
+          steps.push('  7. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push('  8. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
+          steps.push('  9. Let Endurance ETB resolve. Recast Endurance. Repeat from step 2.');
+        } else if (hasReclaimer) {
+          const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
+          steps.push('Variant: Kogla + Eternal Witness + Ashaya + Elvish Reclaimer + ' + rangerName);
+          steps.push('  1. Cast Endurance, pass priority.');
+          steps.push('  2. Endurance ETB on stack — hold priority. Under Ashaya, Endurance is a Forest land.');
+          steps.push('  3. {2},{T}: Elvish Reclaimer sacrifices Endurance (a land) → search for a land.');
+          if (onField('Shang-Chi, Master of Kung Fu')) {
+            steps.push("     (Shang-Chi's static: Reclaimer may activate even if cast this turn.)");
+          }
+          steps.push('  4. Cast Eternal Witness → return Endurance to hand.');
+          steps.push('  5. {1}{G}: Kogla bounces Eternal Witness to hand.');
+          steps.push(`  6. ${rangerName}: return ITSELF (a Forest under Ashaya) to hand → untap Elvish Reclaimer.`);
+          steps.push(`  7. Recast ${rangerName} (new object — fresh once-per-turn activation).`);
+          steps.push('  8. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
+          steps.push('  9. Let Endurance ETB resolve. Recast Endurance. Repeat from step 2.');
+        } else {
+          steps.push('Variant: Kogla, the Titan Ape + Eternal Witness');
+          steps.push('  (Needs a removal method for Endurance: Beast Within / LQR,');
+          steps.push('   or under Ashaya: Crop Rotation, or Elvish Reclaimer + Ranger.)');
+        }
+      } else if (onField('Cloudstone Curio')) {
+        steps.push('Variant: Cloudstone Curio');
         steps.push('  1. Cast Endurance, pass priority.');
-        steps.push('  2. Endurance ETB on stack — hold priority.');
-        steps.push('  3. Cast Beast Within targeting Endurance (Endurance dies, ETB still on stack).');
-        steps.push('  4. Cast Eternal Witness → return Endurance to hand.');
-        steps.push('  5. {1}{G}: Kogla bounces Eternal Witness to hand.');
-        steps.push('  6. Recast Eternal Witness → return Beast Within to hand.');
-        steps.push('  7. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
-        steps.push('  8. Let Endurance ETB resolve. Recast Endurance. Repeat.');
+        steps.push('  2. Endurance ETB + Cloudstone trigger on stack — Curio returns another creature you control to hand.');
+        steps.push('  3. Hold Endurance ETB. Cast the returned creature — its ETB triggers Curio: return Endurance to hand.');
+        steps.push('  4. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
+        steps.push('  5. Recast Endurance, alternating with the second creature. Repeat from step 2.');
       } else if (hasAshaya && hasQR && hasLQR) {
         const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
         steps.push("Variant: Ashaya + Ranger (Legolas's Quick Reflexes)");
@@ -13104,9 +13440,34 @@ function assembleWin(state) {
         steps.push('  7. Resolve Second ETB (resets graveyard → library, returns Endurance + Ranger).');
         steps.push('  8. {2}: Activate Geier Reach Sanitarium — hold priority. Untap. Repeat.');
         steps.push('  9. Resolve First ETB. Recast Ranger. Recast Endurance. Repeat from step 3.');
+      } else if (hasAshaya && hasQR) {
+        // Corrected model: no LQR needed.  A Ranger bounces Endurance-as-
+        // Forest once per turn per Ranger object — recasts of Endurance are
+        // rare (one per ~library-size Geier Reach activations), so the
+        // once-per-turn limit is never the bottleneck.
+        const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
+        steps.push('Variant: Ashaya + Ranger (simple bounce — no kill spell)');
+        steps.push('  1. {2}: Activate Geier Reach Sanitarium — each player draws, then discards.');
+        steps.push('  2. Untap Geier Reach Sanitarium; repeat. Opponents\' libraries shrink by 1 per activation.');
+        steps.push('  3. When OUR library runs low: cast Endurance (Flash) — ETB puts our graveyard');
+        steps.push('     on the bottom of our library (~doubles our remaining activations).');
+        steps.push(`  4. ${rangerName}: return Endurance (a Forest under Ashaya) to hand for a later recast if needed.`);
+        steps.push('  5. Continue activating until every opponent draws from an empty library and loses.');
+      } else if (hasEndurance) {
+        // Simple execution — no re-buy engine on field, Endurance castable
+        // from hand.  One fresh cast is normally ample (initial library +
+        // recycled graveyard ≈ 2× budget vs ~95 activations needed).
+        steps.push('Simple execution (no bounce engine needed — Endurance in hand)');
+        steps.push('  1. {2}: Activate Geier Reach Sanitarium — each player draws, then discards.');
+        steps.push('  2. Untap Geier Reach Sanitarium; repeat. Opponents\' libraries shrink by 1 per activation;');
+        steps.push('     their graveyards are never recycled.');
+        steps.push('  3. When OUR library runs low: cast Endurance (Flash) — its ETB puts our graveyard');
+        steps.push('     on the bottom of our library, refilling it.');
+        steps.push('  4. Continue activating until every opponent draws from an empty library and loses.');
       } else {
-        steps.push('  Execute Hitzel\'s Sequence: cast Endurance → hold priority → activate');
-        steps.push('  Geier Reach Sanitarium repeatedly → let ETB resolve → repeat for mill win.');
+        steps.push('  Execute Hitzel\'s Sequence: activate Geier Reach Sanitarium repeatedly (untap each');
+        steps.push('  cycle); cast Endurance when our library runs low to recycle our graveyard; opponents');
+        steps.push('  deck first since their graveyards are never recycled.');
       }
 
       if (!hasEndurance) {
