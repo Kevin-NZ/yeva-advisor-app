@@ -7506,6 +7506,69 @@ function shangChiActive(state) {
   return state.battlefield.some(p => p.cardKey === 'shang_chi');
 }
 
+// Sum of net green mana the team could produce if every non-summoning-sick
+// creature were untapped and tapped for mana — used by the Great Oak
+// Guardian + Temur Sabertooth loop, where GOG's ETB ("creatures target
+// player controls ... untap them") refreshes the WHOLE team at once rather
+// than a single dork.
+//
+// GOG's ETB does NOT remove summoning sickness (only Concordant Crossroads /
+// Thousand-Year Elixir / Surrak do that), so summoning-sick creatures are
+// excluded even though they'd be untapped.
+//
+// Net = gross production minus each dork's own activation cost, matching
+// the per-dork formulas used elsewhere in this file (Selvala: power − 1 for
+// her {G} activation; Priest/Archdruid/Channeler: elfCount, no extra cost;
+// Circle of Dreams Druid: creatureCount; Marwyn/Topiary Lecturer: power;
+// 1-mana dorks: 1 each). GOG and Temur Sabertooth themselves are excluded —
+// neither has a mana ability.
+//
+// CAVEAT: this does NOT account for GOG's own +2/+2 (not modeled by the
+// engine — see GameState.js). Power-based producers (Selvala, Marwyn,
+// Topiary Lecturer, Karametra's Acolyte via devotion-from-power effects)
+// would actually be larger after the first ETB resolves, making this a
+// conservative lower bound.
+function teamUntapManaProduction(state) {
+  let total = 0;
+  for (const p of state.creatures()) {
+    if (p.summoningSick) continue;
+    if (p.name === 'Great Oak Guardian' || p.name === 'Temur Sabertooth') continue;
+    switch (p.name) {
+      case 'Selvala, Heart of the Wilds':
+        total += Math.max(0, greatestPower(state) - 1);
+        break;
+      case 'Priest of Titania':
+      case 'Elvish Archdruid':
+      case 'Wirewood Channeler':
+        total += elfCount(state);
+        break;
+      case 'Circle of Dreams Druid':
+        total += creatureCount(state);
+        break;
+      case 'Marwyn, the Nurturer':
+      case 'Topiary Lecturer':
+        total += (p.power || 0);
+        break;
+      case "Karametra's Acolyte":
+        total += devotionG(state);
+        break;
+      case 'Llanowar Elves':
+      case 'Elvish Mystic':
+      case 'Fyndhorn Elves':
+      case 'Birds of Paradise':
+      case 'Boreal Druid':
+      case 'Delighted Halfling':
+      case 'Arbor Elf':
+      case 'Wirewood Symbiote':
+        total += 1;
+        break;
+      default:
+        break;
+    }
+  }
+  return total;
+}
+
 function creatureCount(state) {
   return state.creatures().length;
 }
@@ -9080,6 +9143,45 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  GREAT OAK GUARDIAN + TEMUR SABERTOOTH (custom-library — not in default decklist)
+  //
+  //  Great Oak Guardian oracle (Flash, {5}{G}, 4/5):
+  //    "When this creature enters, creatures target player controls get
+  //     +2/+2 until end of turn. Untap them."
+  //  Modeled in GameState.js: untaps every creature you control (the +2/+2
+  //  is not numerically tracked — see teamUntapManaProduction()).
+  //
+  //  Loop:
+  //    1. Cast Great Oak Guardian (Flash) — ETB untaps your whole team.
+  //    2. Tap every untapped, non-summoning-sick creature for mana.
+  //    3. {1}{G}: Temur Sabertooth bounces Great Oak Guardian to hand.
+  //    4. Recast Great Oak Guardian for {5}{G}.
+  //  Total loop cost = {1}{G} (Sabertooth) + {5}{G} (recast) = 8 mana.
+  //  Net positive when the team's combined production ≥ 9 (same acceptance
+  //  level as Cloudstone Curio: GOG is castable with infinite mana from hand
+  //  even if not yet on the battlefield, like Endurance in the Hitzel lines).
+  //
+  //  Same acceptance level as Cloudstone Curio / Hitzel variant 6 — Great Oak
+  //  Guardian is implemented (cards.js + GameState.js ETB) but not in
+  //  DEFAULT_DECKLIST; this detector only fires for custom libraries that
+  //  include it.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)',
+    description:
+      "Cast Great Oak Guardian (Flash) — its ETB untaps your whole team. Tap every " +
+      "untapped, non-summoning-sick creature for mana. {1}{G}: Temur Sabertooth bounces " +
+      "Great Oak Guardian to hand. Recast it for {5}{G}. Total loop cost 8 mana — net " +
+      "positive when the team's combined production is ≥9.",
+    check(state) {
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      if (!inHandOrField(state, 'Great Oak Guardian', 'great_oak_guardian')) return false;
+      return teamUntapManaProduction(state) >= 9;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  WOODCALLER AUTOMATON + TEMUR SABERTOOTH + GAEA'S CRADLE / NYKTHOS
   //
   //  Woodcaller Automaton oracle (Prototype {2GG} — 3/3):
@@ -9884,6 +9986,79 @@ var WIN_CONDITIONS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  WIN: COMMANDER DAMAGE (Great Oak Guardian + infinite mana → Yeva lethal)
+  //  (custom-library — Great Oak Guardian is not in DEFAULT_DECKLIST)
+  //
+  //  Great Oak Guardian's ETB ("creatures target player controls get +2/+2
+  //  until end of turn") targets a PLAYER, pumping every creature that
+  //  player controls — including Yeva, Nature's Herald, the commander.
+  //  With infinite mana + a way to bounce-and-recast GOG (Temur Sabertooth,
+  //  or Cloudstone Curio alternating it with another creature), the ETB
+  //  fires arbitrarily many times, each adding +2/+2 until end of turn.
+  //  Yeva's power becomes arbitrarily large; 21 commander damage from a
+  //  single attacker is lethal (CR 903.10a).
+  //
+  //  Requirements: Yeva on the battlefield, able to attack (not summoning
+  //  sick, or a haste enabler is present), and Great Oak Guardian + a
+  //  re-cast engine for it. Any MANA_POSITIVE engine supplies the mana —
+  //  it need not be the GOG+Sabertooth engine itself (e.g. Ashaya+Ranger
+  //  infinite mana + GOG + Sabertooth + Yeva also wins this way).
+  //
+  //  CAVEAT (documented, same as decklist_combo_analysis.md Win Line 19):
+  //  Maze of Ith *does* stop this — prevented combat damage isn't dealt, so
+  //  commander-damage tracking never increments.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Win: Commander Damage (Great Oak Guardian + infinite mana → Yeva lethal)',
+    description:
+      "Great Oak Guardian's ETB targets a player and gives that player's creatures " +
+      "+2/+2 until end of turn (it also untaps them). With infinite mana and a way to " +
+      "bounce-and-recast GOG (Temur Sabertooth, or Cloudstone Curio alternating it with " +
+      "another creature), repeat the ETB arbitrarily many times targeting yourself. " +
+      "Yeva, Nature's Herald becomes arbitrarily large — attack for 21+ commander damage " +
+      "and win (CR 903.10a). Maze of Ith stops this (prevented damage isn't dealt).",
+    check(state) {
+      if (!hasPerm(state, "Yeva, Nature's Herald")) return false;
+      if (!inHandOrField(state, 'Great Oak Guardian', 'great_oak_guardian')) return false;
+      // Need a way to bounce-and-recast GOG so its ETB fires repeatedly.
+      const hasRecastEngine =
+        hasPerm(state, 'Temur Sabertooth') ||
+        hasPerm(state, 'Cloudstone Curio');
+      if (!hasRecastEngine) return false;
+      // Yeva must be able to attack: not summoning sick, or a haste enabler present.
+      const yeva = state.battlefield.find(p => p.name === "Yeva, Nature's Herald");
+      if (yeva.summoningSick) {
+        const hasHaste =
+          hasPerm(state, 'Concordant Crossroads') ||
+          hasPerm(state, 'Thousand-Year Elixir') ||
+          hasPerm(state, 'Surrak and Goreclaw') ||
+          shangChiActive(state);
+        if (!hasHaste) return false;
+      }
+      return true;
+    },
+    deployed(state) {
+      if (!hasPerm(state, "Yeva, Nature's Herald")) return false;
+      if (!hasPerm(state, 'Great Oak Guardian')) return false;
+      const hasRecastEngine =
+        hasPerm(state, 'Temur Sabertooth') ||
+        hasPerm(state, 'Cloudstone Curio');
+      if (!hasRecastEngine) return false;
+      const yeva = state.battlefield.find(p => p.name === "Yeva, Nature's Herald");
+      if (yeva.summoningSick) {
+        const hasHaste =
+          hasPerm(state, 'Concordant Crossroads') ||
+          hasPerm(state, 'Thousand-Year Elixir') ||
+          hasPerm(state, 'Surrak and Goreclaw') ||
+          shangChiActive(state);
+        if (!hasHaste) return false;
+      }
+      return true;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  ULVENWALD TRACKER FIGHT LOOP — clear all opponent creatures
   //
   //  With infinite mana + Ulvenwald Tracker + a haste/untap enabler + any
@@ -10108,6 +10283,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':                    ['argothian_elder','maze_of_ith'],
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]': ['tireless_provisioner','ashaya','quirion_ranger'],
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
+  'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':  ['great_oak_guardian','temur_sabertooth'],
   'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)':                ['destiny_spinner','ashaya','quirion_ranger'],
   'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':                 ['beast_whisperer'],
   'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance'],
@@ -10119,6 +10295,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)':             ['beast_whisperer'],
   'Win: Tutor for Finisher (infinite mana + creature tutor)':                    ['finale_of_devastation'],
   'Win: Defiler of Vigor (infinite +1/+1 counters)':                             ['defiler_of_vigor'],
+  'Win: Commander Damage (Great Oak Guardian + infinite mana → Yeva lethal)':    ['great_oak_guardian','yeva'],
 };
 
 // Stamp requiredKeys onto each detector at load time (Fix #8).
@@ -10290,6 +10467,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['kogla', 'hyrax_tower_scout'] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
     { all: ['temur_sabertooth', 'woodcaller_automaton'] },
+  'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':
+    { all: ['temur_sabertooth', 'great_oak_guardian'] },
 
   // Shang-Chi bounce-recast loops (new)
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':
@@ -10337,6 +10516,9 @@ var _DETECTOR_PREFILTER = {
   'Win: Defiler of Vigor (infinite +1/+1 counters)':
     { all: ['defiler_of_vigor'],
       any: [['quirion_ranger', 'scryb_ranger', 'temur_sabertooth', 'kogla', 'wirewood_symbiote']] },
+  'Win: Commander Damage (Great Oak Guardian + infinite mana → Yeva lethal)':
+    { all: ['great_oak_guardian', 'yeva'],
+      any: [['temur_sabertooth', 'cloudstone_curio']] },
   // 'Win: Tutor for Finisher' and 'Win: Draw Library' have too many disjunctive
   // paths to safely prefilter — they fall through and run unconditionally.
 };
