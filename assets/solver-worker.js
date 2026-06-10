@@ -2188,6 +2188,9 @@ class GameState {
     s.storm = 0;
     s.isOpponentTurn = false;
     s.flashThisTurn  = false;
+    // CR 500.4 / 514: mana pools empty at the end of each step and phase.
+    // Any floating mana left at the end of your turn is lost.
+    s.mana = new ManaPool();
     s._ensureBF();  // untap loop mutates permanents
     for (const p of s.battlefield) {
       // Exerted creatures don't untap on your next untap step.
