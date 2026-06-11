@@ -6617,6 +6617,60 @@ var CARDS = {
       return [s.log(`Vitalize: untap ${untapped} creature${untapped !== 1 ? 's' : ''}`)];
     },
   },
+  // ─── Custom-library cards (not in DEFAULT_DECKLIST) ───────────────────────
+  vengeant_earth: {
+    name: 'Vengeant Earth', types: ['instant'], subtypes: [], cost: '1G',
+    // Oracle: Target creature or land you control becomes a 4/4 Elemental
+    // creature with haste in addition to its other types until end of turn.
+    // It must be blocked this turn if able.
+    //
+    // Key use (O-12 follow-up): animates a LAND (e.g. Geier Reach
+    // Sanitarium) into a creature with haste for the rest of the turn, so a
+    // Quirion/Scryb Ranger ("untap target creature") can legally target it —
+    // an alternative to Destiny Spinner. Because the effect lasts "until
+    // end of turn" regardless of how many times the animated permanent is
+    // tapped/untapped, ONE cast is enough to enable a whole turn's worth of
+    // repeated Ranger-untaps (each Ranger activation still needs its own
+    // bounce+recast to reset its "once each turn" restriction — unchanged
+    // from the existing model).
+    //
+    // "It must be blocked this turn if able" is a combat drawback not
+    // modeled here (no opponent-combat tracking for utility lands/dorks).
+    castFn(state) {
+      const ap = state.payMana('1G');
+      if (!ap) return [];
+      // Targets: any land you control not already a creature (primary use —
+      // animate a utility land for a creature-untapper), or any creature you
+      // control (secondary use — pump to 4/4 + haste).
+      const targetIds = ap.battlefield
+        .filter(p => (p.is('land') && !p.types.includes('creature')) || p.types.includes('creature'))
+        .map(p => p.id);
+      if (targetIds.length === 0) return [ap.log('Vengeant Earth: no legal target')];
+      const results = [];
+      const seen = new Set();
+      for (const tid of targetIds) {
+        let s = ap.clone();
+        s._ensureBF();
+        const tgt = s.getPermanentById(tid);
+        if (!tgt) continue;
+        const wasLand = tgt.types.includes('land') && !tgt.types.includes('creature');
+        tgt._ensureOwnTypes();
+        if (!tgt.types.includes('creature')) tgt.types.push('creature');
+        if (!tgt.subtypes.includes('Elemental')) tgt.subtypes.push('Elemental');
+        tgt.power = 4;
+        tgt.toughness = 4;
+        tgt.summoningSick = false; // haste
+        s = s.log(`Vengeant Earth: ${tgt.name} becomes a 4/4 Elemental with haste` +
+          (wasLand ? ' (now a creature — untappable by Quirion/Scryb Ranger)' : ''));
+        const fp = s.fingerprint();
+        if (seen.has(fp)) continue;
+        seen.add(fp);
+        results.push(s);
+      }
+      return results.length ? results : [ap.log('Vengeant Earth: no legal target')];
+    },
+  },
+
   touch_of_vitae: {
     name: 'Touch of Vitae', types: ['instant'], subtypes: [], cost: '2G',
     // Oracle: Target creature gains haste + "{0}: Untap this creature (once)."
@@ -7626,6 +7680,16 @@ function ashayaOut(state) {
 //     Destiny Spinner ("{3}{G}: target land you control becomes an X/X
 //     creature ... It's still a land") is the only such effect available.
 //     Ashaya is irrelevant here (it doesn't animate lands).
+// True if something can turn a land into a creature with haste until end
+// of turn — Destiny Spinner ({3}{G}, repeatable activated ability, X/X
+// where X = enchantments) or Vengeant Earth ({1}{G} instant, 4/4,
+// custom-library — not in DEFAULT_DECKLIST). Either lets a creature-only
+// effect (Quirion/Scryb Ranger's "untap target creature", etc.) target a
+// land for the rest of the turn.
+function hasLandAnimator(state) {
+  return hasPerm(state, 'Destiny Spinner') || (state.hand?.includes('vengeant_earth') ?? false);
+}
+
 function hasGeierReachUntapper(state) {
   const hasLandUntapper =
     hasPerm(state, 'Argothian Elder') ||
@@ -7635,7 +7699,18 @@ function hasGeierReachUntapper(state) {
     hasPerm(state, 'Hope Tender');
   if (hasLandUntapper) return true;
   const hasRanger = hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
-  return hasRanger && hasPerm(state, 'Destiny Spinner');
+  if (!hasRanger) return false;
+  // Quirion/Scryb Ranger's untap is "Activate only once each turn" — a
+  // single Ranger object can only do this ONCE per turn no matter how many
+  // Forests it could return. Repeating it within the Hitzel loop requires
+  // bounce+recasting the Ranger itself each cycle (a fresh object = a fresh
+  // once-per-turn activation), which means the Ranger must be able to
+  // return ITSELF as the "Forest you control" cost — i.e. Ashaya, Soul of
+  // the Wild must be out (it makes the Ranger a Forest too).
+  if (!ashayaOut(state)) return false;
+  // Destiny Spinner or Vengeant Earth: animate Geier Reach Sanitarium into a
+  // creature for the rest of the turn so the Ranger can legally target it.
+  return hasLandAnimator(state);
 }
 
 // True if a creature card is available to discard to Fauna Shaman /
@@ -9327,39 +9402,45 @@ var DETECTORS = [
   //  animated land) OR it taps for mana as a creature with Earthcraft.
   //
   //  The key combo path (from card_roles.md):
-  //  Destiny Spinner animates Cradle/Nykthos → the land is now a creature with
-  //  haste. With Ashaya, Quirion/Scryb Ranger can bounce themselves (both are
-  //  Forests under Ashaya) to untap the animated land-creature.
+  //  Destiny Spinner ({3}{G}, repeatable) or Vengeant Earth ({1}{G} instant,
+  //  custom-library — not in DEFAULT_DECKLIST; "until end of turn" covers the
+  //  whole loop with one cast) animates Cradle/Nykthos → the land is now a
+  //  creature with haste. With Ashaya, Quirion/Scryb Ranger can bounce
+  //  themselves (both are Forests under Ashaya) to untap the animated
+  //  land-creature.
   //  This is effectively the Ashaya + Ranger + dork combo, with the animated
   //  land acting as the high-output mana dork.
   //
   //  Loop (Quirion variant, Gaea's Cradle with ≥2 creatures):
-  //   1. Destiny Spinner pays {3G}: animate Cradle → X/X haste creature.
+  //   1. Destiny Spinner pays {3G} (or Vengeant Earth pays {1G}, one cast for
+  //      the whole turn): animate Cradle → 4/4 (or X/X) haste creature.
   //   2. Tap animated Cradle for G×creatures.
   //   3. Quirion Ranger bounces itself (Forest under Ashaya) → untaps animated Cradle.
   //   4. Recast Quirion {G}. Repeat from step 2.
   //  Net: Cradle produces ≥2G, Quirion costs {G}, net ≥1G per cycle.
   //
   //  Prerequisites:
-  //   - Destiny Spinner on battlefield (the animation costs {3G} — paid once to start).
+  //   - Destiny Spinner on battlefield, or Vengeant Earth in hand (the
+  //     animation cost is paid once to start the loop).
   //   - Ashaya on battlefield (makes Ranger a Forest so it can target itself).
   //   - Quirion or Scryb Ranger available.
   //   - A big land (Cradle ≥2 creatures, or Nykthos devotion ≥4 covering
   //     the Ranger recast cost).
   //
-  //  This is a setup combo — the {3G} animation cost is paid once from floating mana.
+  //  This is a setup combo — the one-time animation cost is paid once from floating mana.
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)',
+    name: 'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)',
     description:
-      "Destiny Spinner ({3G}): animate Gaea's Cradle or Nykthos into a haste creature (still a land). " +
+      "Destiny Spinner ({3G}, repeatable) or Vengeant Earth ({1G} instant, lasts until end of " +
+      "turn): animate Gaea's Cradle or Nykthos into a haste creature (still a land). " +
       "With Ashaya, Ranger bounces itself (Forest) → untaps the animated land. " +
       "Quirion ({G}): Cradle ≥2 creatures nets ≥1G. Nykthos devotion ≥4 nets ≥1G. " +
-      "The {3G} animation cost is paid once from initial mana to start the loop.",
+      "The animation cost is paid once from initial mana to start the loop.",
     check(state) {
       if (!ashayaOut(state)) return false;
-      if (!hasPerm(state, 'Destiny Spinner')) return false;
+      if (!hasLandAnimator(state)) return false;
       if (!rangerAvailable(state)) return false;
       // Need a big land untapped to animate and loop with
       // Gaea's Cradle: produces ≥2G with ≥2 creatures (covers Quirion {G} recast, nets ≥1G)
@@ -10379,7 +10460,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]': ['tireless_provisioner','ashaya','quirion_ranger'],
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
   'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':  ['great_oak_guardian','temur_sabertooth'],
-  'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)':                ['destiny_spinner','ashaya','quirion_ranger'],
+  'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)': ['ashaya','quirion_ranger'],
   'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':                 ['beast_whisperer'],
   'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance'],
   'Win: Duskwatch Recruiter (find all creatures)':                              ['duskwatch_recruiter'],
@@ -10508,8 +10589,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['earthcraft', 'ashaya', 'quirion_ranger'] },
   'Infinite Green Mana (Survival/Fauna Shaman → Ashaya + Ranger + Big Dork)':
     { all: ['ashaya', 'quirion_ranger', 'survival_fittest'] },
-  'Infinite Mana (Destiny Spinner + Ashaya + Ranger + Big Land)':
-    { all: ['ashaya', 'destiny_spinner', 'quirion_ranger'] },
+  'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)':
+    { all: ['ashaya'], any: [['destiny_spinner', 'vengeant_earth'], ['quirion_ranger', 'scryb_ranger']] },
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]':
     { all: ['ashaya', 'tireless_provisioner', 'quirion_ranger'] },
 
@@ -13486,12 +13567,16 @@ function assembleWin(state) {
                 } else if (onField('Temur Sabertooth') && (onField('Woodcaller Automaton') || inHand('woodcaller_automaton') || inLibrary('woodcaller_automaton'))) {
                   untapMethod = 'Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop';
                 } else if ((onField('Quirion Ranger') || onField('Scryb Ranger') || inHand('quirion_ranger') || inHand('scryb_ranger'))
-                           && ashayaOnField && onField('Destiny Spinner')) {
+                           && ashayaOnField && (onField('Destiny Spinner') || inHand('vengeant_earth'))) {
                   // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land —
-                  // Geier Reach Sanitarium needs Destiny Spinner to animate it
-                  // into a land-creature before either Ranger can target it.
+                  // Geier Reach Sanitarium needs to be animated into a
+                  // land-creature before either Ranger can target it: either
+                  // Destiny Spinner ({3}{G}, repeatable) or Vengeant Earth
+                  // ({1}{G} instant, "until end of turn" — one cast covers
+                  // the whole turn's loop).
                   const rangerName = (onField('Quirion Ranger') || inHand('quirion_ranger')) ? 'Quirion Ranger' : 'Scryb Ranger';
-                  untapMethod = `${rangerName} + Destiny Spinner: Ranger untaps Geier Reach (animated land-creature under Ashaya)`;
+                  const animator = onField('Destiny Spinner') ? 'Destiny Spinner' : 'Vengeant Earth';
+                  untapMethod = `${rangerName} + ${animator}: Ranger untaps Geier Reach (animated land-creature under Ashaya)`;
                 } else if ((onField('Hyrax Tower Scout') || inHand('hyrax_tower_scout')) && onField('Destiny Spinner') && ashayaOnField) {
                   untapMethod = 'Hyrax Tower Scout + Destiny Spinner: Scout ETB untaps Geier Reach (animated creature-land)';
                 } else if ((onField('Argothian Elder') || inHand('argothian_elder')) && ashayaOnField && onField('Destiny Spinner')) {
@@ -13684,6 +13769,7 @@ function assembleWin(state) {
       const hasLQR     = onField("Legolas's Quick Reflexes") || inHand('legolas_quick_reflexes');
       const hasMagus   = onField('Magus of the Candelabra');
       const hasDestinySpinner = onField('Destiny Spinner');
+      const hasVengeantEarth = inHand('vengeant_earth');
       const hasEndurance = onField('Endurance') || inHand('endurance');
       const hasGeier   = onField('Geier Reach Sanitarium');
 
@@ -13698,12 +13784,20 @@ function assembleWin(state) {
         steps.push('  4. {2}: Activate Geier Reach Sanitarium — hold priority.');
         if (hasMagus && hasAshaya) {
           steps.push('  5. {X},{T}: Magus of the Candelabra untaps Geier Reach Sanitarium.');
-        } else if (hasQR && hasAshaya && hasDestinySpinner) {
-          // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land. Destiny
-          // Spinner ({3}{G}) animates Geier Reach Sanitarium into a
-          // land-creature so the Ranger's "untap target creature" can target it.
+        } else if (hasQR && hasAshaya && (hasDestinySpinner || hasVengeantEarth)) {
+          // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land.
+          // Animate Geier Reach Sanitarium into a land-creature first, so
+          // the Ranger's "untap target creature" can target it: Destiny
+          // Spinner ({3}{G}, repeatable) or Vengeant Earth ({1}{G} instant,
+          // "until end of turn" — one cast covers the whole turn's loop).
           const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
-          steps.push(`  5. {3}{G}: Destiny Spinner animates Geier Reach Sanitarium into a creature.`);
+          if (hasDestinySpinner) {
+            steps.push(`  5. {3}{G}: Destiny Spinner animates Geier Reach Sanitarium into a creature.`);
+          } else {
+            steps.push(`  5. Cast Vengeant Earth ({1}{G}) targeting Geier Reach Sanitarium → it becomes a`);
+            steps.push(`     4/4 Elemental with haste until end of turn (lasts the rest of this turn —`);
+            steps.push(`     no need to recast for further loops).`);
+          }
           steps.push(`     ${rangerName}: return self (Forest land under Ashaya) → untap Geier Reach Sanitarium (now a creature).`);
         } else {
           steps.push('  5. Untap Geier Reach Sanitarium via available untap method.');
