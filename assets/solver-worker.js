@@ -6063,8 +6063,19 @@ var CARDS = {
         if (!self) return s;
         let ts = s.removeFromBattlefield(self.id, null); // DFC transform (leaves the game zone)
         if (!ts) return s;
-        ts = ts.enterBattlefield('itlimoc', { tapped: false });
-        ts = ts.log(`Growing Rites transforms → Itlimoc, Cradle of the Sun (${creatureCount} creatures)`);
+        // [rules] "At the beginning of your end step, if you control four or
+        // more creatures, transform Growing Rites of Itlimoc." The transform
+        // happens in the END STEP — after that, no more sorcery-speed
+        // (non-flash) spells can be cast this turn. So Itlimoc's mana can't
+        // be chained into casting another creature THIS turn unless Yeva,
+        // Nature's Herald (or another "creature spells have flash" effect)
+        // is already on the battlefield, in which case the timing doesn't
+        // matter. Enter tapped in the no-flash case to block that illegal
+        // chain; Itlimoc untaps normally on the next untap step regardless.
+        const hasFlashForCreatures = ts.hasPermanent("Yeva, Nature's Herald");
+        ts = ts.enterBattlefield('itlimoc', { tapped: !hasFlashForCreatures });
+        ts = ts.log(`Growing Rites transforms → Itlimoc, Cradle of the Sun (${creatureCount} creatures)` +
+          (hasFlashForCreatures ? '' : ' — enters tapped (transforms in end step; no flash to cast more this turn)'));
         return ts;
       }
     },
@@ -7625,6 +7636,44 @@ function hasGeierReachUntapper(state) {
   if (hasLandUntapper) return true;
   const hasRanger = hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
   return hasRanger && hasPerm(state, 'Destiny Spinner');
+}
+
+// True if a creature card is available to discard to Fauna Shaman /
+// Survival of the Fittest ("{G}, [{T},] Discard a creature card: search...").
+// Either:
+//   - a creature card is already in hand, or
+//   - a repeatable bounce engine can put one there: Temur Sabertooth / Kogla
+//     bounce ANY creature you control to hand (need ≥1 other creature on
+//     board); Cloudstone Curio alternates two creatures to hand; or, under
+//     Ashaya, a Quirion/Scryb Ranger returning ITSELF (also a Forest, but
+//     still a creature card) to hand.
+function hasCreatureToDiscard(state, excludeKey = null) {
+  var CARDS_local = CARDS;
+  if (state.hand?.some(k => k !== excludeKey && CARDS_local[k]?.types?.includes('creature'))) return true;
+  if (hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape')) {
+    return state.creatures().some(c =>
+      c.name !== 'Temur Sabertooth' && c.name !== 'Kogla, the Titan Ape');
+  }
+  if (hasPerm(state, 'Cloudstone Curio')) {
+    return state.creatures().length >= 2;
+  }
+  if (ashayaOut(state) && (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))) {
+    return true;
+  }
+  return false;
+}
+
+// "You may activate abilities of creatures you control as though those
+// creatures had haste" (or equivalent) — Concordant Crossroads, Thousand-
+// Year Elixir, Surrak and Goreclaw, Shang-Chi. Bypasses summoning sickness
+// for tap-activated abilities, but NOT a creature's current tapped status.
+function hasGlobalHaste(state) {
+  return (
+    hasPerm(state, 'Concordant Crossroads') ||
+    hasPerm(state, 'Thousand-Year Elixir') ||
+    hasPerm(state, 'Surrak and Goreclaw') ||
+    shangChiActive(state)
+  );
 }
 
 // True if some non-Ranger nontoken creature on the battlefield can tap to add
@@ -9505,7 +9554,13 @@ var WIN_CONDITIONS = [
       "  • Beast Whisperer → draw entire deck via creature loop → find any finisher\n" +
       "  • Any creature-based combo piece missing from the current board",
     check(state) {
-      // With infinite mana, Duskwatch in hand or on field finds every creature
+      // With infinite mana, Duskwatch in hand or on field finds every
+      // creature. A tapped/summoning-sick Duskwatch isn't blocked
+      // permanently — it untaps and loses sickness on its controller's next
+      // untap step, so this remains a deterministic win even if not
+      // immediate. (See O-19 for the genuinely blocking case: Fauna
+      // Shaman / Survival of the Fittest with no creature card ever
+      // available to discard.)
       return inHandOrField(state, 'Duskwatch Recruiter', 'duskwatch_recruiter');
     },
     // Duskwatch on the battlefield or in hand with infinite mana = deterministic win.
@@ -9769,6 +9824,10 @@ var WIN_CONDITIONS = [
   //
   //  Battlefield activated/ETB tutors:
   //    Fauna Shaman, Survival of the Fittest, Yisan, Formidable Speaker
+  //    [O-18] Fauna Shaman / Survival of the Fittest cost "Discard a creature
+  //    card" — gated on hasCreatureToDiscard() (a creature already in hand,
+  //    or a bounce engine — Temur/Kogla/Curio/Ashaya+Ranger — that can put
+  //    one there). Formidable Speaker discards ANY card, so it's exempt.
   //
   //  ETB tutors reachable in hand:
   //    Woodland Bellower (ETB → nonlegendary green MV≤3 → Duskwatch MV2)
@@ -9866,7 +9925,13 @@ var WIN_CONDITIONS = [
       ];
       if (state.hand && libHasCreature) {
         for (const k of handCastableTutors) {
-          if (state.hand.includes(k)) return true;
+          if (!state.hand.includes(k)) continue;
+          // Fauna Shaman / Survival of the Fittest cost "Discard a creature
+          // card" once activated — check there's a creature to discard
+          // *after* this card itself leaves the hand by being cast.
+          if ((k === 'fauna_shaman' || k === 'survival_fittest') &&
+              !hasCreatureToDiscard(state, k)) continue;
+          return true;
         }
       }
 
@@ -9894,16 +9959,22 @@ var WIN_CONDITIONS = [
 
       // ── Battlefield activated / ETB tutors ────────────────────────────────
       const bfTutorNames = [
-        'Fauna Shaman',              // {G},{T},discard → any creature → hand
-        'Survival of the Fittest',   // {G},{T},discard → any creature → hand
+        'Fauna Shaman',              // {G},{T},discard a creature card → any creature → hand
+        'Survival of the Fittest',   // {G}, discard a creature card → any creature → hand (no {T})
         'Yisan, the Wanderer Bard',  // {2G},{T},verse → creature of that MV → BF
         'Formidable Speaker',        // ETB: discard → any creature → hand
-        'Duskwatch Recruiter',       // {2G},{T} → creature → hand (wins directly!)
+        'Duskwatch Recruiter',       // {2}{G}: look at top 3 → creature → hand (NO {T} — wins directly!)
       ];
       for (const name of bfTutorNames) {
         // BF activated tutors that search the library also need a creature there
         const needsLib = name !== 'Duskwatch Recruiter'; // Duskwatch searches library too
-        if (hasPerm(state, name) && (!needsLib || libHasCreature)) return true;
+        if (!hasPerm(state, name) || (needsLib && !libHasCreature)) continue;
+        // Fauna Shaman / Survival of the Fittest cost "Discard a creature
+        // card" — without one in hand (or a way to bounce one there), the
+        // ability simply cannot be activated.
+        if ((name === 'Fauna Shaman' || name === 'Survival of the Fittest') &&
+            !hasCreatureToDiscard(state)) continue;
+        return true;
       }
 
       // ── ETB tutors reachable from hand ───────────────────────────────────
@@ -12925,12 +12996,70 @@ function assembleWin(state) {
       { name: 'Survival of the Fittest',step: 'Survival of the Fittest: discard, tutor → find Duskwatch Recruiter' },
       { name: 'Yisan, the Wanderer Bard', step: 'Yisan: activate → find a creature (chain to Duskwatch)' },
     ];
+    // Activated abilities with {T} in their cost — a TAPPED permanent can't
+    // pay {T} no matter what, but it untaps next turn -- not a permanent
+    // blocker. When a bounce-recast engine + global haste are available,
+    // show the same-turn acceleration; otherwise the win still stands (just
+    // takes effect after the next untap step). See O-19.
+    const TAP_COST_TUTORS = new Set(['Fauna Shaman', "Yisan, the Wanderer Bard"]);
     for (const { name, step } of BF_CREATURE_TUTORS) {
       if (onField(name) && inLibrary('duskwatch_recruiter')) {
+        // Fauna Shaman / Survival of the Fittest cost "Discard a creature
+        // card" — without one in hand (or a way to bounce one there from
+        // the battlefield), the ability cannot actually be activated.
+        if ((name === 'Fauna Shaman' || name === 'Survival of the Fittest') &&
+            !hasCreatureToDiscard(s)) continue;
+
+        const prereqSteps = [];
+        const perm = s.battlefield.find(p => p.name === name);
+
+        // [O-19] If `name` is currently tapped, optionally show the
+        // bounce + recast acceleration (untaps it this turn instead of
+        // waiting for the next untap step) when a bounce engine and a
+        // haste enabler (to bypass the recast's summoning sickness for its
+        // {T} ability) are both available.
+        if (TAP_COST_TUTORS.has(name) && perm?.tapped &&
+            (onField('Temur Sabertooth') || onField('Kogla, the Titan Ape') || onField('Cloudstone Curio')) &&
+            hasGlobalHaste(s)) {
+          const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth'
+                            : onField('Kogla, the Titan Ape') ? 'Kogla, the Titan Ape'
+                            : 'Cloudstone Curio';
+          const ck = NAME_TO_KEY[name];
+          let ns = s.removeFromBattlefield(perm.id, null);
+          if (ns && ck) {
+            ns = ns.enterBattlefield(ck);
+            const fresh = ns.battlefield.find(p => p.name === name);
+            if (fresh) fresh.summoningSick = false; // hasGlobalHaste(s) confirmed above
+            s = ns;
+            prereqSteps.push(`{1}{G}: ${bouncerName} bounces ${name} to hand.`);
+            prereqSteps.push(`Recast ${name} (untapped — haste enabler bypasses summoning sickness for its {T} ability).`);
+          }
+        }
+
+        // [O-19] Fauna Shaman needs a creature card in hand to discard. If
+        // none is in hand yet, bounce one from the battlefield first.
+        if (name === 'Fauna Shaman' &&
+            !s.hand?.some(k => CARDS[k]?.types?.includes('creature'))) {
+          const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth'
+                            : onField('Kogla, the Titan Ape') ? 'Kogla, the Titan Ape'
+                            : null;
+          const fodder = s.creatures().find(c =>
+            c.name !== name &&
+            c.name !== 'Temur Sabertooth' && c.name !== 'Kogla, the Titan Ape' &&
+            c.cardKey !== 'shang_chi'); // don't discard the haste enabler this loop relies on
+          if (bouncerName && fodder) {
+            const ns = s.removeFromBattlefield(fodder.id, 'graveyard');
+            if (ns) {
+              s = ns;
+              prereqSteps.push(`{1}{G}: ${bouncerName} bounces ${fodder.name} to hand (discard fodder for Fauna Shaman).`);
+            }
+          }
+        }
+
         const { state: ns, cardKey: found } = searchFor('duskwatch_recruiter');
         if (found) {
           s = ns.addToHand(found);
-          steps.push(step);
+          steps.push(...prereqSteps, step);
           break;
         }
       }
@@ -12952,6 +13081,10 @@ function assembleWin(state) {
     if (!inHand('duskwatch_recruiter') && !onField('Duskwatch Recruiter')) {
       for (const { key, name, step } of HAND_CREATURE_TUTORS) {
         if (inHand(key) && inLibrary('duskwatch_recruiter')) {
+          // Same "discard a creature card" cost check as above, evaluated
+          // as if `key` itself has already left the hand by being cast.
+          if ((key === 'fauna_shaman' || key === 'survival_fittest') &&
+              !hasCreatureToDiscard(s, key)) continue;
           s = s.removeFromHand(key);
           s = s.enterBattlefield(key);
           const perm = s.battlefield.find(p => p.name === name);
