@@ -7600,6 +7600,33 @@ function ashayaOut(state) {
   return hasPerm(state, 'Ashaya, Soul of the Wild');
 }
 
+// [O-12] True if the battlefield has a way to untap Geier Reach Sanitarium
+// each Hitzel cycle.
+//
+// Geier Reach Sanitarium is a LAND, not a creature (Ashaya makes creatures
+// into Forests — it does not make lands into creatures). So:
+//   - Argothian Elder / Ley Weaver ("untap two target lands"),
+//     Magus of the Candelabra ("{X},{T}: untap X target lands"),
+//     Deserted Temple / Hope Tender ("{1},{T}: untap target land")
+//     can ALL untap Geier Reach directly — no Ashaya or animation needed,
+//     since it's already a land.
+//   - Quirion Ranger / Scryb Ranger ("untap target CREATURE") CANNOT target
+//     Geier Reach unless something turns it into a creature first —
+//     Destiny Spinner ("{3}{G}: target land you control becomes an X/X
+//     creature ... It's still a land") is the only such effect available.
+//     Ashaya is irrelevant here (it doesn't animate lands).
+function hasGeierReachUntapper(state) {
+  const hasLandUntapper =
+    hasPerm(state, 'Argothian Elder') ||
+    hasPerm(state, 'Ley Weaver') ||
+    hasPerm(state, 'Magus of the Candelabra') ||
+    hasPerm(state, 'Deserted Temple') ||
+    hasPerm(state, 'Hope Tender');
+  if (hasLandUntapper) return true;
+  const hasRanger = hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+  return hasRanger && hasPerm(state, 'Destiny Spinner');
+}
+
 // True if some non-Ranger nontoken creature on the battlefield can tap to add
 // at least 1 green mana right now (untapped, no summoning sickness, and
 // `tapForMana` produces a state with at least 1 more green pip in the pool).
@@ -9408,22 +9435,18 @@ var WIN_CONDITIONS = [
 
       const enduranceOnField = hasPerm(state, 'Endurance');
       if (!(enduranceFreshCast || (enduranceOnField && hasRebuy))) return false;
-      // Need a way to untap Geier Reach each cycle (any land untapper in the combo already handles this)
-      const hasUntapper =
-        hasPerm(state, 'Argothian Elder') ||
-        hasPerm(state, 'Ley Weaver') ||
-        hasPerm(state, 'Magus of the Candelabra') ||
-        hasPerm(state, 'Deserted Temple') ||
-        hasPerm(state, 'Hope Tender') ||
-        hasPerm(state, 'Quirion Ranger') ||
-        hasPerm(state, 'Scryb Ranger');
-      return hasUntapper;
+      // [O-12] Need a way to untap Geier Reach Sanitarium each cycle. Rangers
+      // untap CREATURES, not lands — they only count with Destiny Spinner.
+      return hasGeierReachUntapper(state);
     },
     // deployed: Hitzel pieces are on the battlefield and ready to execute.
     // When this returns false, the solver keeps searching to show setup steps.
     deployed(state) {
       // Geier Reach must be on battlefield (not just in hand — it's a land, needs to be played)
       if (!hasPerm(state, 'Geier Reach Sanitarium')) return false;
+      // [O-12] Without an untap method, Geier Reach can be activated only
+      // once — not "deployed" as a repeatable mill loop.
+      if (!hasGeierReachUntapper(state)) return false;
       const inHand = (key) => state.hand && state.hand.includes(key);
       const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
       const witnessAvail = inHandOrField(state, 'Eternal Witness', 'eternal_witness');
@@ -9431,9 +9454,10 @@ var WIN_CONDITIONS = [
       // Witness ETB) → deployed with no re-buy engine required.
       if (inHand('endurance')) return true;
       if (gy.includes('Endurance') && witnessAvail) return true;
+      const enduranceOnField = hasPerm(state, 'Endurance');
       // Endurance stranded on the battlefield (ETB spent) → need an on-field
       // re-buy engine to return it to hand for another cast.
-      if (!hasPerm(state, 'Endurance')) return false;
+      if (!enduranceOnField) return false;
       const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
       const hasRanger =
         hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
@@ -13328,10 +13352,13 @@ function assembleWin(state) {
                   untapMethod = 'Magus of the Candelabra: {X},{T} → untap Geier Reach Sanitarium (land under Ashaya)';
                 } else if (onField('Temur Sabertooth') && (onField('Woodcaller Automaton') || inHand('woodcaller_automaton') || inLibrary('woodcaller_automaton'))) {
                   untapMethod = 'Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop';
-                } else if ((onField('Scryb Ranger') || inHand('scryb_ranger')) && ashayaOnField) {
-                  untapMethod = 'Scryb Ranger: return Forest to hand → untap Geier Reach Sanitarium (Forest under Ashaya)';
-                } else if ((onField('Quirion Ranger') || inHand('quirion_ranger')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Quirion Ranger + Destiny Spinner: Ranger untaps Geier Reach (animated land-creature under Ashaya)';
+                } else if ((onField('Quirion Ranger') || onField('Scryb Ranger') || inHand('quirion_ranger') || inHand('scryb_ranger'))
+                           && ashayaOnField && onField('Destiny Spinner')) {
+                  // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land —
+                  // Geier Reach Sanitarium needs Destiny Spinner to animate it
+                  // into a land-creature before either Ranger can target it.
+                  const rangerName = (onField('Quirion Ranger') || inHand('quirion_ranger')) ? 'Quirion Ranger' : 'Scryb Ranger';
+                  untapMethod = `${rangerName} + Destiny Spinner: Ranger untaps Geier Reach (animated land-creature under Ashaya)`;
                 } else if ((onField('Hyrax Tower Scout') || inHand('hyrax_tower_scout')) && onField('Destiny Spinner') && ashayaOnField) {
                   untapMethod = 'Hyrax Tower Scout + Destiny Spinner: Scout ETB untaps Geier Reach (animated creature-land)';
                 } else if ((onField('Argothian Elder') || inHand('argothian_elder')) && ashayaOnField && onField('Destiny Spinner')) {
@@ -13523,6 +13550,7 @@ function assembleWin(state) {
       const hasQR      = onField('Quirion Ranger') || onField('Scryb Ranger');
       const hasLQR     = onField("Legolas's Quick Reflexes") || inHand('legolas_quick_reflexes');
       const hasMagus   = onField('Magus of the Candelabra');
+      const hasDestinySpinner = onField('Destiny Spinner');
       const hasEndurance = onField('Endurance') || inHand('endurance');
       const hasGeier   = onField('Geier Reach Sanitarium');
 
@@ -13537,9 +13565,13 @@ function assembleWin(state) {
         steps.push('  4. {2}: Activate Geier Reach Sanitarium — hold priority.');
         if (hasMagus && hasAshaya) {
           steps.push('  5. {X},{T}: Magus of the Candelabra untaps Geier Reach Sanitarium.');
-        } else if (hasQR && hasAshaya) {
+        } else if (hasQR && hasAshaya && hasDestinySpinner) {
+          // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land. Destiny
+          // Spinner ({3}{G}) animates Geier Reach Sanitarium into a
+          // land-creature so the Ranger's "untap target creature" can target it.
           const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
-          steps.push(`  5. ${rangerName}: return self (Forest land under Ashaya) → untap Geier Reach Sanitarium.`);
+          steps.push(`  5. {3}{G}: Destiny Spinner animates Geier Reach Sanitarium into a creature.`);
+          steps.push(`     ${rangerName}: return self (Forest land under Ashaya) → untap Geier Reach Sanitarium (now a creature).`);
         } else {
           steps.push('  5. Untap Geier Reach Sanitarium via available untap method.');
         }
