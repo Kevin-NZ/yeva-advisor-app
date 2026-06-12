@@ -8293,6 +8293,14 @@ var DETECTORS = [
   //  With Ashaya: Ranger can also bounce itself.
   //  Net: Selvala produces ≥2G, pay {G} activation, net ≥1G.
   //
+  //  [O-23] Quirion/Scryb Ranger's untap is "Activate only once each turn" —
+  //  a single Ranger object can do it exactly once, no matter how many
+  //  Forests exist to return as the cost. Repeating it within the loop
+  //  requires bouncing+recasting the Ranger ITSELF each cycle (a fresh
+  //  object = a fresh once-per-turn), which requires Ashaya so the Ranger
+  //  can return ITSELF as the "Forest you control" cost. Without Ashaya,
+  //  this gives at most 2 total Selvala activations — not infinite.
+  //
   //  NOTE: Wirewood Symbiote is once-per-turn — NOT infinite with Selvala alone.
   //  Symbiote + Selvala only goes infinite inside a Temur Sabertooth loop.
   // ══════════════════════════════════════════════════════════════════════════
@@ -8301,9 +8309,9 @@ var DETECTORS = [
     name: 'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]',
     description:
       "Selvala: pay {G}, tap for G×(greatest power). " +
-      "Ranger bounces a Forest to untap Selvala (free). " +
-      "Net positive with greatest power ≥2. " +
-      "With Ashaya, Ranger bounces itself. Without Ashaya, needs a Forest land.",
+      "With Ashaya, Ranger returns itself (a Forest) to hand → untaps Selvala; " +
+      "recast Ranger for {G}/{1G} (fresh object = fresh once-per-turn). " +
+      "Net positive with greatest power ≥2.",
     check(state) {
       const selvala = state.battlefield.find(
         p => p.name === 'Selvala, Heart of the Wilds' && !p.tapped &&
@@ -8312,10 +8320,9 @@ var DETECTORS = [
       if (!selvala) return false;
       if (greatestPower(state) < 2) return false;
       if (!rangerAvailable(state)) return false; // ability must not be exhausted this turn
-      // With Ashaya: Ranger bounces itself (it IS a Forest). Without Ashaya: Ranger
-      // can bounce any Forest land to untap Selvala. In either case the detector fires
-      // when the pieces are assembled — the solver verifies resource availability.
-      return true;
+      // [O-23] Repeating the Ranger's untap within this turn requires it to
+      // bounce ITSELF (a Forest under Ashaya) for a fresh once-per-turn.
+      return ashayaOut(state);
     },
   },
 
@@ -10260,16 +10267,27 @@ var WIN_CONDITIONS = [
     name: 'Win: Ulvenwald Tracker Fight Loop (clear opponent board)',
     description:
       "With infinite mana, tap Ulvenwald Tracker ({1}{G},{T}) to fight an opponent's creature " +
-      "using your biggest creature. Untap Tracker via Thousand-Year Elixir ({1},{T}) or " +
-      "Shang-Chi's haste engine. Repeat to kill every opponent creature. " +
+      "using your biggest creature. Temur Sabertooth or Kogla bounces Tracker ({1}{G}); recast " +
+      "it ({G}) — a global-haste effect (Concordant Crossroads / Thousand-Year Elixir / " +
+      "Surrak and Goreclaw / Shang-Chi) lets the freshly-recast Tracker use its {T} ability " +
+      "despite summoning sickness. Repeat to kill every opponent creature. " +
       "Attack with your board for lethal.",
     check(state) {
       if (!hasPerm(state, 'Ulvenwald Tracker')) return false;
-      // Need an untap / haste enabler for the Tracker
-      const hasUntapper =
-        hasPerm(state, 'Thousand-Year Elixir') ||
-        hasPerm(state, 'Shang-Chi, Master of Kung Fu');
-      if (!hasUntapper) return false;
+      // [O-23] Ulvenwald Tracker's fight ability is "{1}{G},{T}: ..." — once
+      // activated, Tracker is TAPPED with no further {T} ability available.
+      // Neither Shang-Chi (only bypasses summoning sickness, never untaps)
+      // nor Thousand-Year Elixir (untaps Tracker ONCE, but Elixir itself then
+      // stays tapped forever with nothing to untap IT) makes this repeat
+      // indefinitely — that gives at most 2 total fights. A genuinely
+      // infinite loop needs Tracker bounced+recast each cycle (Temur
+      // Sabertooth / Kogla — "another creature you control", i.e. Tracker)
+      // with a global-haste effect to bypass the recast's summoning
+      // sickness for its {T} ability.
+      const hasBounceRecast =
+        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      if (!hasBounceRecast) return false;
+      if (!hasGlobalHaste(state)) return false;
       // Need at least one other creature to fight with (power ≥ 1)
       const fighter = state.creatures().find(
         c => c.name !== 'Ulvenwald Tracker' && (c.power ?? 0) >= 1
@@ -10278,10 +10296,9 @@ var WIN_CONDITIONS = [
     },
     deployed(state) {
       if (!hasPerm(state, 'Ulvenwald Tracker')) return false;
-      const hasUntapper =
-        hasPerm(state, 'Thousand-Year Elixir') ||
-        hasPerm(state, 'Shang-Chi, Master of Kung Fu');
-      return hasUntapper;
+      const hasBounceRecast =
+        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      return hasBounceRecast && hasGlobalHaste(state);
     },
   },
 
@@ -14049,10 +14066,9 @@ function assembleWin(state) {
     } else if (victory.winCondition === 'Win: Duskwatch Recruiter (find all creatures)') {
       steps.push('');
       steps.push('── Duskwatch Recruiter Sequence (execution) ──');
-      steps.push('  1. {2}{G},{T}: Look at the top 3 cards of your library — put a creature card into your hand.');
-      steps.push('  2. Untap Duskwatch Recruiter (any repeatable untap method available — e.g. the same');
-      steps.push('     engine producing your infinite mana, Hope Tender, or Magus of the Candelabra) and');
-      steps.push('     repeat until every creature in your library is in hand.');
+      steps.push('  1. {2}{G}: Look at the top 3 cards of your library — put a creature card into your hand.');
+      steps.push('  2. Repeat (no {T} in the cost — summoning sickness and tapped status never block it) until');
+      steps.push('     every creature in your library is in hand.');
       steps.push('  3. Cast every found creature (Yeva grants flash to green creatures).');
       const hasGeierForDW = onField('Geier Reach Sanitarium') || inHand('geier_reach') || inGraveyard('Geier Reach Sanitarium');
       const hasEnduranceForDW = onField('Endurance') || inHand('endurance') || inGraveyard('Endurance');
