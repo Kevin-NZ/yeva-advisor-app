@@ -7350,22 +7350,23 @@ var CARDS = {
     //   → Implemented in actions.js: when Shang-Chi is on the battlefield, the
     //     summoningSick guard is bypassed for creature tap-for-mana AND for
     //     creature activated abilities.
-    // Static 2 is the tap ability below.
     //
-    // {T}: Add two mana of any one color; spend this mana only to activate
-    //      abilities of creature sources.  Simplified to {G}{G} for mono-green.
-    tapForMana(state, perm) {
-      // Tapped guard only — summoningSick is intentionally omitted.
-      // The static ability applies to Shang-Chi himself too, so the actions.js
-      // loop already bypasses summoning sickness before calling tapForMana.
-      if (perm.tapped) return [];
-      let s = state.tapPermanent(perm.id);
-      if (!s) return [];
-      s = s.addMana('G');
-      s = s.addMana('G');
-      s = s.log(`Tap Shang-Chi → {G}{G} (for creature abilities)`);
-      return [s];
-    },
+    // [O-27] Static 2: "{T}: Add two mana of any one color, spend this mana
+    // only to activate abilities of creature sources." This mana is
+    // RESTRICTED — it can pay for activated abilities of creature
+    // permanents, but NOT for casting spells (creature spells included —
+    // casting a spell is not "activating an ability of a creature source").
+    // The engine's mana pool has no concept of restricted mana, so a general
+    // `tapForMana` here would let the solver illegally spend Shang-Chi's
+    // {G}{G} on spell casts (e.g. "Tap Shang-Chi → {G}{G}" immediately
+    // followed by "Cast Boreal Druid" using that mana).
+    //
+    // Per COMBO 63 (DISABLED, see below) and COMBO 64, this restricted mana
+    // cannot reach a winning state on its own — COMBO 64's loop nets exactly
+    // 0 restricted mana per cycle (it's only a means to pay for OTHER
+    // restricted-mana activated abilities like Hope Tender's exert).
+    // Intentionally NOT implementing tapForMana: Shang-Chi's value in this
+    // deck is its haste-bypass static, not its mana ability.
   },
 
   nylea_keen_eyed: {
@@ -9868,25 +9869,34 @@ var WIN_CONDITIONS = [
   {
     name: 'Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)',
     description:
-      "Beast Whisperer draws a card per creature cast. Glademuse draws per spell on opponents' turns. " +
-      "With an infinite creature loop, draw the entire library. " +
+      "Beast Whisperer draws a card per creature cast. Glademuse: YOU draw whenever YOU cast a " +
+      "spell on someone else's turn. With an infinite creature loop, draw the entire library. " +
       "Then win via Finale of Devastation X≥10, Infectious Bite loop, or other finisher. " +
       "Creature loops: Ashaya + any Ranger (Ranger recast each cycle), " +
       "Temur Sabertooth or Kogla bounce loops, Hyrax Tower Scout loops.",
     check(state) {
       // Beast Whisperer + creature loop: draws on every creature cast.
       // With infinite mana, Temur/Kogla in hand or field can always find a loop target.
+      const hasRangerLoop =
+        hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+      const hasBounceEngine =
+        inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
+        inHandOrField(state, 'Kogla, the Titan Ape', 'kogla');
       if (inHandOrField(state, 'Beast Whisperer', 'beast_whisperer')) {
-        const hasRangerLoop =
-          hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
-        const hasBounceEngine =
-          inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
-          inHandOrField(state, 'Kogla, the Titan Ape', 'kogla');
         if (hasRangerLoop || hasBounceEngine) return true;
       }
-      // Glademuse: draws per opponent spell — a pass-turn win with infinite mana.
-      // Does NOT draw through creature-bounce loops on your turn.
-      if (inHandOrField(state, 'Glademuse', 'glademuse')) return true;
+      // [O-26] Glademuse's actual oracle: "Whenever a player casts a spell,
+      // if it's not their turn, that player draws a card." The GLADEMUSE
+      // CONTROLLER draws when THEY cast a spell during someone else's turn
+      // — NOT "whenever an opponent casts a spell". To go infinite, pass the
+      // turn, then on an opponent's turn repeatedly recast creatures at
+      // instant speed (needs Yeva's flash for green creature spells) via the
+      // same creature-recursion loop used for the Beast Whisperer case —
+      // each of YOUR casts triggers Glademuse for YOU.
+      if (inHandOrField(state, 'Glademuse', 'glademuse')) {
+        const hasFlash = hasPerm(state, "Yeva, Nature's Herald");
+        if (hasFlash && (hasRangerLoop || hasBounceEngine)) return true;
+      }
       return false;
     },
   },
@@ -14046,8 +14056,26 @@ function assembleWin(state) {
         steps.push(`  5. {1}{G}: ${bouncerName} bounces Eternal Witness to hand.`);
         steps.push('  6. Recast Eternal Witness \u2192 return Noxious Revival to hand.');
         steps.push(`  7. {1}{G}: ${bouncerName} bounces Eternal Witness to hand.`);
-        steps.push("  8. Mikokoro's own draw (step 1) draws it back into your hand from atop your library.");
-        steps.push('  9. Replay Mikokoro (land drop) and repeat from step 1.');
+        // [O-26] Crop Rotation / Elvish Reclaimer put the fetched land
+        // DIRECTLY onto the battlefield (no draw, no land drop) \u2014 since
+        // step 3 just put Mikokoro on TOP of the library, recasting/
+        // reactivating the SAME sac effect (recurred above) fetches Mikokoro
+        // straight back to the battlefield. The land fetched back in step 2
+        // becomes this cycle's sacrifice fodder.
+        if (hasCropRot) {
+          steps.push('  8. Recast Crop Rotation: sacrifice the land fetched in step 2 as the additional cost');
+          steps.push('     \u2192 search your library for Mikokoro (now on top, from step 3) \u2192 put it directly');
+          steps.push('     onto the battlefield. No draw or land drop needed.');
+        } else if (hasReclaimer) {
+          steps.push('  8. {2},{T}: Elvish Reclaimer sacrifices the land fetched in step 2 \u2192 search your');
+          steps.push('     library for Mikokoro (now on top, from step 3) \u2192 put it onto the battlefield');
+          steps.push('     tapped. No draw or land drop needed (untap it via your mana engine before step 1).');
+        } else {
+          steps.push('  8. Recast the sac-effect from step 2 \u2192 search your library for Mikokoro (now on top,');
+          steps.push('     from step 3) \u2192 put it directly onto the battlefield. No draw or land drop needed.');
+        }
+        steps.push("  9. Mikokoro is back on the battlefield. Let step 1's draw resolve (a normal card,");
+        steps.push('     since Mikokoro is no longer in the library) and repeat from step 1.');
         steps.push('  \u2192 Each activation makes every player draw \u2014 opponents mill out before you do.');
       } else {
         steps.push('  \u26a0 Noxious Revival not found \u2014 Mikokoro is stuck in the graveyard after step 2.');
@@ -14106,12 +14134,32 @@ function assembleWin(state) {
         steps.push("  4. Cast Finale of Devastation, Infectious Bite, or assemble Hitzel's Sequence with");
         steps.push('     everything now in hand.');
       } else {
-        steps.push("  Glademuse: whenever an opponent casts a spell, draw a card.");
-        steps.push('  1. With infinite mana available, pass the turn (Yeva grants flash, so the whole hand');
-        steps.push('     can still be deployed at instant speed on opponents\' turns).');
-        steps.push("  2. Each opponent's spell draws you a card — by the time it's your turn again,");
-        steps.push('     your library is empty and a finisher is in hand.');
-        steps.push('  3. Cast the finisher found at instant speed (Yeva grants flash).');
+        // [O-26] Glademuse's actual oracle: "Whenever a player casts a
+        // spell, if it's not their turn, that player draws a card." The
+        // GLADEMUSE CONTROLLER draws when THEY cast a spell during someone
+        // else's turn — not "whenever an opponent casts a spell".
+        steps.push("  Glademuse: whenever YOU cast a spell on someone else's turn, YOU draw a card.");
+        steps.push('  1. Pass the turn without casting your creature-recursion pieces.');
+        if (onField('Ashaya, Soul of the Wild') &&
+            (onField('Quirion Ranger') || onField('Scryb Ranger'))) {
+          const rangerName = onField('Quirion Ranger') ? 'Quirion Ranger' : 'Scryb Ranger';
+          steps.push(`  2. On an opponent's turn: ${rangerName} returns ITSELF (a Forest under Ashaya) to`);
+          steps.push('     hand, untapping any creature.');
+          steps.push(`  3. Recast ${rangerName} (Yeva grants flash to green creature spells) — Glademuse`);
+          steps.push('     triggers: you draw a card.');
+        } else if (onField('Temur Sabertooth') || onField('Kogla, the Titan Ape')) {
+          const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+          steps.push(`  2. On an opponent's turn: {1}{G}: ${bouncerName} bounces a creature you control to hand.`);
+          steps.push('  3. Recast that creature (Yeva grants flash to green creature spells) — Glademuse');
+          steps.push('     triggers: you draw a card.');
+        } else {
+          steps.push("  2. On an opponent's turn, with infinite mana, repeatedly bounce and recast any");
+          steps.push('     creature you control (Yeva grants flash to green creature spells).');
+          steps.push('  3. Each recast triggers Glademuse: you draw a card.');
+        }
+        steps.push('  4. Repeat with infinite mana until your entire library is in hand.');
+        steps.push('  5. Cast the finisher found (Finale of Devastation, Infectious Bite, or');
+        steps.push("     Hitzel's Sequence) at instant speed (Yeva grants flash).");
       }
 
     // ── Emit Tutor for Finisher execution steps ───────────────────────────
@@ -14182,23 +14230,28 @@ function assembleWin(state) {
 
     // ── Emit Ulvenwald Tracker Fight Loop execution steps ─────────────────
     } else if (victory.winCondition === 'Win: Ulvenwald Tracker Fight Loop (clear opponent board)') {
-      const hasElixir = onField('Thousand-Year Elixir');
-      const scActive  = onField('Shang-Chi, Master of Kung Fu');
+      const hasTemur = onField('Temur Sabertooth');
+      const hasKogla = onField('Kogla, the Titan Ape');
+      const bouncerName = hasTemur ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+      // [O-23] Identify which global-haste effect lets the freshly-recast
+      // Tracker use its {T} ability despite summoning sickness.
+      const hasteSource =
+        onField('Concordant Crossroads')      ? 'Concordant Crossroads'      :
+        onField('Thousand-Year Elixir')       ? "Thousand-Year Elixir's static" :
+        onField('Surrak and Goreclaw')        ? 'Surrak and Goreclaw'        :
+        onField('Shang-Chi, Master of Kung Fu') ? "Shang-Chi's static"        :
+        'a global-haste effect';
 
       steps.push('');
       steps.push('── Ulvenwald Tracker Fight Loop (execution) ──');
-      steps.push('  1. {1}{G},{T}: Ulvenwald Tracker — your biggest creature fights target creature an');
+      steps.push('  1. {1}{G},{T}: Ulvenwald Tracker — a creature you control fights target creature an');
       steps.push('     opponent controls. The opposing creature dies.');
-      if (hasElixir) {
-        steps.push('  2. {1},{T}: Thousand-Year Elixir untaps Ulvenwald Tracker.');
-      } else if (scActive) {
-        steps.push("  2. Shang-Chi's static lets Ulvenwald Tracker activate again as though it had haste —");
-        steps.push('     untap Tracker via your existing untap engine.');
-      } else {
-        steps.push('  2. Untap Ulvenwald Tracker via Thousand-Year Elixir or Shang-Chi\'s haste engine.');
-      }
-      steps.push('  3. Repeat until every creature your opponents control is destroyed.');
-      steps.push('  4. Attack with your unblocked board for lethal damage.');
+      steps.push(`  2. {1}{G}: ${bouncerName} bounces Ulvenwald Tracker to hand` +
+        (hasKogla && !hasTemur ? ' (Tracker is a Human Shaman).' : '.'));
+      steps.push(`  3. Recast Ulvenwald Tracker ({G}) — ${hasteSource} lets the freshly-recast Tracker`);
+      steps.push('     activate its {T} ability despite summoning sickness. Repeat from step 1.');
+      steps.push('  4. Repeat until every creature your opponents control is destroyed.');
+      steps.push('  5. Attack with your unblocked board for lethal damage.');
     }
   }
 
