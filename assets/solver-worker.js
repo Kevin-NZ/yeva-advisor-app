@@ -2214,22 +2214,23 @@ class GameState {
     // If it can't, the player loses immediately (life set to 0).
     if (s.pactOwed) {
       s.pactOwed = false; // clear regardless — either paid or lost
-      let potentialG = 0;
-      let potentialAny = 0;
+      // Candidates: untapped permanents that can produce mana right now.
+      const candidates = [];
       for (const p of s.battlefield) {
         const def = CARDS[p.cardKey];
         if (!def?.tapForMana) continue;
+        if (p.tapped) continue;
         if (def.types.includes('creature') && p.summoningSick) continue;
-        // Call tapForMana to see what it produces (using current state)
         const results = def.tapForMana(s, p);
         if (!results || !results.length) continue;
         const afterTap = results[0];
-        // How much did mana increase?
-        const gained = afterTap.mana.total() - s.mana.total();
-        const gainedG = afterTap.mana.G - s.mana.G;
-        potentialG   += Math.max(0, gainedG);
-        potentialAny += Math.max(0, gained);
+        const gainedTotal = afterTap.mana.total() - s.mana.total();
+        const gainedG     = afterTap.mana.G - s.mana.G;
+        if (gainedTotal <= 0) continue;
+        candidates.push({ id: p.id, gainedTotal, gainedG: Math.max(0, gainedG) });
       }
+      const potentialG   = candidates.reduce((sum, c) => sum + c.gainedG, 0);
+      const potentialAny = candidates.reduce((sum, c) => sum + c.gainedTotal, 0);
       // {2}{G}{G} requires at least 2G pips and 4 total mana
       const canPay = potentialG >= 2 && potentialAny >= 4;
       if (!canPay) {
@@ -2246,15 +2247,34 @@ class GameState {
         }];
         return s;
       }
-      // Can pay — deduct {2}{G}{G} from potential mana (tap sources as needed)
-      // For simplicity, just log the payment; the solver will naturally tap
-      // lands during the turn. The key enforcement is the loss branch above.
+      // [O-28] Actually CONSUME the mana sources used to pay {2}{G}{G} —
+      // tap a covering subset so they're unavailable for the rest of the
+      // turn, rather than just verifying feasibility and leaving every
+      // permanent untapped (which previously let the solver "pay" the Pact
+      // for free and still use the same lands normally afterward).
+      // Greedily tap smallest producers first to minimize over-tapping,
+      // continuing until both the {2} generic and {G}{G} colored
+      // requirements are met.
+      candidates.sort((a, b) => a.gainedTotal - b.gainedTotal);
+      let accG = 0, accTotal = 0;
+      const toTap = [];
+      for (const c of candidates) {
+        if (accTotal >= 4 && accG >= 2) break;
+        toTap.push(c.id);
+        accG += c.gainedG;
+        accTotal += c.gainedTotal;
+      }
+      s._ensureBF();
+      for (const id of toTap) {
+        const live = s.getPermanentById(id);
+        if (live) live.tapped = true;
+      }
       s.history = [...s.history, {
         turn: s.turn,
         msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
       }, {
         turn: s.turn,
-        msg: `Summoner's Pact upkeep: pay {2}{G}{G} ✓`,
+        msg: `Summoner's Pact upkeep: pay {2}{G}{G} ✓ (tapped ${toTap.length} permanent(s))`,
       }];
       s._ensurePlayers();
       s.players[0] = s.players[0].draw(0); // no-op clone to own player
