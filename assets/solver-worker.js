@@ -98,10 +98,12 @@ var COMBO_REQUIRED_KEYS = [
   ['concordant_crossroads','selvala'],
   ['concordant_crossroads','circle_of_dreams_druid'],
 
-  // Argothian Elder / Ley Weaver loops (combos 31, 40, 42, 46)
+  // Argothian Elder + Wirewood Lodge loops (combos 31, 40, 42, 46)
+  // [O-30] NOT ley_weaver — Wirewood Lodge's "{G},{T}: Untap target Elf"
+  // cannot target Ley Weaver (a Human Druid), so it does not complete this
+  // loop. (Ley Weaver IS valid in the Ashaya and Maze-of-Ith loops below.)
   ['argothian_elder','wirewood_lodge'],                    // 40, 42, 46
   ['argothian_elder','wirewood_lodge','nykthos'],          // 31
-  ['ley_weaver','wirewood_lodge'],
 
   // Maze of Ith + Elder/Weaver infinite mana loops
   // Elder taps → untaps Maze + Cradle/Nykthos; Maze taps → untaps Elder; repeat.
@@ -7676,6 +7678,36 @@ function greatestPower(state) {
   return Math.max(0, ...state.creatures().map(c => c.power || 0));
 }
 
+// [O-29] Gross mana a single mana-dork permanent taps for RIGHT NOW (before
+// subtracting any per-activation cost). Returns 0 for non-dorks. Used by the
+// generalized Temur+Symbiote loop detector, where the dork must gross ≥5 to
+// net positive after the loop's fixed {G}{G}{G}{G} recast cost.
+function dorkGrossOutput(state, p) {
+  switch (p.name) {
+    case 'Priest of Titania':
+    case 'Elvish Archdruid':
+    case 'Wirewood Channeler':
+      return elfCount(state);
+    case 'Circle of Dreams Druid':
+      return creatureCount(state);
+    case "Karametra's Acolyte":
+      return devotionG(state);
+    case 'Marwyn, the Nurturer':
+    case 'Topiary Lecturer':
+      return p.power || 0;
+    case 'Selvala, Heart of the Wilds':
+      // Selvala's {G},{T} produces greatestPower; the {G} is a separate
+      // activation cost handled by her own dedicated detectors, so the
+      // Symbiote-loop math (which assumes a no-cost {T} tap) doesn't apply
+      // to her — excluded here.
+      return 0;
+    case 'Llanowar Tribe':
+      return 3;
+    default:
+      return 0;
+  }
+}
+
 function cradleUntapped(state) {
   return state.battlefield.some(p =>
     (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') && !p.tapped
@@ -7684,6 +7716,41 @@ function cradleUntapped(state) {
 
 function ashayaOut(state) {
   return hasPerm(state, 'Ashaya, Soul of the Wild');
+}
+
+// [O-33] True if the battlefield has a mechanism to recast a green creature
+// spell an UNBOUNDED number of times this turn — the requirement for any
+// "infinite green-permanent-cast" win (Defiler counters, Beast Whisperer /
+// Glademuse draw).
+//
+// Repeatable green-creature recast mechanisms:
+//   • Temur Sabertooth / Kogla, the Titan Ape — "{1}{G}: return another
+//     creature you control to hand"; mana-cost bounce, unlimited per turn.
+//     Bounce a green creature, recast it → repeat.
+//   • Quirion Ranger / Scryb Ranger + Ashaya — the Ranger returns ITSELF
+//     (a Forest under Ashaya) to hand, then is recast (a green creature
+//     spell) for a fresh once-per-turn. Without Ashaya the Ranger returns a
+//     DIFFERENT Forest (a land) and is NOT itself recast, so no green spell
+//     is cast — and its "activate only once each turn" clause prevents
+//     repetition anyway. So the Ranger branch REQUIRES Ashaya.
+//
+// NOT sufficient on its own: Wirewood Symbiote (once per turn), a lone Ranger
+// without Ashaya (once per turn, and it bounces a land not itself).
+function hasRepeatableCreatureRecast(state) {
+  // Temur/Kogla may be in hand OR on the battlefield — with infinite mana
+  // (the context in which the win conditions using this helper run) a hand
+  // copy is castable, after which it loops.
+  if (inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
+      inHandOrField(state, 'Kogla, the Titan Ape', 'kogla')) {
+    return true;
+  }
+  // The Ashaya+Ranger loop must be ESTABLISHED on the battlefield (the Ranger
+  // returns itself as a Forest under Ashaya, then is recast each cycle).
+  if (ashayaOut(state) &&
+      (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))) {
+    return true;
+  }
+  return false;
 }
 
 // [O-12] True if the battlefield has a way to untap Geier Reach Sanitarium
@@ -8236,7 +8303,13 @@ var DETECTORS = [
       "Nykthos needs devotion ≥4 (produces ≥4G, pay {2}+{G}={3G}, net ≥1G). " +
       "Wild Growth / Elvish Guidance on any land: enchanted land taps for ≥2G, net ≥1G after Lodge.",
     check(state) {
-      if (!permReady(state, 'Argothian Elder') && !permReady(state, 'Ley Weaver')) return false;
+      // [O-30] Wirewood Lodge's untap ability is "{G},{T}: Untap target Elf."
+      // The land-untapper creature in this loop MUST be an Elf so Lodge can
+      // untap it each cycle. Argothian Elder is an Elf Druid ✓. Ley Weaver is
+      // a HUMAN Druid ✗ — Lodge cannot target it, so it does NOT work here
+      // (unlike the Ashaya and Maze-of-Ith loops, where Ley Weaver is valid
+      // because it untaps itself as a land / is untapped as any creature).
+      if (!permReady(state, 'Argothian Elder')) return false;
       if (!permUntapped(state, 'Wirewood Lodge')) return false;
       const cradleOk      = cradleUntapped(state) && creatureCount(state) >= 2;
       const nykthosOk     = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4;
@@ -8403,14 +8476,16 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid)  [COMBO 4, 5, 17]',
+    name: 'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]',
     description:
-      "Symbiote bounces a 1-drop Elf → untaps Circle of Dreams Druid. " +
+      "Symbiote bounces a 1-drop Elf → untaps the mana dork (free, once-per-turn). " +
       "Sabertooth bounces Symbiote ({1G}). Recast Symbiote ({G}) + 1-drop ({G}). " +
-      "Net positive with ≥5 creatures (Circle taps for ≥5G).",
+      "Loop costs {G}{G}{G}{G}; nets positive when the dork grosses ≥5 mana per tap " +
+      "(Circle of Dreams Druid ≥5 creatures, Priest of Titania / Wirewood Channeler / " +
+      "Elvish Archdruid ≥5 Elves, Karametra's Acolyte devotion ≥5, Marwyn / Topiary " +
+      "Lecturer power ≥5, Llanowar Tribe).",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
-      if (!permReady(state, 'Circle of Dreams Druid')) return false;
       if (!symbioteAvailable(state)) return false; // ability must not be exhausted this turn
       const hasOneDrop = state.battlefield.some(p =>
         p.subtypes && p.subtypes.includes('Elf') &&
@@ -8418,7 +8493,15 @@ var DETECTORS = [
          'Allosaurus Shepherd','Wirewood Symbiote'].includes(p.name)
       );
       if (!hasOneDrop) return false;
-      return creatureCount(state) >= 5;
+      // [O-29] Any untapped, non-summoning-sick dork that grosses ≥5 mana per
+      // tap completes the loop (was previously hardcoded to Circle of Dreams
+      // Druid + creatureCount≥5). Shang-Chi's haste-bypass also lets a sick
+      // dork tap (permReadyOrSCActive semantics).
+      return state.creatures().some(p =>
+        !p.tapped &&
+        (!p.summoningSick || shangChiActive(state)) &&
+        dorkGrossOutput(state, p) >= 5
+      );
     },
   },
 
@@ -8830,7 +8913,60 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  VITALIZE / EMERALD CHARM + ETERNAL WITNESS LOOPS  (COMBO 33, 39, 44, 51, 58)
+  //  [O-31] CLOUDSTONE CURIO + DEFILER OF VIGOR + HASTE + TWO 1-DROP ELVES
+  //
+  //  Defiler of Vigor: "As an additional cost to cast green permanent spells,
+  //  you may pay 2 life. Those spells cost {G} less..." → a 1-drop green elf
+  //  ({G}) is recast for {0} + 2 life.
+  //  Cloudstone Curio: when a nonartifact permanent enters, return another
+  //  permanent sharing a type (a creature) to hand.
+  //
+  //  Loop (needs two 1-drop green mana elves, A and B; A on battlefield, B
+  //  in hand, or vice-versa):
+  //   1. Tap elf A for {G}.
+  //   2. Cast elf B for {0} (pay 2 life via Defiler). It has haste (global
+  //      haste enabler), so it can tap.  Cloudstone bounces tapped elf A.
+  //   3. Repeat with roles swapped.  Net +1 green mana per cycle, −2 life.
+  //
+  //  A global-haste enabler is REQUIRED — without it the recast elf is
+  //  summoning-sick and cannot tap, so the loop nets 0 (verified in-engine).
+  //  This is LIFE-BOUNDED (2 life/cycle), not literally infinite, but ~19
+  //  iterations from 40 life is ample to assemble any finisher; each cast
+  //  also pumps the whole team via Defiler's +1/+1 trigger.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Cloudstone Curio + Defiler of Vigor + Haste + Two 1-drop Elves)',
+    description:
+      "Defiler makes a 1-drop green elf cost {0} + 2 life. Tap elf A for {G}; " +
+      "cast elf B for {0} (it has haste, can tap) → Cloudstone bounces elf A. " +
+      "Repeat with roles swapped: +1 green mana per cycle (−2 life). " +
+      "Requires a global-haste enabler (Concordant Crossroads / Thousand-Year " +
+      "Elixir / Surrak and Goreclaw / Shang-Chi) so recast elves can tap. " +
+      "Life-bounded but ample to assemble any finisher.",
+    check(state) {
+      if (!hasPerm(state, 'Cloudstone Curio')) return false;
+      if (!hasPerm(state, 'Defiler of Vigor')) return false;
+      if (!hasGlobalHaste(state)) return false;
+      // Need at least TWO 1-drop green mana elves (cost exactly {G}, tap for
+      // mana) to alternate as Cloudstone bounce targets. They may be on the
+      // battlefield or in hand (the loop keeps one in each zone). Count
+      // distinct copies across battlefield + hand.
+      const ONE_DROP_MANA_ELVES = new Set(['llanowar_elves', 'elvish_mystic', 'fyndhorn_elves']);
+      let count = 0;
+      for (const p of state.battlefield) {
+        if (ONE_DROP_MANA_ELVES.has(p.cardKey)) count++;
+      }
+      for (const k of state.hand) {
+        if (ONE_DROP_MANA_ELVES.has(k)) count++;
+      }
+      // Need a life buffer to run enough cycles to matter (≥3 cycles = 6 life).
+      const life = state.players?.[0]?.life ?? state.life ?? 0;
+      return count >= 2 && life > 6;
+    },
+  },
+
+
   //
   //  Vitalize {G}: Untap all creatures you control.
   //  Emerald Charm {G}: Untap target permanent (choose this mode).
@@ -9709,10 +9845,32 @@ var WIN_CONDITIONS = [
     name: 'Win: Infectious Bite (poison counters)',
     description:
       "Cast Infectious Bite ({1G}): target creature you control deals damage to a creature " +
-      "you don't control. Each opponent gets a poison counter. " +
-      "With infinite mana, cast 10 times → each opponent reaches 10 poison counters and loses.",
+      "you don't control. Each opponent gets ONE poison counter. " +
+      "Infectious Bite is an instant — casting it sends it to the graveyard, so infinite " +
+      "mana alone only casts it once. To reach 10 poison you must recur it from the " +
+      "graveyard each cast: Eternal/Timeless Witness returns it and a bouncer (Temur " +
+      "Sabertooth / Kogla) loops the Witness. Repeat 10× → each opponent reaches 10 " +
+      "poison and loses.",
     check(state) {
-      return state.hand && state.hand.includes('infectious_bite');
+      // Bite must be available to cast (hand, or recurrable from graveyard).
+      const biteInHand = state.hand && state.hand.includes('infectious_bite');
+      const biteInGrave = state.players?.[0]?.graveyard?.includes('Infectious Bite');
+      if (!biteInHand && !biteInGrave) return false;
+      // [O-32] An instant can only be cast ONCE per copy. Reaching 10 poison
+      // requires returning Infectious Bite from the graveyard each cycle.
+      // The deck's spell-recursion engine is Eternal/Timeless Witness (ETB:
+      // return a card from GY to hand) looped by a bouncer (Temur Sabertooth
+      // / Kogla): each cycle cast Bite (→ GY), cast Witness (ETB returns Bite),
+      // bounce Witness with Temur/Kogla, recast Witness. Every step is a spell
+      // cast, a triggered ETB, or a mana-cost bounce — none is a {T} ability
+      // on a summoning-sick creature, so NO global-haste effect is required
+      // (mirrors the Vitalize/Emerald-Charm + Witness loops, COMBO 33/39/etc.).
+      const hasWitness =
+        inHandOrField(state, 'Eternal Witness', 'eternal_witness') ||
+        inHandOrField(state, 'Timeless Witness', 'timeless_witness');
+      const hasBouncer =
+        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      return hasWitness && hasBouncer;
     },
   },
 
@@ -9896,14 +10054,13 @@ var WIN_CONDITIONS = [
       "Temur Sabertooth or Kogla bounce loops, Hyrax Tower Scout loops.",
     check(state) {
       // Beast Whisperer + creature loop: draws on every creature cast.
-      // With infinite mana, Temur/Kogla in hand or field can always find a loop target.
-      const hasRangerLoop =
-        hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
-      const hasBounceEngine =
-        inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
-        inHandOrField(state, 'Kogla, the Titan Ape', 'kogla');
+      // [O-33] Need a genuinely repeatable green-creature recast loop —
+      // Temur/Kogla bounce-recast or Ashaya+Ranger (Ranger returns itself).
+      // A lone Ranger without Ashaya is once-per-turn and bounces a land, not
+      // itself, so it does NOT loop.
+      const hasLoop = hasRepeatableCreatureRecast(state);
       if (inHandOrField(state, 'Beast Whisperer', 'beast_whisperer')) {
-        if (hasRangerLoop || hasBounceEngine) return true;
+        if (hasLoop) return true;
       }
       // [O-26] Glademuse's actual oracle: "Whenever a player casts a spell,
       // if it's not their turn, that player draws a card." The GLADEMUSE
@@ -9911,11 +10068,11 @@ var WIN_CONDITIONS = [
       // — NOT "whenever an opponent casts a spell". To go infinite, pass the
       // turn, then on an opponent's turn repeatedly recast creatures at
       // instant speed (needs Yeva's flash for green creature spells) via the
-      // same creature-recursion loop used for the Beast Whisperer case —
-      // each of YOUR casts triggers Glademuse for YOU.
+      // same creature-recursion loop — each of YOUR casts triggers Glademuse
+      // for YOU.
       if (inHandOrField(state, 'Glademuse', 'glademuse')) {
         const hasFlash = hasPerm(state, "Yeva, Nature's Herald");
-        if (hasFlash && (hasRangerLoop || hasBounceEngine)) return true;
+        if (hasFlash && hasLoop) return true;
       }
       return false;
     },
@@ -9973,7 +10130,8 @@ var WIN_CONDITIONS = [
       'Duskwatch Recruiter, Yisan, Elvish Harbinger.\n' +
       'Enchantment tutor (cast from hand): Survival of the Fittest.\n' +
       'ETB chain: Woodland Bellower → Duskwatch; Fierce Empath → Bellower → Duskwatch.\n' +
-      'Draw engines: Beast Whisperer (cast + creature loop draws deck), Glademuse (pass turn).\n' +
+      'Draw engines: Beast Whisperer (cast + repeatable creature loop draws deck), ' +
+      'Glademuse (with Yeva + creature loop: recast on opponents\' turns to draw deck).\n' +
       'Land paths: Sylvan Scrying → War Room; Crop Rotation → War Room (Ashaya = always a Forest to sac).\n' +
       'Sowing Mycospawn → on-cast fetches War Room/Geier Reach → draw to finisher.',
     check(state) {
@@ -10054,16 +10212,13 @@ var WIN_CONDITIONS = [
       }
 
       // ── Beast Whisperer / draw engines castable from hand ─────────────────
-      // With infinite mana + creature loop already on BF, casting Beast
-      // Whisperer draws the entire deck. Same for Beast Whisperer in hand
-      // when the mana combo involves creature recasts (Ranger loops, etc.).
+      // With infinite mana + a genuinely repeatable creature-recast loop on
+      // BF, casting Beast Whisperer draws the entire deck.
+      // [O-34] Must be a REPEATABLE recast loop (Temur/Kogla, or Ashaya+Ranger
+      // — the Ranger returns itself). A lone Ranger or Wirewood Symbiote is
+      // "activate only once each turn" and does NOT loop (same fix as O-33).
       if (state.hand && state.hand.includes('beast_whisperer')) {
-        // Need a creature loop on BF to draw cards with Whisperer
-        const hasCreatureLoop =
-          hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger') ||
-          hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape') ||
-          hasPerm(state, 'Wirewood Symbiote') || hasPerm(state, 'Hyrax Tower Scout');
-        if (hasCreatureLoop) return true;
+        if (hasRepeatableCreatureRecast(state)) return true;
       }
 
       // ── topDecked: Worldly Tutor already placed a creature on library top ─
@@ -10101,8 +10256,19 @@ var WIN_CONDITIONS = [
       // Fierce Empath ETB finds MV≥6 (Woodland Bellower MV 6) → then Bellower → Duskwatch
       if (inHandOrField(state, 'Fierce Empath', 'fierce_empath')) return true;
 
-      // ── Glademuse: pass turn → draw from opponent spells → find finisher ─
-      if (inHandOrField(state, 'Glademuse', 'glademuse')) return true;
+      // ── Glademuse: YOU draw when YOU cast a spell on an opponent's turn ───
+      // [O-34] Glademuse's actual oracle (see O-26): "Whenever a player casts
+      // a spell, if it's not their turn, that player draws a card." The
+      // CONTROLLER draws when THEY cast on someone else's turn — not the old
+      // "pass turn, opponents cast, you draw". To draw the library, pass the
+      // turn and repeatedly recast a creature at instant speed on an
+      // opponent's turn — needs Yeva (flash for green creatures) AND a
+      // repeatable recast loop.
+      if (inHandOrField(state, 'Glademuse', 'glademuse') &&
+          hasPerm(state, "Yeva, Nature's Herald") &&
+          hasRepeatableCreatureRecast(state)) {
+        return true;
+      }
 
       // ── Crop Rotation → War Room: fetch → pay life to draw → find finisher ─
       if (state.hand && state.hand.includes('crop_rotation') && state.lands().length > 0) return true;
@@ -10139,8 +10305,15 @@ var WIN_CONDITIONS = [
             (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))))));
       if (hitzelDeployed) return true;
 
-      // Infectious Bite in hand
-      if (state.hand && state.hand.includes('infectious_bite')) return true;
+      // [O-32] Infectious Bite is an instant — it is only a terminal win with
+      // a spell-recursion loop (Eternal/Timeless Witness + Temur/Kogla) to
+      // recur it from the graveyard for 10 poison counters. Bite in hand with
+      // infinite mana alone casts it once (1 poison) — not a deployed win.
+      const biteRecursion =
+        (inHandOrField(state, 'Eternal Witness', 'eternal_witness') ||
+         inHandOrField(state, 'Timeless Witness', 'timeless_witness')) &&
+        (hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape'));
+      if (state.hand && state.hand.includes('infectious_bite') && biteRecursion) return true;
 
       // Beast Whisperer + creature loop
       if (hasPerm(state, 'Beast Whisperer') &&
@@ -10183,15 +10356,12 @@ var WIN_CONDITIONS = [
     check(state) {
       // Defiler must be on the battlefield (not just in hand)
       if (!hasPerm(state, 'Defiler of Vigor')) return false;
-      // Need an infinite-cast loop — any ranger/bouncer that bounces a green permanent
-      const hasRanger =
-        hasPerm(state, 'Quirion Ranger') ||
-        hasPerm(state, 'Scryb Ranger');
-      const hasBouncer =
-        hasPerm(state, 'Temur Sabertooth') ||
-        hasPerm(state, 'Kogla, the Titan Ape');
-      const hasSymbiote = hasPerm(state, 'Wirewood Symbiote');
-      return hasRanger || hasBouncer || hasSymbiote;
+      // [O-33] Need a genuinely repeatable green-permanent-cast loop. A lone
+      // Ranger (once per turn, without Ashaya) or Wirewood Symbiote (once per
+      // turn) does NOT loop — only Temur/Kogla bounce-recast or Ashaya+Ranger
+      // (Ranger returns itself, recast each cycle) repeatedly casts a green
+      // permanent to re-trigger Defiler's counter.
+      return hasRepeatableCreatureRecast(state);
     },
     deployed(state) {
       return hasPerm(state, 'Defiler of Vigor');
@@ -10490,7 +10660,7 @@ var DETECTOR_REQUIRED_KEYS = {
   // one-shot untappers (Deserted Temple, Hope Tender, Magus) do not loop with Nykthos alone.
   'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':      ['selvala','quirion_ranger'],
   "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":        ['kogla','karametra_acolyte'],
-  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote','circle_of_dreams_druid'],
+  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote'],
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22]': ['temur_sabertooth','concordant_crossroads'],
   'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 57]': ['hyrax_tower_scout','temur_sabertooth'],
   'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]': ['hyrax_tower_scout','kogla'],
@@ -10499,6 +10669,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Yavimaya + Big Land)': ['ashaya','quirion_ranger','arbor_elf','yavimaya'],
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]': ['temur_sabertooth','wirewood_symbiote','selvala'],
   'Infinite Mana (Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf)  [COMBO 53, 54, 55]': ['selvala','cloudstone_curio','wirewood_symbiote'],
+  'Infinite Mana (Cloudstone Curio + Defiler of Vigor + Haste + Two 1-drop Elves)': ['cloudstone_curio','defiler_of_vigor'],
   'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]': ['marwyn','eternal_witness','temur_sabertooth'],
   'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]':  ['marwyn','eternal_witness','kogla'],
   'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]': ['selvala','eternal_witness','temur_sabertooth'],
@@ -10512,7 +10683,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance'],
   'Win: Duskwatch Recruiter (find all creatures)':                              ['duskwatch_recruiter'],
   'Win: Finale of Devastation X≥10':                                             ['finale_of_devastation'],
-  'Win: Infectious Bite (poison counters)':                                      ['infectious_bite'],
+  'Win: Infectious Bite (poison counters)':                                      ['infectious_bite','eternal_witness','temur_sabertooth'],
   'Win: Mikokoro Mill Line':                                                     ['mikokoro'],
   'Win: Scrapshooter Mill (infinite gift draw)':                                 ['scrapshooter'],
   'Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)':             ['beast_whisperer'],
@@ -10563,8 +10734,9 @@ for (const d of [...DETECTORS, ...WIN_CONDITIONS]) {
 //     be in hand or on field; both go into `present`).
 // • Tireless Provisioner+Ashaya+Ranger:    ashayaOut() AND tireless_provisioner +
 //     either ranger.
-// • Argothian Elder+Wirewood Lodge:        (argothian_elder OR ley_weaver) AND
-//     wirewood_lodge — equiv-grouped, so 'argothian_elder' suffices.
+// • Argothian Elder+Wirewood Lodge:        argothian_elder AND wirewood_lodge.
+//     [O-30] NOT ley_weaver — Wirewood Lodge untaps only Elves, and Ley Weaver
+//     is a Human Druid, so it cannot be the untapped creature in this loop.
 // • Argothian Elder + Maze of Ith:         argothian_elder + maze_of_ith.
 // • Defiler win:                           defiler_of_vigor + (any ranger / bouncer / symbiote).
 // • Hitzel:                                geier_reach + endurance + (Temur OR (Kogla+EW)
@@ -10671,14 +10843,17 @@ var _DETECTOR_PREFILTER = {
   'Infinite Mana (Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf)  [COMBO 53, 54, 55]':
     { all: ['selvala', 'cloudstone_curio', 'wirewood_symbiote'] },
 
+  'Infinite Mana (Cloudstone Curio + Defiler of Vigor + Haste + Two 1-drop Elves)':
+    { all: ['cloudstone_curio', 'defiler_of_vigor'] },
+
   // Kogla + Acolyte (combo 2)
   "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":
     { all: ['kogla', 'karametra_acolyte'],
       any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
 
   // Temur Sabertooth + various engines
-  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Circle of Dreams Druid)  [COMBO 4, 5, 17]':
-    { all: ['temur_sabertooth', 'wirewood_symbiote', 'circle_of_dreams_druid'] },
+  'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]':
+    { all: ['temur_sabertooth', 'wirewood_symbiote'] },
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
     { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]':
@@ -10728,7 +10903,7 @@ var _DETECTOR_PREFILTER = {
   'Win: Finale of Devastation X≥10':
     { all: ['finale_of_devastation'] },
   'Win: Infectious Bite (poison counters)':
-    { all: ['infectious_bite'] },
+    { all: ['temur_sabertooth'] },  // equiv-grouped with kogla; Witness+Bite checked in check()
   'Win: Mikokoro Mill Line':
     { all: ['mikokoro', 'eternal_witness'],
       any: [['temur_sabertooth', 'kogla'],
@@ -11095,9 +11270,6 @@ function trinisphereMin(state) {
  */
 function costReductions(state, def) {
   let genericReduction = 0;
-  const isGreenPermanent = def.cost?.includes('G') &&
-    (def.types.includes('creature') || def.types.includes('enchantment') ||
-     def.types.includes('artifact') || def.types.includes('planeswalker'));
 
   for (const perm of state.battlefield) {
     const permDef = CARDS[perm.cardKey];
@@ -11112,17 +11284,36 @@ function costReductions(state, def) {
         genericReduction += permDef.costReduction.amount;
       }
     }
-    // Defiler of Vigor: green permanent spells cost {1} less (pay 2 life as additional cost)
-    // Simplified: always apply the reduction (life payment not tracked turn-by-turn)
-    if (perm.name === 'Defiler of Vigor' && isGreenPermanent) {
-      genericReduction += 1;
-    }
+    // [O-31] Defiler of Vigor's reduction is "{G} less ... reduces only the
+    // amount of GREEN mana you pay" — NOT generic. Handled separately in
+    // effectiveCost via defilerGreenReduction(); do NOT add it here (a generic
+    // reduction does nothing for pure-colored costs like {G}, which was the
+    // bug — Llanowar Elves stayed {G} instead of dropping to {0}).
     // Nylea, Keen-Eyed: creature spells cost {1} less
     if (perm.name === 'Nylea, Keen-Eyed' && def.types.includes('creature')) {
       genericReduction += 1;
     }
   }
   return genericReduction;
+}
+
+/**
+ * [O-31] Defiler of Vigor: "As an additional cost to cast green permanent
+ * spells, you may pay 2 life. Those spells cost {G} less to cast if you paid
+ * life this way. This effect reduces only the amount of green mana you pay."
+ * Returns the number of GREEN pips (0 or 1) to remove from the spell's cost.
+ * Only once per spell (the ⚖ ruling). Requires Defiler on the battlefield and
+ * a green permanent spell that actually has a green pip to reduce.
+ */
+function defilerGreenReduction(state, def) {
+  const isGreenPermanent = def.cost?.includes('G') &&
+    (def.types.includes('creature') || def.types.includes('enchantment') ||
+     def.types.includes('artifact') || def.types.includes('planeswalker'));
+  if (!isGreenPermanent) return 0;
+  for (const perm of state.battlefield) {
+    if (perm.name === 'Defiler of Vigor') return 1;
+  }
+  return 0;
 }
 
 /**
@@ -11134,12 +11325,16 @@ function effectiveCost(state, def) {
   // Use pre-cached parsed cost (set on def at cards.js load time) — Option A
   const raw = def._parsedCost ?? _parseCost(def.cost);
 
+  // [O-31] Defiler of Vigor removes one GREEN pip (pay 2 life), not generic.
+  const greenCut = defilerGreenReduction(state, def);
+
   // Option B: skip STAX checks when no STAX is on the battlefield
   if (!state._hasSTAX) {
     // Fast path: only check Emerald Medallion cost reduction
     const reduction = costReductions(state, def);
     let generic = Math.max(0, raw.generic - reduction);
     const colored = { ...raw.colored };
+    if (greenCut > 0 && colored.G > 0) colored.G = Math.max(0, colored.G - greenCut);
     let costStr = '';
     if (generic > 0) costStr += String(generic);
     for (const [color, amt] of Object.entries(colored)) costStr += color.repeat(amt);
@@ -11151,6 +11346,7 @@ function effectiveCost(state, def) {
   const thorn = thornTax(state, def);
   let generic = Math.max(0, raw.generic - reduction) + thorn;
   const colored = { ...raw.colored };
+  if (greenCut > 0 && colored.G > 0) colored.G = Math.max(0, colored.G - greenCut);
   const coloredTotal = Object.values(colored).reduce((a, b) => a + b, 0);
   const triMin = trinisphereMin(state);
   if (generic + coloredTotal < triMin) generic = triMin - coloredTotal;
