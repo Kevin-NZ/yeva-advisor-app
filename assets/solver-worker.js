@@ -5159,7 +5159,11 @@ var CARDS = {
   },
   chomping_changeling: {
     externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
-    name:'Chomping Changeling', types:['creature'], subtypes:['Shapeshifter'],
+    // Changeling: this card is EVERY creature type. The deck's combos care about
+    // the Elf type (elfCount for Priest/Archdruid, Symbiote/Ranger fodder) and the
+    // Human type (Kogla bounces Humans), so we list both alongside 'Shapeshifter'.
+    // (Other creature types are not used by any current detector.)
+    name:'Chomping Changeling', types:['creature'], subtypes:['Shapeshifter','Elf','Human'],
     cost:'2G', power:3, toughness:3,
     // ETB: destroy up to one target artifact or enchantment.
     // Identical to Reclamation Sage ETB — implemented in GameState.enterBattlefield.
@@ -7525,46 +7529,6 @@ function symbioteAvailable(state) {
   );
 }
 
-// True if Temur Sabertooth is on battlefield AND there is a loopable creature —
-// something to bounce and recast each cycle. With infinite mana, any creature in
-// hand works (recast it each cycle). Any other creature already on board also
-// works (bounce it, recast it). Without a loop target, Temur alone does nothing.
-// Note: draw engines (Beast Whisperer, Glademuse) are excluded as loop targets —
-// bouncing your draw engine breaks the loop itself.
-var DRAW_ENGINES = new Set(['Beast Whisperer', 'Glademuse']);
-function temurLoopReady(state) {
-  if (!hasPerm(state, 'Temur Sabertooth')) return false;
-  // Any creature in hand = can recast it each cycle
-  const hasCreatureInHand = state.hand && state.hand.some(ck => {
-    const def = CARDS[ck];
-    return def && def.types.includes('creature');
-  });
-  if (hasCreatureInHand) return true;
-  // Any non-Temur, non-draw-engine creature on board = can be bounced and recast
-  const hasOtherCreature = state.battlefield.some(p =>
-    p.name !== 'Temur Sabertooth' &&
-    !DRAW_ENGINES.has(p.name) &&
-    p.types && p.types.includes('creature')
-  );
-  return hasOtherCreature;
-}
-
-// Kogla needs a Human to bounce ({1G}: return target Human you control).
-// With infinite mana: any Human in hand or on board besides Kogla.
-function koglaLoopReady(state) {
-  if (!hasPerm(state, 'Kogla, the Titan Ape')) return false;
-  const hasHumanInHand = state.hand && state.hand.some(ck => {
-    const def = CARDS[ck];
-    return def && def.types.includes('creature') && def.subtypes?.includes('Human');
-  });
-  if (hasHumanInHand) return true;
-  const hasHumanOnBoard = state.battlefield.some(p =>
-    p.name !== 'Kogla, the Titan Ape' &&
-    p.subtypes && p.subtypes.includes('Human')
-  );
-  return hasHumanOnBoard;
-}
-
 // True if card is on battlefield OR in hand (with infinite mana, hand = castable)
 function inHandOrField(state, name, cardKey) {
   return hasPerm(state, name) ||
@@ -7678,6 +7642,28 @@ function greatestPower(state) {
   return Math.max(0, ...state.creatures().map(c => c.power || 0));
 }
 
+// Mana value of a card from its cost string (counts generic digits + colour pips).
+// "G" → 1, "1G" → 2, "2GG" → 4, null/"" → 0.
+function cardMV(cardKey) {
+  const cost = CARDS[cardKey]?.cost;
+  if (!cost) return 0;
+  let mv = 0;
+  for (const ch of cost) {
+    if (ch >= '0' && ch <= '9') mv += Number(ch);
+    else mv += 1;  // each colour/colourless pip letter is 1
+  }
+  return mv;
+}
+
+// Is there a cheap (MV ≤ 1) creature on the battlefield OTHER than `exceptName`?
+// Used by Cloudstone Curio ping-pong loops, which recast a cheap partner each
+// cycle — the partner must be affordable ({G} for a 1-drop) for the loop to net.
+function hasCheapCreaturePartner(state, exceptName) {
+  return state.creatures().some(c =>
+    c.name !== exceptName && cardMV(c.cardKey) <= 1
+  );
+}
+
 // [O-29] Gross mana a single mana-dork permanent taps for RIGHT NOW (before
 // subtracting any per-activation cost). Returns 0 for non-dorks. Used by the
 // generalized Temur+Symbiote loop detector, where the dork must gross ≥5 to
@@ -7744,11 +7730,50 @@ function hasRepeatableCreatureRecast(state) {
       inHandOrField(state, 'Kogla, the Titan Ape', 'kogla')) {
     return true;
   }
+  // Cloudstone Curio ping-pong: casting creature A bounces creature B, casting B
+  // bounces A, repeat. This is an unbounded creature-recast loop given infinite
+  // mana. Cloudstone bounces "ANOTHER permanent sharing a type", so it needs at
+  // least two creatures to ping-pong between (one alone has no partner). A second
+  // creature in hand also works as the partner to start the loop.
+  if (hasPerm(state, 'Cloudstone Curio')) {
+    const creatureCountTotal =
+      state.creatures().length +
+      (state.hand ? state.hand.filter(k => {
+        var def = CARDS;
+        return def && def.types && def.types.includes('creature');
+      }).length : 0);
+    if (creatureCountTotal >= 2) return true;
+  }
   // The Ashaya+Ranger loop must be ESTABLISHED on the battlefield (the Ranger
   // returns itself as a Forest under Ashaya, then is recast each cycle).
   if (ashayaOut(state) &&
       (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))) {
     return true;
+  }
+  return false;
+}
+
+// True if there is a bounce engine that can repeatedly recast a SPECIFIC
+// creature (so a creature's own ETB re-fires each cycle). This is stricter
+// than hasRepeatableCreatureRecast: the Ashaya+Ranger loop recasts only the
+// Ranger, so it does NOT re-trigger a different creature's ETB (e.g. Regal
+// Force's "draw per green creature"). Temur/Kogla bounce-recast any creature;
+// Cloudstone Curio ping-pongs a creature with a partner — both re-enter the
+// targeted creature each cycle. Used by the Regal Force Draw Library branch.
+function hasSelfRecastBounce(state, selfName) {
+  if (inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
+      inHandOrField(state, 'Kogla, the Titan Ape', 'kogla')) {
+    return true;
+  }
+  // Cloudstone Curio needs a partner creature (≠ the looped creature) to
+  // ping-pong with, so it bounces the looped creature back each cycle.
+  if (hasPerm(state, 'Cloudstone Curio')) {
+    const partners = state.creatures().filter(c => c.name !== selfName).length +
+      (state.hand ? state.hand.filter(k => {
+        var def = CARDS;
+        return def && def.types && def.types.includes('creature');
+      }).length : 0);
+    if (partners >= 1) return true;
   }
   return false;
 }
@@ -8566,24 +8591,23 @@ var DETECTORS = [
     name: 'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]',
     description:
       "Hyrax ETB untaps the mana dork. Sabertooth bounces Hyrax ({1G}), recast ({2G}). " +
-      "Total loop cost {4G}+{1}. Need dork producing ≥5G. " +
+      "Total loop cost {4G}+{1}. Need dork grossing ≥5G. " +
       "Priest/Archdruid/Channeler: ≥5 elves. Circle: ≥5 creatures. " +
-      "Selvala: power ≥6 (includes {G} activation). Marwyn: power ≥6.",
+      "Karametra's Acolyte: devotion ≥5. Selvala: power ≥6. Marwyn/Topiary: power ≥5. Llanowar Tribe.",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       if (!hasPerm(state, 'Hyrax Tower Scout')) return false;
-      return state.battlefield.some(p => {
-        if (p.summoningSick) return false;
-        switch (p.name) {
-          case 'Priest of Titania':           return elfCount(state) >= 5;
-          case 'Circle of Dreams Druid':      return creatureCount(state) >= 5;
-          case 'Elvish Archdruid':            return elfCount(state) >= 5;
-          case 'Wirewood Channeler':          return elfCount(state) >= 5;
-          case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 6;
-          case 'Marwyn, the Nurturer':        return (p.power || 0) >= 6;
-          case 'Topiary Lecturer':            return (p.power || 0) >= 6;
-          default: return false;
-        }
+      // [O-29] Any untapped, non-summoning-sick dork that grosses ≥5 mana per
+      // tap completes the loop. Use the shared dorkGrossOutput helper so the dork
+      // list (Priest, Archdruid, Channeler, Circle, Karametra's Acolyte, Marwyn,
+      // Topiary, Llanowar Tribe) stays consistent with the Symbiote-loop detector.
+      // Selvala is intentionally excluded by dorkGrossOutput (her {G} activation
+      // cost is handled by her own dedicated detectors); keep her special-cased.
+      return state.creatures().some(p => {
+        if (p.summoningSick && !shangChiActive(state)) return false;
+        if (p.tapped) return false;
+        if (p.name === 'Selvala, Heart of the Wilds') return greatestPower(state) >= 6;
+        return dorkGrossOutput(state, p) >= 5;
       });
     },
   },
@@ -9392,10 +9416,295 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  TIRELESS PROVISIONER + ASHAYA + QUIRION/SCRYB RANGER  (Combo Summary #9)
+  //  ARGOTHIAN ELDER + HYRAX TOWER SCOUT BOUNCE ENGINE + BIG LAND
   //
-  //  Tireless Provisioner oracle: "Landfall — Whenever a land you control
-  //  enters, create a Food token or a Treasure token."
+  //  Source: ref/card_roles.md (Argothian Elder): "Goes infinite with
+  //  Wirewood Symbiote / Hyrax Tower Scout loops when Gaea's Cradle or
+  //  Nykthos, Shrine to Nyx are in play."
+  //
+  //  Unlike the Maze of Ith / Wirewood Lodge variants (which untap Elder via a
+  //  dedicated land), here the Hyrax bounce-recast loop supplies the repeatable
+  //  untap: Hyrax's ETB ("untap target creature") refreshes Argothian Elder
+  //  each cycle. Elder ({T}: untap two lands, FREE) untaps the big mana land,
+  //  which is tapped for mana each cycle.
+  //
+  //  Loop (Temur variant):
+  //   1. Hyrax ETB → untap Argothian Elder.
+  //   2. Tap Elder → untap the big land (+ a 2nd land; Elder must target two).
+  //   3. Tap the big land for mana.
+  //   4. Temur Sabertooth ({1}{G}) → bounce Hyrax to hand.
+  //   5. Recast Hyrax ({2}{G}) → ETB untaps Elder again. Repeat.
+  //
+  //  Kogla variant: Kogla bounces Hyrax (a Human Scout) for {1}{G} instead of
+  //  Temur — identical loop cost.
+  //
+  //  Mana accounting (conservative — one Hyrax cycle yields exactly one Elder
+  //  untap = one big-land tap):
+  //    Loop cost = bounce {1}{G} (2) + Hyrax recast {2}{G} (3) = 5 mana.
+  //    Gaea's Cradle: taps for creatureCount (N). Net = N − 5 → infinite at N ≥ 6.
+  //    Nykthos:       taps for devotionG (D), minus {2} activation.
+  //                   Net = D − 2 − 5 = D − 7 → infinite at devotion ≥ 8.
+  //
+  //  Requirements:
+  //   • Argothian Elder ready (untapped, not summoning sick — or Shang-Chi active).
+  //   • Hyrax Tower Scout available (on battlefield or in hand to recast).
+  //   • A bounce engine: Temur Sabertooth OR Kogla, the Titan Ape.
+  //   • At least TWO lands (Argothian Elder must target two different lands).
+  //   • A big land: Cradle (creatureCount ≥ 6) or Nykthos (devotion ≥ 8).
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)',
+    description:
+      "Hyrax ETB untaps Argothian Elder / Ley Weaver; it (free) untaps the big land, tapped each cycle. " +
+      "Temur/Kogla bounce-recast Hyrax ({1G}+{2G}=5 mana/cycle). " +
+      "Gaea's Cradle: creatureCount ≥ 6 (net ≥1G). " +
+      "Nykthos: devotion ≥ 8 (net ≥1G after {2} activation). " +
+      "The land-untapper requires a 2nd land to target. No Ashaya required.",
+    check(state) {
+      // The land-untapper must be able to activate its tap ability this cycle.
+      // Argothian Elder (Elf Druid) and Ley Weaver (Human Druid) both have the
+      // identical "{T}: Untap two target lands" ability and are interchangeable
+      // here — Hyrax's ETB untaps ANY creature, so creature type is irrelevant.
+      if (!permReadyOrSCActive(state, 'Argothian Elder') &&
+          !permReadyOrSCActive(state, 'Ley Weaver')) return false;
+      // A repeatable Hyrax bounce engine: Temur Sabertooth or Kogla.
+      const bounceEngine = hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      if (!bounceEngine) return false;
+      // Hyrax must be available — on the battlefield (about to be bounced) or in
+      // hand (canonical PRE state, recast to start the loop).
+      const hyraxAvailable =
+        hasPerm(state, 'Hyrax Tower Scout') ||
+        (state.hand && state.hand.includes('hyrax_tower_scout'));
+      if (!hyraxAvailable) return false;
+      // The untapper's ability targets TWO different lands — require ≥2 lands.
+      if (state.lands().length < 2) return false;
+      // Big land branch: Cradle (creatureCount ≥ 6) or Nykthos (devotion ≥ 8).
+      if (cradleUntapped(state) && creatureCount(state) >= 6) return true;
+      if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 8) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ARGOTHIAN ELDER / LEY WEAVER + HYRAX + CLOUDSTONE CURIO + BIG LAND
+  //
+  //  A cheaper bounce engine for the Hyrax variant. Cloudstone Curio:
+  //  "Whenever a nonartifact permanent you control enters, you may return
+  //  another permanent you control that shares a permanent type with it to its
+  //  owner's hand." Casting Hyrax bounces a partner creature; casting the
+  //  partner bounces Hyrax; each Hyrax recast re-fires its ETB (untap the
+  //  land-untapper). The bounce itself is FREE — no {1}{G} Temur activation.
+  //
+  //  Loop:
+  //   1. Cast Hyrax ({2}{G}) → Cloudstone bounces partner X → Hyrax ETB untaps
+  //      Argothian Elder / Ley Weaver.
+  //   2. Tap Elder/Weaver → untap big land (+ 2nd land). Tap big land → +N.
+  //   3. Cast partner X ({G}) → Cloudstone bounces Hyrax. Repeat from 1.
+  //
+  //  Mana accounting (conservative, X is a 1-drop):
+  //    Per cycle: cast Hyrax {2}{G} (3) + cast X {G} (1) = 4 mana. Bounce free.
+  //    Gaea's Cradle: net = N − 4 → infinite at creatureCount ≥ 5 (break-even 4).
+  //    Nykthos: net = D − 2 − 4 = D − 6 → infinite at devotion ≥ 7.
+  //
+  //  Requirements:
+  //   • Argothian Elder or Ley Weaver ready; ≥2 lands (untapper targets two).
+  //   • Hyrax available (battlefield or hand).
+  //   • Cloudstone Curio on the battlefield.
+  //   • A cheap (MV ≤ 1) creature partner OTHER than Hyrax to ping-pong with.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Cloudstone Curio + Cradle/Nykthos)',
+    description:
+      "Cloudstone Curio ping-pongs Hyrax with a cheap partner creature (free bounce); each Hyrax " +
+      "recast re-fires its ETB, untapping Argothian Elder / Ley Weaver, which untaps the big land. " +
+      "Per cycle: Hyrax {2G} + 1-drop partner {G} = 4 mana. " +
+      "Gaea's Cradle: creatureCount ≥ 5. Nykthos: devotion ≥ 7. " +
+      "Needs a 2nd land and a cheap (MV≤1) partner other than Hyrax.",
+    check(state) {
+      if (!permReadyOrSCActive(state, 'Argothian Elder') &&
+          !permReadyOrSCActive(state, 'Ley Weaver')) return false;
+      if (!hasPerm(state, 'Cloudstone Curio')) return false;
+      const hyraxAvailable =
+        hasPerm(state, 'Hyrax Tower Scout') ||
+        (state.hand && state.hand.includes('hyrax_tower_scout'));
+      if (!hyraxAvailable) return false;
+      // Cloudstone needs a cheap partner creature (≠ Hyrax) to ping-pong with.
+      if (!hasCheapCreaturePartner(state, 'Hyrax Tower Scout')) return false;
+      // The untapper targets TWO different lands — require ≥2 lands.
+      if (state.lands().length < 2) return false;
+      // Big land branch — thresholds one lower than Temur (bounce is free).
+      if (cradleUntapped(state) && creatureCount(state) >= 5) return true;
+      if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 7) return true;
+      return false;
+    },
+  },
+
+  //  Companion to the Hyrax variant above. Same source (ref/card_roles.md):
+  //  Argothian Elder "goes infinite with Wirewood Symbiote / Hyrax Tower Scout
+  //  loops when Gaea's Cradle or Nykthos are in play."
+  //
+  //  Here Wirewood Symbiote supplies the repeatable Elder untap:
+  //    "Return an Elf you control: Untap target creature. Activate only once
+  //     each turn."
+  //  Symbiote's once-per-turn clause is reset each cycle by Temur Sabertooth
+  //  bouncing and recasting Symbiote (a fresh object = a fresh once-per-turn).
+  //
+  //  Loop:
+  //   1. Symbiote: return an Elf (a dork, NOT Argothian Elder) → untap Elder.
+  //   2. Tap Elder → untap the big land (+ a 2nd land target).
+  //   3. Tap the big land for mana.
+  //   4. Recast the returned Elf ({G}).
+  //   5. Temur bounce Symbiote ({1}{G}), recast Symbiote ({G}). Repeat.
+  //
+  //  CRITICAL DIFFERENCES from the Hyrax variant:
+  //   • Reset engine is Temur ONLY — Kogla returns Humans, but Symbiote is an
+  //     Insect, so Kogla cannot bounce it.
+  //   • Symbiote's cost returns an Elf each cycle, so a SECOND Elf (besides
+  //     Argothian Elder itself) must exist to feed the cost — returning Elder
+  //     would remove the untap source.
+  //   • That returned Elf is briefly off the battlefield, dipping the Cradle
+  //     count by 1 mid-loop. Net per cycle = (N-1) − 4 = N − 5.
+  //
+  //  Mana accounting (conservative):
+  //    Loop cost = recast Elf {G} (1) + Temur bounce {1}{G} (2) + recast
+  //                Symbiote {G} (1) = 4 mana.
+  //    Gaea's Cradle: taps for (N-1) during the loop. Net = (N-1) − 4 = N − 5
+  //                   → infinite at creatureCount ≥ 6.
+  //    Nykthos:       taps for devotion D, minus {2} activation, with one Elf
+  //                   briefly returned. Conservatively require devotion ≥ 8
+  //                   (matching the Hyrax variant's headroom).
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)',
+    description:
+      "Symbiote (return an Elf) untaps Argothian Elder / Ley Weaver; it (free) untaps the big land. " +
+      "Temur bounce-recasts Symbiote to reset its once-per-turn ({1G}+{G}), plus recast the " +
+      "returned Elf ({G}) = 4 mana/cycle. " +
+      "Gaea's Cradle: creatureCount ≥ 6. Nykthos: devotion ≥ 8. " +
+      "Needs an Elf to feed Symbiote that ISN'T the untapper, a 2nd land, and Temur " +
+      "(Kogla can't bounce the Insect Symbiote). No Ashaya required.",
+    check(state) {
+      // The land-untapper: Argothian Elder (Elf Druid) or Ley Weaver (Human
+      // Druid). Both have "{T}: Untap two target lands". Symbiote untaps ANY
+      // creature, so either works as the untap target.
+      const untapper =
+        (permReadyOrSCActive(state, 'Argothian Elder') && 'Argothian Elder') ||
+        (permReadyOrSCActive(state, 'Ley Weaver') && 'Ley Weaver') ||
+        null;
+      if (!untapper) return false;
+      // Wirewood Symbiote on the battlefield (the untap source).
+      if (!hasPerm(state, 'Wirewood Symbiote')) return false;
+      // Reset engine: Temur ONLY (Kogla returns Humans; Symbiote is an Insect).
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      // Symbiote's cost returns an Elf each cycle. That Elf must NOT be the
+      // untapper we're relying on (returning the untapper would remove the
+      // untap source). Ley Weaver isn't an Elf, so it's never a candidate to be
+      // returned; Argothian Elder is an Elf, so it must be excluded explicitly.
+      const feedElves = state.battlefield.filter(p =>
+        p.subtypes && p.subtypes.includes('Elf') && p.name !== untapper
+      ).length;
+      if (feedElves < 1) return false;
+      // The untapper targets TWO different lands — require ≥2 lands.
+      if (state.lands().length < 2) return false;
+      // Big land branch: Cradle (creatureCount ≥ 6) or Nykthos (devotion ≥ 8).
+      if (cradleUntapped(state) && creatureCount(state) >= 6) return true;
+      if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 8) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  MAGUS OF THE CANDELABRA + HYRAX / WIREWOOD SYMBIOTE BOUNCE ENGINE + BIG LAND
+  //
+  //  Third member of the bounce-engine family (after the Argothian Elder /
+  //  Ley Weaver Hyrax and Symbiote loops). Magus of the Candelabra
+  //  ("{X},{T}: Untap X target lands") is the land-untapper; the Hyrax ETB
+  //  (or Wirewood Symbiote's ability) re-untaps Magus each cycle, reset by the
+  //  bounce engine.
+  //
+  //  Loop (Hyrax + Temur, Gaea's Cradle):
+  //   1. Hyrax ETB → untap Magus.
+  //   2. Magus: pay {1}, untap Gaea's Cradle (X=1).
+  //   3. Tap Cradle → +N (N = creature count).
+  //   4. Temur ({1}{G}) bounce Hyrax; recast Hyrax ({2}{G}) → ETB untaps Magus.
+  //   5. Repeat.
+  //
+  //  KEY DIFFERENCES from the Elder/Weaver loops:
+  //   • Magus's untap costs {X} ({1} for one big land), adding {1} per cycle.
+  //   • Magus untaps only its targets — it does NOT require a second land
+  //     (Argothian Elder must target two lands; Magus can untap a lone Cradle).
+  //
+  //  Mana accounting (conservative, X=1 to untap the single big land):
+  //    Hyrax loop cost = bounce {1}{G} (2) + recast {2}{G} (3) = 5 mana.
+  //    Magus cost      = {1} per cycle.
+  //    Gaea's Cradle:  net = N − 5 − 1 = N − 6 → infinite at creatureCount ≥ 7.
+  //    Nykthos:        net = D − 2 − 5 − 1 = D − 8 → infinite at devotion ≥ 9.
+  //
+  //  Symbiote sub-variant: Wirewood Symbiote untaps Magus instead of Hyrax.
+  //   • Reset engine is Temur ONLY (Kogla can't bounce the Insect Symbiote).
+  //   • Symbiote's return cost needs an Elf (Magus is a Human Wizard, never the
+  //     returned Elf), and that Elf is briefly off the battlefield. Using the
+  //     same conservative thresholds (Cradle ≥7, Nykthos ≥9) keeps headroom.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)',
+    description:
+      "Hyrax ETB (or Wirewood Symbiote) untaps the {1}-cost land-untapper (Magus of the " +
+      "Candelabra, Formidable Speaker, or Hope Tender); it pays {1} to untap the big land, tapped each cycle. " +
+      "Hyrax loop {1G}+{2G}=5 plus the untapper's {1} = 6 mana/cycle. " +
+      "Gaea's Cradle: creatureCount ≥ 7. Nykthos: devotion ≥ 9. " +
+      "No 2nd land needed (untaps only its target). Symbiote sub-variant needs " +
+      "Temur (not Kogla) and an Elf to feed Symbiote that isn't the untapper.",
+    check(state) {
+      // The {1}-cost land-untapper this cycle: Magus of the Candelabra
+      // ("{X},{T}: Untap X target lands"), Formidable Speaker
+      // ("{1},{T}: Untap another target permanent"), or Hope Tender
+      // ("{1},{T}: Untap target land"). All untap one big land for {1} and are
+      // re-untapped by Hyrax's ETB / Symbiote's ability.
+      const untapper =
+        (permReadyOrSCActive(state, 'Magus of the Candelabra') && 'Magus of the Candelabra') ||
+        (permReadyOrSCActive(state, 'Formidable Speaker') && 'Formidable Speaker') ||
+        (permReadyOrSCActive(state, 'Hope Tender') && 'Hope Tender') ||
+        null;
+      if (!untapper) return false;
+
+      // Untap-source + reset-engine pairing:
+      //  (a) Hyrax ETB untaps the untapper, reset by Temur OR Kogla; or
+      //  (b) Wirewood Symbiote untaps the untapper, reset by Temur ONLY, and
+      //      needs an Elf to feed Symbiote's return cost that isn't the untapper.
+      const hyraxAvailable =
+        hasPerm(state, 'Hyrax Tower Scout') ||
+        (state.hand && state.hand.includes('hyrax_tower_scout'));
+      const hyraxEngine =
+        hyraxAvailable &&
+        (hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape'));
+
+      // The Elf returned to Symbiote must NOT be the untapper we're relying on.
+      // Magus is a Human Wizard (never an Elf candidate); Formidable Speaker IS
+      // an Elf, so it must be excluded from the feed-Elf count.
+      const feedElves = state.battlefield.filter(p =>
+        p.subtypes && p.subtypes.includes('Elf') && p.name !== untapper
+      ).length;
+      const symbioteEngine =
+        hasPerm(state, 'Wirewood Symbiote') &&
+        hasPerm(state, 'Temur Sabertooth') &&  // Kogla can't bounce an Insect
+        feedElves >= 1;
+
+      if (!hyraxEngine && !symbioteEngine) return false;
+
+      // Big land branch. The untapper untaps only its target, so NO 2nd-land
+      // requirement. Thresholds are one higher than the free Elder/Weaver loops
+      // (the untapper pays {1} per cycle).
+      if (cradleUntapped(state) && creatureCount(state) >= 7) return true;
+      if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 9) return true;
+      return false;
+    },
+  },
+
   //  Treasure token: {T}, Sacrifice: Add one mana of any color.
   //
   //  With Ashaya: Quirion Ranger is a Forest land. When it enters the battlefield
@@ -9774,7 +10083,7 @@ var WIN_CONDITIONS = [
   // ══════════════════════════════════════════════════════════════════════════
   //  DUSKWATCH RECRUITER — tutor entire creature library, then attack
   //
-  //  With infinite mana, activate Duskwatch ({2G},{T}) repeatedly to find every
+  //  With infinite mana, activate Duskwatch ({2}{G}, no {T}) repeatedly to find every
   //  creature in the library, put them in hand. Cast them all. With Finale of
   //  Devastation X≥10, all creatures get +X/+X and haste → attack for lethal.
   //  Or simply attack with an arbitrarily large board.
@@ -10062,6 +10371,15 @@ var WIN_CONDITIONS = [
       if (inHandOrField(state, 'Beast Whisperer', 'beast_whisperer')) {
         if (hasLoop) return true;
       }
+      // Regal Force's ETB draws a card per green creature you control. Unlike
+      // Beast Whisperer (which draws on ANY creature cast), Regal Force only
+      // draws when IT re-enters, so it needs a loop that recasts REGAL FORCE
+      // ITSELF — Temur/Kogla bounce-recast or Cloudstone ping-pong, NOT the
+      // Ashaya+Ranger loop (which only recasts the Ranger). Regal Force is a
+      // green creature (4GGG), so it counts itself → draws ≥1 per recast.
+      if (inHandOrField(state, 'Regal Force', 'regal_force')) {
+        if (hasSelfRecastBounce(state, 'Regal Force')) return true;
+      }
       // [O-26] Glademuse's actual oracle: "Whenever a player casts a spell,
       // if it's not their turn, that player draws a card." The GLADEMUSE
       // CONTROLLER draws when THEY cast a spell during someone else's turn
@@ -10084,7 +10402,7 @@ var WIN_CONDITIONS = [
   //  With infinite mana and any creature tutor in hand or on the battlefield,
   //  we can always find Duskwatch Recruiter (or another finisher) and win.
   //
-  //  With infinite mana: activate Duskwatch repeatedly ({2G},{T}) to pull every
+  //  With infinite mana: activate Duskwatch repeatedly ({2}{G}, no {T}) to pull every
   //  creature from the library into hand. Cast them all. Then win via:
   //  - Finale of Devastation X≥10 (haste + attack for lethal)
   //  - Infectious Bite (10 poison counters)
@@ -11356,6 +11674,9 @@ function effectiveCost(state, def) {
   return costStr || '0';
 }
 
+// ── Hand-size limit (Magic rule 402.2) ───────────────────────────────────
+var MAX_HAND_SIZE = 7;
+
 // ── Main action generator ─────────────────────────────────────────────────
 
 function generateActions(state, _presentHint = null) {
@@ -11364,6 +11685,33 @@ function generateActions(state, _presentHint = null) {
   // ── 0. Loss pruning ──────────────────────────────────────────────────────
   // Never expand a state where you've already lost
   if (state.youLost()) return [];
+
+  // ── 0a. Discard to hand size (CR 402.2 / cleanup step) ──────────────────
+  // At the end of YOUR turn only (not opponent turns), if you have more than
+  // MAX_HAND_SIZE cards in hand, you must discard down to hand size before
+  // passing to the next turn. We enforce this by blocking all other actions
+  // and generating one discard_eot action per unique card in hand.
+  // The solver will choose which card(s) to discard and then proceed.
+  if (!state.isOpponentTurn && state.hand.length > MAX_HAND_SIZE) {
+    for (const cardKey of uniqueCards(state.hand)) {
+      const def = CARDS[cardKey];
+      const cardName = def ? def.name : cardKey;
+      // Assign discard value: cards with higher combo priority are MORE valuable
+      // so they get a higher apply priority (solver prefers to discard low-value cards).
+      // We use TUTOR_PRIORITY_SCORE as the card value — lower score → discard first.
+      // Priority of the action = how GOOD it is to discard this card (lower card value → better to discard)
+      const cardScore = TUTOR_PRIORITY_SCORE[cardKey] ?? 0;
+      actions.push({
+        type: 'discard_eot',
+        label: `Discard ${cardName} (hand size ${state.hand.length} → ${state.hand.length - 1})`,
+        priority: 100 - cardScore,  // discard least-valuable card first (lower cardScore = higher action priority)
+        apply(s) { return s.discardFromHand(cardKey); },
+      });
+    }
+    // Sort and return immediately — no other actions allowed while over hand size.
+    actions.sort((a, b) => b.priority - a.priority);
+    return actions;
+  }
 
   // [E2] Reuse pre-built present Set from analyzeState when available.
   // Building this Set is O(hand + battlefield) — doing it once per node
@@ -12363,6 +12711,7 @@ var _ACM = { generateActions, NAME_TO_KEY, COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_S
  *   strategy    {string}   'dfs' | 'bfs' (default 'dfs')
  *   allLines    {boolean}  Collect ALL winning lines, not just the best (default false)
  *   verbose     {boolean}  Log each winning line as found (default false)
+ *   firstWin    {boolean}  Return after the first winning line is found
  *
  * v3 improvements (retained):
  *   #1  Parent-pointer linked list replaces per-call path array copies in DFS
@@ -12415,6 +12764,51 @@ var _ACM = { generateActions, NAME_TO_KEY, COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_S
  *          before any turn-2 child.  Prevents the DFS from exhausting its state
  *          budget in deep multi-turn sub-trees before finding cheap turn-1 wins.
  */
+
+// ── [O-37] Fast-mana regime classifier ────────────────────────────────────
+// The heuristic's base term `-state.mana.total()` (prefer more floating mana)
+// is useful SIGNAL on dork-ramp hands — floating mana tracks combo-assembly
+// progress there. But on hands flush with NON-creature fast mana (Sol Ring,
+// Ancient Tomb, Gaea's Cradle, Lotus Petal, etc.), that term becomes NOISE:
+// it front-loads "tap every rock now" branches that don't advance the combo,
+// ballooning the search.
+//
+// `__fastManaRegime` is classified ONCE at the start of solve() from the
+// initial hand+battlefield: true iff there are >= 2 non-creature fast-mana
+// sources. When true, the heuristic drops the mana term (uses 0 base) so
+// child ordering isn't dominated by rock-tapping permutations. Crucially the
+// flag is NEVER set on dork-only hands (dorks are creatures, excluded from
+// the count), so those hands keep the mana term they benefit from.
+//
+// A/B (state counts, wins identical in every case): Default hand -52.2%,
+// rock-heavy hand -24%, and 0.0% (byte-identical) on every dork/aura/tutor
+// hand and the full bench. Strictly better-or-equal: it only alters ordering
+// on the rock regime, where it strictly helps. See ToDo.md O-37.
+var __fastManaRegime = false;
+
+// Non-creature permanents that provide fast/burst mana (rocks, rituals, and
+// high-output utility lands). Creature dorks are deliberately excluded.
+var FAST_MANA_KEYS = new Set([
+  'sol_ring', 'mana_crypt', 'mana_vault', 'grim_monolith', 'lotus_petal',
+  'ancient_tomb', 'gaeas_cradle', 'itlimoc',
+]);
+
+// Count non-creature fast-mana sources in the initial hand + battlefield.
+function countFastManaSources(state) {
+  let n = 0;
+  const scan = (key) => {
+    const d = CARDS[key];
+    if (!d || d.types.includes('creature')) return;
+    if (FAST_MANA_KEYS.has(key) ||
+        (d.types.includes('artifact') &&
+         (d.tapForMana || (d.abilities && d.abilities.tapForMana)))) {
+      n++;
+    }
+  };
+  if (state && state.hand) for (const k of state.hand) scan(k);
+  if (state && state.battlefield) for (const p of state.battlefield) scan(p.cardKey);
+  return n;
+}
 
 // ── Search spell keys ─────────────────────────────────────────────────────
 // Instant/sorcery cards with castFn that fetch combo pieces.  When one of
@@ -12685,6 +13079,7 @@ var DEFAULT_OPTIONS = {
   strategy:  'dfs',
   allLines:  false,
   verbose:   false,
+  firstWin:  false,
   // exhaustive: disable score pruning, canReachCombo pruning, and the
   // search-spell heuristic penalty. The solver explores every reachable
   // state within the turn/depth budget. Much slower but never misses a win.
@@ -12754,7 +13149,10 @@ function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefi
 
   // [C-32] Base score: just floating mana.  minMissing*1000 was dropped —
   // see function-level note.
-  let h = -state.mana.total();
+  // [O-37] On the fast-mana regime, drop the mana term — it front-loads
+  // rock-tapping noise that doesn't advance the combo. Dork hands never set
+  // the flag, so they keep the mana-progress signal.
+  let h = __fastManaRegime ? 0 : -state.mana.total();
 
   // A) Search-spell penalty — disabled in exhaustive mode so every ordering is explored.
   //
@@ -12885,6 +13283,9 @@ class Solver {
   solve(initialState) {
     this._reset();
 
+    // [O-37] Classify the fast-mana regime once from the initial state.
+    __fastManaRegime = countFastManaSources(initialState) >= 2;
+
     const t0 = Date.now();
 
     if (this.opts.strategy === 'bfs') {
@@ -12985,6 +13386,10 @@ class Solver {
       if (combo.deployed) {
         // Fully deployed — this is a terminal win, stop exploring this branch
         this._recordWin(reconstructPath(node), combo, s);
+        if (this.opts.firstWin) {
+	  // Stop exploring as we've found the first winning line
+          this.opts.maxStates = this.statesExplored -1;
+        }
         return;
       }
       // Win reachable but pieces not yet deployed on battlefield.
@@ -13528,7 +13933,7 @@ function assembleWin(state) {
     s = s.enterBattlefield('duskwatch_recruiter');
     // summoningSick not cleared: assembleWin represents Duskwatch activations as
     // narrative steps rather than state-machine taps, so sickness state is irrelevant.
-    // Duskwatch's {2G},{T} ability is handled by WIN_CONDITIONS, not by this state.
+    // Duskwatch's {2G} (no {T}) ability is handled by WIN_CONDITIONS, not by this state.
     steps.push('Cast Duskwatch Recruiter (infinite mana available)');
   }
 
@@ -14384,8 +14789,8 @@ function assembleWin(state) {
       steps.push('── Tutor for Finisher (execution) ──');
       steps.push('  1. Activate or cast the available tutor (see steps above) to find a creature.');
       steps.push('  2. Find Duskwatch Recruiter specifically if possible — its repeatable activated ability');
-      steps.push('     ({2}{G},{T}: look at top 3, take a creature) finds every remaining creature in your');
-      steps.push('     library with infinite mana and any untap method.');
+      steps.push('     ({2}{G}: look at top 3, take a creature — no {T}, so tapped/summoning-sick status');
+      steps.push('     never blocks it) finds every remaining creature in your library with infinite mana.');
       steps.push("  3. Cast all found creatures, then assemble Hitzel's Sequence (Geier Reach Sanitarium +");
       steps.push('     Endurance + Temur Sabertooth/Kogla), Finale of Devastation X≥10, or Infectious Bite');
       steps.push('     as the pieces allow.');
@@ -14407,12 +14812,14 @@ function assembleWin(state) {
         const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
         steps.push(`  1. {1}{G}: ${bouncerName} bounces a green creature you control to hand.`);
         steps.push('  2. Recast it — Defiler triggers: every creature you control gets a +1/+1 counter.');
-      } else if (onField('Wirewood Symbiote')) {
-        steps.push('  1. Wirewood Symbiote: return a 1-mana Elf to hand, untapping a mana dork.');
-        steps.push('  2. Recast the Elf — Defiler triggers: every creature you control gets a +1/+1 counter.');
       } else {
-        steps.push('  1. Loop any bounce-and-recast of a green permanent with infinite mana.');
-        steps.push('  2. Each recast is a green permanent spell — Defiler triggers: every creature you');
+        // [O-35] The detector only fires for Ashaya+Ranger or Temur/Kogla (a
+        // genuinely repeatable green-permanent-cast loop). Wirewood Symbiote /
+        // a lone Ranger are once-per-turn and never reach here. This fallback
+        // describes the same valid mechanism generically.
+        steps.push('  1. Bounce a green creature you control to hand via your repeatable recast loop');
+        steps.push('     (Temur Sabertooth / Kogla, or Ashaya + a Ranger returning itself).');
+        steps.push('  2. Recast it — a green permanent spell, so Defiler triggers: every creature you');
         steps.push('     control gets a +1/+1 counter.');
       }
       steps.push('  3. Repeat with infinite mana — every creature you control gets arbitrarily large.');
