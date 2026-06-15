@@ -1345,6 +1345,7 @@ class GameState {
     let s = this.removeFromHand(cardKey);
     if (!s) return null;
     s = s.addToGraveyard(0, cardName);
+    s = s.log(`Discard ${cardName} (cleanup, end of turn ${this.turn})`);
     return s;
   }
 
@@ -7668,19 +7669,29 @@ function hasCheapCreaturePartner(state, exceptName) {
 // subtracting any per-activation cost). Returns 0 for non-dorks. Used by the
 // generalized Temur+Symbiote loop detector, where the dork must gross ≥5 to
 // net positive after the loop's fixed {G}{G}{G}{G} recast cost.
+//
+// Leyline of Abundance ("Whenever you tap a creature for mana, add an additional
+// {G}") adds +1 to a CREATURE dork's per-tap output. In the bounce loops one
+// dork is tapped once per cycle, so the bonus is exactly +1 per cycle. This can
+// push a gross-4 dork (e.g. Priest at 4 elves, or Fanatic's Ferocious mode) to 5.
 function dorkGrossOutput(state, p) {
+  let base;
   switch (p.name) {
     case 'Priest of Titania':
     case 'Elvish Archdruid':
     case 'Wirewood Channeler':
-      return elfCount(state);
+      base = elfCount(state); break;
     case 'Circle of Dreams Druid':
-      return creatureCount(state);
+      base = creatureCount(state); break;
     case "Karametra's Acolyte":
-      return devotionG(state);
+      base = devotionG(state); break;
     case 'Marwyn, the Nurturer':
     case 'Topiary Lecturer':
-      return p.power || 0;
+      base = p.power || 0; break;
+    case 'Fanatic of Rhonas':
+      // Ferocious: {T}: Add {G}{G}{G}{G} if you control a creature with power ≥4.
+      // Otherwise its plain {T}: Add {G} = 1.
+      base = greatestPower(state) >= 4 ? 4 : 1; break;
     case 'Selvala, Heart of the Wilds':
       // Selvala's {G},{T} produces greatestPower; the {G} is a separate
       // activation cost handled by her own dedicated detectors, so the
@@ -7688,10 +7699,13 @@ function dorkGrossOutput(state, p) {
       // to her — excluded here.
       return 0;
     case 'Llanowar Tribe':
-      return 3;
+      base = 3; break;
     default:
       return 0;
   }
+  // Leyline of Abundance adds +1 {G} when this creature dork is tapped for mana.
+  if (hasPerm(state, 'Leyline of Abundance')) base += 1;
+  return base;
 }
 
 function cradleUntapped(state) {
@@ -8593,7 +8607,9 @@ var DETECTORS = [
       "Hyrax ETB untaps the mana dork. Sabertooth bounces Hyrax ({1G}), recast ({2G}). " +
       "Total loop cost {4G}+{1}. Need dork grossing ≥5G. " +
       "Priest/Archdruid/Channeler: ≥5 elves. Circle: ≥5 creatures. " +
-      "Karametra's Acolyte: devotion ≥5. Selvala: power ≥6. Marwyn/Topiary: power ≥5. Llanowar Tribe.",
+      "Karametra's Acolyte: devotion ≥5. Selvala: power ≥6. Marwyn/Topiary: power ≥5. Llanowar Tribe. " +
+      "Leyline of Abundance adds +1 to the dork's tap, so a gross-4 dork (e.g. Priest at 4 elves, " +
+      "Fanatic's Ferocious mode) reaches the ≥5 threshold.",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       if (!hasPerm(state, 'Hyrax Tower Scout')) return false;
@@ -11686,31 +11702,34 @@ function generateActions(state, _presentHint = null) {
   // Never expand a state where you've already lost
   if (state.youLost()) return [];
 
-  // ── 0a. Discard to hand size (CR 402.2 / cleanup step) ──────────────────
-  // At the end of YOUR turn only (not opponent turns), if you have more than
-  // MAX_HAND_SIZE cards in hand, you must discard down to hand size before
-  // passing to the next turn. We enforce this by blocking all other actions
-  // and generating one discard_eot action per unique card in hand.
-  // The solver will choose which card(s) to discard and then proceed.
-  if (!state.isOpponentTurn && state.hand.length > MAX_HAND_SIZE) {
+  // ── 0a. Cleanup-step discard to hand size (CR 514.1) ────────────────────
+  // The cleanup discard happens at the END of your turn, NOT at the start.
+  // We therefore do NOT block the opening hand: the player may make all their
+  // plays first, and the over-full hand is only resolved when passing the turn.
+  //
+  // Implementation: when you're over MAX_HAND_SIZE on your own turn, we emit a
+  // discard action per unique card (so the solver still CHOOSES which to pitch),
+  // but we DON'T return early — normal plays remain available. Passing the turn
+  // is gated below (see "Pass turn") so it's unavailable until hand ≤ 7, which
+  // forces the discard to occur at the turn boundary, just before the next turn.
+  // Each discard is logged via discardFromHand (graveyard + history entry).
+  const overHandSize = !state.isOpponentTurn && state.hand.length > MAX_HAND_SIZE;
+  if (overHandSize) {
     for (const cardKey of uniqueCards(state.hand)) {
       const def = CARDS[cardKey];
       const cardName = def ? def.name : cardKey;
-      // Assign discard value: cards with higher combo priority are MORE valuable
-      // so they get a higher apply priority (solver prefers to discard low-value cards).
-      // We use TUTOR_PRIORITY_SCORE as the card value — lower score → discard first.
-      // Priority of the action = how GOOD it is to discard this card (lower card value → better to discard)
+      // Discard the least-valuable card first: TUTOR_PRIORITY_SCORE is the card's
+      // value, so a lower score → higher action priority (better to discard).
       const cardScore = TUTOR_PRIORITY_SCORE[cardKey] ?? 0;
       actions.push({
         type: 'discard_eot',
-        label: `Discard ${cardName} (hand size ${state.hand.length} → ${state.hand.length - 1})`,
-        priority: 100 - cardScore,  // discard least-valuable card first (lower cardScore = higher action priority)
+        label: `Discard ${cardName} to hand size (${state.hand.length} → ${state.hand.length - 1})`,
+        priority: 100 - cardScore,
         apply(s) { return s.discardFromHand(cardKey); },
       });
     }
-    // Sort and return immediately — no other actions allowed while over hand size.
-    actions.sort((a, b) => b.priority - a.priority);
-    return actions;
+    // NOTE: no early return — normal actions are still generated below so the
+    // player can play their turn before the end-of-turn discard.
   }
 
   // [E2] Reuse pre-built present Set from analyzeState when available.
@@ -12601,17 +12620,26 @@ function generateActions(state, _presentHint = null) {
   // ── 6. Pass turn / opponent turn ─────────────────────────────────────────
   // On your turn: you can pass to start the next turn, OR (if Yeva is
   // available) pass to an opponent's end step to cast flash spells.
-  actions.push({
-    type: 'pass_turn',
-    label: 'Pass to next turn',
-    priority: 2,
-    apply(s) { return s.startNewTurn(); },
-  });
+  //
+  // Passing is gated behind the cleanup discard (CR 514.1): you cannot leave
+  // your turn while holding more than MAX_HAND_SIZE cards. When over the limit,
+  // the discard_eot actions emitted in step 0a are the only way to progress
+  // toward the next turn, so the discard happens at the END of the turn.
+  if (!overHandSize) {
+    actions.push({
+      type: 'pass_turn',
+      label: 'Pass to next turn',
+      priority: 2,
+      apply(s) { return s.startNewTurn(); },
+    });
+  }
 
   // Opponent-turn window: available if Yeva is in play and it's currently
   // your turn (not already an opponent turn). Lets the solver explore casting
   // green creatures at instant speed on opponents' end steps.
-  if (!isOpponentTurn && yevaOnBattlefield) {
+  // Gated behind the cleanup discard too — you can't leave your turn (even to a
+  // flash window) while over hand size.
+  if (!isOpponentTurn && yevaOnBattlefield && !overHandSize) {
     actions.push({
       type: 'opponent_turn',
       label: "Pass to opponent's end step (Yeva flash window)",
@@ -12763,6 +12791,33 @@ var _ACM = { generateActions, NAME_TO_KEY, COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_S
  *          to the child's sort score, ensuring every turn-1 child is explored
  *          before any turn-2 child.  Prevents the DFS from exhausting its state
  *          budget in deep multi-turn sub-trees before finding cheap turn-1 wins.
+ * [v4-14]  Parent→child reuse of present/infiniteMana/analysis. When the parent
+ *          generates and sorts its children it already computes buildPresentSet,
+ *          checkCombos, and analyzeState for each child (for the heuristic and the
+ *          canReachCombo prune). Those results are now carried on the child object
+ *          (DFS) / enqueued node (BFS) and reused when the child is visited,
+ *          instead of recomputing the identical values. buildPresentSet was the
+ *          single hottest JS function (~24% of solve time on the priest hand);
+ *          this removes its duplicate call (plus the duplicate checkCombos +
+ *          analyzeState) per non-root node. Zero behaviour change — the values are
+ *          a pure function of the (immutable) child state, so state counts and
+ *          winning lines are byte-identical. In BFS every enqueued node is dequeued
+ *          exactly once, so reuse is 100%; in DFS surviving (non-deduped) children
+ *          reuse, deduped children fall through harmlessly.
+ * [v4-15]  DFS child-loop reordering (E18). Instrumentation showed that on the
+ *          priest benchmark ~46% of generated children are score-pruned and ~29%
+ *          are deduped on entry — yet the OLD code computed each child's
+ *          buildPresentSet + checkCombos + analyzeState (the hot path) BEFORE
+ *          those cheap rejections ran in the child's _dfs, wasting that work on
+ *          ~75% of children. Now the cheap filters (score-prune, then fingerprint
+ *          dedup) run in the parent's generation loop FIRST; only survivors get
+ *          the expensive analysis, which is then threaded to the child via `pre`
+ *          (along with the fingerprint + score) for full reuse. Interleaved A/B
+ *          (load-canceling) measures ~15% faster on the priest hand. State counts
+ *          are byte-identical: each rejected child is still counted once
+ *          (statesExplored++), and a budget pre-check before recursion preserves
+ *          the maxStates+1 invariant (the early-reject increments are guarded so
+ *          they can't push the counter past the ceiling a bare _dfs entry reaches).
  */
 
 // ── [O-37] Fast-mana regime classifier ────────────────────────────────────
@@ -13327,7 +13382,7 @@ class Solver {
   // ── DFS ───────────────────────────────────────────────────────────────────
   // #1: parentNode is { state, parent } linked list node (null at root)
 
-  _dfs(state, parentNode, depth) {
+  _dfs(state, parentNode, depth, pre) {
     this.statesExplored++;
     if (this.statesExplored > this.opts.maxStates) return;
     if (depth > this.opts.maxDepth)  return;
@@ -13349,14 +13404,19 @@ class Solver {
     // (depth*10 dominates -mana.total() deltas), so a state at score s
     // cannot produce wins at score < s.  Therefore `>` is sufficient (we
     // only miss ties at this exact score, which `>` admits).
-    const s = score(state, depth);
+    // [E18] Reuse the score computed by the parent (a pure function of state +
+    // depth) but RE-COMPARE against the current bestScore — bestScore may have
+    // tightened since the parent checked, so the comparison itself can't be cached.
+    const s = pre && pre.score !== undefined ? pre.score : score(state, depth);
     if (!this.opts.exhaustive) {
       const cut = this.opts.allLines ? (s > this.bestScore) : (s >= this.bestScore);
       if (cut) { this.pruned++; return; }
     }
 
     // Dedup: full fingerprint including mana (mana affects what actions are available)
-    const fp = state.fingerprint();
+    // [E18] Reuse the parent-computed fingerprint, but RE-CHECK visited — a sibling
+    // explored between the parent's early check and now may have claimed this fp.
+    const fp = pre && pre.fp !== undefined ? pre.fp : state.fingerprint();
     const prev = this.visited.get(fp);
     if (prev !== undefined && prev <= depth) { this.pruned++; return; }
     this.visited.set(fp, depth);
@@ -13365,18 +13425,19 @@ class Solver {
     // every checkCombos / checkVictory / analyzeState / generateActions call so
     // the per-detector prefilter can short-circuit without rebuilding the Set.
     // The Set is hand∪BF post-equiv-expansion; see Solver.buildPresentSet.
-    const present = buildPresentSet(state);
-
-    // [E3] Compute checkCombos ONCE per node and reuse in analyzeState,
-    // checkVictory, canReachCombo, and heuristic — eliminates 3+ redundant calls.
-    // [E11] Pass `present` so checkCombos can skip detectors whose required
-    // keys aren't in hand∪BF — modest wins on most hands, larger on tutor-heavy
-    // (we measure ~10–25% reduction in detector .check() calls).
-    const infiniteMana = checkCombos(state, present);
-
-    // #2: Build present-set + minMissing once for this node (pass pre-computed result)
-    // [E11] Pass `present` so analyzeState skips its own (identical) build.
-    const analysis = analyzeState(state, infiniteMana, present);
+    //
+    // [E14] The PARENT already computed present/infiniteMana/analysis for this
+    // state when it generated and sorted its children (for the heuristic + the
+    // canReachCombo prune). Reuse those here instead of recomputing — this state's
+    // board/hand/mana are identical to what the parent saw. Saves one
+    // buildPresentSet (the single hottest function) + one checkCombos + one
+    // analyzeState per non-root node. Falls back to computing for the root, which
+    // has no parent. Note: these are computed AFTER the dedup check above, so a
+    // deduped node still pays nothing extra — but a node that survives dedup now
+    // skips the duplicate work the parent already did.
+    const present      = pre ? pre.present      : buildPresentSet(state);
+    const infiniteMana = pre ? pre.infiniteMana : checkCombos(state, present);
+    const analysis     = pre ? pre.analysis     : analyzeState(state, infiniteMana, present);
 
     // Combo/victory check (pass pre-computed infiniteMana + present for prefilter)
     const combo = checkVictory(state, infiniteMana, present);
@@ -13403,22 +13464,58 @@ class Solver {
       // Don't return — continue exploring to deploy the remaining pieces
     }
 
-    // #2 / #4 / #8: Generate children with lazy canReachCombo pruning per child.
-    // analyzeState is called per child for the heuristic, and we immediately gate
-    // on canReachCombo so unpromising children are pruned before sort (Fix #4).
-    // [E2] Pass analysis.present so generateActions skips its own Set construction.
+    // #2 / #4 / #8: Generate children with lazy pruning per child.
+    // [E18] Reordered for performance: apply the CHEAP rejection tests
+    // (score-prune + dedup) BEFORE the expensive present/checkCombos/analyzeState
+    // computation. ~75% of generated children are score-pruned or deduped on
+    // entry; computing their present-set/combos/analysis (the hot path) was pure
+    // waste. We now compute those only for children that survive both filters.
+    // The surviving child's fp/present/combos/analysis are threaded via `pre` so
+    // the child's own _dfs reuses them (E14) — including the fingerprint (E18),
+    // which the child no longer recomputes.
+    //
+    // statesExplored accounting is preserved exactly: a child rejected here would
+    // have entered _dfs, incremented the counter, and returned at the same filter.
+    // We replicate that +1 so state counts stay identical to the un-reordered code.
     const actions = generateActions(state, analysis.present);
     const children = [];
+    const childDepth = depth + 1;
+    const childExceedsTurn = false; // turn check handled in child _dfs (cheap)
     for (const action of actions) {
       let next;
       try { next = action.apply(state); }
       catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
       if (!next) continue;
 
-      // [E11] Build the child's present Set first, then pass it through both
-      // checkCombos (prefilter) and analyzeState (skip rebuild).
+      // Mirror the child _dfs entry guards in order, counting each as one state.
+      // Budget guard FIRST (before the count) so early-rejects can never push
+      // statesExplored beyond the maxStates+1 ceiling that a bare _dfs entry
+      // would reach — preserving the solver budget invariant exactly.
+      // 1) Score prune — score is monotone along the path, so a child at score
+      //    ≥ bestScore (or > in allLines) can be skipped exactly as _dfs would.
+      const childScore = score(next, childDepth);
+      if (!this.opts.exhaustive) {
+        const cut = this.opts.allLines ? (childScore > this.bestScore) : (childScore >= this.bestScore);
+        if (cut) {
+          if (this.statesExplored > this.opts.maxStates) break;
+          this.statesExplored++; this.pruned++;
+          continue;
+        }
+      }
+      // 2) Dedup — compute the child fingerprint ONCE here; if already visited at
+      //    depth ≤ childDepth it would be deduped on entry. Skip without paying
+      //    for present/combos/analysis. The fp is reused by the surviving child.
+      const childFp = next.fingerprint();
+      const prevSeen = this.visited.get(childFp);
+      if (prevSeen !== undefined && prevSeen <= childDepth) {
+        if (this.statesExplored > this.opts.maxStates) break;
+        this.statesExplored++; this.pruned++;
+        continue;
+      }
+
+      // Survives cheap filters — now compute the expensive analysis (needed for
+      // the heuristic, canReachCombo, and child reuse).
       const childPresent = buildPresentSet(next);
-      // [E3] Compute child's infiniteMana once, reuse in analyzeState + canReachCombo + heuristic
       const childInfiniteMana = checkCombos(next, childPresent);
       const childAnalysis = analyzeState(next, childInfiniteMana, childPresent);
       // Fix #4: prune unreachable children before they enter the sort list
@@ -13429,7 +13526,16 @@ class Solver {
           continue;
         }
       }
-      children.push({ next, h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive, childInfiniteMana) });
+      children.push({
+        next,
+        h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive, childInfiniteMana),
+        // [E14] Carry the values computed here so the recursive _dfs call on this
+        // child reuses them instead of recomputing buildPresentSet/checkCombos/
+        // analyzeState. These describe `next` exactly and stay valid until used.
+        // [E18] Also carry the fingerprint and score already computed above so the
+        // child's _dfs skips recomputing them (fingerprint is the 2nd-hottest fn).
+        pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: childAnalysis, fp: childFp, score: childScore },
+      });
     }
 
     // #8: Skip sort when trivially ordered
@@ -13437,8 +13543,12 @@ class Solver {
 
     // #1: Build current node for parent-pointer chain
     const node = { state, parent: parentNode };
-    for (const { next } of children) {
-      this._dfs(next, node, depth + 1);
+    for (const { next, pre: childPre } of children) {
+      // Budget pre-check: child generation above may have consumed budget via
+      // early-rejects, so stop before entering _dfs if we're already at the
+      // ceiling — otherwise the _dfs entry increment could push past maxStates+1.
+      if (this.statesExplored > this.opts.maxStates) return;
+      this._dfs(next, node, depth + 1, childPre);
       if (this.statesExplored > this.opts.maxStates) return;
     }
   }
@@ -13482,7 +13592,7 @@ class Solver {
 
         const node = q[qi];
         q[qi] = null; // [E9] Release reference for GC — queues can grow large
-        const { state, depth } = node;
+        const { state, depth, pre } = node;
         this.statesExplored++;
 
         if (state.youLost())            continue;
@@ -13499,11 +13609,10 @@ class Solver {
         // [E11] Build present once for this BFS node, share with checkCombos
         // (prefilter), checkVictory (prefilter), analyzeState (skip rebuild),
         // and generateActions ([E2] missingComboCards reuse).
-        const present = buildPresentSet(state);
-
-        // [E3] Compute checkCombos once per BFS node, reuse in checkVictory + children
-        // [E11] Pass present to enable detector prefilter.
-        const infiniteMana = checkCombos(state, present);
+        // [E14] The parent already computed present/infiniteMana/analysis for
+        // this node when it enqueued it — reuse them (the root has no parent).
+        const present      = pre ? pre.present      : buildPresentSet(state);
+        const infiniteMana = pre ? pre.infiniteMana : checkCombos(state, present);
         const combo = checkVictory(state, infiniteMana, present);
         if (combo) {
           if (combo.deployed) {
@@ -13523,7 +13632,8 @@ class Solver {
         // turn queue (same turn = stays here; pass turn = next turn's queue)
         // [E2] Build present Set once for this node; share with generateActions + children.
         // [E11] present already built above; pass into analyzeState to skip rebuild.
-        const nodeAnalysis = analyzeState(state, infiniteMana, present);
+        // [E14] Reuse the parent-computed analysis when available.
+        const nodeAnalysis = pre ? pre.analysis : analyzeState(state, infiniteMana, present);
         const actions = generateActions(state, nodeAnalysis.present);
         const children = [];
         for (const action of actions) {
@@ -13562,12 +13672,20 @@ class Solver {
             continue;
           }
           this.visited.set(childFp, depth + 1);
-          children.push({ next, h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana) });
+          // [E14] Carry the precomputed values so the dequeue of this node reuses
+          // them instead of recomputing buildPresentSet/checkCombos/analyzeState.
+          // In BFS every enqueued node is dequeued exactly once (dedup happens at
+          // enqueue), so this is a 100%-reuse, zero-waste optimization.
+          children.push({
+            next,
+            h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana),
+            pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: ca },
+          });
         }
         if (children.length > 1) children.sort((a, b) => a.h - b.h);
 
-        for (const { next } of children) {
-          enqueue({ state: next, parent: node, depth: depth + 1 });
+        for (const { next, pre } of children) {
+          enqueue({ state: next, parent: node, depth: depth + 1, pre });
         }
       }
 
