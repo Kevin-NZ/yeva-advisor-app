@@ -855,6 +855,12 @@ class GameState {
   constructor(data = {}) {
     this.turn          = data.turn        ?? 1;
     this.phase         = data.phase       ?? 'main1';
+    // endingTurn: set true when the player has committed to ending YOUR turn and
+    // is in the cleanup step. While true, only the discard-to-hand-size actions
+    // are offered, so the cleanup discard is sequenced AFTER all plays (it shows
+    // at the end of the turn in the log), then the turn advances. Cleared by
+    // startNewTurn(). Never set on opponent turns.
+    this.endingTurn    = data.endingTurn  ?? false;
     this.landDrops     = data.landDrops   ?? 1;
     // landsPlayedThisTurn: incremented each time a land is played from hand.
     // Reset to 0 at the start of each turn. Used by Nissa, Resurgent Animist
@@ -1094,6 +1100,7 @@ class GameState {
     const s = Object.create(GameState.prototype);
     s.turn          = this.turn;
     s.phase         = this.phase;
+    s.endingTurn    = this.endingTurn;
     s.landDrops     = this.landDrops;
     s.landsPlayedThisTurn = this.landsPlayedThisTurn;
     s.hand          = [...this.hand];
@@ -1150,6 +1157,7 @@ class GameState {
     const s = Object.create(GameState.prototype);
     s.turn          = this.turn;
     s.phase         = this.phase;
+    s.endingTurn    = this.endingTurn;
     s.landDrops     = this.landDrops;
     s.landsPlayedThisTurn = this.landsPlayedThisTurn;
     s.hand          = this.hand;            // shared (no mutation after log)
@@ -2191,6 +2199,7 @@ class GameState {
     s.storm = 0;
     s.isOpponentTurn = false;
     s.flashThisTurn  = false;
+    s.endingTurn     = false;  // cleanup complete; fresh turn
     // CR 500.4 / 514: mana pools empty at the end of each step and phase.
     // Any floating mana left at the end of your turn is lost.
     s.mana = new ManaPool();
@@ -2471,6 +2480,7 @@ class GameState {
                (this.pactOwed       ? '|PC' : '') +
                (this.landsPlayedThisTurn > 0 ? '|LP:' + this.landsPlayedThisTurn : '') +
                (this.isOpponentTurn ? '|OT' : '') +
+               (this.endingTurn     ? '|ET' : '') +
                ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
                (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
     return this._fp;
@@ -11703,33 +11713,51 @@ function generateActions(state, _presentHint = null) {
   if (state.youLost()) return [];
 
   // ── 0a. Cleanup-step discard to hand size (CR 514.1) ────────────────────
-  // The cleanup discard happens at the END of your turn, NOT at the start.
-  // We therefore do NOT block the opening hand: the player may make all their
-  // plays first, and the over-full hand is only resolved when passing the turn.
+  // The cleanup discard happens at the END of your turn. It is NOT a free action
+  // the solver can take at any time (which would let it discard before playing,
+  // showing the discard at the START of the turn in the log). Instead it is
+  // sequenced: the player makes all their plays, then takes the `end_turn`
+  // action below to enter the cleanup step (state.endingTurn = true). ONLY while
+  // in that cleanup step do we offer discards — so a discard is always logged
+  // AFTER the turn's plays, immediately before the turn advances.
   //
-  // Implementation: when you're over MAX_HAND_SIZE on your own turn, we emit a
-  // discard action per unique card (so the solver still CHOOSES which to pitch),
-  // but we DON'T return early — normal plays remain available. Passing the turn
-  // is gated below (see "Pass turn") so it's unavailable until hand ≤ 7, which
-  // forces the discard to occur at the turn boundary, just before the next turn.
-  // Each discard is logged via discardFromHand (graveyard + history entry).
-  const overHandSize = !state.isOpponentTurn && state.hand.length > MAX_HAND_SIZE;
-  if (overHandSize) {
-    for (const cardKey of uniqueCards(state.hand)) {
-      const def = CARDS[cardKey];
-      const cardName = def ? def.name : cardKey;
-      // Discard the least-valuable card first: TUTOR_PRIORITY_SCORE is the card's
-      // value, so a lower score → higher action priority (better to discard).
-      const cardScore = TUTOR_PRIORITY_SCORE[cardKey] ?? 0;
+  // While endingTurn is set, discards are the ONLY actions: emit one per unique
+  // card (the solver still CHOOSES which to pitch). The discard that brings the
+  // hand to MAX_HAND_SIZE also advances the turn (folds startNewTurn in), so the
+  // cleanup → next-turn transition is atomic. Never set on opponent turns.
+  if (state.endingTurn) {
+    if (state.hand.length > MAX_HAND_SIZE) {
+      for (const cardKey of uniqueCards(state.hand)) {
+        const def = CARDS[cardKey];
+        const cardName = def ? def.name : cardKey;
+        // Discard least-valuable first: lower TUTOR_PRIORITY_SCORE → higher priority.
+        const cardScore = TUTOR_PRIORITY_SCORE[cardKey] ?? 0;
+        const willReachLimit = state.hand.length - 1 <= MAX_HAND_SIZE;
+        actions.push({
+          type: 'discard_eot',
+          label: `Discard ${cardName} to hand size (${state.hand.length} → ${state.hand.length - 1})`,
+          priority: 100 - cardScore,
+          apply(s) {
+            const afterDiscard = s.discardFromHand(cardKey);
+            if (!afterDiscard) return null;
+            // The discard that reaches the limit advances the turn atomically.
+            return willReachLimit ? afterDiscard.startNewTurn() : afterDiscard;
+          },
+        });
+      }
+    } else {
+      // Already at/under the limit when cleanup began (e.g. exactly 7): just
+      // advance the turn — nothing to discard.
       actions.push({
-        type: 'discard_eot',
-        label: `Discard ${cardName} to hand size (${state.hand.length} → ${state.hand.length - 1})`,
-        priority: 100 - cardScore,
-        apply(s) { return s.discardFromHand(cardKey); },
+        type: 'pass_turn',
+        label: 'End turn (no discard needed)',
+        priority: 2,
+        apply(s) { return s.startNewTurn(); },
       });
     }
-    // NOTE: no early return — normal actions are still generated below so the
-    // player can play their turn before the end-of-turn discard.
+    // In the cleanup step, NO other actions are available.
+    actions.sort((a, b) => b.priority - a.priority);
+    return actions;
   }
 
   // [E2] Reuse pre-built present Set from analyzeState when available.
@@ -12621,16 +12649,27 @@ function generateActions(state, _presentHint = null) {
   // On your turn: you can pass to start the next turn, OR (if Yeva is
   // available) pass to an opponent's end step to cast flash spells.
   //
-  // Passing is gated behind the cleanup discard (CR 514.1): you cannot leave
-  // your turn while holding more than MAX_HAND_SIZE cards. When over the limit,
-  // the discard_eot actions emitted in step 0a are the only way to progress
-  // toward the next turn, so the discard happens at the END of the turn.
-  if (!overHandSize) {
+  // The cleanup discard (CR 514.1) is sequenced AT THE END of your turn. When
+  // you choose to end your turn (pass_turn):
+  //   • hand ≤ MAX_HAND_SIZE → advance to the next turn directly.
+  //   • hand > MAX_HAND_SIZE  → enter the cleanup step (endingTurn = true); only
+  //     discards are then offered (step 0a), and the final discard advances the
+  //     turn. This guarantees the discard is logged AFTER the turn's plays.
+  const overHandSize = !isOpponentTurn && state.hand.length > MAX_HAND_SIZE;
+  {
     actions.push({
       type: 'pass_turn',
-      label: 'Pass to next turn',
+      label: overHandSize ? 'End turn → cleanup discard to hand size' : 'Pass to next turn',
       priority: 2,
-      apply(s) { return s.startNewTurn(); },
+      apply(s) {
+        if (s.hand.length > MAX_HAND_SIZE) {
+          // Enter the cleanup step; discards (and the turn advance) happen there.
+          const ns = s.clone();
+          ns.endingTurn = true;
+          return ns;
+        }
+        return s.startNewTurn();
+      },
     });
   }
 
