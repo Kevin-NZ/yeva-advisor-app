@@ -303,6 +303,60 @@ var FUNCTIONAL_EQUIVALENTS = [
            'elvish_archdruid', 'wirewood_channeler', 'marwyn']),
 ];
 
+// ── Fingerprint equivalents (state-dedup, NOT combo detection) ────────────
+// ⚠ DO NOT reuse FUNCTIONAL_EQUIVALENTS above for this purpose, and do not
+// add to this table by automated signature-matching (cost/power/toughness/
+// subtypes comparison alone is NOT sufficient — see false positives caught
+// below). This is a different relation: "two permanents that, if swapped,
+// produce a fingerprint-identical resulting GameState forever after, in
+// every respect the engine models" — not "play the same combo role."
+//
+// A member of FUNCTIONAL_EQUIVALENTS can satisfy the same combo as another
+// member while still being fingerprint-DISTINCT (e.g. Temur Sabertooth and
+// Kogla are both bounce-loop enablers, but they're different P/T, different
+// cost, and never simultaneously redundant copies of the same role on one
+// battlefield) — so the two tables are expected to look completely different
+// and neither should be derived from the other.
+//
+// Qualification bar for a group below: every member must share IDENTICAL
+// cost, power, toughness, types, AND subtypes (subtypes matter because other
+// cards count board state by subtype — e.g. countElves() — not by name), and
+// tapForMana must produce IDENTICAL mana output under every board state, not
+// just the fresh-off-battlefield default (board-state-scaling abilities like
+// "add G per Elf you control" are disqualifying even when two cards happen to
+// match in a single test snapshot). Verified by direct tapForMana() calls,
+// not by comparing source text — closures over different captured constants
+// (e.g. simpleTap('{G}',...) vs simpleTap('{C}',...)) can have identical
+// Function.prototype.toString() output despite producing different mana.
+//
+// Caught and excluded during verification (recorded so the next pass doesn't
+// re-discover the same false positives from scratch):
+//   • joraga_treespeaker — matches the group below ONLY at level 0; levels up
+//     to {G}{G} output and a different power, so it's never a true twin.
+//   • priest_of_titania / elvish_archdruid / heart_warden / llanowar_visionary —
+//     scale with countElves(state) (or carry an ETB draw), so two of them
+//     side by side are NOT swap-equivalent even though a single-Elf test
+//     snapshot makes their output match Llanowar Elves by coincidence.
+//   • topiary_lecturer / elvish_harbinger — power-scaling output and
+//     any-color/tutor-ETB respectively; not twins despite matching cost/P/T.
+//   • boreal_druid / delighted_halfling — true twins of EACH OTHER ({T}: Add
+//     {C}, 1/1, no other ability) but NOT of the group below: different mana
+//     color, and delighted_halfling's subtypes (Halfling, Citizen) lack the
+//     Elf subtype that other cards (Elvish Guidance, countElves callers)
+//     check for, so swapping it in for an Elf changes those cards' behavior.
+//     Kept as its own separate group rather than merged into anything else.
+var FINGERPRINT_EQUIVALENTS = [
+  // {T}: Add {G}. 1/1 Elf Druid, cost G, no other text. Verified identical
+  // tapForMana() output across all three with no board-state dependence.
+  new Set(['llanowar_elves', 'elvish_mystic', 'fyndhorn_elves']),
+  // {T}: Add {C}. 1/1, cost G, no other text. NOT merged with the group above:
+  // different mana color, and the two cards have different subtypes from
+  // each other too (boreal_druid is Elf Druid; delighted_halfling is
+  // Halfling Citizen) — kept distinct so subtype-counting effects elsewhere
+  // are never silently misattributed by a fingerprint canonicalization.
+  new Set(['boreal_druid', 'delighted_halfling']),
+];
+
 // ── STAX card keys ────────────────────────────────────────────────────────
 // Cards that suppress mana abilities or tax spells. Never fetched by tutors.
 var STAX_KEYS = new Set([
@@ -445,6 +499,25 @@ function _isEmptyBag(obj) {
     if (obj[k]) return false;
   }
   return true;
+}
+
+// Card key → canonical label for fingerprint() purposes, built once from
+// FINGERPRINT_EQUIVALENTS (combo_data.js). Within a group, every member maps
+// to the SAME label (the group's alphabetically-first cardKey) so that e.g.
+// Llanowar Elves and Fyndhorn Elves — verified fully interchangeable, see
+// that table's comment for the verification done — produce identical
+// fingerprint segments. The label is just the raw cardKey (not a display
+// name); fingerprint() is an opaque dedup key, never parsed, so readability
+// doesn't matter here. This only affects the fast path in fingerprint() (no
+// aura/sickness/counters/etc.), which is exactly the case where two group
+// members really are 100% swap-equivalent; anything with a distinguishing
+// feature already takes the slow path and keeps its own cardKey-derived
+// identity there regardless of this map.
+var _fingerprintCanonicalName = new Map();
+for (const group of FINGERPRINT_EQUIVALENTS) {
+  const sorted = [...group].sort();
+  const canonicalKey = sorted[0];
+  for (const k of group) _fingerprintCanonicalName.set(k, canonicalKey);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2477,7 +2550,17 @@ class GameState {
         named === undefined &&
         !luck
       ) {
-        segs[i] = p.name + tap;
+        // [perf] Canonicalize fingerprint-equivalent permanents (e.g. Llanowar
+        // Elves / Fyndhorn Elves — see FINGERPRINT_EQUIVALENTS) to the same
+        // label. Only reachable here in the fast path, which already requires
+        // no aura/sickness/counters/etc — exactly the "fully interchangeable"
+        // case the table is scoped to. Two such permanents on the same
+        // battlefield (e.g. one of each) now sort/serialize identically
+        // regardless of which one a search branch happened to tap, so DFS/BFS
+        // dedup catches the convergence instead of treating "tapped Llanowar
+        // first" and "tapped Fyndhorn first" as distinct states forever.
+        const canon = _fingerprintCanonicalName.get(p.cardKey);
+        segs[i] = (canon !== undefined ? canon : p.name) + tap;
         continue;
       }
 
