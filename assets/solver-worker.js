@@ -917,6 +917,27 @@ class GameState {
         if (COST_STAX_C.has(entry.split('@')[0].trim())) { this._hasSTAX = true; break; }
       }
     }
+    // threats: opponent interaction-capacity profile (O-8). Read-only
+    // configuration set once on the initial state and shared by every clone —
+    // it describes the table's ability to interact with our line, not a piece
+    // of mutable game state, so it intentionally does NOT participate in
+    // fingerprint() (mirrors opponentStax, which is the same kind of static
+    // pre-game configuration). See AdversarialSolver.js for how it's used:
+    // the core Solver never reads it, so a default solve is byte-identical
+    // whether or not a threat profile is attached.
+    //   counterMana    {number}  total mana opponents can dedicate to countering
+    //                             our combo pieces across the whole game (budget,
+    //                             not per-turn — spent down as AdversarialSolver
+    //                             evaluates exposure windows)
+    //   removalMana    {number}  total mana opponents can dedicate to removing
+    //                             an assembled combo piece once it resolves
+    //   counterDensity {number}  0..1, rough fraction of relevant draws/turns
+    //                             where interaction is actually live (accounts
+    //                             for opponents being tapped out, holding the
+    //                             wrong card, etc.) — default 1 (worst case)
+    //   watchedKeys    {string[]|null} restrict analysis to these card keys
+    //                             (defaults to null = every manifest cardKey)
+    this.threats = data.threats ?? null;
     // flashThisTurn: true when Emergence Zone has been sacrificed this turn
     // (all spells can be cast as though they had flash).
     this.flashThisTurn  = data.flashThisTurn ?? false;
@@ -1048,6 +1069,40 @@ class GameState {
   }
 
   /**
+   * Return a new state with an opponent threat/interaction profile attached
+   * (O-8). Purely descriptive — the core Solver never reads `state.threats`,
+   * so attaching one does not change search behaviour, pruning, or
+   * fingerprint() at all. AdversarialSolver.js is the sole consumer: it walks
+   * a completed line and uses this profile to estimate how exposed each
+   * combo-critical piece was to counterspells/removal.
+   *
+   * Usage: state.withThreats({ counterMana: 2, removalMana: 3, counterDensity: 0.5 })
+   *
+   * Unspecified fields default to the worst case for the player (maximum
+   * opponent capacity), matching the project's general bias toward not
+   * silently under-claiming risk.
+   */
+  withThreats(profile) {
+    const s = this.clone();
+    s.threats = {
+      counterMana:    profile.counterMana    ?? 0,
+      removalMana:    profile.removalMana    ?? 0,
+      counterDensity: profile.counterDensity ?? 1,
+      watchedKeys:    profile.watchedKeys    ?? null,
+    };
+    return s;
+  }
+
+  /**
+   * Remove the threat profile (return to the default "no interaction" model).
+   */
+  withoutThreats() {
+    const s = this.clone();
+    s.threats = null;
+    return s;
+  }
+
+  /**
    * Get a parameter from an opponent stax entry, e.g.
    * opponentStaxParam('Chalice of the Void') → '1' (from 'Chalice of the Void@1')
    * Returns null if not present or not parameterized.
@@ -1120,6 +1175,7 @@ class GameState {
     s.drawForTurn   = this.drawForTurn;
     s._hasSTAX      = this._hasSTAX;
     s.opponentStax  = this.opponentStax; // Set is immutable — safe to share
+    s.threats       = this.threats;      // static config — safe to share (O-8)
     s.flashThisTurn = this.flashThisTurn;
     s.pactOwed      = this.pactOwed;
     s._fp           = null;
@@ -1189,6 +1245,7 @@ class GameState {
     s.drawForTurn   = this.drawForTurn;
     s._hasSTAX      = this._hasSTAX;
     s.opponentStax  = this.opponentStax; // Set is immutable — safe to share
+    s.threats       = this.threats;      // static config — safe to share (O-8)
     s.flashThisTurn = this.flashThisTurn;
     s.pactOwed      = this.pactOwed;
     s._fp           = null;
@@ -12302,6 +12359,33 @@ function generateActions(state, _presentHint = null) {
   }
 
   // ── 4. Tap permanents for mana ────────────────────────────────────────────
+  // [perf] Symmetry-breaking dedup: when N permanents are completely
+  // state-identical (same card, same tap/sick/counters/aura status — most
+  // commonly multiple untapped basic Forests), tapping any one of them
+  // produces a fingerprint-identical resulting state (fingerprint() sorts
+  // battlefield segments, so "Forest#1 tapped" == "Forest#2 tapped"). Without
+  // this, generateActions emits N separate actions and DFS explores all N as
+  // distinct branches before dedup catches the convergence one level down —
+  // for N identical untapped lands that's O(N!) redundant paths through the
+  // same eventual states. Only applied to the single-result fast path; the
+  // multi-option branch (Fanatic ferocious, Nykthos devotion) is left alone
+  // since per-instance differences there are exactly the point.
+  const _seenTapSignatures = new Set();
+  function _tapSignature(p) {
+    // Mirrors the "fast path" fields in GameState.fingerprint() — the set of
+    // fields that can make two same-cardKey permanents behave differently.
+    if (p.enchantedLandId !== undefined || p.elvishGuidance || p.imprintedColor !== undefined ||
+        p.cauldronAbilityKey !== undefined || p.copyKey !== undefined ||
+        (p.levelCounters && p.levelCounters !== 0) || p.namedCard !== undefined || p.luckCounter) {
+      return null; // has a distinguishing field — never dedup, always emit its own action
+    }
+    const countersKey = (p.counters && Object.keys(p.counters).some(k => p.counters[k]))
+      ? JSON.stringify(p.counters) : '';
+    const usedKey = (p.abilitiesUsed && Object.keys(p.abilitiesUsed).some(k => p.abilitiesUsed[k]))
+      ? JSON.stringify(p.abilitiesUsed) : '';
+    return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${countersKey}:${usedKey}`;
+  }
+
   for (const perm of state.battlefield) {
     if (perm.tapped) continue;
     const def = CARDS[perm.cardKey];
@@ -12335,6 +12419,15 @@ function generateActions(state, _presentHint = null) {
       : perm;
     const preResults = def.tapForMana(state, permForPreCheck);
     if (!preResults.length) continue;
+
+    // [perf] Symmetry-breaking check (single-result case only — see comment above).
+    if (preResults.length === 1) {
+      const sig = _tapSignature(perm);
+      if (sig !== null) {
+        if (_seenTapSignatures.has(sig)) continue; // identical to an already-emitted permanent — skip
+        _seenTapSignatures.add(sig);
+      }
+    }
 
     // Quest for Renewal: when a non-attacking creature taps for mana, add a quest counter.
     // We add the counter whenever a creature tapForMana fires on YOUR turn.
@@ -13178,6 +13271,14 @@ var DEFAULT_OPTIONS = {
   // search-spell heuristic penalty. The solver explores every reachable
   // state within the turn/depth budget. Much slower but never misses a win.
   exhaustive: false,
+  // [O-8] heuristicBias(state) => number: optional additive term folded into
+  // child-ordering heuristic(). Defaults to a no-op (always 0), which makes
+  // every existing call site, state count, and bench.js result byte-identical
+  // to before this option existed. AdversarialSolver.js is the only current
+  // caller — it uses this hook to bias the DFS/BFS child order toward lines
+  // that minimise combo-piece exposure to opponent interaction, without
+  // forking or duplicating the search loops themselves.
+  heuristicBias: null,
 };
 
 // ── Scoring ───────────────────────────────────────────────────────────────
@@ -13567,7 +13668,11 @@ class Solver {
       }
       children.push({
         next,
-        h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive, childInfiniteMana),
+        // [O-8] heuristicBias is null by default — `+ 0` is a guaranteed
+        // no-op so existing state counts/bench.js results are unaffected
+        // unless a caller (AdversarialSolver) explicitly supplies one.
+        h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive, childInfiniteMana) +
+           (this.opts.heuristicBias ? this.opts.heuristicBias(next) : 0),
         // [E14] Carry the values computed here so the recursive _dfs call on this
         // child reuses them instead of recomputing buildPresentSet/checkCombos/
         // analyzeState. These describe `next` exactly and stay valid until used.
@@ -13717,7 +13822,9 @@ class Solver {
           // enqueue), so this is a 100%-reuse, zero-waste optimization.
           children.push({
             next,
-            h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana),
+            // [O-8] see DFS site above — null by default, guaranteed no-op.
+            h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana) +
+               (this.opts.heuristicBias ? this.opts.heuristicBias(next) : 0),
             pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: ca },
           });
         }
