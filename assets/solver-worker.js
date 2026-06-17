@@ -5448,11 +5448,34 @@ var CARDS = {
     onEnter(state) {
       // Pick the highest-value land target. Priority:
       //   Gaea's Cradle > Nykthos > Big non-basic (Ancient Tomb) > basic Forest
-      // Under Ashaya every creature is already a land, so skip those —
-      // only target permanents that are PURELY lands (no creature type before earthbend).
-      const candidates = state.battlefield.filter(p =>
+      //   > everything else (including creature-lands under Ashaya)
+      // Real oracle text is just "target land you control" — there is NO
+      // rules restriction against the land also being a creature. Under
+      // Ashaya, Hope Tender / Magus of the Candelabra / Ley Weaver /
+      // Argothian Elder / Elvish Reclaimer (etc.) are all already lands
+      // and are fully legal earthbend targets too — confirmed against the
+      // real card text in ref/card_data.md. Pure (non-creature) lands are
+      // still preferred by default (they're typically the highest
+      // strategic value, e.g. animating Gaea's Cradle for mana), but
+      // creature-lands are included as candidates rather than excluded
+      // outright, so earthbend can still find a target when no pure land
+      // is available, or when the assembly narration specifically asks
+      // for a creature-land's haste (see Solver.js's haste-enabler block).
+      const pureLandCandidates = state.battlefield.filter(p =>
         p.is('land') && !p.is('creature') && p.name !== 'Badgermole Cub'
       );
+      const creatureLandCandidates = state.battlefield.filter(p =>
+        p.is('land') && p.is('creature') && p.name !== 'Badgermole Cub' &&
+        // Ashaya itself is excluded as a fallback target: it doesn't need
+        // haste for anything, and its power/toughness are dynamically
+        // computed (= number of lands controlled) rather than static, so
+        // adding a static +1/+1 counter to it would produce a confusing,
+        // not-actually-useful result. The whole point of targeting a
+        // creature-land here is to grant haste to something that
+        // benefits from it (Hope Tender, Magus, Reclaimer, etc.).
+        p.name !== 'Ashaya, Soul of the Wild'
+      );
+      const candidates = pureLandCandidates.length > 0 ? pureLandCandidates : creatureLandCandidates;
       if (candidates.length === 0) return state.log('Badgermole Cub ETB: no land target');
 
       const priority = ["Gaea's Cradle", 'Nykthos, Shrine to Nyx', 'Ancient Tomb',
@@ -5462,17 +5485,38 @@ var CARDS = {
         return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
       })[0];
 
-      // Clone and mutate the target land: add creature type, haste, 1/1 P/T
+      // Clone and mutate the target land: add creature type (if not
+      // already one), grant haste, and add a +1/+1 counter.
+      //
+      // Power/toughness handling per the real reminder text ("becomes a
+      // 0/0 creature... Put a +1/+1 counter on it"): the 0/0 base only
+      // applies when the target was a PURE land before earthbend (no
+      // prior P/T at all, since lands don't intrinsically have any) — in
+      // that case it ends up 1/1 after the counter. If the target is
+      // ALREADY a creature (a creature-land under Ashaya, e.g. Hope
+      // Tender 1/1 or Argothian Elder 2/2), it keeps its own real printed
+      // power/toughness — the +1/+1 counter is added on top of THAT, not
+      // a 0/0 reset. Getting this wrong would incorrectly shrink Elder/Ley
+      // Weaver (2/2 base) down to 1/1.
       let s = state.clone();
       s._ensureBF();
       const tgt = s.getPermanentById(target.id);
       if (!tgt) return state.log('Badgermole Cub ETB: target not found');
+      const wasAlreadyCreature = tgt.is('creature');
       tgt._ensureOwnTypes?.();
       if (!tgt.types.includes('creature')) tgt.types = [...tgt.types, 'creature'];
       tgt.summoningSick = false; // haste
-      tgt.power     = 1;
-      tgt.toughness = 1;
-      return s.log(`Badgermole Cub ETB: earthbend ${target.name} → 1/1 creature with haste`);
+      if (wasAlreadyCreature) {
+        tgt.power     = (tgt.power     ?? 0) + 1;
+        tgt.toughness = (tgt.toughness ?? 0) + 1;
+      } else {
+        tgt.power     = 1;
+        tgt.toughness = 1;
+      }
+      const resultDesc = wasAlreadyCreature
+        ? `+1/+1 counter (now ${tgt.power}/${tgt.toughness}) with haste`
+        : '1/1 creature with haste';
+      return s.log(`Badgermole Cub ETB: earthbend ${target.name} → ${resultDesc}`);
     },
   },
   outland_liberator: {
@@ -7649,6 +7693,27 @@ function hasPerm(state, name) {
   return state.battlefield.some(p => p.name === name);
 }
 
+// True if a named permanent is on the battlefield AND can activate its own
+// tap ability right now -- i.e. it isn't summoning sick, UNLESS Shang-Chi's
+// static is active (which bypasses summoning sickness for any creature's
+// activated ability -- see actions.js's generic ability handler). hasPerm
+// alone only checks presence, which silently treats a permanent that was
+// JUST cast this turn (e.g. via a tutor, mid-assembly) as already able to
+// tap -- wrong for the self-tapping Geier Reach untappers (Magus of the
+// Candelabra, Hope Tender, Ley Weaver, Argothian Elder), whose {T}-cost
+// abilities genuinely require summoning sickness to have worn off (or a
+// haste source) before they can activate at all, independent of whether
+// the broader bounce-and-recast loop would otherwise sustain them.
+// NOTE: named permCanActivate (not permReady) to avoid colliding with the
+// existing permReady() defined later in this file, which has a different,
+// incompatible signature (also checks !tapped, no Shang-Chi awareness) --
+// a same-named later function declaration would silently shadow this one.
+function permCanActivate(state, name) {
+  const p = state.battlefield.find(p => p.name === name);
+  if (!p) return false;
+  return !p.summoningSick || shangChiActive(state);
+}
+
 // True if Quirion Ranger is on battlefield AND its once-per-turn bounce ability
 // has NOT yet been used this turn.
 function quirionAvailable(state) {
@@ -7963,18 +8028,123 @@ function hasSelfRecastBounce(state, selfName) {
 // custom-library — not in DEFAULT_DECKLIST). Either lets a creature-only
 // effect (Quirion/Scryb Ranger's "untap target creature", etc.) target a
 // land for the rest of the turn.
+//
+// Badgermole Cub's earthbend ("target land you control becomes a 0/0
+// creature with haste — it's still a land") is a DIFFERENT kind of
+// animator than Destiny Spinner/Vengeant Earth: it's a one-shot ETB
+// trigger with deterministic, priority-ordered targeting (Gaea's Cradle /
+// Nykthos / Ancient Tomb / Deserted Temple / Wirewood Lodge / Forest /
+// Boseiju are all preferred over Geier Reach Sanitarium — see
+// GameState/cards.js's earthbend onEnter) — so "Badgermole is on the
+// battlefield" does NOT reliably mean Geier Reach got animated by it (if
+// a higher-priority land like Gaea's Cradle is also present, Badgermole
+// targets that instead). What DOES reliably mean it's usable: Geier Reach
+// is ALREADY a creature on the current battlefield — its real oracle text
+// has no "until end of turn" clause (unlike Destiny Spinner's), so once
+// animated it stays a creature-land permanently, and that's a directly
+// checkable fact rather than a guess about Badgermole's future targeting.
 function hasLandAnimator(state) {
-  return hasPerm(state, 'Destiny Spinner') || (state.hand?.includes('vengeant_earth') ?? false);
+  if (hasPerm(state, 'Destiny Spinner') || (state.hand?.includes('vengeant_earth') ?? false)) return true;
+  const geier = state.battlefield?.find(p => p.cardKey === 'geier_reach');
+  return !!(geier && geier.types?.includes('creature'));
 }
 
 function hasGeierReachUntapper(state) {
-  const hasLandUntapper =
-    hasPerm(state, 'Argothian Elder') ||
-    hasPerm(state, 'Ley Weaver') ||
-    hasPerm(state, 'Magus of the Candelabra') ||
-    hasPerm(state, 'Deserted Temple') ||
-    hasPerm(state, 'Hope Tender');
-  if (hasLandUntapper) return true;
+  // Deserted Temple is a true land — never summoning sick, and its
+  // "{1},{T}: untap target land" never needs to target itself to keep
+  // going (it's not tapped by its own ability the way the creature
+  // untappers below are). Unconditionally fine on its own.
+  if (hasPerm(state, 'Deserted Temple')) return true;
+
+  const hasBouncer =
+    inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
+    inHandOrField(state, 'Kogla, the Titan Ape', 'kogla');
+
+  // Magus of the Candelabra ({X},{T}: untap X target lands), Ley Weaver and
+  // Argothian Elder ({T}: untap two target lands), and Hope Tender ({1},{T}
+  // [,Exert]: untap target land(s)) all tap THEMSELVES as part of activating
+  // — see each card's ability fn in cards.js ("Tap [X] FIRST... under Ashaya,
+  // [X] is a Forest land and can target itself"). Without Ashaya, none of
+  // them are lands, so none of them can ever re-target themselves — the
+  // loop dies after exactly one cycle (verified directly: the permanent
+  // stays tapped after the first activation with no Ashaya present).
+  // There are two independent ways to make any of these four sustain
+  // without Ashaya:
+  //   (a) Ashaya itself — makes the creature a Forest, so its own untap
+  //       can include itself each cycle (verified: the X=2 Magus result
+  //       "untap Magus + Geier Reach" leaves Magus untapped too).
+  //   (b) A bouncer (Temur/Kogla) to return-and-recast it each cycle, PLUS
+  //       Shang-Chi's static — which bypasses summoning sickness for ANY
+  //       creature's activated ability (see actions.js's generic ability
+  //       handler) — so the freshly-recast (summoning-sick) permanent can
+  //       still activate immediately. Without Shang-Chi, a bounced-and-
+  //       recast creature is summoning sick and the ability requires
+  //       perm.summoningSick === false, so the loop still dies even with a
+  //       bouncer. (Destiny Spinner/Badgermole Cub do NOT substitute for
+  //       Shang-Chi here — both only grant haste to a LAND becoming a
+  //       creature, per their real oracle text; they can't grant haste to
+  //       an already-existing creature like a recast Magus unless Ashaya
+  //       has already made it a land, which collapses back to path (a).)
+  const selfSustainable = ashayaOut(state) || (hasBouncer && shangChiActive(state));
+
+  if (selfSustainable) {
+    if (permCanActivate(state, 'Magus of the Candelabra') || permCanActivate(state, 'Hope Tender')) return true;
+    // Ley Weaver / Argothian Elder need TWO legal land targets when not
+    // self-targeting (their ability has no X=1 mode, unlike Magus) — so
+    // without Ashaya (where the permanent itself supplies one target),
+    // require at least one other land you control besides Geier Reach
+    // itself to be available as the second target.
+    if ((permCanActivate(state, 'Ley Weaver') || permCanActivate(state, 'Argothian Elder')) &&
+        (ashayaOut(state) || state.lands().length >= 2)) {
+      return true;
+    }
+  }
+
+  // Woodcaller Automaton's ETB (cast trigger) untaps target land you control —
+  // see GameState.enterBattlefield, which already prefers Cradle/Nykthos but
+  // falls back to any tapped land, so it untaps Geier Reach Sanitarium when
+  // that's the highest-priority tapped land. The trigger is one-shot, so it
+  // only counts as a repeatable untapper when paired with a way to bounce
+  // and recast it each cycle. Temur Sabertooth specifically — Woodcaller is
+  // a Construct, not a Human, so Kogla can't bounce it (same rule as the
+  // Woodcaller+Temur infinite-mana combo above).
+  const hasWoodcallerLoop =
+    inHandOrField(state, 'Woodcaller Automaton', 'woodcaller_automaton') &&
+    inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth');
+  if (hasWoodcallerLoop) return true;
+
+  // Hyrax Tower Scout's ETB (cast trigger) untaps target CREATURE (not a
+  // land directly — see GameState.enterBattlefield), so Geier Reach must
+  // first be animated into a creature-land (Destiny Spinner / Vengeant
+  // Earth does this on its own — no Ashaya needed; Ashaya is only required
+  // by the RANGER case below, where the bounce COST itself needs Ashaya to
+  // make the Ranger count as "a Forest you control"). The ETB is one-shot
+  // like Woodcaller's, so it also needs a bouncer to recast it each cycle —
+  // but unlike Woodcaller, Hyrax is a Human, so EITHER Temur Sabertooth OR
+  // Kogla works (Kogla's bounce targets Humans specifically).
+  const hasHyraxLoop =
+    inHandOrField(state, 'Hyrax Tower Scout', 'hyrax_tower_scout') &&
+    hasLandAnimator(state) && hasBouncer;
+  if (hasHyraxLoop) return true;
+
+  // Wirewood Symbiote's ability ("Return an Elf to hand: untap a creature,
+  // once per turn") can target Geier Reach once it's animated into a
+  // creature-land (Destiny Spinner / Vengeant Earth — no Ashaya needed,
+  // same reasoning as Hyrax above). The once-per-turn flag is on Symbiote's
+  // OWN permanent id and is set regardless of which Elf gets returned —
+  // Symbiote itself can't self-bounce to reset it (it's an Insect, not an
+  // Elf, so it's never a legal target of its own ability) — so it needs an
+  // EXTERNAL bouncer to get a fresh object each cycle. Temur Sabertooth
+  // specifically: its bounce targets "another creature" with no subtype
+  // restriction, so it works regardless of Symbiote's (non-Human) type —
+  // Kogla's bounce is restricted to Humans and Symbiote is an Insect, so
+  // Kogla can't do it.
+  const hasSymbioteLoop =
+    inHandOrField(state, 'Wirewood Symbiote', 'wirewood_symbiote') &&
+    hasLandAnimator(state) &&
+    inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth');
+  if (hasSymbioteLoop) return true;
+
   const hasRanger = hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
   if (!hasRanger) return false;
   // Quirion/Scryb Ranger's untap is "Activate only once each turn" — a
@@ -14060,6 +14230,356 @@ function assembleWin(state) {
     return s.hasPermanent(cardName);
   }
 
+  // ── attemptGeierReachUntap: shared by every Geier Reach Sanitarium fetch
+  // path (hand, Crop Rotation, Eternal Witness->Crop Rotation, Elvish
+  // Reclaimer) ───────────────────────────────────────────────────────────
+  // Once Geier Reach is on the battlefield, regardless of which path put
+  // it there, the same untap-method detection applies. This was originally
+  // written inline only inside the Elvish Reclaimer (C2) fetch path, which
+  // meant the Crop Rotation paths (A: from hand, B: Crop Rotation from
+  // hand, C1: Eternal Witness recovers Crop Rotation from graveyard) fell
+  // straight through to the end of the function with no untap attempt at
+  // all — reported gap: a hand using Crop Rotation/Eternal Witness to fetch
+  // Geier Reach never even tried to find an untap method, despite having
+  // one available (Ashaya + Quirion Ranger + a fetchable Destiny Spinner).
+  // Mirrors hasGeierReachUntapper (combos.js) — see that function's
+  // comments for the per-config verification (which pieces actually need
+  // Ashaya vs which don't, and which bouncer each one-shot ETB requires).
+  function attemptGeierReachUntap() {
+    // ── O-10: Identify the Sanitarium untap configuration ──────
+    // Geier Reach must be untapped repeatedly to mill the table.
+    // Detect which untap method is available and document the loop.
+    // Mirrors hasGeierReachUntapper (combos.js) — see that function's
+    // comments for the per-config verification (which pieces actually
+    // need Ashaya vs which don't, and which bouncer each one-shot ETB
+    // requires). Deserted Temple (a true land) is checked first since
+    // it has no other requirement at all.
+    const ashayaOnField = onField('Ashaya, Soul of the Wild');
+    const hasBouncerOnField = onField('Temur Sabertooth') || onField('Kogla, the Titan Ape') ||
+      inHand('temur_sabertooth') || inHand('kogla');
+    const shangChiOnField = onField('Shang-Chi, Master of Kung Fu');
+    // Magus / Ley Weaver / Argothian Elder / Hope Tender all tap
+    // THEMSELVES as part of their own untap ability (see each
+    // card's fn in cards.js) — without Ashaya none of them are
+    // lands, so none can re-target themselves, and the loop dies
+    // after one cycle. Sustaining without Ashaya needs a bouncer
+    // (Temur/Kogla) PLUS Shang-Chi (bypasses summoning sickness on
+    // the freshly-recast permanent — Destiny Spinner/Badgermole
+    // do NOT substitute here, since both only grant haste to a
+    // LAND becoming a creature, not to an existing creature).
+    const selfTapSustainable = ashayaOnField || (hasBouncerOnField && shangChiOnField);
+    // Ley Weaver / Argothian Elder additionally need a second
+    // legal land target when not self-targeting (no X=1 mode,
+    // unlike Magus) — Ashaya supplies that target itself; without
+    // Ashaya, require another real land on the battlefield.
+    const hasSecondLandTarget = ashayaOnField || state.lands().length >= 2;
+    let untapMethod = null;
+
+    if (onField('Deserted Temple')) {
+      untapMethod = 'Deserted Temple: {1},{T} → untap Geier Reach Sanitarium directly (it\'s a land)';
+    } else if (onField('Magus of the Candelabra') && selfTapSustainable) {
+      untapMethod = ashayaOnField
+        ? 'Magus of the Candelabra: {2},{T} → untap itself + Geier Reach Sanitarium (Forest under Ashaya)'
+        : 'Magus of the Candelabra + Temur/Kogla + Shang-Chi: untap Geier Reach, bounce → recast Magus (Shang-Chi bypasses sickness) → repeat';
+    } else if (onField('Hope Tender') && selfTapSustainable) {
+      untapMethod = ashayaOnField
+        ? 'Hope Tender (exert): {1},{T} → untap itself + Geier Reach Sanitarium (Forest under Ashaya)'
+        : 'Hope Tender + Temur/Kogla + Shang-Chi: untap Geier Reach, bounce → recast Hope Tender (Shang-Chi bypasses sickness) → repeat';
+    } else if (onField('Argothian Elder') && selfTapSustainable && hasSecondLandTarget) {
+      untapMethod = ashayaOnField
+        ? 'Argothian Elder: {T} → untap itself + Geier Reach Sanitarium (Forest under Ashaya)'
+        : 'Argothian Elder + Temur/Kogla + Shang-Chi: untap Geier Reach + another land, bounce → recast Elder (Shang-Chi bypasses sickness) → repeat';
+    } else if (onField('Ley Weaver') && selfTapSustainable && hasSecondLandTarget) {
+      untapMethod = ashayaOnField
+        ? 'Ley Weaver: {T} → untap itself + Geier Reach Sanitarium (Forest under Ashaya)'
+        : 'Ley Weaver + Temur/Kogla + Shang-Chi: untap Geier Reach + another land, bounce → recast Ley Weaver (Shang-Chi bypasses sickness) → repeat';
+    } else if (ashayaOnField && !onField('Magus of the Candelabra') &&
+               (inHand('magus_of_the_candelabra') || (inLibrary('magus_of_the_candelabra') && onField('Duskwatch Recruiter'))) &&
+               (shangChiOnField || inHand('shang_chi') || inLibrary('shang_chi') ||
+                onField('Badgermole Cub') || inHand('badgermole_cub') || inLibrary('badgermole_cub'))) {
+      // Magus isn't deployed yet but is fetchable, and Ashaya is already
+      // out — fetch and cast it rather than falling through to the more
+      // convoluted Ranger+Destiny Spinner path below (which needs an
+      // animator AND Destiny Spinner specifically to be reachable). Magus
+      // is strictly simpler once Ashaya is present: {2},{T} untaps itself
+      // + Geier Reach directly, no animator step needed at all (Geier
+      // Reach is already a land — Magus doesn't need it to be a
+      // creature, unlike the Ranger's "untap target creature" ability).
+      // CRITICAL: a freshly-cast Magus is summoning sick and its {2},{T}
+      // ability genuinely can't activate this turn without a haste
+      // source — Ashaya alone does NOT grant haste, it just makes Magus a
+      // Forest (a separate property). grantHasteEnabler tries Shang-Chi's
+      // static first, then Badgermole Cub's earthbend (legal target under
+      // Ashaya — see cards.js's onEnter) as a fallback — both bypass
+      // summoning sickness for Magus's own activation. Without either
+      // reachable, this branch must not claim the method is ready — fall
+      // through to the Ranger+Destiny Spinner path below instead, which
+      // doesn't have this same-turn problem (the Ranger itself isn't
+      // freshly cast in that path).
+      if (!inHand('magus_of_the_candelabra')) {
+        const { state: nsMg, cardKey: mgFound } = searchFor('magus_of_the_candelabra');
+        if (mgFound) { s = nsMg.addToHand(mgFound); steps.push('Activate Duskwatch Recruiter → find Magus of the Candelabra'); }
+      }
+      if (inHand('magus_of_the_candelabra')) {
+        s = s.removeFromHand('magus_of_the_candelabra');
+        s = s.enterBattlefield('magus_of_the_candelabra');
+        steps.push('Cast Magus of the Candelabra (infinite mana available)');
+        grantHasteEnabler('Magus of the Candelabra');
+        untapMethod = 'Magus of the Candelabra: {2},{T} → untap itself + Geier Reach Sanitarium (Forest under Ashaya)';
+      }
+    } else if (ashayaOnField && !onField('Hope Tender') &&
+               (inHand('hope_tender') || (inLibrary('hope_tender') && onField('Duskwatch Recruiter'))) &&
+               (shangChiOnField || inHand('shang_chi') || inLibrary('shang_chi') ||
+                onField('Badgermole Cub') || inHand('badgermole_cub') || inLibrary('badgermole_cub'))) {
+      // Same idea as the Magus branch above, tried when Magus itself isn't
+      // reachable at all (e.g. exiled) — Hope Tender is functionally
+      // equivalent here: a 1/1 with a self-targeting "{1},{T} [,Exert]:
+      // untap target land" ability, just as simple to fetch+cast+haste.
+      if (!inHand('hope_tender')) {
+        const { state: nsHt, cardKey: htFound } = searchFor('hope_tender');
+        if (htFound) { s = nsHt.addToHand(htFound); steps.push('Activate Duskwatch Recruiter → find Hope Tender'); }
+      }
+      if (inHand('hope_tender')) {
+        s = s.removeFromHand('hope_tender');
+        s = s.enterBattlefield('hope_tender');
+        steps.push('Cast Hope Tender (infinite mana available)');
+        grantHasteEnabler('Hope Tender');
+        untapMethod = 'Hope Tender (exert): {1},{T} → untap itself + Geier Reach Sanitarium (Forest under Ashaya)';
+      }
+    } else if (onField('Temur Sabertooth') && onField('Woodcaller Automaton')) {
+      // Both pieces are genuinely deployed already — the method is
+      // truly ready. (If Woodcaller is only in hand/library, it
+      // hasn't been cast yet — that's handled by the fetch-and-cast
+      // branch below instead of being described here without
+      // actually being executed.)
+      untapMethod = 'Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop';
+    } else if ((onField('Hyrax Tower Scout') || inHand('hyrax_tower_scout')) &&
+               (onField('Destiny Spinner') || inHand('vengeant_earth')) && hasBouncerOnField) {
+      // Hyrax's ETB untaps a creature (not a land directly), so
+      // Geier Reach must be animated first — Destiny Spinner does
+      // this on its own, no Ashaya needed. The ETB is one-shot,
+      // so it also needs a bouncer (Temur or Kogla — Hyrax is a
+      // Human, so either works) to recast it each cycle.
+      const animator = onField('Destiny Spinner') ? 'Destiny Spinner' : 'Vengeant Earth';
+      const bouncerName = onField('Temur Sabertooth') ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+      untapMethod = `Hyrax Tower Scout + ${animator} + ${bouncerName}: Scout ETB untaps Geier Reach (animated creature-land), ${bouncerName} bounces Scout to recast each cycle`;
+    } else if ((onField('Wirewood Symbiote') || inHand('wirewood_symbiote')) &&
+               (onField('Destiny Spinner') || inHand('vengeant_earth')) && onField('Temur Sabertooth')) {
+      // Symbiote's "return an Elf: untap a creature" can target
+      // animated Geier Reach — no Ashaya needed (Destiny Spinner
+      // alone animates it). The once-per-turn flag is on
+      // Symbiote's own id and can't be reset by self-bounce
+      // (Symbiote is an Insect, not an Elf — never a legal target
+      // of its own ability), so it needs Temur Sabertooth
+      // specifically to bounce-and-recast IT each cycle (Kogla's
+      // bounce is Human-restricted; Symbiote isn't a Human).
+      const animator = onField('Destiny Spinner') ? 'Destiny Spinner' : 'Vengeant Earth';
+      untapMethod = `Wirewood Symbiote + ${animator} + Temur Sabertooth: return an Elf → untap Geier Reach (animated creature-land), Temur bounces Symbiote to recast each cycle`;
+    } else if ((onField('Quirion Ranger') || onField('Scryb Ranger') || inHand('quirion_ranger') || inHand('scryb_ranger'))
+               && ashayaOnField &&
+               (onField('Destiny Spinner') || inHand('vengeant_earth') || inHand('destiny_spinner') ||
+                (inLibrary('destiny_spinner') && onField('Duskwatch Recruiter')))) {
+      // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land —
+      // Geier Reach Sanitarium needs to be animated into a
+      // land-creature before either Ranger can target it: either
+      // Destiny Spinner ({3}{G}, repeatable) or Vengeant Earth
+      // ({1}{G} instant, "until end of turn" — one cast covers
+      // the whole turn's loop). Ashaya IS needed here (unlike
+      // Hyrax/Symbiote above): the Ranger's bounce COST returns
+      // "a Forest you control", and Ashaya is what lets the
+      // Ranger return ITSELF to reset its own once-per-turn flag.
+      // Fetch Destiny Spinner if it's still in the library rather
+      // than relying on Badgermole Cub — Badgermole's earthbend
+      // is a one-shot ETB that may have already resolved targeting
+      // a DIFFERENT land (e.g. Gaea's Cradle, picked by its
+      // deterministic priority order during the actual search,
+      // well before Geier Reach was even fetched) — it can't be
+      // redirected after the fact, whereas Destiny Spinner is a
+      // repeatable activated ability with no such conflict.
+      // (Duskwatch Recruiter is guaranteed on field here whenever
+      // this fetch branch is reached — it's required by the
+      // outer condition's inLibrary clause above — so no
+      // additional onField check is needed before searching.)
+      if (!onField('Destiny Spinner') && !inHand('destiny_spinner') && inLibrary('destiny_spinner')) {
+        const { state: nsDs, cardKey: dsFound } = searchFor('destiny_spinner');
+        if (dsFound) { s = nsDs.addToHand(dsFound); steps.push('Activate Duskwatch Recruiter → find Destiny Spinner'); }
+      }
+      if (!onField('Destiny Spinner') && inHand('destiny_spinner')) {
+        s = s.removeFromHand('destiny_spinner');
+        s = s.enterBattlefield('destiny_spinner');
+        steps.push('Cast Destiny Spinner (infinite mana available)');
+      }
+      const rangerName = (onField('Quirion Ranger') || inHand('quirion_ranger')) ? 'Quirion Ranger' : 'Scryb Ranger';
+      const animator = onField('Destiny Spinner') ? 'Destiny Spinner' : 'Vengeant Earth';
+      untapMethod = `${rangerName} + ${animator}: Ranger untaps Geier Reach (animated land-creature under Ashaya)`;
+    }
+
+    if (untapMethod) {
+      steps.push(`Untap method: ${untapMethod}`);
+      steps.push('{2}: Activate Geier Reach Sanitarium (hold priority) → Untap Geier Reach → Repeat to mill entire library');
+    } else if (!onField('Woodcaller Automaton') &&
+               (onField('Temur Sabertooth') || inHand('temur_sabertooth') || inLibrary('temur_sabertooth')) &&
+               (inHand('woodcaller_automaton') || (onField('Duskwatch Recruiter') && inLibrary('woodcaller_automaton')))) {
+      // Temur Sabertooth + Woodcaller Automaton is a valid Geier Reach
+      // untap engine (see hasGeierReachUntapper in combos.js), but
+      // Woodcaller hasn't been cast yet at this point in the
+      // narration. If it's already in hand, cast it directly;
+      // otherwise fetch it via Duskwatch first (same searchFor/
+      // enterBattlefield pattern as the other Duskwatch finds
+      // above) — either way, actually execute the step rather
+      // than just describing the path in prose.
+      if (inHand('woodcaller_automaton')) {
+        s = s.removeFromHand('woodcaller_automaton');
+        s = s.enterBattlefield('woodcaller_automaton');
+        steps.push("Cast Woodcaller Automaton ({2}{G}{G}) — ETB untaps Geier Reach Sanitarium");
+        steps.push('Untap method: Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop');
+        steps.push('{2}: Activate Geier Reach Sanitarium (hold priority) → Untap Geier Reach → Repeat to mill entire library');
+      } else {
+        const { state: nsWC, cardKey: wcFound } = searchFor('woodcaller_automaton');
+        if (wcFound) {
+          s = nsWC.addToHand(wcFound);
+          steps.push('Activate Duskwatch Recruiter → find Woodcaller Automaton');
+          s = s.removeFromHand(wcFound);
+          s = s.enterBattlefield(wcFound);
+          steps.push("Cast Woodcaller Automaton ({2}{G}{G}) — ETB untaps Geier Reach Sanitarium");
+          steps.push('Untap method: Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop');
+          steps.push('{2}: Activate Geier Reach Sanitarium (hold priority) → Untap Geier Reach → Repeat to mill entire library');
+        } else {
+          steps.push('(Need untap for Geier Reach Sanitarium: Magus of the Candelabra, Woodcaller+Temur, Scryb Ranger+Ashaya, etc.)');
+        }
+      }
+    } else {
+      steps.push('(Need untap for Geier Reach Sanitarium: Magus of the Candelabra, Woodcaller+Temur, Scryb Ranger+Ashaya, etc.)');
+    }
+  }
+
+  // ── grantHasteEnabler: shared by every creature that needs haste to
+  // activate its own tap ability the same turn it's cast (Elvish
+  // Reclaimer, Magus of the Candelabra, Hope Tender, Ley Weaver,
+  // Argothian Elder) ────────────────────────────────────────────────────
+  // Originally written inline, hardcoded to Elvish Reclaimer only.
+  // Parameterized so the same priority-ordered enabler search (global
+  // haste statics → Shang-Chi → Destiny Spinner+Ashaya → Badgermole
+  // Cub+Ashaya → fallback) applies to any of the self-tapping untappers.
+  // Returns true if haste was granted (or already present), false if no
+  // enabler was reachable at all (caller still proceeds — the gap is
+  // documented in steps for the pilot, matching the original behavior).
+  function grantHasteEnabler(creatureName) {
+    const perm = s.battlefield.find(p => p.name === creatureName);
+    let hasteGranted = false;
+
+    // 1. Global haste already on field (Concordant Crossroads, Thousand-Year Elixir,
+    //    Surrak and Goreclaw) — the creature enters without summoning sickness.
+    const GLOBAL_HASTE = ['Concordant Crossroads','Thousand-Year Elixir','Surrak and Goreclaw'];
+    if (!hasteGranted && GLOBAL_HASTE.some(n => onField(n))) {
+      if (perm) perm.summoningSick = false;
+      const enablerName = GLOBAL_HASTE.find(n => onField(n));
+      steps.push(`${enablerName}: ${creatureName} enters with haste`);
+      hasteGranted = true;
+    }
+
+    // 1b. Shang-Chi, Master of Kung Fu — static: "You may activate
+    //     abilities of creatures you control as though those creatures
+    //     had haste." A summoning-sick creature's own tap ability is
+    //     exactly such an activation, so it can use it while Shang-Chi is
+    //     on the field. Shang-Chi IS in the default decklist, making this
+    //     the most common real-game enabler. If he's in hand, cast him
+    //     ({1}{G} — infinite mana available).
+    if (!hasteGranted && (onField('Shang-Chi, Master of Kung Fu') || inHand('shang_chi') || inLibrary('shang_chi'))) {
+      if (!onField('Shang-Chi, Master of Kung Fu') && !inHand('shang_chi') && inLibrary('shang_chi') && onField('Duskwatch Recruiter')) {
+        const { state: nsSc, cardKey: scFound } = searchFor('shang_chi');
+        if (scFound) { s = nsSc.addToHand(scFound); steps.push('Activate Duskwatch Recruiter → find Shang-Chi, Master of Kung Fu'); }
+      }
+      if (!onField('Shang-Chi, Master of Kung Fu') && inHand('shang_chi')) {
+        s = s.removeFromHand('shang_chi');
+        s = s.enterBattlefield('shang_chi');
+        steps.push('Cast Shang-Chi, Master of Kung Fu (infinite mana available)');
+      }
+      if (onField('Shang-Chi, Master of Kung Fu')) {
+        const permNow = s.battlefield.find(p => p.name === creatureName);
+        if (permNow) permNow.summoningSick = false;
+        steps.push(`Shang-Chi, Master of Kung Fu: activate ${creatureName}'s ability as though it had haste`);
+        hasteGranted = true;
+      }
+    }
+
+    // 2. Destiny Spinner — {3}{G}: animate the creature (a land under Ashaya) → haste
+    if (!hasteGranted && onField('Ashaya, Soul of the Wild') &&
+        (onField('Destiny Spinner') || inHand('destiny_spinner') || inLibrary('destiny_spinner'))) {
+      if (!onField('Destiny Spinner') && !inHand('destiny_spinner') && inLibrary('destiny_spinner') && onField('Duskwatch Recruiter')) {
+        const { state: nsDs, cardKey: dsFound } = searchFor('destiny_spinner');
+        if (dsFound) { s = nsDs.addToHand(dsFound); steps.push('Activate Duskwatch Recruiter → find Destiny Spinner'); }
+      }
+      if (!onField('Destiny Spinner') && inHand('destiny_spinner')) {
+        s = s.removeFromHand('destiny_spinner');
+        s = s.enterBattlefield('destiny_spinner');
+        steps.push('Cast Destiny Spinner (infinite mana available)');
+      }
+      if (onField('Destiny Spinner')) {
+        if (perm) perm.summoningSick = false;
+        const enchCount = s.battlefield.filter(p => p.types.includes('enchantment')).length;
+        steps.push(`Destiny Spinner: {3}{G} → animate ${creatureName} (land under Ashaya) → ${enchCount}/${enchCount} Elemental with haste`);
+        hasteGranted = true;
+      }
+    }
+
+    // 3. Badgermole Cub — ETB earthbend targets a creature-land (legal
+    //    under Ashaya — see cards.js's onEnter, fixed to allow this) → haste.
+    //    The ETB is one-shot: if Badgermole is ALREADY on the battlefield,
+    //    its trigger may already have resolved against a different target
+    //    (e.g. Gaea's Cradle, animated earlier in the real search, before
+    //    this haste need was even known) — that can't be redirected after
+    //    the fact. In that case, Temur Sabertooth is required to bounce
+    //    and recast Badgermole for a guaranteed-fresh ETB. If Badgermole
+    //    isn't deployed yet, casting it fresh already gives a fresh ETB
+    //    with no bounce needed.
+    const badgermoleAlreadyDeployed = onField('Badgermole Cub');
+    const hasTemurForBadgermole = onField('Temur Sabertooth') || inHand('temur_sabertooth') || inLibrary('temur_sabertooth');
+    if (!hasteGranted && onField('Ashaya, Soul of the Wild') &&
+        (onField('Badgermole Cub') || inHand('badgermole_cub') || inLibrary('badgermole_cub')) &&
+        (!badgermoleAlreadyDeployed || hasTemurForBadgermole)) {
+      if (perm) perm.summoningSick = false;
+      if (!badgermoleAlreadyDeployed) {
+        if (!inHand('badgermole_cub') && inLibrary('badgermole_cub')) {
+          if (onField('Duskwatch Recruiter')) {
+            const { state: nsBc, cardKey: bcFound } = searchFor('badgermole_cub');
+            if (bcFound) { s = nsBc.addToHand(bcFound); steps.push('Activate Duskwatch Recruiter → find Badgermole Cub'); }
+          }
+        }
+        if (inHand('badgermole_cub')) {
+          s = s.removeFromHand('badgermole_cub');
+          s = s.enterBattlefield('badgermole_cub');
+        }
+        steps.push(`Badgermole Cub ETB (earthbend): target ${creatureName} (land under Ashaya) → +1/+1 counter and haste`);
+      } else {
+        // Already deployed with its ETB possibly already spent — bounce
+        // and recast via Temur Sabertooth for a guaranteed-fresh trigger.
+        if (!onField('Temur Sabertooth')) {
+          if (!inHand('temur_sabertooth') && inLibrary('temur_sabertooth') && onField('Duskwatch Recruiter')) {
+            const { state: nsTs, cardKey: tsFound } = searchFor('temur_sabertooth');
+            if (tsFound) { s = nsTs.addToHand(tsFound); steps.push('Activate Duskwatch Recruiter → find Temur Sabertooth'); }
+          }
+          if (inHand('temur_sabertooth')) {
+            s = s.removeFromHand('temur_sabertooth');
+            s = s.enterBattlefield('temur_sabertooth');
+            steps.push('Cast Temur Sabertooth (infinite mana available)');
+          }
+        }
+        steps.push("Temur Sabertooth: bounce Badgermole Cub to hand (its ETB may already be spent on a different target)");
+        steps.push(`Recast Badgermole Cub — fresh ETB (earthbend): target ${creatureName} (land under Ashaya) → +1/+1 counter and haste`);
+      }
+      hasteGranted = true;
+    }
+
+    // 4. Fallback — note that a haste enabler is needed but not yet available.
+    //    (The win line is still valid — this documents the gap for the pilot.)
+    if (!hasteGranted) {
+      if (perm) perm.summoningSick = false; // allow activation to proceed
+      steps.push(`(Need haste enabler for ${creatureName}: Shang-Chi static, Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)`);
+    }
+    return hasteGranted;
+  }
+
   // ── Step 0: Find Duskwatch Recruiter via tutor if not available ─────────
   // If Duskwatch isn't on field or in hand, check for tutor creatures that
   // can find it (on BF or in hand → cast → activate/ETB to find Duskwatch).
@@ -14371,6 +14891,7 @@ function assembleWin(state) {
       s = s.removeFromHand('geier_reach');
       s = s.enterBattlefield('geier_reach');
       steps.push('Play Geier Reach Sanitarium (land drop)');
+      attemptGeierReachUntap();
     } else if (inHand('crop_rotation') && inLibrary('geier_reach')) {
       // Path B: Crop Rotation from hand → fetch Geier Reach
       const sacLand = s.lands()[0];
@@ -14382,6 +14903,7 @@ function assembleWin(state) {
           if (found) {
             s = ns2.enterBattlefield(found);
             steps.push(`Crop Rotation: sacrifice ${sacLand.name} → fetch Geier Reach Sanitarium`);
+            attemptGeierReachUntap();
           }
         }
       }
@@ -14414,6 +14936,7 @@ function assembleWin(state) {
               if (found) {
                 s = ns2.enterBattlefield(found);
                 steps.push(`Crop Rotation: sacrifice ${sacLand.name} → fetch Geier Reach Sanitarium`);
+                attemptGeierReachUntap();
               }
             }
           }
@@ -14462,79 +14985,7 @@ function assembleWin(state) {
           s = s.enterBattlefield(found);
           steps.push('Cast Elvish Reclaimer (infinite mana available)');
 
-          // ── O-10: Grant Elvish Reclaimer haste via a real enabler ────────
-          // Under Ashaya, Reclaimer is a Forest land-creature. We need to give
-          // it haste so it can activate the same turn it's cast.
-          // Priority: cheapest/simplest enabler first.
-          const reclPerm = s.battlefield.find(p => p.name === 'Elvish Reclaimer');
-          let hasteGranted = false;
-
-          // 1. Global haste already on field (Concordant Crossroads, Thousand-Year Elixir,
-          //    Surrak and Goreclaw) — Reclaimer enters without summoning sickness.
-          const GLOBAL_HASTE = ['Concordant Crossroads','Thousand-Year Elixir','Surrak and Goreclaw'];
-          if (!hasteGranted && GLOBAL_HASTE.some(n => onField(n))) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            const enablerName = GLOBAL_HASTE.find(n => onField(n));
-            steps.push(`${enablerName}: Elvish Reclaimer enters with haste`);
-            hasteGranted = true;
-          }
-
-          // 1b. Shang-Chi, Master of Kung Fu — static: "You may activate
-          //     abilities of creatures you control as though those creatures
-          //     had haste."  Reclaimer's {2},{T} sac ability is exactly such an
-          //     activation, so a summoning-sick Reclaimer can use it while
-          //     Shang-Chi is on the field.  Unlike Crossroads/Elixir/Surrak,
-          //     Shang-Chi IS in the default decklist, making this the most
-          //     common real-game enabler.  If he's in hand, cast him
-          //     ({1}{G} — infinite mana available).  Bonus: his {T}: add two
-          //     restricted mana legally pays Reclaimer's {2} and Kogla's
-          //     {1}{G} (creature-source abilities) — though NOT Geier Reach's
-          //     {2},{T}, which is a land-source ability.
-          if (!hasteGranted && (onField('Shang-Chi, Master of Kung Fu') || inHand('shang_chi'))) {
-            if (!onField('Shang-Chi, Master of Kung Fu') && inHand('shang_chi')) {
-              s = s.removeFromHand('shang_chi');
-              s = s.enterBattlefield('shang_chi');
-              steps.push('Cast Shang-Chi, Master of Kung Fu (infinite mana available)');
-            }
-            const reclNow = s.battlefield.find(p => p.name === 'Elvish Reclaimer');
-            if (reclNow) reclNow.summoningSick = false;
-            steps.push("Shang-Chi, Master of Kung Fu: activate Elvish Reclaimer's ability as though it had haste");
-            hasteGranted = true;
-          }
-
-          // 2. Destiny Spinner on field — {3}{G}: animate Reclaimer (land under Ashaya) → haste
-          if (!hasteGranted && onField('Destiny Spinner') && onField('Ashaya, Soul of the Wild')) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            const enchCount = s.battlefield.filter(p => p.types.includes('enchantment')).length;
-            steps.push(`Destiny Spinner: {3}{G} → animate Elvish Reclaimer (land under Ashaya) → ${enchCount}/${enchCount} Elemental with haste`);
-            hasteGranted = true;
-          }
-
-          // 3. Badgermole Cub — ETB earthbend targets a creature-land → haste
-          if (!hasteGranted && (onField('Badgermole Cub') || inHand('badgermole_cub') || inLibrary('badgermole_cub'))) {
-            if (reclPerm) reclPerm.summoningSick = false;
-            if (!onField('Badgermole Cub')) {
-              if (!inHand('badgermole_cub') && inLibrary('badgermole_cub')) {
-                if (onField('Duskwatch Recruiter')) {
-                  const { state: nsBc, cardKey: bcFound } = searchFor('badgermole_cub');
-                  if (bcFound) { s = nsBc.addToHand(bcFound); steps.push('Activate Duskwatch Recruiter → find Badgermole Cub'); }
-                }
-              }
-              if (inHand('badgermole_cub')) {
-                s = s.removeFromHand('badgermole_cub');
-                s = s.enterBattlefield('badgermole_cub');
-              }
-            }
-            steps.push('Badgermole Cub ETB (earthbend): target Elvish Reclaimer → gets haste');
-            hasteGranted = true;
-          }
-
-          // 4. Fallback — note that a haste enabler is needed but not yet available.
-          //    (The win line is still valid — this documents the gap for the pilot.)
-          if (!hasteGranted) {
-            if (reclPerm) reclPerm.summoningSick = false; // allow activation to proceed
-            steps.push('(Need haste enabler for Elvish Reclaimer: Shang-Chi static, Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)');
-          }
+          grantHasteEnabler('Elvish Reclaimer');
 
           // Activate: sacrifice the expendable creature-Forest to fetch Geier Reach
           const sacTarget = sacCreatureKey
@@ -14551,41 +15002,7 @@ function assembleWin(state) {
                 s = ns4.enterBattlefield(gr);
                 steps.push(`Elvish Reclaimer: sacrifice ${sacTarget.name} → fetch Geier Reach Sanitarium`);
 
-                // ── O-10: Identify the Sanitarium untap configuration ──────
-                // Geier Reach must be untapped repeatedly to mill the table.
-                // Detect which untap method is available and document the loop.
-                const ashayaOnField = onField('Ashaya, Soul of the Wild');
-                let untapMethod = null;
-
-                if (onField('Magus of the Candelabra') && ashayaOnField) {
-                  untapMethod = 'Magus of the Candelabra: {X},{T} → untap Geier Reach Sanitarium (land under Ashaya)';
-                } else if (onField('Temur Sabertooth') && (onField('Woodcaller Automaton') || inHand('woodcaller_automaton') || inLibrary('woodcaller_automaton'))) {
-                  untapMethod = 'Woodcaller Automaton ETB + Temur Sabertooth: bounce → recast → untap Geier Reach each loop';
-                } else if ((onField('Quirion Ranger') || onField('Scryb Ranger') || inHand('quirion_ranger') || inHand('scryb_ranger'))
-                           && ashayaOnField && (onField('Destiny Spinner') || inHand('vengeant_earth'))) {
-                  // [O-12] Quirion/Scryb Ranger untap a CREATURE, not a land —
-                  // Geier Reach Sanitarium needs to be animated into a
-                  // land-creature before either Ranger can target it: either
-                  // Destiny Spinner ({3}{G}, repeatable) or Vengeant Earth
-                  // ({1}{G} instant, "until end of turn" — one cast covers
-                  // the whole turn's loop).
-                  const rangerName = (onField('Quirion Ranger') || inHand('quirion_ranger')) ? 'Quirion Ranger' : 'Scryb Ranger';
-                  const animator = onField('Destiny Spinner') ? 'Destiny Spinner' : 'Vengeant Earth';
-                  untapMethod = `${rangerName} + ${animator}: Ranger untaps Geier Reach (animated land-creature under Ashaya)`;
-                } else if ((onField('Hyrax Tower Scout') || inHand('hyrax_tower_scout')) && onField('Destiny Spinner') && ashayaOnField) {
-                  untapMethod = 'Hyrax Tower Scout + Destiny Spinner: Scout ETB untaps Geier Reach (animated creature-land)';
-                } else if ((onField('Argothian Elder') || inHand('argothian_elder')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Argothian Elder + Destiny Spinner: Elder untaps Geier Reach (animated creature-land)';
-                } else if ((onField('Wirewood Symbiote') || inHand('wirewood_symbiote')) && ashayaOnField && onField('Destiny Spinner')) {
-                  untapMethod = 'Wirewood Symbiote + Destiny Spinner: return Elf → untap Geier Reach (animated creature-land)';
-                }
-
-                if (untapMethod) {
-                  steps.push(`Untap method: ${untapMethod}`);
-                  steps.push('{2}: Activate Geier Reach Sanitarium (hold priority) → Untap Geier Reach → Repeat to mill entire library');
-                } else {
-                  steps.push('(Need untap for Geier Reach Sanitarium: Magus of the Candelabra, Woodcaller+Temur, Scryb Ranger+Ashaya, etc.)');
-                }
+                attemptGeierReachUntap();
               }
             }
           }
