@@ -179,6 +179,19 @@ var COMBO_REQUIRED_KEYS = [
   // Magus + Cradle (combo 32): Magus untaps a land for {3}, paying its own
   // recast cost when Cradle has ≥3 creatures.
   ['magus_of_the_candelabra','gaeas_cradle'],                 // 32
+  // Yeva flash-window combos: Yeva is always in the command zone (cost-0),
+  // so these tuples list only the OTHER pieces needed. analyzeState will see
+  // Yeva as present automatically (buildPresentSet now includes commandZone)
+  // and just count the remaining missing pieces.
+  ['glademuse', 'ashaya'],           // Glademuse + Yeva flash + ETB loop (QR implied by Ashaya combo)
+  ['glademuse', 'gaeas_cradle'],     // Glademuse + Yeva flash + Cradle mana engine
+  ['seedborn_muse', 'gaeas_cradle'], // Seedborn untap + Cradle on each opponent turn
+  // Board-clear win conditions (need infinite mana + the clearing tool)
+  ['ulvenwald_tracker', 'temur_sabertooth'], // Tracker fight loop: Temur bounces Tracker + haste
+  ['legolas_quick_reflexes', 'gaeas_cradle'], // LQR tap loop: any mana-positive loop + LQR
+  ['legolas_quick_reflexes', 'ashaya'],       // LQR tap loop: Ashaya-based loops have creatures to tap
+  // Yavimaya + Arbor Elf combo
+  ['yavimaya', 'arbor_elf', 'ashaya', 'quirion_ranger'], // Yavimaya makes Cradle a Forest → Arbor can untap it
 ];
 
 // ── Tutor target priority ─────────────────────────────────────────────────
@@ -263,9 +276,9 @@ var TUTOR_PRIORITY_SCORE = {
   'formidable_speaker':  45,  // COMBO 64 key piece (Ashaya+SC+Tender loop)
   'elvish_harbinger':    42,  // fetches specific elves, enables elf-chain lines
   'regal_force':         38,  // major draw engine in creature-heavy boards
-  'seedborn_muse':       38,  // untaps all permanents on opponents' turns
+  'seedborn_muse':       55,  // untaps all permanents on opponents' turns + Yeva = extra turns
   'elvish_reclaimer':    35,  // fetches Cradle, Yavimaya, Nykthos
-  'glademuse':           30,  // draw on opponent spells — useful card advantage
+  'glademuse':           45,  // draw on YOUR spells during opponents' turns (needs Yeva flash) — same win as Beast Whisperer
   'heartwood_storyteller': 30, // draw on non-creature spells — group symmetry
 };
 
@@ -472,6 +485,7 @@ function buildDefaultLibrary(opts = {}) {
   for (const k of (opts.hand        ?? []))        excludeCounts.set(k, (excludeCounts.get(k) ?? 0) + 1);
   for (const k of (opts.battlefield ?? []))        excludeCounts.set(k, (excludeCounts.get(k) ?? 0) + 1);
   for (const k of (opts.exile       ?? []))        excludeCounts.set(k, (excludeCounts.get(k) ?? 0) + 1);
+  for (const k of (opts.graveyard   ?? []))        excludeCounts.set(k, (excludeCounts.get(k) ?? 0) + 1);
 
   // Build deck by emitting each key (count − excluded) times (Fix #11)
   const deck = [];
@@ -957,6 +971,10 @@ class GameState {
     this.commanderTax   = data.commanderTax ?? 0;
     // isOpponentTurn: true when modelling a flash window on an opponent's turn
     this.isOpponentTurn = data.isOpponentTurn ?? false;
+    // opponentTurnsThisRound: how many opponent turns have been taken this round
+    // (0–3 in Commander with 3 opponents). Seedborn Muse / Yeva flash windows
+    // are available once per opponent turn, so at most 3 windows per round.
+    this.opponentTurnsThisRound = data.opponentTurnsThisRound ?? 0;
     // topDecked: card key placed on top of library by a tutor.
     // When set, startNewTurn draws exactly that card into hand, then clears this flag.
     // When null, no draw step occurs — keeping the solver deterministic.
@@ -1044,6 +1062,9 @@ class GameState {
           library:   data.library     ?? buildDefaultLibrary({
             commandZone: this.commandZone,
             hand:        this.hand,
+            graveyard:   (() => {
+              return (data.graveyard ?? []).map(name => NAME_TO_KEY[name]).filter(Boolean);
+            })(),
           }),
           poison:    data.poison      ?? 0,
           graveyard: data.graveyard   ?? [],
@@ -1244,6 +1265,7 @@ class GameState {
     s.commandZone   = this.commandZone;     // shared (rarely mutated)
     s.commanderTax  = this.commanderTax;
     s.isOpponentTurn = this.isOpponentTurn;
+    s.opponentTurnsThisRound = this.opponentTurnsThisRound;
     s.topDecked     = this.topDecked;
     s.drawForTurn   = this.drawForTurn;
     s._hasSTAX      = this._hasSTAX;
@@ -1314,6 +1336,7 @@ class GameState {
     s.commandZone   = this.commandZone;     // shared
     s.commanderTax  = this.commanderTax;
     s.isOpponentTurn = this.isOpponentTurn;
+    s.opponentTurnsThisRound = this.opponentTurnsThisRound;
     s.topDecked     = this.topDecked;
     s.drawForTurn   = this.drawForTurn;
     s._hasSTAX      = this._hasSTAX;
@@ -2123,6 +2146,58 @@ class GameState {
       if (ck) s = s.addToHand(ck);
     }
 
+    // Formidable Speaker ETB: you may discard a card → search library for a
+    // creature card, reveal it, put it into your hand, then shuffle.
+    // Only fires when there's a card to discard AND the library has a creature
+    // worth tutoring. Discard strategy: prefer the lowest-value non-combo card
+    // in hand (to avoid losing pieces we need), then fetch the best combo
+    // creature from the library (same TUTOR_PRIORITY_SCORE ranking as Survival).
+    if (!skipETB && cardKey === 'formidable_speaker' && s.hand.length > 0) {
+      const libCards = s.players[0].library;
+      const creaturesInLib = libCards.filter(k => cards[k]?.types.includes('creature'));
+      if (creaturesInLib.length > 0) {
+        // Find the best creature to tutor (highest TUTOR_PRIORITY_SCORE)
+        let bestTutor = null, bestScore = -1;
+        for (const k of creaturesInLib) {
+          const score = TUTOR_PRIORITY_SCORE[k] ?? 0;
+          if (score > bestScore) { bestScore = score; bestTutor = k; }
+        }
+        if (bestTutor) {
+          // Find the least-valuable card to discard (avoid discarding the target itself
+          // or high-value pieces not yet on battlefield)
+          const handCopy = [...new Set(s.hand)].filter(k => k !== bestTutor);
+          const present = new Set(s.battlefield.map(p => {
+            var { NAME_TO_KEY: N2K } = _ACM;
+            return N2K[p.name];
+          }).filter(Boolean));
+          const PROTECT_THRESHOLD = 70;
+          const discardable = handCopy.filter(k =>
+            (TUTOR_PRIORITY_SCORE[k] ?? 0) < PROTECT_THRESHOLD || present.has(k)
+          );
+          // Use first available discard candidate (or any card if all are protected)
+          const discardKey = discardable[0] ?? handCopy[0];
+          if (discardKey) {
+            s._ensurePlayers();
+            s.players[0] = s.players[0].clone();
+            // Remove tutored card from library
+            const libIdx = s.players[0].library.indexOf(bestTutor);
+            if (libIdx >= 0) {
+              s.players[0].library = [
+                ...s.players[0].library.slice(0, libIdx),
+                ...s.players[0].library.slice(libIdx + 1),
+              ];
+            }
+            // Discard the chosen card
+            s = s.removeFromHand(discardKey) ?? s;
+            s = s.addToGraveyard(0, cards[discardKey]?.name ?? discardKey);
+            // Add tutored creature to hand
+            s = s.addToHand(bestTutor);
+            s = s.log(`Formidable Speaker ETB: discard ${cards[discardKey]?.name ?? discardKey} → tutor ${cards[bestTutor]?.name ?? bestTutor}`);
+          }
+        }
+      }
+    }
+
     // Disciple of Freyalise ETB: sacrifice another creature, draw X, gain X life
     // where X = sacrificed creature's power.
     //
@@ -2328,6 +2403,7 @@ class GameState {
     s.landsPlayedThisTurn = 0;
     s.storm = 0;
     s.isOpponentTurn = false;
+    s.opponentTurnsThisRound = 0; // fresh round: all 3 opponent windows available again
     s.flashThisTurn  = false;
     s.endingTurn     = false;  // cleanup complete; fresh turn
     // CR 500.4 / 514: mana pools empty at the end of each step and phase.
@@ -2620,6 +2696,7 @@ class GameState {
                (this.pactOwed       ? '|PC' : '') +
                (this.landsPlayedThisTurn > 0 ? '|LP:' + this.landsPlayedThisTurn : '') +
                (this.isOpponentTurn ? '|OT' : '') +
+               (this.opponentTurnsThisRound > 0 ? '|OTR:' + this.opponentTurnsThisRound : '') +
                (this.endingTurn     ? '|ET' : '') +
                ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
                (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
@@ -2755,7 +2832,25 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
 
       var cards = CARDS;
       const results = [];
-      const bounceable = state.battlefield.filter(p => filterFn(p));
+      // Protect Yavimaya, Cradle of Growth from being bounced when Ashaya is
+      // already on the battlefield AND Arbor Elf + a big land are present.
+      // Once Ashaya is out, QR becomes a Forest (creature under Ashaya = Forest)
+      // and can bounce ITSELF instead of Yavimaya to untap Arbor Elf. So from
+      // that point on, bouncing Yavimaya is strictly inferior and breaks the combo.
+      //
+      // BEFORE Ashaya arrives: QR is not a Forest, so bouncing Yavimaya may be
+      // the only way to use QR's ability mid-turn (e.g. to generate mana).
+      // In that case the protection must NOT apply.
+      const ashayaOnField = state.battlefield.some(p => p.cardKey === 'ashaya');
+      const arborOnField  = state.battlefield.some(p => p.cardKey === 'arbor_elf');
+      const cradleOnField = state.battlefield.some(
+        p => p.cardKey === 'gaeas_cradle' || p.cardKey === 'nykthos'
+      );
+      const protectYavimaya = ashayaOnField && arborOnField && cradleOnField;
+      const bounceable = state.battlefield.filter(p => {
+        if (protectYavimaya && p.cardKey === 'yavimaya') return false;
+        return filterFn(p);
+      });
       for (const target of bounceable) {
         const creaturesCanUntap = state.creatures().filter(c => c.id !== target.id && c.tapped);
         // Only offer "untap self" when bouncing another Elf if the symbiote/ranger
@@ -2794,14 +2889,17 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
           results.push(s);
         }
       }
-      // Deduplicate by fingerprint: when multiple identical permanents exist
-      // (e.g. 3 Forests), bouncing any of them produces the same resulting
-      // state. Keeping duplicates wastes BFS queue budget.
-      const seen = new Set();
+      // Deduplicate: when multiple identical permanents exist (e.g. 3 Forests),
+      // bouncing any of them produces the same resulting state. Use label-based
+      // deduplication — identical labels mean identical (bounce, untap) pairs which
+      // produce identical result states. This avoids computing fingerprints on all
+      // result states (fingerprint() is fast but the result states themselves are
+      // expensive to build — each is a full COW clone chain).
+      const seenLabels = new Set();
       return results.filter(r => {
-        const fp = r.fingerprint();
-        if (seen.has(fp)) return false;
-        seen.add(fp);
+        const msg = r.history.at(-1)?.msg ?? '';
+        if (seenLabels.has(msg)) return false;
+        seenLabels.add(msg);
         return true;
       });
     },
@@ -9148,7 +9246,8 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
-      if (!permReadyOrSCActive(state, 'Arbor Elf')) return false;
+      // Arbor Elf need not be untapped: QR bounce untaps it as the first loop action.
+      if (!hasPerm(state, 'Arbor Elf')) return false;
       // Need an enchanted Forest producing ≥2G (Wild Growth or Utopia Sprawl attached)
       const hasSprawl = state.battlefield.some(p =>
         (p.cardKey === 'wild_growth' || p.cardKey === 'utopia_sprawl') &&
@@ -9187,11 +9286,21 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
-      if (!permReadyOrSCActive(state, 'Arbor Elf')) return false;
+      // Arbor Elf need not be untapped: QR's bounce ability (the first action
+      // of the loop) untaps Arbor Elf as its effect, even if Arbor is tapped.
+      // Loop sequence: QR bounces itself (a Forest under Ashaya) → untaps Arbor
+      // → Arbor untaps Cradle → Cradle taps for mana → recast QR.
+      if (!hasPerm(state, 'Arbor Elf')) return false;
       if (!hasPerm(state, 'Yavimaya, Cradle of Growth')) return false;
-      // Gaea's Cradle untapped + ≥2 creatures → produces ≥2G, net +1G after Ranger {G}
-      if (cradleUntapped(state) && creatureCount(state) >= 2) return true;
-      // Nykthos untapped + devotion ≥4 → produces ≥4G - {2} activation = ≥2G, net +1G
+      // Gaea's Cradle / Itlimoc on battlefield + ≥2 creatures → ≥2G per cycle.
+      // Both Cradle and Arbor may be tapped at detection time — the first loop
+      // action (QR bounce) untaps Arbor, then Arbor untaps Cradle.
+      const hasCradle = state.battlefield.some(
+        p => p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun'
+      );
+      if (hasCradle && creatureCount(state) >= 2) return true;
+      // Nykthos untapped + devotion ≥4 → net +1G after {2} activation cost.
+      // Nykthos must be untapped since Arbor needs to untap it, not QR.
       if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4) return true;
       return false;
     },
@@ -10199,6 +10308,58 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  ASHAYA + QUIRION/SCRYB RANGER + ALREADY-ANIMATED GAEA'S CRADLE
+  //
+  //  When Gaea's Cradle has already been animated into a creature (e.g. by
+  //  Badgermole Cub's earthbend ETB, or by Destiny Spinner in a prior step),
+  //  the Destiny Spinner animator is no longer needed to start the loop.
+  //
+  //  Cradle is now a creature/land. With Ashaya, QR is a Forest and can bounce
+  //  itself to untap a CREATURE. Cradle qualifies as both land AND creature.
+  //
+  //  Loop (Quirion variant, Cradle already animated, ≥2 creatures on BF):
+  //   1. QR bounces itself (Forest under Ashaya) → untaps Cradle (creature).
+  //   2. Tap Cradle for G×creatures (≥2G).
+  //   3. Recast QR {G}. Net: ≥1G per cycle → infinite mana.
+  //
+  //  Note: Cradle may be currently TAPPED (e.g. was just tapped this turn).
+  //  That's fine — the loop's first action is QR untapping it, so tapped
+  //  state doesn't block detection. The Ranger only needs to not have used
+  //  its bounce ability this turn yet (quirionAvailable check).
+  //
+  //  This combo was previously missed in a scenario where Badgermole animated
+  //  Cradle at step 16, Ashaya entered at step 20, and the board at step 21
+  //  had Cradle tapped (was just tapped at step 19) — so hasGreenTapper
+  //  returned false and no MANA_POSITIVE detector fired. The correct answer
+  //  was that QR untaps Cradle as its first loop action; no need for Cradle
+  //  to already be untapped at detection time.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Ashaya + Ranger + Animated Gaea\'s Cradle)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Gaea's Cradle is already animated as a creature (e.g. by Badgermole Cub's " +
+      'earthbend). With Ashaya, Quirion/Scryb Ranger bounces itself (a Forest) ' +
+      'to untap the animated Cradle-creature. Tap Cradle for G×creatures ≥ 2G. ' +
+      'Recast Ranger for {G}. Net ≥1G per cycle → infinite mana.',
+    check(state) {
+      if (!ashayaOut(state)) return false;
+      if (!rangerAvailable(state)) return false;
+      // Cradle must already be animated (have creature type) — regardless of tapped state,
+      // since the Ranger untaps it as the first step of the loop.
+      const cradle = state.battlefield.find(p =>
+        (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') &&
+        p.types?.includes('creature')
+      );
+      if (!cradle) return false;
+      // Need ≥2 creatures so Cradle produces ≥2G (covering Ranger's {G} recast cost
+      // and netting ≥1G). creatureCount includes Cradle itself since it's now a creature.
+      if (creatureCount(state) < 2) return false;
+      return true;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  DESTINY SPINNER + ASHAYA + QUIRION/SCRYB RANGER + BIG MANA LAND
   //
   //  Destiny Spinner oracle: {3G}: Target land you control becomes an X/X
@@ -10725,7 +10886,12 @@ var WIN_CONDITIONS = [
       // same creature-recursion loop — each of YOUR casts triggers Glademuse
       // for YOU.
       if (inHandOrField(state, 'Glademuse', 'glademuse')) {
-        const hasFlash = hasPerm(state, "Yeva, Nature's Herald");
+        // Yeva is our commander -- she's available from the command zone
+        // as well as from the battlefield. With infinite mana the {2GG}
+        // commander cost is trivially payable, so treat commandZone as
+        // equivalent to 'on field' for the purposes of this check.
+        const hasFlash = hasPerm(state, "Yeva, Nature's Herald") ||
+          (state.commandZone ?? []).includes('yeva');
         if (hasFlash && hasLoop) return true;
       }
       return false;
@@ -10919,7 +11085,7 @@ var WIN_CONDITIONS = [
       // opponent's turn — needs Yeva (flash for green creatures) AND a
       // repeatable recast loop.
       if (inHandOrField(state, 'Glademuse', 'glademuse') &&
-          hasPerm(state, "Yeva, Nature's Herald") &&
+          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva')) &&
           hasRepeatableCreatureRecast(state)) {
         return true;
       }
@@ -11096,8 +11262,10 @@ var WIN_CONDITIONS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  ULVENWALD TRACKER FIGHT LOOP — clear all opponent creatures
+  //  ULVENWALD TRACKER FIGHT LOOP / LEGOLAS'S QUICK REFLEXES TAP LOOP
+  //  — clear all opponent creatures, then attack for lethal
   //
+  //  ── Ulvenwald Tracker variant ────────────────────────────────────────────
   //  With infinite mana + Ulvenwald Tracker + a haste/untap enabler + any
   //  creature with power ≥ 1:
   //
@@ -11113,46 +11281,124 @@ var WIN_CONDITIONS = [
   //    Shang-Chi's static grants haste and acts as an untap engine via his
   //    own tap ability + Hope Tender exert loop. No Elixir needed.
   //
-  //  Result: infinite fights → board wipe of all opponent creatures →
-  //  attack with your arbitrarily large board for lethal.
+  //  ── Legolas's Quick Reflexes variant ─────────────────────────────────────
+  //  LQR is an instant that gives a creature "whenever this creature becomes
+  //  tapped, it deals damage equal to its power to up to one target creature"
+  //  until end of turn. Cast it on ANY creature that's already in an infinite
+  //  tap loop (mana dork, Hope Tender, Argothian Elder, Ashaya, etc.) and
+  //  point the tap-trigger at a different opponent creature each cycle.
+  //
+  //  Requirements:
+  //    • An established infinite mana loop that involves tapping a creature
+  //      (any MANA_POSITIVE combo qualifies — the tapping creature IS the
+  //      mana source that drives the loop).
+  //    • Legolas's Quick Reflexes accessible: in hand, OR in graveyard with
+  //      a recursion engine available (Eternal Witness, Noxious Revival, etc.)
+  //      since it goes to the graveyard after resolving as an instant.
+  //    • The creature being tapped has power ≥ 1 (kills at least 1-toughness
+  //      creatures per tap; with sufficient power kills anything in N taps
+  //      of the same creature — but with infinite iterations, N is irrelevant).
+  //
+  //  Unlike Ulvenwald Tracker, LQR does NOT need:
+  //    • A bounce/recast engine (the tap trigger persists until EOT, not per cast)
+  //    • Global haste (the trigger fires on tapping, not on an activated ability)
+  //  The infinite tap loop itself provides all the untap repetition needed.
+  //
+  //  Power note: with any 1/1 dork, this kills 1-toughness creatures. Ashaya's
+  //  power scales with lands controlled (typically 4+ in a loop), killing
+  //  anything. For guaranteed lethal vs any toughness: Ashaya or Great Oak
+  //  Guardian pump (not required for the win condition to fire — the solver
+  //  models this as "kill all opponents' creatures eventually").
+  //
+  //  Result: both paths → board wipe of all opponent creatures →
+  //  attack with your board for lethal.
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Win: Ulvenwald Tracker Fight Loop (clear opponent board)',
+    name: 'Win: Ulvenwald Tracker Fight Loop / Legolas Tap Loop (clear opponent board)',
     description:
-      "With infinite mana, tap Ulvenwald Tracker ({1}{G},{T}) to fight an opponent's creature " +
-      "using your biggest creature. Temur Sabertooth or Kogla bounces Tracker ({1}{G}); recast " +
+      "Two paths to board-wiping all opponent creatures with infinite mana:\n" +
+      "ULVENWALD TRACKER: Tap Tracker ({1}{G},{T}) → your creature fights an opponent's " +
+      "creature. Temur Sabertooth or Kogla bounces Tracker ({1}{G}); recast " +
       "it ({G}) — a global-haste effect (Concordant Crossroads / Thousand-Year Elixir / " +
-      "Surrak and Goreclaw / Shang-Chi) lets the freshly-recast Tracker use its {T} ability " +
-      "despite summoning sickness. Repeat to kill every opponent creature. " +
-      "Attack with your board for lethal.",
+      "Surrak and Goreclaw / Shang-Chi) lets the freshly-recast Tracker activate " +
+      "despite summoning sickness. Repeat to kill every opponent creature.\n" +
+      "LEGOLAS'S QUICK REFLEXES: Cast LQR ({G}) on any creature in the infinite tap loop " +
+      "(Hope Tender, Argothian Elder, Ashaya, any mana dork) — it gains " +
+      "'whenever this becomes tapped, deal damage = power to target creature' until EOT. " +
+      "The infinite tap loop fires the trigger repeatedly; point it at a different " +
+      "opponent creature each cycle. No bounce engine or global haste needed — " +
+      "the tap loop itself provides the repetition. LQR can be in graveyard " +
+      "(Eternal Witness / Noxious Revival recurs it). " +
+      "Both paths: attack with your board for lethal once the opponent's board is clear.",
     check(state) {
-      if (!hasPerm(state, 'Ulvenwald Tracker')) return false;
-      // [O-23] Ulvenwald Tracker's fight ability is "{1}{G},{T}: ..." — once
-      // activated, Tracker is TAPPED with no further {T} ability available.
-      // Neither Shang-Chi (only bypasses summoning sickness, never untaps)
-      // nor Thousand-Year Elixir (untaps Tracker ONCE, but Elixir itself then
-      // stays tapped forever with nothing to untap IT) makes this repeat
-      // indefinitely — that gives at most 2 total fights. A genuinely
-      // infinite loop needs Tracker bounced+recast each cycle (Temur
-      // Sabertooth / Kogla — "another creature you control", i.e. Tracker)
-      // with a global-haste effect to bypass the recast's summoning
-      // sickness for its {T} ability.
-      const hasBounceRecast =
-        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
-      if (!hasBounceRecast) return false;
-      if (!hasGlobalHaste(state)) return false;
-      // Need at least one other creature to fight with (power ≥ 1)
-      const fighter = state.creatures().find(
-        c => c.name !== 'Ulvenwald Tracker' && (c.power ?? 0) >= 1
-      );
-      return !!fighter;
+      // ── Path 1: Ulvenwald Tracker ─────────────────────────────────────────
+      if (hasPerm(state, 'Ulvenwald Tracker')) {
+        // [O-23] Ulvenwald Tracker's fight ability is "{1}{G},{T}: ..." — once
+        // activated, Tracker is TAPPED with no further {T} ability available.
+        // Neither Shang-Chi (only bypasses summoning sickness, never untaps)
+        // nor Thousand-Year Elixir (untaps Tracker ONCE, but Elixir itself then
+        // stays tapped forever with nothing to untap IT) makes this repeat
+        // indefinitely — that gives at most 2 total fights. A genuinely
+        // infinite loop needs Tracker bounced+recast each cycle (Temur
+        // Sabertooth / Kogla — "another creature you control", i.e. Tracker)
+        // with a global-haste effect to bypass the recast's summoning
+        // sickness for its {T} ability.
+        const hasBounceRecast =
+          hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+        if (hasBounceRecast && hasGlobalHaste(state)) {
+          // Need at least one other creature to fight with (power ≥ 1)
+          const fighter = state.creatures().find(
+            c => c.name !== 'Ulvenwald Tracker' && (c.power ?? 0) >= 1
+          );
+          if (fighter) return true;
+        }
+      }
+
+      // ── Path 2: Legolas's Quick Reflexes on a tap-loop creature ──────────
+      // LQR must be in hand, OR in graveyard with a recursion engine available
+      // (Eternal Witness, Noxious Revival recur it; it goes to GY after use).
+      const gy = state.players?.[0]?.graveyard ?? [];
+      const lqrInHand = state.hand && state.hand.includes('legolas_quick_reflexes');
+      const lqrInGY   = gy.includes("Legolas's Quick Reflexes");
+      const hasLQR = lqrInHand ||
+        (lqrInGY && (
+          inHandOrField(state, 'Eternal Witness', 'eternal_witness') ||
+          inHandOrField(state, 'Noxious Revival', 'noxious_revival')
+        ));
+      if (!hasLQR) return false;
+
+      // The infinite tap loop (already confirmed by the calling mana_positive
+      // detector) involves a creature tapping for mana. That creature is the
+      // LQR target. It needs power ≥ 1 to deal meaningful damage.
+      // In practice: any mana dork (1/1+), Argothian Elder/Ley Weaver (2/2),
+      // or Ashaya (power = lands controlled, typically 4+).
+      const tapLoopCreature = state.creatures().find(c => {
+        var CARDS_local = CARDS;
+        const def = CARDS_local[c.cardKey];
+        return def?.tapForMana && (c.power ?? 0) >= 1;
+      });
+      return !!tapLoopCreature;
     },
     deployed(state) {
-      if (!hasPerm(state, 'Ulvenwald Tracker')) return false;
-      const hasBounceRecast =
-        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
-      return hasBounceRecast && hasGlobalHaste(state);
+      // ── Path 1 deployed: Tracker + bounce engine + haste all on battlefield ─
+      if (hasPerm(state, 'Ulvenwald Tracker')) {
+        const hasBounceRecast =
+          hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+        if (hasBounceRecast && hasGlobalHaste(state)) return true;
+      }
+      // ── Path 2 deployed: LQR in hand + tap-loop creature present ──────────
+      // "Deployed" means ready to execute now: LQR must be in hand (castable),
+      // and a tap-loop creature with power ≥ 1 must already be on the field.
+      if (state.hand && state.hand.includes('legolas_quick_reflexes')) {
+        const tapLoopCreature = state.creatures().find(c => {
+          var CARDS_local = CARDS;
+          const def = CARDS_local[c.cardKey];
+          return def?.tapForMana && (c.power ?? 0) >= 1;
+        });
+        if (tapLoopCreature) return true;
+      }
+      return false;
     },
   },
 
@@ -11573,6 +11819,12 @@ var _DETECTOR_PREFILTER = {
       any: [['temur_sabertooth', 'cloudstone_curio']] },
   // 'Win: Tutor for Finisher' and 'Win: Draw Library' have too many disjunctive
   // paths to safely prefilter — they fall through and run unconditionally.
+  'Win: Ulvenwald Tracker Fight Loop / Legolas Tap Loop (clear opponent board)':
+    // Either Tracker or LQR in hand/on-field satisfies the prefilter.
+    // The any group covers both paths; graveyard-only LQR falls through without
+    // a present-set hit, but that's acceptable — the prefilter is a fast-reject,
+    // not an exhaustive gate.
+    { any: [['ulvenwald_tracker'], ['legolas_quick_reflexes']] },
 };
 
 // Stamp _prefilterAll / _prefilterAny on each detector at load.
@@ -11683,7 +11935,21 @@ for (const det of DETECTORS) {
 var _DEFAULT_WC_REQUIRES = [LOOP_TYPE.MANA_POSITIVE];
 var _WIN_CONDITION_LOOP_TYPES = new Map([
   ['Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)',
-   [LOOP_TYPE.MANA_POSITIVE, LOOP_TYPE.MANA_NEUTRAL_DRAW]],
+   // Beast Whisperer draws on every creature cast (mana_positive, mana_neutral_draw,
+   // mana_neutral_etb all qualify since any creature loop drives the draw engine).
+   // Glademuse+Yeva specifically needs mana_neutral_etb: the Ashaya+QR bounce loop
+   // (COMBO 1, loopType mana_neutral_etb) recasts creatures at instant speed on the
+   // opponent's turn, and Glademuse draws for each such cast. Without mana_neutral_etb
+   // in this accepted set, checkVictory skips the Glademuse win whenever COMBO 1
+   // fires first -- even though glamWin.check() already correctly guards for Yeva.
+   [LOOP_TYPE.MANA_POSITIVE, LOOP_TYPE.MANA_NEUTRAL_DRAW, LOOP_TYPE.MANA_NEUTRAL_ETB]],
+  ['Win: Ulvenwald Tracker Fight Loop / Legolas Tap Loop (clear opponent board)',
+   // Tracker path: requires actual mana each cycle ({1}{G},{T} + bounce/recast) → mana_positive.
+   // LQR path: any loop that taps a creature fires the "whenever tapped, deal damage" trigger.
+   // The Ashaya+QR ETB loop (mana_neutral_etb, COMBO 1) includes a dork tap each cycle
+   // to fund the QR recast -- that tap fires the LQR trigger. So mana_neutral_etb qualifies.
+   // check() itself guards for the required pieces, so accepting extra loop types is safe.
+   [LOOP_TYPE.MANA_POSITIVE, LOOP_TYPE.MANA_NEUTRAL_ETB]],
 ]);
 for (const wc of WIN_CONDITIONS) {
   if (!wc.loopType) wc.loopType = LOOP_TYPE.WIN_CONDITION;
@@ -11976,6 +12242,26 @@ function defilerGreenReduction(state, def) {
  */
 // Option A: import parseCost once at module level
 function effectiveCost(state, def) {
+  // ── Ultra-fast path ─────────────────────────────────────────────────────
+  // In the vast majority of states (no STAX, no Defiler, no cost reducers)
+  // effectiveCost == def.cost.  Detect this in O(1) and return immediately.
+  // _hasSTAX is a boolean set on GameState when stax enters the battlefield.
+  // defilerActive / costReducerActive are checked via the battlefield array,
+  // but only when the cheaper _hasSTAX gate has passed.
+  if (!state._hasSTAX) {
+    // Check cost reducers (Emerald Medallion, Nylea) and Defiler.
+    // These are all rare cards -- in practice this loop almost always exits
+    // without finding a match, paying only the iteration cost (~0.05μs).
+    let hasReducer = false;
+    for (const perm of state.battlefield) {
+      if (perm.name === 'Defiler of Vigor' ||
+          perm.name === 'Nylea, Keen-Eyed') { hasReducer = true; break; }
+      const permDef = CARDS[perm.cardKey];
+      if (permDef?.costReduction) { hasReducer = true; break; }
+    }
+    if (!hasReducer) return def.cost || '0';  // common case: skip all computation
+  }
+
   // Use pre-cached parsed cost (set on def at cards.js load time) — Option A
   const raw = def._parsedCost ?? _parseCost(def.cost);
 
@@ -12406,14 +12692,25 @@ function generateActions(state, _presentHint = null) {
         } else {
           ns = ns.addToGraveyard(0, def.name);
         }
-        ns = ns.log(`Cast ${def.name}`);
+        // NOTE: "Cast X" is logged AFTER all triggers (Beast Whisperer draw,
+        // Topiary Lecturer, onEnter ETB effects, etc.) so it ends up as the
+        // LAST history entry for this state transition. printResult displays
+        // the last entry as the primary [N] step and all preceding entries as
+        // ↳ sub-lines -- so "Cast Badgermole Cub" shows as the main step with
+        // "Badgermole Cub ETB: earthbend..." as the ↳, not the reverse.
 
         // ── On-cast / on-enter triggers ────────────────────────────────────
 
         // Beast Whisperer: draw a card when you cast a creature spell.
         // Triggered ability — fires regardless of summoning sickness.
-        if (isCreature && ns.hasPermanent('Beast Whisperer')) {
+        // IMPORTANT: check s (pre-cast state), not ns. Beast Whisperer's own
+        // cast must NOT trigger itself — it wasn't on the battlefield when you
+        // cast it (it only enters during resolution). Using ns.hasPermanent
+        // would incorrectly draw a card when BW itself is cast. This mirrors
+        // the pre-cast snapshot pattern used by Topiary Lecturer above.
+        if (isCreature && s.hasPermanent('Beast Whisperer')) {
           ns = ns.playerDraws(0, 1);
+          ns = ns.log('Beast Whisperer: draw a card');
         }
 
         // Topiary Lecturer — Increment trigger:
@@ -12454,15 +12751,23 @@ function generateActions(state, _presentHint = null) {
           }
         }
 
-        // Guardian Project: draw when unique creature enters
+        // Guardian Project: draw when unique creature enters.
+        // This is an ETB trigger (fires after the creature enters), so checking
+        // ns (post-enter state) is correct. Guardian Project is an enchantment
+        // so it can never be the creature entering -- no self-cast issue.
+        // TODO: uniqueness clause ("doesn't share a name with another creature
+        // you control or in graveyard") is not currently enforced.
         if (isCreature && ns.hasPermanent('Guardian Project')) {
           ns = ns.playerDraws(0, 1);
+          ns = ns.log('Guardian Project: draw a card');
         }
 
         // Primordial Sage: whenever you cast a creature spell, you may draw a card.
-        // Triggered ability — fires regardless of summoning sickness.
-        if (isCreature && ns.hasPermanent('Primordial Sage')) {
+        // Cast trigger -- check s (pre-cast state) so Primordial Sage's own cast
+        // does NOT draw a card (it wasn't on the battlefield when you cast it).
+        if (isCreature && s.hasPermanent('Primordial Sage')) {
           ns = ns.playerDraws(0, 1);
+          ns = ns.log('Primordial Sage: draw a card');
         }
 
         // Soul of the Harvest: whenever another nontoken creature you control enters, draw a card.
@@ -12472,11 +12777,15 @@ function generateActions(state, _presentHint = null) {
           const entered = ns.battlefield[ns.battlefield.length - 1];
           if (entered && entered.name !== 'Soul of the Harvest' && !entered.isToken) {
             ns = ns.playerDraws(0, 1);
+            ns = ns.log('Soul of the Harvest: draw a card');
           }
         }
 
         // Lifecrafter's Bestiary: whenever you cast a creature spell, you may pay {G} → draw.
-        if (isCreature && ns.hasPermanent("Lifecrafter's Bestiary")) {
+        // Cast trigger -- check s (pre-cast state) for consistency and correctness.
+        // Bestiary is an artifact so it can't self-cast as a creature, but s is
+        // the semantically correct pre-cast state for a 'when you cast' trigger.
+        if (isCreature && s.hasPermanent("Lifecrafter's Bestiary")) {
           const paid = ns.payMana('G');
           if (paid) {
             ns = paid.playerDraws(0, 1);
@@ -12504,7 +12813,9 @@ function generateActions(state, _presentHint = null) {
           ns = ns.log('Defiler of Vigor: +1/+1 counter on each creature');
         }
 
-        // onEnter hook: Auras and cards with immediate resolution effects
+        // onEnter hook: Auras and cards with immediate resolution effects.
+        // Called here so its ETB log entries appear BEFORE the final "Cast X"
+        // entry -- making them ↳ sub-lines in printResult's step display.
         if (entersBattlefield && def.onEnter && typeof def.onEnter === 'function') {
           const entered = ns.getPermanent(def.name);
           const after = def.onEnter(ns, entered);
@@ -12524,6 +12835,10 @@ function generateActions(state, _presentHint = null) {
             entered.summoningSick = false;
           }
         }
+
+        // "Cast X" logged last -- becomes the primary [N] step in printResult.
+        // All earlier entries (ETB effects, draw triggers, etc.) appear as ↳.
+        ns = ns.log(`Cast ${def.name}`);
 
         return ns;
       },
@@ -12698,9 +13013,14 @@ function generateActions(state, _presentHint = null) {
 
     // Shared bonus-application helper (Leyline, Badgermole, Auras)
     function applyTapBonuses(ns, live) {
-      if (def.types.includes('creature')) {
+      // Use live.is('creature') rather than def.types.includes('creature') so
+      // that dynamically-animated creature-lands (e.g. Gaea's Cradle after
+      // Badgermole's ETB earthbend) correctly receive Leyline/Badgermole bonuses.
+      // def.types is the static card definition captured at action-generation
+      // time — it won't reflect runtime type changes like earthbend animation.
+      if (live.is('creature')) {
         if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
-        if (ns.hasPermanent('Badgermole Cub') && perm.name !== 'Badgermole Cub') ns = ns.addMana('G');
+        if (ns.hasPermanent('Badgermole Cub') && live.name !== 'Badgermole Cub') ns = ns.addMana('G');
       }
       if (live.types.includes('land')) {
         const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
@@ -12731,8 +13051,8 @@ function generateActions(state, _presentHint = null) {
           if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
           // Shang-Chi active = simply present on battlefield (sickness irrelevant)
           const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
-          if (def.types.includes('creature') && live.summoningSick && !scActive) return null;
-          const liveForAbil = (scActive && live.summoningSick && def.types.includes('creature'))
+          if (live.is('creature') && live.summoningSick && !scActive) return null;
+          const liveForAbil = (scActive && live.summoningSick && live.is('creature'))
             ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false })
             : live;
           const results = def.tapForMana(s, liveForAbil);
@@ -12757,8 +13077,8 @@ function generateActions(state, _presentHint = null) {
             for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
             if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
             const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
-            if (def.types.includes('creature') && live.summoningSick && !scActive) return null;
-            const liveForAbil = (scActive && live.summoningSick && def.types.includes('creature'))
+            if (live.is('creature') && live.summoningSick && !scActive) return null;
+            const liveForAbil = (scActive && live.summoningSick && live.is('creature'))
               ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false })
               : live;
             const results = def.tapForMana(s, liveForAbil);
@@ -12985,6 +13305,7 @@ function generateActions(state, _presentHint = null) {
         ns.commandZone = ns.commandZone.filter(k => k !== cmdKey);
         ns.commanderTax = (ns.commanderTax ?? 0) + 1;
         ns = ns.enterBattlefield(cmdKey);
+        // Log cast last so it is the primary [N] step (any ETB effects are ↳ sub-lines)
         ns = ns.log(`Cast ${def.name} from command zone`);
         return ns;
       },
@@ -13019,19 +13340,49 @@ function generateActions(state, _presentHint = null) {
     });
   }
 
-  // Opponent-turn window: available if Yeva is in play and it's currently
-  // your turn (not already an opponent turn). Lets the solver explore casting
-  // green creatures at instant speed on opponents' end steps.
-  // Gated behind the cleanup discard too — you can't leave your turn (even to a
-  // flash window) while over hand size.
-  if (!isOpponentTurn && yevaOnBattlefield && !overHandSize) {
+  // Opponent-turn window: pass to an opponent's end step when there's meaningful
+  // value to be had there. Originally gated solely on yevaOnBattlefield (casting
+  // green creatures at flash speed), but the opponent turn is also valuable when:
+  //   • Seedborn Muse on BF — untaps ALL permanents, generating mana to cast Yeva
+  //     from command zone and then cast green creatures at flash speed.
+  //   • Quest for Renewal with 4+ counters — untaps all creatures (mana dorks),
+  //     similar mana-recovery pattern to Seedborn.
+  //   • Glademuse on BF — you draw whenever YOU cast a spell on an opponent's turn,
+  //     so passing to their end step and casting via Yeva flash draws the library.
+  //   • Yeva in command zone + Seedborn/Quest — the canonical path: untap everything,
+  //     tap for mana, cast Yeva from CZ, then cast creatures with her flash grant.
+  const yevaInCommandZone = (state.commandZone ?? []).includes('yeva');
+  const seedbornActive    = state.hasPermanent('Seedborn Muse');
+  const glademuseActive   = state.hasPermanent('Glademuse');
+  const questCounters     = state.getPermanent?.('Quest for Renewal')?.counters?.quest ?? 0;
+  const questActive       = questCounters >= 4;
+  // Flash enabler: something that lets us cast spells at instant speed on opponent turns.
+  // Without this, opponent windows have no value (Seedborn just untaps permanents we
+  // can't use; Glademuse only passively draws from opponent casts, requiring no action).
+  const hasFlashEnabler   = yevaOnBattlefield || yevaInCommandZone ||
+    state.hasPermanent('Emergence Zone');
+  const hasOpponentTurnValue =
+    hasFlashEnabler && (            // can actually DO something on opponent turns
+      yevaOnBattlefield ||          // already have flash for green creatures
+      seedbornActive ||             // untaps everything → tap for mana → cast via Yeva CZ
+      questActive ||                // untaps creatures → mana dorks available
+      glademuseActive               // draws on YOUR casts during opponent's turn (needs flash)
+    );
+
+  // In Commander there are 3 opponents. With Seedborn Muse / Yeva flash /
+  // Glademuse, each opponent's end step is a separate opportunity. Offer up
+  // to 3 windows per round, tracked by opponentTurnsThisRound (0-2 used so far).
+  const oppTurnsDone = state.opponentTurnsThisRound ?? 0;
+  if (!isOpponentTurn && hasOpponentTurnValue && !overHandSize && oppTurnsDone < 3) {
+    const oppNum = oppTurnsDone + 1;
     actions.push({
       type: 'opponent_turn',
-      label: "Pass to opponent's end step (Yeva flash window)",
+      label: `Pass to opponent ${oppNum} of 3 end step (Yeva flash / Seedborn / Glademuse window)`,
       priority: 3,  // slightly above pass_turn
       apply(s) {
         let ns = s.clone();
         ns.isOpponentTurn = true;
+        ns.opponentTurnsThisRound = (s.opponentTurnsThisRound ?? 0) + 1;
         // Mana drains between phases — always construct a fresh ManaPool.
         // Previously used `new ns.mana.constructor()` which is fragile if
         // ManaPool ever gains required constructor arguments.
@@ -13085,18 +13436,28 @@ function generateActions(state, _presentHint = null) {
           ns = ns.log('Heartwood Storyteller: opponent casts noncreature spell → draw 1');
         }
 
-        return ns.log("Opponent's end step (Yeva flash window)");
+        return ns.log(`Opponent ${oppNum} of 3 end step`);
       },
     });
   }
 
-  // End of opponent turn: pass back to your next turn
+  // End of opponent turn: return to your turn (same turn number, but no longer
+  // in the opponent-turn window). Does NOT call startNewTurn() — that fires when
+  // the player explicitly passes to the next turn. This preserves opponentTurnsThisRound
+  // so the counter correctly gates how many more opponent windows are available.
   if (isOpponentTurn) {
     actions.push({
       type: 'pass_turn',
       label: 'Pass back to your turn',
       priority: 2,
-      apply(s) { return s.startNewTurn(); },
+      apply(s) {
+        const ns = s.clone();
+        ns.isOpponentTurn = false;
+        // Drain mana — end of opponent's phase
+        var { ManaPool: _MP } = _GSM;
+        ns.mana = new _MP();
+        return ns.log('-- back to your turn --');
+      },
     });
   }
 
@@ -13113,15 +13474,19 @@ var _ACM = { generateActions, NAME_TO_KEY, COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_S
 /**
  * MTG Combo Solver — Solver (v4)
  *
- * Two search strategies:
- *   'dfs'  — Depth-first with score pruning (fast, finds optimal quickly)
- *   'bfs'  — Breadth-first by turn then depth (guaranteed fewest-actions per turn)
+ * Three search strategies:
+ *   'dfs'   — Depth-first with score pruning (fast, finds optimal quickly)
+ *   'bfs'   — Breadth-first by turn then depth (guaranteed fewest-actions per turn)
+ *   'iddfs' — Iterative-deepening DFS by turn: runs DFS with maxTurns=1,2,...N
+ *             (firstWin=true each pass). Finds earliest-turn win like BFS but
+ *             uses DFS ordering/pruning. Solves T4-blowout cases where DFS
+ *             exhausts its budget on T4 branches before finding a T3 win.
  *
  * Options:
  *   maxTurns    {number}   Hard turn cutoff (default 4)
  *   maxDepth    {number}   Max actions per DFS branch (default 40)
  *   maxStates   {number}   Visited-state budget (default 500 000)
- *   strategy    {string}   'dfs' | 'bfs' (default 'dfs')
+ *   strategy    {string}   'dfs' | 'bfs' | 'iddfs' (default 'dfs')
  *   allLines    {boolean}  Collect ALL winning lines, not just the best (default false)
  *   verbose     {boolean}  Log each winning line as found (default false)
  *   firstWin    {boolean}  Return after the first winning line is found
@@ -13391,6 +13756,12 @@ function buildPresentSet(state) {
   }
   // topDecked counts as 'will be in hand next turn'
   if (state.topDecked) present.add(state.topDecked);
+  // commandZone cards are always castable (commander tax applies but they're
+  // never "missing") -- include them so analyzeState never treats the commander
+  // as a piece to tutor for, which was causing over-pruning of all lines that
+  // require Yeva (Glademuse flash window, Seedborn flash window, Commander
+  // Damage win, etc.).
+  for (const ck of (state.commandZone ?? [])) present.add(ck);
 
   // Expand present set via FUNCTIONAL_EQUIVALENTS (same logic that was inline
   // in analyzeState).  [E8] Two-pass: collect additions first, then apply —
@@ -13738,6 +14109,8 @@ class Solver {
 
     if (this.opts.strategy === 'bfs') {
       this._bfs(initialState);
+    } else if (this.opts.strategy === 'iddfs') {
+      this._iddfs(initialState);
     } else {
       this._dfs(initialState, null, 0);  // #1: pass parent node (null = root)
     }
@@ -13967,6 +14340,40 @@ class Solver {
   //
   //   Result: BFS now matches DFS on turn number while still guaranteeing the
   //   fewest steps within the winning turn.
+
+  // ── Iterative-deepening DFS (turn-level) ─────────────────────────────────
+  // Runs _dfs with maxTurns=1, then 2, then 3, ... up to this.opts.maxTurns,
+  // stopping the moment any pass finds a win. Each pass uses firstWin=true so
+  // it exits immediately on the first deployed win — the best win within that
+  // turn budget. The shared statesExplored budget accumulates across passes.
+  //
+  // Why this solves the T4 blowout:
+  // Standard DFS(maxTurns=4) explores T4 branches depth-first before completing
+  // all T3 paths. Hands with GSZ (or other X-cost tutors) have enormous T4
+  // branching because X-cost exclusion prevents the search-spell penalty from
+  // guiding DFS toward the winning T3 cast. IDDFS avoids this by exhausting T3
+  // before ever generating T4 states.
+  //
+  // Visited map reset between passes: a T2 fingerprint stored at depth D could
+  // block re-entry to the same state at depth D+k in a T3 pass (the depth-gate
+  // at _dfs line 735 prunes revisits at the same or shallower depth). Resetting
+  // ensures each pass is a clean search.
+  _iddfs(initialState) {
+    const savedMaxTurns  = this.opts.maxTurns;
+    const savedFirstWin  = this.opts.firstWin;
+    this.opts.firstWin   = true;  // each pass stops at first win
+
+    for (let t = 1; t <= savedMaxTurns; t++) {
+      this.opts.maxTurns = t;
+      this.visited       = new Map();          // fresh dedup map each pass
+      this._dfs(initialState, null, 0);
+      if (this.bestLine) break;                // win found — done
+      if (this.statesExplored >= this.opts.maxStates) break; // budget exhausted
+    }
+
+    this.opts.maxTurns = savedMaxTurns;
+    this.opts.firstWin = savedFirstWin;
+  }
 
   _bfs(initialState) {
     // queues[t] = ordered array of nodes whose state.turn === t
@@ -15616,29 +16023,56 @@ function assembleWin(state) {
       steps.push('     tracking does not increment.');
 
     // ── Emit Ulvenwald Tracker Fight Loop execution steps ─────────────────
-    } else if (victory.winCondition === 'Win: Ulvenwald Tracker Fight Loop (clear opponent board)') {
-      const hasTemur = onField('Temur Sabertooth');
-      const hasKogla = onField('Kogla, the Titan Ape');
-      const bouncerName = hasTemur ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
-      // [O-23] Identify which global-haste effect lets the freshly-recast
-      // Tracker use its {T} ability despite summoning sickness.
-      const hasteSource =
-        onField('Concordant Crossroads')      ? 'Concordant Crossroads'      :
-        onField('Thousand-Year Elixir')       ? "Thousand-Year Elixir's static" :
-        onField('Surrak and Goreclaw')        ? 'Surrak and Goreclaw'        :
-        onField('Shang-Chi, Master of Kung Fu') ? "Shang-Chi's static"        :
-        'a global-haste effect';
+    } else if (victory.winCondition === 'Win: Ulvenwald Tracker Fight Loop / Legolas Tap Loop (clear opponent board)') {
+      // Determine which path applies: LQR in hand → prefer that narration;
+      // otherwise fall back to the Ulvenwald Tracker path.
+      const hasLQRInHand = inHand('legolas_quick_reflexes');
+      const hasTracker   = onField('Ulvenwald Tracker');
 
-      steps.push('');
-      steps.push('── Ulvenwald Tracker Fight Loop (execution) ──');
-      steps.push('  1. {1}{G},{T}: Ulvenwald Tracker — a creature you control fights target creature an');
-      steps.push('     opponent controls. The opposing creature dies.');
-      steps.push(`  2. {1}{G}: ${bouncerName} bounces Ulvenwald Tracker to hand` +
-        (hasKogla && !hasTemur ? ' (Tracker is a Human Shaman).' : '.'));
-      steps.push(`  3. Recast Ulvenwald Tracker ({G}) — ${hasteSource} lets the freshly-recast Tracker`);
-      steps.push('     activate its {T} ability despite summoning sickness. Repeat from step 1.');
-      steps.push('  4. Repeat until every creature your opponents control is destroyed.');
-      steps.push('  5. Attack with your unblocked board for lethal damage.');
+      if (hasLQRInHand && !hasTracker) {
+        // ── Legolas's Quick Reflexes path ──
+        // Identify the tap-loop creature (creature with tapForMana and power ≥ 1)
+        var CARDS_local = CARDS;
+        const tapCreature = s.battlefield.find(p => {
+          const def = CARDS_local[p.cardKey];
+          return def?.tapForMana && (p.power ?? 0) >= 1;
+        });
+        const tapName = tapCreature?.name ?? 'the tap-loop creature';
+        steps.push('');
+        steps.push('── Legolas\'s Quick Reflexes Tap Loop (execution) ──');
+        steps.push(`  1. Cast Legolas's Quick Reflexes ({G}) targeting ${tapName}.`);
+        steps.push(`     ${tapName} gains "whenever this creature becomes tapped, deal`);
+        steps.push('     damage equal to its power to up to one target creature" until EOT.');
+        steps.push(`  2. The infinite mana loop taps ${tapName} each cycle.`);
+        steps.push('     Point the tap-trigger at a different opponent creature each iteration.');
+        steps.push(`     Damage dealt per tap = ${tapName}'s power (${tapCreature?.power ?? '?'}).`);
+        steps.push('  3. Repeat until every creature your opponents control is destroyed.');
+        steps.push('  4. Attack with your unblocked board for lethal damage.');
+      } else {
+        // ── Ulvenwald Tracker path ──
+        const hasTemur = onField('Temur Sabertooth');
+        const hasKogla = onField('Kogla, the Titan Ape');
+        const bouncerName = hasTemur ? 'Temur Sabertooth' : 'Kogla, the Titan Ape';
+        // [O-23] Identify which global-haste effect lets the freshly-recast
+        // Tracker use its {T} ability despite summoning sickness.
+        const hasteSource =
+          onField('Concordant Crossroads')        ? 'Concordant Crossroads'        :
+          onField('Thousand-Year Elixir')         ? "Thousand-Year Elixir's static" :
+          onField('Surrak and Goreclaw')          ? 'Surrak and Goreclaw'          :
+          onField('Shang-Chi, Master of Kung Fu') ? "Shang-Chi's static"           :
+          'a global-haste effect';
+
+        steps.push('');
+        steps.push('── Ulvenwald Tracker Fight Loop (execution) ──');
+        steps.push('  1. {1}{G},{T}: Ulvenwald Tracker — a creature you control fights target creature an');
+        steps.push('     opponent controls. The opposing creature dies.');
+        steps.push(`  2. {1}{G}: ${bouncerName} bounces Ulvenwald Tracker to hand` +
+          (hasKogla && !hasTemur ? ' (Tracker is a Human Shaman).' : '.'));
+        steps.push(`  3. Recast Ulvenwald Tracker ({G}) — ${hasteSource} lets the freshly-recast Tracker`);
+        steps.push('     activate its {T} ability despite summoning sickness. Repeat from step 1.');
+        steps.push('  4. Repeat until every creature your opponents control is destroyed.');
+        steps.push('  5. Attack with your unblocked board for lethal damage.');
+      }
     }
   }
 
