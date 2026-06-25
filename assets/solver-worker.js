@@ -957,6 +957,23 @@ class GameState {
     this.battlefield   = data.battlefield
       ? data.battlefield.map(p => p instanceof Permanent ? p : new Permanent(p))
       : [];
+
+    // Apply earthbent land overrides (Badgermole Cub permanent animation).
+    // When Cradle/Nykthos was earthbent in a prior Goldfish turn, skipETB:true
+    // means Badgermole's onEnter never fired. Mutate types here so combo
+    // detectors (p.types.includes('creature')) see the correct state.
+    const earthbentNames = new Set(data.earthbentLandNames ?? []);
+    if (earthbentNames.size > 0) {
+      for (const perm of this.battlefield) {
+        if (earthbentNames.has(perm.name)) {
+          if (!Array.isArray(perm.types) || perm.types === perm.constructor?.prototype?.types) {
+            perm.types = [...(perm.types ?? [])];
+          }
+          if (!perm.types.includes('creature')) perm.types = [...perm.types, 'creature'];
+          perm.summoningSick = false; // earthbend grants haste
+        }
+      }
+    }
     this.mana          = data.mana instanceof ManaPool ? data.mana : new ManaPool(data.mana ?? {});
     this.storm         = data.storm       ?? 0;
     this.comboAchieved = data.comboAchieved ?? false;
@@ -2498,6 +2515,35 @@ class GameState {
       s.players[0] = s.players[0].draw(0); // no-op clone to own player
       return s._afterDraw(s);
     }
+    // ── Lifecrafter's Bestiary upkeep scry ──────────────────────────────────
+    // "At the beginning of your upkeep, scry 1."
+    // If Bestiary is on the battlefield, look at the top card of library.
+    // If it's below the combo relevance threshold (TUTOR_PRIORITY_SCORE < 50),
+    // put it on the bottom — we'd rather draw a higher-value card.
+    // This models the practical benefit: avoid drawing dead cards mid-combo.
+    if (s.hasPermanent("Lifecrafter's Bestiary") &&
+        s.players[0].library.length >= 2) {
+      const topKey = s.players[0].library[0];
+      const topScore = TUTOR_PRIORITY_SCORE[topKey] ?? 0;
+      // If the top card is low-priority, move it to the bottom (scry to bottom)
+      if (topScore < 50 && topKey !== 'unknown') {
+        s._ensurePlayers();
+        const lib = [...s.players[0].library];
+        lib.push(lib.shift()); // move top to bottom
+        s.players[0] = s.players[0].clone();
+        s.players[0].library = lib;
+        s.history = [...s.history, {
+          turn: s.turn,
+          msg: `Lifecrafter's Bestiary: scry 1 → ${CARDS[topKey]?.name ?? topKey} to bottom`,
+        }];
+      } else {
+        s.history = [...s.history, {
+          turn: s.turn,
+          msg: `Lifecrafter's Bestiary: scry 1 → keep ${CARDS[topKey]?.name ?? topKey} on top`,
+        }];
+      }
+    }
+
     // ── Normal turn (no pact) ────────────────────────────────────────────────
     s.history = [...s.history, {
       turn: s.turn,
@@ -7940,7 +7986,9 @@ function creatureCount(state) {
 }
 
 function elfCount(state) {
-  return state.battlefield.filter(p => p.subtypes && p.subtypes.includes('Elf')).length;
+  let n = 0;
+  for (const p of state.battlefield) if (p.subtypes?.includes('Elf')) n++;
+  return n;
 }
 
 function devotionG(state) {
@@ -8077,10 +8125,13 @@ function hasRepeatableCreatureRecast(state) {
       (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))) {
     return true;
   }
+  // Beast Within infinite creature loops (generates 3/3 beast tokens each cycle).
+  // Three paths: BW+Endurance+Duskwatch, BW+Badgermole+Temur/Kogla, BW+Witness+Kogla/Temur.
+  if (hasBeastWithinCreatureLoop(state)) return true;
+
   return false;
 }
 
-// True if there is a bounce engine that can repeatedly recast a SPECIFIC
 // creature (so a creature's own ETB re-fires each cycle). This is stricter
 // than hasRepeatableCreatureRecast: the Ashaya+Ranger loop recasts only the
 // Ranger, so it does NOT re-trigger a different creature's ETB (e.g. Regal
@@ -8095,17 +8146,83 @@ function hasSelfRecastBounce(state, selfName) {
   // Cloudstone Curio needs a partner creature (≠ the looped creature) to
   // ping-pong with, so it bounces the looped creature back each cycle.
   if (hasPerm(state, 'Cloudstone Curio')) {
-    const partners = state.creatures().filter(c => c.name !== selfName).length +
-      (state.hand ? state.hand.filter(k => {
-        var def = CARDS;
-        return def && def.types && def.types.includes('creature');
-      }).length : 0);
+    let partners = 0;
+    for (const c of state.creatures()) if (c.name !== selfName) partners++;
+    if (state.hand) for (const k of state.hand) {
+      const def = CARDS[k];
+      if (def?.types?.includes('creature')) partners++;
+    }
     if (partners >= 1) return true;
   }
   return false;
 }
 
-// [O-12] True if the battlefield has a way to untap Geier Reach Sanitarium
+// ── Beast Within infinite-creature loops ──────────────────────────────────
+//
+// All paths generate infinite creature (beast) tokens given infinite mana.
+// Beast Within (BW) destroys a target permanent and gives its controller a 3/3
+// beast token.  Cost: {2}{G} per cycle.
+//
+//  Path B — Beast Within + Badgermole Cub + Temur Sabertooth / Kogla
+//  ──────────────────────────────────────────────────────────────────
+//  Badgermole Cub's ETB: "Earthbend 1 — target land you control becomes a
+//  0/0 creature with haste that's still a land. Put a +1/+1 counter on it.
+//  When it dies or is exiled, return it to the battlefield tapped."
+//  1. Cast Badgermole Cub → ETB animates a land (it now has the death-return clause).
+//  2. Cast Beast Within targeting that animated land-creature.
+//     Land is destroyed → death trigger returns it to BF tapped; WE get a 3/3 beast.
+//  3. Bounce Badgermole with Temur ({1}{G}) or Kogla ({1}{G}); recast to re-animate
+//     the same (now-untapped) land next turn.  Repeat.
+//  Net: +1 beast per 2 casts (Badgermole + BW).  Land returns via earthbend death trigger.
+//  Requires: BW in hand or GY accessible via Witness, Badgermole in hand or loop, Temur/Kogla for bounce.
+//
+//  NOTE: Path A (BW + Endurance + Duskwatch) does NOT work. Endurance ETB shuffles
+//  the GY (including BW) back into the library, but Duskwatch Recruiter only finds
+//  CREATURES — Beast Within is an instant and cannot be retrieved. The loop breaks
+//  on the second iteration. Path A has been removed.
+//
+//  Path C — Beast Within + Eternal Witness + Kogla / Temur
+//  ────────────────────────────────────────────────────────
+//  1. Target any creature YOU control with Beast Within → it is destroyed; you get a beast.
+//     (The targeted creature's controller = you, so you get the token.)
+//  2. Cast Eternal Witness → ETB returns Beast Within to hand.
+//  3. Bounce Witness with Kogla ({1}{G}) or Temur ({1}{G}).
+//  4. Cast Eternal Witness again → ETB returns the previously destroyed creature to hand.
+//  5. Bounce Witness.  Cast the creature → now BF again.  Repeat from step 1.
+//  Net: +1 beast per 2-cast cycle (Witness × 2 + BW each loop).
+//  Requires: BW in hand or GY, Eternal Witness in hand/field, Kogla or Temur on BF.
+//
+function hasBeastWithinCreatureLoop(state) {
+  const inHand = (key) => state.hand && state.hand.includes(key);
+  const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
+  const bwAvail = inHand('beast_within') || gy.includes('Beast Within');
+
+  if (!bwAvail) return false;
+
+  const hasBouncer =
+    inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
+    inHandOrField(state, 'Kogla, the Titan Ape', 'kogla');
+
+  // Path B: Badgermole Cub + Temur/Kogla (land returns via earthbend death trigger).
+  // Any land can be targeted — it need not be a non-creature land.
+  // The land returns tapped from the death trigger; Badgermole re-animates it
+  // each cycle (the land's tap state doesn't matter — it's only the BW target).
+  const hasBadgermole = inHandOrField(state, 'Badgermole Cub', 'badgermole_cub');
+  const hasAnimatableLand = state.battlefield.some(p =>
+    p.types && p.types.includes('land')
+  );
+  if (hasBadgermole && hasBouncer && hasAnimatableLand) return true;
+
+  // Path C: Eternal Witness + Kogla/Temur (Witness recurs BW; second Witness cast recurs target creature)
+  const hasWitness = inHandOrField(state, 'Eternal Witness', 'eternal_witness');
+  if (hasWitness && hasBouncer) {
+    const bfCreatures = state.battlefield.filter(p => p.is?.('creature') || p.types?.includes('creature'));
+    if (bfCreatures.length >= 2) return true;
+    if (inHand('eternal_witness') && bfCreatures.length >= 1) return true;
+  }
+
+  return false;
+}
 // each Hitzel cycle.
 //
 // Geier Reach Sanitarium is a LAND, not a creature (Ashaya makes creatures
@@ -10857,7 +10974,10 @@ var WIN_CONDITIONS = [
       "spell on someone else's turn. With an infinite creature loop, draw the entire library. " +
       "Then win via Finale of Devastation X≥10, Infectious Bite loop, or other finisher. " +
       "Creature loops: Ashaya + any Ranger (Ranger recast each cycle), " +
-      "Temur Sabertooth or Kogla bounce loops, Hyrax Tower Scout loops.",
+      "Temur Sabertooth or Kogla bounce loops, Hyrax Tower Scout loops. " +
+      "Beast Within loops: " +
+      "(B) BW+Badgermole+Temur/Kogla — animate land, BW kills it, earthbend returns land, bounce Badgermole; " +
+      "(C) BW+Witness+Kogla/Temur — BW kills a creature, Witness recurs BW, Witness bounced, Witness recurs creature.",
     check(state) {
       // Beast Whisperer + creature loop: draws on every creature cast.
       // [O-33] Need a genuinely repeatable green-creature recast loop —
@@ -12395,7 +12515,10 @@ function generateActions(state, _presentHint = null) {
     if (def.hasFlash) return true;           // innate flash (e.g. Yeva herself)
     if (flashThisTurn) return true;          // Emergence Zone: all spells have flash
     if (isOpponentTurn) {
-      // On opponent turn: only instants and Yeva-granted flash creatures
+      // On opponent turn: only instants and Yeva-granted flash for green creatures.
+      // Yeva must be ON THE BATTLEFIELD — being in the command zone does not grant
+      // flash until she has been cast and resolved. yevaInCommandZone only justifies
+      // opening the window (so you can cast Yeva herself, then creatures afterwards).
       if (def.types.includes('creature') && def.cost?.includes('G') && yevaOnBattlefield) return true;
       return false;
     }
@@ -12532,13 +12655,11 @@ function generateActions(state, _presentHint = null) {
     // missingComboCards() returns the keys one card away from any known combo.
     // NAME_TO_KEY O(1) lookups replace per-result O(n) card scans.
     if (def.castFn) {
-      const costStr2 = effectiveCost(state, def);
-      if (state.mana.pay(costStr2) !== null) {
-        const afterPay0 = state.payMana(costStr2);
-        const fromHand0 = afterPay0?.removeFromHand(cardKey);
-        if (fromHand0) {
-          const allResults = def.castFn(fromHand0);
-          if (allResults && allResults.length > 0) {
+      const afterPay0 = state.payMana(costStr);
+      const fromHand0 = afterPay0?.removeFromHand(cardKey);
+      if (fromHand0) {
+        const allResults = def.castFn(fromHand0);
+        if (allResults && allResults.length > 0) {
             // Removal spells (isRemoval: true) bypass the combo-target filter —
             // they offer all valid targets regardless of combo relevance.
             if (def.isRemoval) {
@@ -12666,12 +12787,9 @@ function generateActions(state, _presentHint = null) {
                   return result;
                 },
               });
-            }
-          } else {
-            // castFn returned no results — spell cannot be cast (missing sacrifice target)
-          }
-        }
-      }
+          } // for resultState
+        } // if allResults
+      } // if fromHand0
       continue;
     }
 
@@ -12700,6 +12818,16 @@ function generateActions(state, _presentHint = null) {
         // "Badgermole Cub ETB: earthbend..." as the ↳, not the reverse.
 
         // ── On-cast / on-enter triggers ────────────────────────────────────
+
+        // Glademuse: "Whenever a player casts a spell, if it's not that player's
+        // turn, that player draws a card."
+        // WE draw when WE cast on an opponent's turn (requires flash via Yeva /
+        // Emergence Zone). Checked on the pre-cast state (s) so casting Glademuse
+        // itself does not trigger — it wasn't on the battlefield when cast.
+        if (isOpponentTurn && s.hasPermanent('Glademuse')) {
+          ns = ns.playerDraws(0, 1);
+          ns = ns.log('Glademuse: you cast on opponent\'s turn → draw 1');
+        }
 
         // Beast Whisperer: draw a card when you cast a creature spell.
         // Triggered ability — fires regardless of summoning sickness.
@@ -13323,14 +13451,13 @@ function generateActions(state, _presentHint = null) {
   //     discards are then offered (step 0a), and the final discard advances the
   //     turn. This guarantees the discard is logged AFTER the turn's plays.
   const overHandSize = !isOpponentTurn && state.hand.length > MAX_HAND_SIZE;
-  {
+  if (!isOpponentTurn) {
     actions.push({
       type: 'pass_turn',
       label: overHandSize ? 'End turn → cleanup discard to hand size' : 'Pass to next turn',
       priority: 2,
       apply(s) {
         if (s.hand.length > MAX_HAND_SIZE) {
-          // Enter the cleanup step; discards (and the turn advance) happen there.
           const ns = s.clone();
           ns.endingTurn = true;
           return ns;
@@ -13354,20 +13481,38 @@ function generateActions(state, _presentHint = null) {
   const yevaInCommandZone = (state.commandZone ?? []).includes('yeva');
   const seedbornActive    = state.hasPermanent('Seedborn Muse');
   const glademuseActive   = state.hasPermanent('Glademuse');
+  const runicArmasaurActive = state.hasPermanent('Runic Armasaur');
   const questCounters     = state.getPermanent?.('Quest for Renewal')?.counters?.quest ?? 0;
   const questActive       = questCounters >= 4;
   // Flash enabler: something that lets us cast spells at instant speed on opponent turns.
   // Without this, opponent windows have no value (Seedborn just untaps permanents we
-  // can't use; Glademuse only passively draws from opponent casts, requiring no action).
-  const hasFlashEnabler   = yevaOnBattlefield || yevaInCommandZone ||
-    state.hasPermanent('Emergence Zone');
+  // can't use; Glademuse draws when YOU cast, so needs flash to actually trigger).
+  // yevaInCommandZone is NOT a flash enabler by itself — Yeva must be on the battlefield
+  // before she can grant flash to other green creature spells. The CZ only means we could
+  // cast Yeva (she has innate flash), which then unlocks the window for further casts.
+  const hasFlashEnabler   = yevaOnBattlefield || state.hasPermanent('Emergence Zone');
+  // Yeva-CZ flash path: she has innate flash, so she can be cast at instant speed.
+  // With Seedborn Muse, the untap step generates fresh mana, so we don't need
+  // pre-existing mana in pool — Seedborn will untap lands/dorks to fund her cast.
+  const yevaInCZCastable  = yevaInCommandZone && (
+    state.mana.canPay('2GG') || seedbornActive
+  );
+  // Glademuse draws when YOU cast a spell on an opponent's turn (requires flash).
+  // It only has window value when flash is genuinely available -- meaning Yeva is
+  // on the battlefield, OR Yeva is in the CZ with enough mana to cast her (so she
+  // can grant flash to other spells). Without this, opening a window wastes budget.
+  const glademuseHasValue = glademuseActive && (
+    yevaOnBattlefield ||
+    yevaInCZCastable ||
+    state.hasPermanent('Emergence Zone')
+  );
   const hasOpponentTurnValue =
-    hasFlashEnabler && (            // can actually DO something on opponent turns
-      yevaOnBattlefield ||          // already have flash for green creatures
-      seedbornActive ||             // untaps everything → tap for mana → cast via Yeva CZ
-      questActive ||                // untaps creatures → mana dorks available
-      glademuseActive               // draws on YOUR casts during opponent's turn (needs flash)
-    );
+    runicArmasaurActive ||              // draws on opponent non-mana activations (no flash needed)
+    yevaOnBattlefield ||                // Yeva on BF: can cast green creatures at instant speed
+    state.hasPermanent('Emergence Zone') ||  // all spells have flash this turn
+    (seedbornActive && (yevaOnBattlefield || yevaInCZCastable || state.hasPermanent('Emergence Zone'))) ||
+    questActive ||                      // untaps creatures; only useful if we have a flash enabler too
+    glademuseHasValue;                  // draws on YOUR casts — only if flash is accessible
 
   // In Commander there are 3 opponents. With Seedborn Muse / Yeva flash /
   // Glademuse, each opponent's end step is a separate opportunity. Offer up
@@ -13377,7 +13522,7 @@ function generateActions(state, _presentHint = null) {
     const oppNum = oppTurnsDone + 1;
     actions.push({
       type: 'opponent_turn',
-      label: `Pass to opponent ${oppNum} of 3 end step (Yeva flash / Seedborn / Glademuse window)`,
+      label: `Pass to opponent ${oppNum} of 3 end step (Yeva flash / Seedborn / Glademuse / Runic Armasaur window)`,
       priority: 3,  // slightly above pass_turn
       apply(s) {
         let ns = s.clone();
@@ -13416,16 +13561,13 @@ function generateActions(state, _presentHint = null) {
           }
         }
 
-        // Glademuse: "Whenever a player casts a spell, if it's not that player's turn,
-        // that player draws a card."
-        // In Commander (3 opponents) each opponent casts roughly 1 spell per turn on
-        // average. Model: draw 1 card per opponent turn (3 opponents → draw 3 over a
-        // full round). We conservatively draw 1 here — one opponent casting one spell
-        // on their turn. This captures the real play pattern without over-estimating.
-        if (ns.hasPermanent('Glademuse')) {
-          ns = ns.playerDraws(0, 1);
-          ns = ns.log('Glademuse: opponent casts a spell on their turn → draw 1');
-        }
+        // Glademuse draws when WE cast a spell during an opponent's turn — not
+        // unconditionally on every opponent window. The oracle: "Whenever a player
+        // casts a spell, if it's not that player's turn, that player draws a card."
+        // WE draw when WE cast (requires flash via Yeva / Emergence Zone).
+        // The draw trigger is handled in the cast path (cast_spell / cast_commander)
+        // where isOpponentTurn=true and Glademuse is on the battlefield.
+        // Nothing to do here at window-entry time.
 
         // Heartwood Storyteller: "Whenever a player casts a noncreature spell, if it
         // wasn't that player's turn, each other player may draw a card."
@@ -13436,29 +13578,89 @@ function generateActions(state, _presentHint = null) {
           ns = ns.log('Heartwood Storyteller: opponent casts noncreature spell → draw 1');
         }
 
+        // Runic Armasaur: "Whenever an opponent activates an ability of a creature or
+        // land that isn't a mana ability, you may draw a card."
+        // In Commander opponents routinely activate fetch lands, creature utility
+        // abilities, cycling lands, etc. Model: draw 1 card per opponent turn
+        // (conservative — one non-mana activation per opponent per turn is the floor).
+        if (ns.hasPermanent('Runic Armasaur')) {
+          ns = ns.playerDraws(0, 1);
+          ns = ns.log('Runic Armasaur: opponent activates non-mana ability → draw 1');
+        }
+
         return ns.log(`Opponent ${oppNum} of 3 end step`);
       },
     });
   }
 
-  // End of opponent turn: return to your turn (same turn number, but no longer
-  // in the opponent-turn window). Does NOT call startNewTurn() — that fires when
-  // the player explicitly passes to the next turn. This preserves opponentTurnsThisRound
-  // so the counter correctly gates how many more opponent windows are available.
+  // End of opponent turn: either chain directly to the next opponent's window
+  // (if more remain and Seedborn/etc still has value) or truly return to your
+  // main phase. The brief !isOpponentTurn state between windows must NOT offer
+  // sorcery-speed actions — you have no main phase between opponents' turns.
   if (isOpponentTurn) {
-    actions.push({
-      type: 'pass_turn',
-      label: 'Pass back to your turn',
-      priority: 2,
-      apply(s) {
-        const ns = s.clone();
-        ns.isOpponentTurn = false;
-        // Drain mana — end of opponent's phase
-        var { ManaPool: _MP } = _GSM;
-        ns.mana = new _MP();
-        return ns.log('-- back to your turn --');
-      },
-    });
+    const oppTurnsDoneNow = state.opponentTurnsThisRound ?? 0;
+    const moreWindowsAvailable = oppTurnsDoneNow < 3 && hasOpponentTurnValue;
+
+    if (moreWindowsAvailable) {
+      // Chain directly to the next opponent window — no free main phase in between.
+      const nextOppNum = oppTurnsDoneNow + 1;
+      actions.push({
+        type: 'pass_turn',
+        label: `Pass to opponent ${nextOppNum} of 3 end step`,
+        priority: 2,
+        apply(s) {
+          let ns = s.clone();
+          ns.opponentTurnsThisRound = (s.opponentTurnsThisRound ?? 0) + 1;
+          var { ManaPool: _MP } = _GSM;
+          ns.mana = new _MP();
+          // Seedborn Muse untaps on each opponent's untap step
+          if (ns.hasPermanent('Seedborn Muse')) {
+            ns._ensureBF();
+            for (const p of ns.battlefield) {
+              if (p.abilitiesUsed?.exert_two_lands) continue;
+              p.tapped = false;
+              p.abilitiesUsed = {};
+            }
+          }
+          // Quest for Renewal untaps creatures
+          if (ns.hasPermanent('Quest for Renewal')) {
+            const questPerm = ns.getPermanent('Quest for Renewal');
+            if ((questPerm?.counters?.quest ?? 0) >= 4) {
+              ns._ensureBF();
+              for (const p of ns.battlefield) {
+                if (!p.is('creature')) continue;
+                if (p.abilitiesUsed?.exert_two_lands) continue;
+                p.tapped = false;
+                p.abilitiesUsed = {};
+              }
+            }
+          }
+          if (ns.hasPermanent('Heartwood Storyteller')) {
+            ns = ns.playerDraws(0, 1);
+            ns = ns.log('Heartwood Storyteller: opponent casts noncreature spell → draw 1');
+          }
+          if (ns.hasPermanent('Runic Armasaur')) {
+            ns = ns.playerDraws(0, 1);
+            ns = ns.log('Runic Armasaur: opponent activates non-mana ability → draw 1');
+          }
+          return ns.log(`Opponent ${nextOppNum} of 3 end step`);
+        },
+      });
+    } else {
+      // All opponent windows used (or no more value) — truly return to your turn.
+      actions.push({
+        type: 'pass_turn',
+        label: 'Pass back to your turn',
+        priority: 2,
+        apply(s) {
+          const ns = s.clone();
+          ns.isOpponentTurn = false;
+          var { ManaPool: _MP } = _GSM;
+          ns.mana = new _MP();
+          return ns.log('-- back to your turn --');
+        },
+      });
+    }
   }
 
   actions.sort((a, b) => b.priority - a.priority);
@@ -13999,9 +14201,10 @@ function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefi
         if (X_COST_SEARCH_SPELLS.has(k)) continue;
         const def = CARDS[k];
         if (!def) continue;
-        if (!state.mana.canPay(effectiveCost(state, def))) continue;
+        const ec = effectiveCost(state, def);
+        if (!state.mana.canPay(ec)) continue;
         if (def.castFn) {
-          const afterPay = state.payMana(effectiveCost(state, def));
+          const afterPay = state.payMana(ec);
           const fromHand = afterPay?.removeFromHand(k);
           if (fromHand) {
             const results = def.castFn(fromHand);
@@ -17473,12 +17676,28 @@ self.onmessage = function(e) {
       const landPerm = state.battlefield.find(p => p.id === landId);
       if (auraPerm && landPerm) auraPerm.enchantedLandId = landPerm.id;
     }
+    // EarthBent: mutate lands that were animated by Badgermole Cub in a prior turn.
+    // Must run after the enterBattlefield loop — each enterBattlefield call returns a
+    // new cloned state so any mid-loop mutation goes stale. The GameState constructor
+    // block handles the data.battlefield deserialization path; this handles the
+    // Goldfish worker path where cards are placed one-by-one via enterBattlefield.
+    const earthbentNames = d.earthbentLandNames || [];
+    if (earthbentNames.length > 0) {
+      const nameSet = new Set(earthbentNames);
+      state._ensureBF();
+      for (const perm of state.battlefield) {
+        if (nameSet.has(perm.name)) {
+          if (!perm.types.includes('creature')) perm.types = [...perm.types, 'creature'];
+          perm.summoningSick = false; // earthbend grants haste
+        }
+      }
+    }
     // Read solver config from payload (with safe defaults)
     const solverOpts = {
       maxTurns:   Math.min(Math.max(d.maxTurns  ?? 4,  1), 10),
       maxDepth:   Math.min(Math.max(d.maxDepth  ?? 50, 10), 200),
       maxStates:  Math.min(Math.max(d.maxStates ?? 200000, 10000), 2000000),
-      strategy:   d.strategy   === 'bfs' ? 'bfs' : 'dfs',
+      strategy:   ['bfs','dfs','iddfs'].includes(d.strategy) ? d.strategy : 'dfs',
       allLines:   !!d.allLines,
       exhaustive: !!d.exhaustive,
     };
