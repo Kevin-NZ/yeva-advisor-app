@@ -5891,6 +5891,44 @@ var CARDS = {
     // Implementation in GameState.enterBattlefield: sacrifices lowest-power non-key
     // creature (deterministic). cards.js onEnter removed (2026-05-12) to prevent
     // double-fire when cast via actions.js.
+    //
+    // DFC land back: Garden of Freyalise — {T}: Add {G}; enters tapped unless you
+    // pay 3 life. Two branches offered: tapped (free) and untapped (pay 3 life).
+    handAbilities: {
+      play_as_land_tapped: {
+        label: 'Play Garden of Freyalise (land side, enters tapped)',
+        fn(state, cardKey) {
+          if (state.isOpponentTurn) return null;
+          if (state.landDrops <= 0) return null;
+          const s0 = state.removeFromHand(cardKey); if (!s0) return null;
+          const s1 = s0.clone(); s1.landDrops--;
+          s1.landsPlayedThisTurn = (s1.landsPlayedThisTurn ?? 0) + 1;
+          const ns = s1.enterBattlefield('garden_of_freyalise', { tapped: true });
+          return ns.log('Play Garden of Freyalise → enters tapped');
+        },
+      },
+      play_as_land_untapped: {
+        label: 'Play Garden of Freyalise (land side, pay 3 life → enters untapped)',
+        fn(state, cardKey) {
+          if (state.isOpponentTurn) return null;
+          if (state.landDrops <= 0) return null;
+          if (state.life <= 3) return null; // don't pay life we don't have
+          const s0 = state.removeFromHand(cardKey); if (!s0) return null;
+          const s1 = s0.clone(); s1.landDrops--;
+          s1.landsPlayedThisTurn = (s1.landsPlayedThisTurn ?? 0) + 1;
+          s1.life -= 3;
+          const ns = s1.enterBattlefield('garden_of_freyalise', { tapped: false });
+          return ns.log('Play Garden of Freyalise (pay 3 life) → enters untapped');
+        },
+      },
+    },
+  },
+
+  // Garden of Freyalise — land back face of Disciple of Freyalise MDFC
+  // Entered via the handAbilities above; not played directly from hand.
+  garden_of_freyalise: {
+    name: 'Garden of Freyalise', types: ['land'], subtypes: ['Forest'], cost: null,
+    tapForMana: simpleTap('{G}', [['G', 1]]),
   },
   hyrax_tower_scout: {
     name: 'Hyrax Tower Scout', types: ['creature'], subtypes: ['Human','Scout'],
