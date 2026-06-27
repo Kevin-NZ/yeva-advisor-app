@@ -1515,15 +1515,20 @@ class GameState {
    * Discard a card from your hand into your graveyard.
    * Removes the card from hand and adds it to players[0].graveyard.
    * Returns new GameState or null if card not in hand.
+   * @param {string} cardKey
+   * @param {string} [reason] - log message suffix; defaults to 'cleanup, end of turn N'
    */
-  discardFromHand(cardKey) {
+  discardFromHand(cardKey, reason) {
     var cards = CARDS;
     const def = cards[cardKey];
     const cardName = def ? def.name : cardKey;
     let s = this.removeFromHand(cardKey);
     if (!s) return null;
     s = s.addToGraveyard(0, cardName);
-    s = s.log(`Discard ${cardName} (cleanup, end of turn ${this.turn})`);
+    const msg = reason
+      ? `Discard ${cardName} (${reason})`
+      : `Discard ${cardName} (cleanup, end of turn ${this.turn})`;
+    s = s.log(msg);
     return s;
   }
 
@@ -3733,7 +3738,7 @@ var CARDS = {
           const exileCandidates = [...new Set(state.hand)].filter(k => _isStax(k));
           const results = [];
           for (const card of exileCandidates) {
-            let s = state.discardFromHand(card); if (!s) continue;
+            let s = state.discardFromHand(card, 'Gemstone Caverns exile cost'); if (!s) continue;
             // Mark perm as having a luck counter using proper Permanent mutation
             s = s.clone();
             s._ensureBF();
@@ -3812,7 +3817,7 @@ var CARDS = {
         label: 'Cycling {G}: Discard Tranquil Thicket → draw a card',
         fn(state, cardKey) {
           const ap = state.payMana('G'); if (!ap) return [];
-          let s = ap.discardFromHand(cardKey); if (!s) return [];
+          let s = ap.discardFromHand(cardKey, 'cycling cost'); if (!s) return [];
           s = s.playerDraws(0, 1);
           return [s.log('Cycling Tranquil Thicket → draw a card')];
         },
@@ -3882,7 +3887,7 @@ var CARDS = {
         for (const lk of landKeys) {
           let s = state.clone();
           // Discard the land
-          s = s.discardFromHand(lk);
+          s = s.discardFromHand(lk, 'Mox Diamond discard cost');
           if (!s) continue;
           // Mox Diamond enters the battlefield (it was already removed from hand by the cast action wrapper)
           s = s.enterBattlefield('mox_diamond');
@@ -5772,7 +5777,7 @@ var CARDS = {
             if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
             seenDiscard.add(discard);
             let s = ap.tapPermanent(perm.id); if (!s) continue;
-            s = s.discardFromHand(discard); if (!s) continue;
+            s = s.discardFromHand(discard, 'Fauna Shaman discard cost'); if (!s) continue;
             const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
             if (!cardKey) continue;
             // Put the fetched creature directly into hand (oracle: "put it into your hand")
@@ -6329,7 +6334,7 @@ var CARDS = {
             if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
             if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
             seenDiscard.add(discard);
-            let s = afterPay.discardFromHand(discard); if (!s) continue;
+            let s = afterPay.discardFromHand(discard, 'Survival of the Fittest discard cost'); if (!s) continue;
             const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
             if (!cardKey) continue;
             // Put the fetched creature directly into hand (oracle: "put it into your hand")
@@ -6977,9 +6982,9 @@ var CARDS = {
             k !== cardKey && CARDS[k]?.cost?.includes('G')
           );
           if (!exileCandidate) return null;
-          let s = state.discardFromHand(cardKey);   // remove Force of Vigor
+          let s = state.discardFromHand(cardKey, 'Force of Vigor cast (free)');   // remove Force of Vigor
           if (!s) return null;
-          s = s.discardFromHand(exileCandidate);     // exile the green card
+          s = s.discardFromHand(exileCandidate, 'Force of Vigor exile cost');     // exile the green card
           if (!s) return null;
           s = s.clone(); s.exile = [...(s.exile ?? []), CARDS[exileCandidate]?.name ?? exileCandidate];
           let destroyed2 = 0;
@@ -7002,7 +7007,59 @@ var CARDS = {
       },
     },
   },
-  beast_within:           { intentionalStub: true, name:'Beast Within',             types:['instant'],  subtypes:[], cost:'2G'   },
+  beast_within: {
+    name: 'Beast Within', types: ['instant'], subtypes: [], cost: '2G',
+    // Oracle: Destroy target permanent. Its controller creates a 3/3 green Beast creature token.
+    // Solver use-cases:
+    //   1. Kill own creature while its ETB is on the stack (Hitzel Kogla variant —
+    //      destroy Endurance so Witness can recur it from GY each cycle).
+    //   2. Remove opponent stax artifacts/enchantments (removal role).
+    //   3. Beast token generation engine (with Badgermole/Witness loops).
+    castFn(state) {
+      const results = [];
+      const seen = new Set();
+
+      const makeToken = (s) => {
+        const ns = s.clone(); ns._ensureBF();
+        ns.battlefield.push(new Permanent({
+          cardKey: '__beast_token__', name: 'Beast Token',
+          types: ['creature'], subtypes: ['Beast'],
+          power: 3, toughness: 3, summoningSick: true, isToken: true,
+        }));
+        return ns;
+      };
+
+      const tryTarget = (perm, label) => {
+        if (seen.has(perm.name)) return;
+        seen.add(perm.name);
+        const s = state.removeFromBattlefield(perm.id, 'graveyard');
+        if (!s) return;
+        results.push(makeToken(s).log(`Beast Within → destroy ${perm.name}, create 3/3 Beast token${label ? ' ' + label : ''}`));
+      };
+
+      // Priority 1: key Hitzel targets (Endurance — destroy while ETB on stack)
+      for (const p of state.battlefield.filter(p => p.name === 'Endurance'))
+        tryTarget(p, '');
+
+      // Priority 2: stax targets (removal role)
+      const STAX = new Set(['Null Rod','Collector Ouphe','Thorn of Amethyst',
+        'Trinisphere','Root Maze','Orb of Dreams','Chalice of the Void',
+        'Disruptor Flute','Titania\'s Song']);
+      for (const p of state.battlefield.filter(p => STAX.has(p.name)))
+        tryTarget(p, '(stax)');
+
+      // Priority 3: expendable own creature (beast token loop / general removal)
+      const KEEP = new Set(['Ashaya, Soul of the Wild',"Yeva, Nature's Herald",
+        'Temur Sabertooth','Kogla, the Titan Ape','Eternal Witness',
+        'Quirion Ranger','Scryb Ranger','Arbor Elf','Beast Token']);
+      const expendable = state.battlefield.find(p =>
+        p.types?.includes('creature') && !KEEP.has(p.name) && !seen.has(p.name)
+      );
+      if (expendable) tryTarget(expendable, '');
+
+      return results.length > 0 ? results : [state.log('Beast Within: no legal target')];
+    },
+  },
   vitalize: {
     name: 'Vitalize', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle: Untap all creatures you control.
@@ -8157,10 +8214,10 @@ function hasRepeatableCreatureRecast(state) {
       }).length : 0);
     if (creatureCountTotal >= 2) return true;
   }
-  // The Ashaya+Ranger loop must be ESTABLISHED on the battlefield (the Ranger
-  // returns itself as a Forest under Ashaya, then is recast each cycle).
-  if (ashayaOut(state) &&
-      (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))) {
+  // The Ashaya+Ranger loop: Ranger bounces itself (a Forest under Ashaya),
+  // is recast, and repeats. The first iteration requires the Ranger's
+  // once-per-turn bounce to still be available this turn.
+  if (ashayaOut(state) && rangerAvailable(state)) {
     return true;
   }
   // Beast Within infinite creature loops (generates 3/3 beast tokens each cycle).
@@ -8432,7 +8489,9 @@ function hasCreatureToDiscard(state, excludeKey = null) {
   if (hasPerm(state, 'Cloudstone Curio')) {
     return state.creatures().length >= 2;
   }
-  if (ashayaOut(state) && (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))) {
+  if (ashayaOut(state) && rangerAvailable(state)) {
+    // Ranger is a Forest under Ashaya — can bounce itself to hand as discard fodder,
+    // but only if its once-per-turn bounce hasn't already been used this turn.
     return true;
   }
   return false;
@@ -9756,10 +9815,12 @@ var DETECTORS = [
       'Big dorks: Priest of Titania, Circle of Dreams Druid, Elvish Archdruid, ' +
       'Wirewood Channeler, Selvala, Karametra\'s Acolyte, Badgermole Cub (boosts any 1G dork).',
     check(state) {
-      // Need a Ranger on the battlefield (Quirion or Scryb) — not sick for cast abilities,
-      // but Ranger's bounce has no tap cost so summoning sickness is irrelevant here.
-      const hasQR   = hasPerm(state, 'Quirion Ranger');
-      const hasScryb = hasPerm(state, 'Scryb Ranger');
+      // Need a Ranger on the battlefield with its once-per-turn bounce still available.
+      // (CR 302.6: summoning sickness doesn't restrict abilities without {T}/{Q} cost,
+      // so a sick Ranger can still bounce — but it can only do so ONCE per turn unless
+      // bounced to hand and recast. quirionAvailable checks !abilitiesUsed.bounce_forest.)
+      const hasQR    = quirionAvailable(state);
+      const hasScryb = scrybAvailable(state);
       if (!hasQR && !hasScryb) return false;
 
       // Need Survival of the Fittest OR Fauna Shaman on the battlefield and usable.
@@ -9855,10 +9916,25 @@ var DETECTORS = [
       // Find best big dork available in library
       const libBigDork = [...BIG_DORK_KEYS].find(k => libSet.has(k) && (hasQR ? isBigDork(k) : isBigDorkForScryb(k)));
 
+      // ── Untap-engine check ────────────────────────────────────────────────
+      // The infinite loop requires a creature that can untap a Forest (the big
+      // dork / Cradle). Under Ashaya, all creatures are Forests, so Arbor Elf /
+      // Fyndhorn Elves-type untappers work. The untapper must be UNTAPPED and
+      // not summoning sick (it has a tap cost: {T}: untap target Forest).
+      // Without a ready untapper, the loop stalls after one Cradle tap.
+      const UNTAP_FOREST_KEYS = new Set([
+        'arbor_elf', 'argothian_elder', 'kiora_bests_the_sea_god',
+      ]);
+      const hasReadyUntapper = state.battlefield.some(p =>
+        UNTAP_FOREST_KEYS.has(p.cardKey) && !p.tapped &&
+        (!p.summoningSick || shangChiActive(state))
+      );
+
       // ── PATTERN A: Ashaya already on battlefield ──────────────────────────
       // One activation: discard 1 creature → fetch big dork → cast it.
       if (ashayaOnBF) {
         if (!libBigDork) return false;
+        if (!hasReadyUntapper) return false;
         const creaturesInHand = state.hand
           ? state.hand.filter(k => CARDS[k]?.types.includes('creature') && k !== libBigDork)
           : [];
@@ -9872,6 +9948,7 @@ var DETECTORS = [
       // One activation: discard OTHER creature → fetch big dork → cast Ashaya → cast dork.
       if (ashayaInHand) {
         if (!libBigDork) return false;
+        if (!hasReadyUntapper) return false;
         const creaturesInHand = state.hand
           ? state.hand.filter(k => k !== 'ashaya' && CARDS[k]?.types.includes('creature') && k !== libBigDork)
           : [];
@@ -9884,6 +9961,7 @@ var DETECTORS = [
       // ── PATTERN C: Ashaya in library ─────────────────────────────────────
       // Two activations: fetch Ashaya → fetch big dork → cast both.
       if (ashayaInLib && libBigDork) {
+        if (!hasReadyUntapper) return false;
         // Need 2 distinct creatures in hand to discard (one per activation).
         const creaturesInHand = state.hand
           ? state.hand.filter(k => CARDS[k]?.types.includes('creature'))
@@ -10195,8 +10273,9 @@ var DETECTORS = [
         (permReadyOrSCActive(state, 'Ley Weaver') && 'Ley Weaver') ||
         null;
       if (!untapper) return false;
-      // Wirewood Symbiote on the battlefield (the untap source).
-      if (!hasPerm(state, 'Wirewood Symbiote')) return false;
+      // Wirewood Symbiote on the battlefield with its once-per-turn bounce available.
+      // Temur bounces Symbiote each cycle to reset it, but the FIRST activation needs it fresh.
+      if (!symbioteAvailable(state)) return false;
       // Reset engine: Temur ONLY (Kogla returns Humans; Symbiote is an Insect).
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       // Symbiote's cost returns an Elf each cycle. That Elf must NOT be the
@@ -10290,7 +10369,7 @@ var DETECTORS = [
         p.subtypes && p.subtypes.includes('Elf') && p.name !== untapper
       ).length;
       const symbioteEngine =
-        hasPerm(state, 'Wirewood Symbiote') &&
+        symbioteAvailable(state) &&    // bounce must be fresh for the first iteration
         hasPerm(state, 'Temur Sabertooth') &&  // Kogla can't bounce an Insect
         feedElves >= 1;
 
@@ -10715,7 +10794,7 @@ var WIN_CONDITIONS = [
       if (!enduranceOnField) return false;
       const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
       const hasRanger =
-        hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+        rangerAvailable(state); // bounce must be fresh to start the re-buy loop
       const koglaWitnessReady =
         hasPerm(state, 'Kogla, the Titan Ape') && witnessAvail;
       const rebuyReady =
@@ -10962,8 +11041,7 @@ var WIN_CONDITIONS = [
       if (hasKoglaWitness) {
         const gy = state.players?.[0]?.graveyard ?? state.graveyard ?? [];
         const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
-        const hasRanger  =
-          hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+        const hasRanger  = rangerAvailable(state); // first activation must be fresh
         // BW/LQR: in hand OR graveyard — Witness recurs them from GY each loop
         if (inHand('beast_within') || gy.includes('Beast Within') ||
             inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes")) return true;
@@ -10986,8 +11064,7 @@ var WIN_CONDITIONS = [
       if (hasPerm(state, 'Kogla, the Titan Ape') &&
           inHandOrField(state, 'Eternal Witness', 'eternal_witness')) {
         const hasAshaya = hasPerm(state, 'Ashaya, Soul of the Wild');
-        const hasRanger  =
-          hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger');
+        const hasRanger  = rangerAvailable(state); // first activation must be fresh
         if (inHand('beast_within') || gy.includes('Beast Within') ||
             inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes")) return true;
         if (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) return true;
@@ -11280,8 +11357,7 @@ var WIN_CONDITIONS = [
            (hasPerm(state, 'Kogla, the Titan Ape') &&
             inHandOrField(state, 'Eternal Witness', 'eternal_witness')) ||
            (hasPerm(state, 'Ashaya, Soul of the Wild') &&
-            (hasPerm(state, 'Quirion Ranger') || hasPerm(state, 'Scryb Ranger'))))));
-      if (hitzelDeployed) return true;
+            rangerAvailable(state)))));  // bounce must be fresh to re-buy stranded Endurance
 
       // [O-32] Infectious Bite is an instant — it is only a terminal win with
       // a spell-recursion loop (Eternal/Timeless Witness + Temur/Kogla) to
