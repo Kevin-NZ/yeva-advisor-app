@@ -2383,6 +2383,9 @@ class GameState {
     const idx = s.hand.indexOf(cardKey);
     if (idx === -1) return null;
     s.hand = [...s.hand.slice(0, idx), ...s.hand.slice(idx + 1)];
+    // Clear topDecked when the card it refers to is cast — it's no longer
+    // waiting to be drawn (Harbinger ETB sets it but QR may be cast this turn).
+    if (s.topDecked === cardKey) s.topDecked = null;
     return s;
   }
 
@@ -9240,19 +9243,23 @@ var DETECTORS = [
       "Lecturer power ≥5, Llanowar Tribe).",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
-      if (!symbioteAvailable(state)) return false; // ability must not be exhausted this turn
-      const hasOneDrop = state.battlefield.some(p =>
-        p.subtypes && p.subtypes.includes('Elf') &&
-        ['Llanowar Elves','Elvish Mystic','Fyndhorn Elves',
-         'Allosaurus Shepherd','Wirewood Symbiote'].includes(p.name)
-      );
-      if (!hasOneDrop) return false;
-      // [O-29] Any untapped, non-summoning-sick dork that grosses ≥5 mana per
-      // tap completes the loop (was previously hardcoded to Circle of Dreams
-      // Druid + creatureCount≥5). Shang-Chi's haste-bypass also lets a sick
-      // dork tap (permReadyOrSCActive semantics).
+      if (!symbioteAvailable(state)) return false;
+
+      // Feed-elf on BF (Symbiote bounces it to untap the dork each cycle).
+      const ONE_DROP_ELVES = new Set([
+        'Llanowar Elves','Elvish Mystic','Fyndhorn Elves',
+        'Allosaurus Shepherd','Wirewood Symbiote',
+        'Quirion Ranger','Scryb Ranger',
+      ]);
+      if (!state.battlefield.some(p =>
+        p.subtypes?.includes('Elf') && ONE_DROP_ELVES.has(p.name)
+      )) return false;
+
+      // Dork that grosses ≥5 mana per tap — tapped or untapped doesn't matter.
+      // Loop order: Symbiote bounces feed-elf (free) → untaps dork → tap dork
+      // for ≥5G → pay Temur {1G} + recast Symbiote {G} → repeat.
+      // No bootstrap mana needed regardless of dork's tapped state.
       return state.creatures().some(p =>
-        !p.tapped &&
         (!p.summoningSick || shangChiActive(state)) &&
         dorkGrossOutput(state, p) >= 5
       );
@@ -9629,13 +9636,11 @@ var DETECTORS = [
       );
       if (!selvala) return false;
       if (greatestPower(state) < 6) return false;
-      // Need a 1-drop elf to bounce (Symbiote can bounce Llanowar Elves, Elvish Mystic, Fyndhorn Elves, etc.)
-      const hasOneDrop = state.battlefield.some(p =>
-        p.subtypes && p.subtypes.includes('Elf') && !p.summoningSick &&
-        ['Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves',
-         'Allosaurus Shepherd'].includes(p.name)
+      // Feed-elf must be on BF — Symbiote needs it on the first activation.
+      const FEED_ELVES = new Set(['Llanowar Elves','Elvish Mystic','Fyndhorn Elves','Allosaurus Shepherd']);
+      return state.battlefield.some(p =>
+        p.subtypes?.includes('Elf') && !p.summoningSick && FEED_ELVES.has(p.name)
       );
-      return hasOneDrop;
     },
   },
 
@@ -9669,12 +9674,11 @@ var DETECTORS = [
       );
       if (!selvala) return false;
       if (greatestPower(state) < 4) return false;
-      // Need a 1-drop elf not sick (Llanowar Elves, Elvish Mystic, or Fyndhorn Elves)
-      const hasOneDrop = state.battlefield.some(p =>
-        p.subtypes && p.subtypes.includes('Elf') && !p.summoningSick &&
-        ['Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves'].includes(p.name)
+      // Feed-elf must be on BF — Symbiote needs it on the first activation.
+      const FEED_ELVES2 = new Set(['Llanowar Elves','Elvish Mystic','Fyndhorn Elves']);
+      return state.battlefield.some(p =>
+        p.subtypes?.includes('Elf') && !p.summoningSick && FEED_ELVES2.has(p.name)
       );
-      return hasOneDrop;
     },
   },
 
@@ -10365,8 +10369,10 @@ var DETECTORS = [
       // untapper we're relying on (returning the untapper would remove the
       // untap source). Ley Weaver isn't an Elf, so it's never a candidate to be
       // returned; Argothian Elder is an Elf, so it must be excluded explicitly.
+      // Feed-elf must be on BF — Symbiote needs it on the first activation.
+      // Exclude the untapper itself (returning Argothian Elder would break the loop).
       const feedElves = state.battlefield.filter(p =>
-        p.subtypes && p.subtypes.includes('Elf') && p.name !== untapper
+        p.subtypes?.includes('Elf') && p.name !== untapper
       ).length;
       if (feedElves < 1) return false;
       // The untapper targets TWO different lands — require ≥2 lands.
@@ -10445,11 +10451,11 @@ var DETECTORS = [
         hyraxAvailable &&
         (hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape'));
 
-      // The Elf returned to Symbiote must NOT be the untapper we're relying on.
+      // Feed-elf must be on BF — Symbiote needs it on the first activation.
       // Magus is a Human Wizard (never an Elf candidate); Formidable Speaker IS
       // an Elf, so it must be excluded from the feed-Elf count.
       const feedElves = state.battlefield.filter(p =>
-        p.subtypes && p.subtypes.includes('Elf') && p.name !== untapper
+        p.subtypes?.includes('Elf') && p.name !== untapper
       ).length;
       const symbioteEngine =
         symbioteAvailable(state) &&    // bounce must be fresh for the first iteration
@@ -11359,13 +11365,18 @@ var WIN_CONDITIONS = [
         if (hasRepeatableCreatureRecast(state)) return true;
       }
 
-      // ── topDecked: Worldly Tutor already placed a creature on library top ─
-      // The creature will be drawn at the start of next turn. With infinite
-      // mana it's as good as in hand.
+      // ── topDecked: creature placed on library top by Worldly Tutor / Harbinger ETB ─
+      // The creature is drawn at the START OF THE NEXT TURN — not this turn.
+      // Only count this as a win if the topDecked card isn't already in play
+      // (Harbinger sets topDecked but the card may have been cast this same turn).
       if (state.topDecked) {
         var CARDS_local = CARDS;
         const def = CARDS_local[state.topDecked];
-        if (def && def.types.includes('creature')) return true;
+        if (def && def.types.includes('creature')) {
+          const alreadyOnBF   = state.battlefield.some(p => p.cardKey === state.topDecked);
+          const alreadyInHand = state.hand?.includes(state.topDecked);
+          if (!alreadyOnBF && !alreadyInHand) return true; // drawn next turn → win next turn
+        }
       }
 
       // ── Battlefield activated / ETB tutors ────────────────────────────────
@@ -15385,6 +15396,24 @@ function assembleWin(state) {
       steps.push(`(Need haste enabler for ${creatureName}: Shang-Chi static, Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)`);
     }
     return hasteGranted;
+  }
+
+  // ── topDecked: note the card that will be drawn at the start of next turn ─
+  // Harbinger ETB / Worldly Tutor places a specific card on top of the library.
+  // It won't be available until the next draw step — document this clearly and
+  // add it to the simulated hand so subsequent assembly steps can reference it.
+  if (state.topDecked && !state.hand?.includes(state.topDecked) &&
+      !state.battlefield.some(p => p.cardKey === state.topDecked)) {
+    const topDef = CARDS[state.topDecked];
+    const topName = topDef?.name ?? state.topDecked;
+    const sourceMsg = (state.history ?? []).slice().reverse().find(h =>
+      h.msg?.includes('top of library') || h.msg?.includes('Worldly Tutor')
+    )?.msg ?? null;
+    const sourceNote = sourceMsg ? ` — ${sourceMsg}` : ' — Worldly Tutor / Elvish Harbinger ETB';
+    steps.push(`(Next turn) Draw ${topName}${sourceNote}`);
+    // Simulate it being in hand so subsequent assembly steps can reference it
+    s = s.clone();
+    s.hand = [...(s.hand ?? []), state.topDecked];
   }
 
   // ── Step 0: Find Duskwatch Recruiter via tutor if not available ─────────
