@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yeva Solver — Board Replay</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --card-w: 153px;
+    --card-h: 215px;
+    --card-sm-w: 72px;
+    --card-sm-h: 101px;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0d1f0d;
+    color: #d4e8d4;
+    height: 100dvh;
+    padding: 12px 16px 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  #header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #combo-title { font-size: 13px; font-weight: 700; color: #4ade80; margin-bottom: 2px; }
+  #combo-sub   { font-size: 11px; color: #4b6b4b; }
+
+  /* ── Controls ── */
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: #1a3a1a;
+    border: 1px solid #2d5a2d;
+    color: #86efac;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  #btn-play {
+    background: #14532d;
+    border-color: #166534;
+    color: #4ade80;
+    padding: 5px 14px;
+    font-weight: 700;
+  }
+  select#speed {
+    background: #1a3a1a;
+    border: 1px solid #2d5a2d;
+    color: #86efac;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  #step-ctr { font-size: 11px; color: #4b6b4b; min-width: 72px; text-align: center; }
+
+  /* ── Progress bar ── */
+  #progress-track {
+    height: 3px;
+    background: #1a3a1a;
+    border-radius: 2px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+  #progress-fill {
+    height: 100%;
+    background: #22c55e;
+    border-radius: 2px;
+    width: 0%;
+    transition: width .3s;
+  }
+
+  /* ── Action bar ── */
+  #action-bar {
+    background: #111f11;
+    border: 1px solid #2d4a2d;
+    border-radius: 10px;
+    padding: 8px 16px;
+    margin-bottom: 10px;
+    height: 78px;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  #turn-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: #4b6b4b;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #action-body { display: flex; height: 40px; overflow: hidden; }
+  #step-bubble {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #14532d;
+    color: #4ade80;
+    font-weight: 700;
+    font-size: 11px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+  }
+  #action-msg        { font-size: 15px; font-weight: 600; color: #d4e8d4; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #action-msg.turn   { font-size: 16px; color: #60a5fa; }
+  #action-msg.opp-step  { color: #fbbf24; }
+  #action-msg.opp-close { font-size: 13px; color: #86efac; font-style: italic; }
+  #action-body > div { overflow: hidden; min-width: 0; }
+  .subline {
+    font-size: 12px;
+    color: #6b8f6b;
+    padding-left: 10px;
+    border-left: 2px solid #2d4a2d;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Stats row ── */
+  #stats-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .stat {
+    background: #111f11;
+    border: 1px solid #1a3a1a;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 14px;
+    color: #6b8f6b;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .stat strong { color: #86efac; font-size: 13px; }
+  #mana-pips { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
+  .pip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  /* ── Zone layout ── */
+  #zones {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  #zones > div:first-child {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #side-zones { display: flex; flex-direction: column; gap: 8px; min-width: 82px; }
+
+  .zone-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .zone-box {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: flex-start;
+    background: #1a2e1a;
+    border: 1px solid #2d4a2d;
+    border-radius: 8px;
+    padding: 18px;
+    min-height: 90px;
+  }
+  #bf-zone {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    align-content: flex-start;
+  }
+  .zone-box.hand-zone { background: #111f11; min-height: 120px; max-height: 250px; }
+  .zone-box.hand-zone .card-img { margin: 1px 1px; }
+  .zone-box.gy-zone   { min-height: 60px; min-width: 75px; }
+  .empty-msg { color: #2d4a2d; font-size: 11px; align-self: center; margin-left: 4px; }
+
+  /* ── Cards ── */
+  .card-wrap        { position: relative; display: inline-block; flex-shrink: 0; }
+  .card-wrap.tapped { margin: 0 calc(var(--card-w) * 0.20); }
+  .card-img  {
+    width: var(--card-w); height: var(--card-h);
+    border-radius: 6px;
+    object-fit: cover;
+    border: 1.5px solid rgba(0,0,0,.2);
+    display: block;
+    background: #c8bfa0;
+    transition: transform .2s, width .2s, height .2s;
+    margin: 0px 30px;
+  }
+  .card-img.tapped  { transform: rotate(90deg); transform-origin: center center; margin: 0px 0; }
+  .card-img.small   { width: var(--card-sm-w); height: var(--card-sm-h); filter: saturate(0) brightness(.6); }
+  .card-ph {
+    width: var(--card-w); height: var(--card-h);
+    border-radius: 6px;
+    background: #2d4a2d;
+    border: 1px dashed #3d6a3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: #4b8b4b;
+    text-align: center;
+    padding: 4px;
+    font-family: Georgia, serif;
+  }
+  .card-ph.small { width: var(--card-sm-w); height: var(--card-sm-h); font-size: 8px; }
+  .sick-ring {
+    position: absolute; inset: 0 30px;
+    border-radius: 6px;
+    border: 2px solid #f59e0b;
+    pointer-events: none;
+  }
+  .new-ring {
+    position: absolute; inset: 0 30px;
+    border-radius: 6px;
+    border: 2.5px solid #22c55e;
+    pointer-events: none;
+    animation: pop .9s ease-out forwards;
+  }
+  @keyframes pop {
+    from { opacity: 1; transform: scale(1); }
+    to   { opacity: 0; transform: scale(1.2); }
+  }
+  .forest-badge {
+    position: absolute; top: 5px; left: 34px;
+    background: rgba(22,101,52,.88);
+    color: #bbf7d0;
+    font-size: 11px; font-weight: 700;
+    padding: 2px 5px; border-radius: 3px;
+    pointer-events: none;
+  }
+  .pt-badge {
+    position: absolute; bottom: 5px; right: 34px;
+    background: rgba(0,0,0,.72);
+    color: #fff;
+    font-size: 12px; font-weight: 700;
+    padding: 2px 5px; border-radius: 3px;
+    pointer-events: none;
+  }
+
+  /* ── Footer ── */
+  #credit { font-size: 10px; color: #3d5c3d; text-align: right; margin-top: 6px; flex-shrink: 0; }
+  #credit a { color: #4ade80; }
+
+  /* ── JSON paste panel ── */
+  #paste-panel {
+    margin-bottom: 10px;
+    background: #111f11;
+    border: 1px solid #2d4a2d;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #4b6b4b;
+    flex-shrink: 0;
+  }
+  #paste-panel summary { cursor: pointer; color: #6b8f6b; font-weight: 600; user-select: none; }
+  #paste-panel textarea {
+    width: 100%; margin-top: 8px;
+    background: #0d1f0d; border: 1px solid #2d4a2d; border-radius: 6px;
+    color: #86efac; font-size: 11px; font-family: monospace;
+    padding: 6px; resize: vertical; height: 60px;
+  }
+  #paste-panel button.load-btn {
+    margin-top: 6px;
+    background: #14532d; border-color: #166534; color: #4ade80;
+  }
+  #paste-error { color: #f87171; margin-top: 4px; font-size: 11px; }
+  /* ── Card hover popup ── */
+  #card-popup {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    display: none;
+    filter: drop-shadow(0 8px 24px rgba(0,0,0,.8));
+    transition: opacity .12s;
+    opacity: 0;
+  }
+  #card-popup.visible { display: block; opacity: 1; }
+  #card-popup img {
+    width: 280px;
+    height: auto;
+    border-radius: 12px;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<!-- Card hover popup -->
+<div id="card-popup"><img id="card-popup-img" alt=""></div>
+
+<!-- JSON paste panel (collapsed by default) -->
+<details id="paste-panel">
+  <summary>Load replay JSON</summary>
+  <textarea id="json-input" placeholder='{"combo":"…","totalSteps":17,"frames":[…]}'></textarea>
+  <br>
+  <button class="load-btn" onclick="loadJSON()">Load</button>
+  <span id="paste-error"></span>
+</details>
+
+<!-- Header -->
+<div id="header">
+  <div>
+    <div id="combo-title">♾ Loading…</div>
+    <div id="combo-sub"></div>
+  </div>
+  <div id="controls">
+    <select id="speed">
+      <option value="1800">Slow</option>
+      <option value="900" selected>Normal</option>
+      <option value="400">Fast</option>
+      <option value="150">Fastest</option>
+    </select>
+    <button id="btn-prev" disabled onclick="navigate(-1)">◀ Prev</button>
+    <button id="btn-play" onclick="togglePlay()">▶ Play</button>
+    <button id="btn-next" onclick="navigate(1)">Next ▶</button>
+    <div id="step-ctr">—</div>
+  </div>
+</div>
+
+<!-- Progress -->
+<div id="progress-track"><div id="progress-fill"></div></div>
+
+<!-- Action bar -->
+<div id="action-bar">
+  <div id="turn-label">Turn 1</div>
+  <div id="action-body">
+    <div id="step-bubble" style="display:none">0</div>
+    <div>
+      <div id="action-msg"></div>
+      <div id="sublines"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Stats -->
+<div id="stats-row">
+  <div class="stat">❤️ Life: <strong id="s-life">40</strong></div>
+  <div class="stat">💎 Mana: <span id="mana-pips">—</span></div>
+  <!-- <div class="stat">🃏 Hand: <strong id="s-hand">7</strong></div> -->
+  <!-- <div class="stat">📚 Library: <strong id="s-lib">92</strong></div> -->
+</div>
+
+<!-- Battlefield + Graveyard -->
+<div id="zones">
+  <div>
+    <div class="zone-label" style="color:#22c55e">Battlefield</div>
+    <div class="zone-box" id="bf-zone"><span class="empty-msg">—</span></div>
+  </div>
+  <div id="side-zones">
+    <div>
+      <div class="zone-label" style="color:#6b7280">Graveyard</div>
+      <div class="zone-box gy-zone" id="gy-zone"><span class="empty-msg">—</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Hand -->
+<div style="flex-shrink:0">
+  <div class="zone-label" style="color:#60a5fa">Hand</div>
+  <div class="zone-box hand-zone" id="hand-zone"><span class="empty-msg">—</span></div>
+</div>
+
+<div id="credit">
+  Card images © Wizards of the Coast, via <a href="https://scryfall.com" target="_blank">Scryfall</a>
+</div>
+
+<script>
+/* ── Demo data ─────────────────────────────────────────────────────────────── */
+const DEMO = {"combo":"Win: Tutor for Finisher (infinite mana + creature tutor)","totalSteps":39,"frames":[{"stepNum":0,"turn":1,"msg":"Opening Hand","subLines":[],"hand":["arbor_elf","badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote","yavimaya"],"battlefield":[],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false},{"stepNum":null,"turn":1,"msg":"Begin Turn 1","subLines":[],"hand":["arbor_elf","badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote","yavimaya"],"battlefield":[],"graveyard":[],"mana":"","life":40,"isTurnBoundary":true,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":1,"turn":1,"msg":"Play Yavimaya, Cradle of Growth","subLines":[],"hand":["arbor_elf","badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":false,"sick":false,"types":["land"],"isForest":true}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":2,"turn":1,"msg":"Tap Yavimaya, Cradle of Growth → {G}","subLines":[],"hand":["arbor_elf","badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":3,"turn":1,"msg":"Cast Arbor Elf","subLines":[],"hand":["badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":null,"turn":2,"msg":"Begin Turn 2 (lib: 92)","subLines":[],"hand":["badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":false,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":true,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":4,"turn":2,"msg":"Tap Yavimaya, Cradle of Growth → {G}","subLines":[],"hand":["badgermole_cub","gaeas_cradle","green_suns_zenith","survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":5,"turn":2,"msg":"Play Gaea's Cradle","subLines":[],"hand":["badgermole_cub","green_suns_zenith","survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land"],"isForest":true}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":6,"turn":2,"msg":"Cast Wirewood Symbiote","subLines":[],"hand":["badgermole_cub","green_suns_zenith","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land"],"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":7,"turn":2,"msg":"Tap Gaea's Cradle → {G}x2 (2 creatures)","subLines":[],"hand":["badgermole_cub","green_suns_zenith","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x2","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":8,"turn":2,"msg":"Arbor Elf → untap Gaea's Cradle","subLines":[],"hand":["badgermole_cub","green_suns_zenith","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":true,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land"],"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x2","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":9,"turn":2,"msg":"Cast Badgermole Cub","subLines":["Badgermole Cub ETB: earthbend Gaea's Cradle → 1/1 creature with haste"],"hand":["green_suns_zenith","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":true,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":10,"turn":2,"msg":"Tap Gaea's Cradle → {G}x4 (4 creatures)","subLines":[],"hand":["green_suns_zenith","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":true,"sick":false,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false}],"graveyard":[],"mana":"{G}x5","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":11,"turn":2,"msg":"Wirewood Symbiote: return Arbor Elf → untap Gaea's Cradle","subLines":[],"hand":["arbor_elf","green_suns_zenith","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false}],"graveyard":[],"mana":"{G}x5","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":12,"turn":2,"msg":"Green Sun's Zenith → fetch Temur Sabertooth (MV 4)","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":13,"turn":2,"msg":"Tap Gaea's Cradle → {G}x4 (4 creatures)","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false}],"graveyard":[],"mana":"{G}x5","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":14,"turn":2,"msg":"Cast Arbor Elf","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x4","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":15,"turn":2,"msg":"Temur Sabertooth → return Wirewood Symbiote to hand","subLines":[],"hand":["survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x2","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":16,"turn":2,"msg":"Cast Wirewood Symbiote","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":17,"turn":2,"msg":"Wirewood Symbiote: return Arbor Elf → untap Gaea's Cradle","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":18,"turn":2,"msg":"Cast Arbor Elf","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":19,"turn":2,"msg":"Tap Gaea's Cradle → {G}x5 (5 creatures)","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x6","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":20,"turn":2,"msg":"Temur Sabertooth → return Wirewood Symbiote to hand","subLines":[],"hand":["survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x4","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":21,"turn":2,"msg":"Cast Wirewood Symbiote","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x3","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":22,"turn":2,"msg":"Wirewood Symbiote: return Arbor Elf → untap Gaea's Cradle","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x3","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":23,"turn":2,"msg":"Cast Arbor Elf","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x2","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":24,"turn":2,"msg":"Tap Gaea's Cradle → {G}x5 (5 creatures)","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x8","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":25,"turn":2,"msg":"Temur Sabertooth → return Badgermole Cub to hand","subLines":[],"hand":["badgermole_cub","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land"],"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x6","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":26,"turn":2,"msg":"Cast Badgermole Cub","subLines":["Badgermole Cub ETB: earthbend Yavimaya, Cradle of Growth → 1/1 creature with haste"],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false}],"graveyard":[],"mana":"{G}x4","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":27,"turn":2,"msg":"Temur Sabertooth → return Wirewood Symbiote to hand","subLines":[],"hand":["survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false}],"graveyard":[],"mana":"{G}x2","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":28,"turn":2,"msg":"Cast Wirewood Symbiote","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":29,"turn":2,"msg":"Wirewood Symbiote: return Arbor Elf → untap Gaea's Cradle","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x1","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":30,"turn":2,"msg":"Cast Arbor Elf","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":31,"turn":2,"msg":"Tap Gaea's Cradle → {G}x6 (6 creatures)","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x7","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":32,"turn":2,"msg":"Temur Sabertooth → return Wirewood Symbiote to hand","subLines":[],"hand":["survival_fittest","wirewood_symbiote"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x5","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":33,"turn":2,"msg":"Cast Wirewood Symbiote","subLines":[],"hand":["survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Arbor Elf","cardKey":"arbor_elf","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x4","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":34,"turn":2,"msg":"Wirewood Symbiote: return Arbor Elf → untap Gaea's Cradle","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false}],"graveyard":[],"mana":"{G}x4","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":35,"turn":2,"msg":"Cast Yeva, Nature's Herald from command zone","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Yeva, Nature's Herald","cardKey":"yeva","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":4,"isForest":false}],"graveyard":[],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":36,"turn":2,"msg":"Tap Gaea's Cradle → {G}x6 (6 creatures)","subLines":[],"hand":["arbor_elf","survival_fittest"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Yeva, Nature's Herald","cardKey":"yeva","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":4,"isForest":false}],"graveyard":[],"mana":"{G}x7","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":37,"turn":2,"msg":"Cast Survival of the Fittest","subLines":[],"hand":["arbor_elf"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Yeva, Nature's Herald","cardKey":"yeva","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":4,"isForest":false},{"name":"Survival of the Fittest","cardKey":"survival_fittest","tapped":false,"sick":false,"types":["enchantment"],"isForest":false}],"graveyard":[],"mana":"{G}x5","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":38,"turn":2,"msg":"Survival of the Fittest: pay {G}, discard Arbor Elf → Woodcaller Automaton to hand","subLines":["Discard Arbor Elf (Survival of the Fittest discard cost)"],"hand":["woodcaller_automaton"],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Yeva, Nature's Herald","cardKey":"yeva","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":4,"isForest":false},{"name":"Survival of the Fittest","cardKey":"survival_fittest","tapped":false,"sick":false,"types":["enchantment"],"isForest":false}],"graveyard":["Arbor Elf"],"mana":"{G}x4","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0},{"stepNum":39,"turn":2,"msg":"Cast Woodcaller Automaton","subLines":[],"hand":[],"battlefield":[{"name":"Yavimaya, Cradle of Growth","cardKey":"yavimaya","tapped":true,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Gaea's Cradle","cardKey":"gaeas_cradle","tapped":false,"sick":false,"types":["land","creature"],"power":1,"toughness":1,"isForest":true},{"name":"Temur Sabertooth","cardKey":"temur_sabertooth","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":3,"isForest":false},{"name":"Badgermole Cub","cardKey":"badgermole_cub","tapped":false,"sick":true,"types":["creature"],"power":2,"toughness":2,"isForest":false},{"name":"Wirewood Symbiote","cardKey":"wirewood_symbiote","tapped":false,"sick":true,"types":["creature"],"power":1,"toughness":1,"isForest":false},{"name":"Yeva, Nature's Herald","cardKey":"yeva","tapped":false,"sick":true,"types":["creature"],"power":4,"toughness":4,"isForest":false},{"name":"Survival of the Fittest","cardKey":"survival_fittest","tapped":false,"sick":false,"types":["enchantment"],"isForest":false},{"name":"Woodcaller Automaton","cardKey":"woodcaller_automaton","tapped":false,"sick":true,"types":["creature","artifact"],"power":3,"toughness":3,"isForest":false}],"graveyard":["Arbor Elf"],"mana":"","life":40,"isTurnBoundary":false,"isOpponentTurn":false,"opponentWindowNum":0}]}
+
+/* ── State ────────────────────────────────────────────────────────────────── */
+let data    = DEMO;
+let idx     = 0;
+let playing = false;
+let timer   = null;
+let prevBF  = new Set();
+const imgErr = {};
+
+/* Build cardKey → name map once from all frames */
+const nameMap = {};
+function buildNameMap() {
+  for (const f of data.frames)
+    for (const p of f.battlefield)
+      if (!nameMap[p.cardKey]) nameMap[p.cardKey] = p.name;
+}
+
+/* ── Scryfall ─────────────────────────────────────────────────────────────── */
+function sfUrl(name) {
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=normal`;
+}
+
+/* ── Mana pips ────────────────────────────────────────────────────────────── */
+const PIP_COL = { G:'#15803d', C:'#6b7280', W:'#ca8a04', U:'#1d4ed8', B:'#374151', R:'#dc2626' };
+
+function renderMana(str) {
+  const el = document.getElementById('mana-pips');
+  el.innerHTML = '';
+  if (!str) { el.textContent = '—'; el.style.color = '#6b7280'; el.style.fontSize = '12px'; return; }
+  el.style.color = ''; el.style.fontSize = '';
+  const re = /\{([^}]+)\}(?:x(\d+))?|([A-Z])x(\d+)/g;
+  const matches = [...str.matchAll(re)];
+  let m;
+  for (const m of matches.reverse()) {
+    const sym = m[1] || m[3];
+    const cnt = Math.min(parseInt(m[2] || m[4] || '1', 10), 12);
+    const col = PIP_COL[sym?.toUpperCase()] || '#9ca3af';
+    /*
+    for (let i = 0; i < cnt; i++) {
+      const pip = document.createElement('span');
+      pip.className = 'pip';
+      pip.style.background = col;
+      pip.textContent = sym?.charAt(0) || '?';
+      el.appendChild(pip);
+    }
+    */
+    const pip = document.createElement('span');
+    pip.className = 'pip';
+    pip.style.background = col;
+    pip.textContent = cnt;
+    el.appendChild(pip);
+  }
+  if (!el.childNodes.length) { el.textContent = str; el.style.color = '#86efac'; el.style.fontSize = '14px'; }
+}
+
+/* ── Card element factory ─────────────────────────────────────────────────── */
+function makeCard(p, small = false) {
+  const wrap = document.createElement('div');
+  wrap.className = 'card-wrap' + (p.tapped ? ' tapped' : '');
+
+  if (imgErr[p.cardKey]) {
+    const ph = document.createElement('div');
+    ph.className = 'card-ph' + (small ? ' small' : '');
+    ph.textContent = p.name;
+    wrap.appendChild(ph);
+  } else {
+    const img = document.createElement('img');
+    img.className = 'card-img' + (p.tapped ? ' tapped' : '') + (small ? ' small' : '');
+    img.alt = p.name;
+    img.loading = 'lazy';
+    img.src = sfUrl(p.name);
+    img.onerror = () => {
+      imgErr[p.cardKey] = true;
+      const ph = document.createElement('div');
+      ph.className = 'card-ph' + (small ? ' small' : '');
+      ph.textContent = p.name;
+      wrap.replaceChild(ph, img);
+    };
+    wrap.appendChild(img);
+  }
+
+  if (p.sick) {
+    const r = document.createElement('div'); r.className = 'sick-ring'; wrap.appendChild(r);
+  }
+  if (p.isNew) {
+    const r = document.createElement('div'); r.className = 'new-ring'; wrap.appendChild(r);
+  }
+  if (p.isForest) {
+    const b = document.createElement('div'); b.className = 'forest-badge'; b.textContent = 'FOREST'; wrap.appendChild(b);
+  }
+  if (p.power !== undefined) {
+    const b = document.createElement('div'); b.className = 'pt-badge'; b.textContent = p.power + '/' + p.toughness; wrap.appendChild(b);
+  }
+
+  // Hover popup
+  wrap.addEventListener('mouseenter', e => showPopup(p.name, e));
+  wrap.addEventListener('mousemove',  e => positionPopup(e));
+  wrap.addEventListener('mouseleave', hidePopup);
+
+  return wrap;
+}
+
+/* ── Zone renderer ────────────────────────────────────────────────────────── */
+function renderZone(id, items, small = false) {
+  const el = document.getElementById(id);
+  el.innerHTML = '';
+  if (!items.length) { el.innerHTML = '<span class="empty-msg">—</span>'; return; }
+  for (const it of items) el.appendChild(makeCard(it, small));
+}
+
+/* ── Main render ──────────────────────────────────────────────────────────── */
+function render() {
+  const f     = data.frames[idx];
+  const total = data.frames.length - 1;
+  const maxTurn = Math.max(...data.frames.map(x => x.turn));
+
+  /* Header */
+  document.getElementById('combo-title').textContent = '♾ ' + (data.combo || 'Replay');
+  document.getElementById('combo-sub').textContent   = data.totalSteps + ' steps · Turn ' + maxTurn + ' win';
+
+  /* Controls */
+  document.getElementById('progress-fill').style.width = (idx / total * 100) + '%';
+  document.getElementById('btn-prev').disabled = idx === 0;
+  document.getElementById('btn-next').disabled = idx === total;
+  document.getElementById('step-ctr').textContent =
+    f.stepNum != null ? `Step ${f.stepNum}/${data.totalSteps}` : `Turn ${f.turn}`;
+
+  /* Action bar */
+  document.getElementById('turn-label').textContent =
+    f.isOpponentTurn && !f.isTurnBoundary ? 'Opponent\'s Turn (Flash Window)' :
+    f.isOpponentTurnClose ? 'Flash Window End' :
+    'Turn ' + f.turn;
+  const am = document.getElementById('action-msg');
+  am.textContent = f.msg;
+  am.className = f.isTurnBoundary ? 'turn' : '';
+  if (f.isOpponentTurnClose) am.className = 'opp-close';
+  if (f.isOpponentTurn && !f.isTurnBoundary) am.className = 'opp-step';
+
+  const sb = document.getElementById('step-bubble');
+  if (f.stepNum != null) { sb.style.display = 'inline-flex'; sb.textContent = f.stepNum; }
+  else                    { sb.style.display = 'none'; }
+
+  const sl = document.getElementById('sublines');
+  sl.innerHTML = '';
+  for (const s of (f.subLines || [])) {
+    const d = document.createElement('div'); d.className = 'subline'; d.textContent = '↳ ' + s; sl.appendChild(d);
+  }
+
+  /* Stats */
+  document.getElementById('s-life').textContent = f.life;
+  /*document.getElementById('s-hand').textContent = f.hand.length;*/
+  /*document.getElementById('s-lib').textContent  = Math.max(0, 92 - idx);*/
+  renderMana(f.mana);
+
+  /* Battlefield (with new-entry detection) */
+  const currBF = new Set(f.battlefield.map(p => p.cardKey + '|' + p.name));
+  const bfItems = f.battlefield.map(p => ({
+    ...p,
+    isNew: !prevBF.has(p.cardKey + '|' + p.name) && idx > 0,
+  }));
+  prevBF = currBF;
+  renderZone('bf-zone', bfItems);
+
+  /* Graveyard */
+  renderZone('gy-zone', f.graveyard.map(name => ({
+    name, cardKey: name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+    tapped: false, sick: false, types: [],
+  })), true);
+
+  /* Hand */
+  const handItems = f.hand.map(k => ({
+    name: nameMap[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+    cardKey: k, tapped: false, sick: false, types: [],
+  }));
+  renderZone('hand-zone', handItems);
+}
+
+/* ── Playback ─────────────────────────────────────────────────────────────── */
+function stop() {
+  playing = false;
+  clearTimeout(timer);
+  document.getElementById('btn-play').textContent = '▶ Play';
+}
+
+function advance() {
+  if (!playing) return;
+  idx++;
+  if (idx >= data.frames.length) { idx = data.frames.length - 1; stop(); return; }
+  render();
+  timer = setTimeout(advance, parseInt(document.getElementById('speed').value, 10));
+}
+
+function togglePlay() {
+  if (playing) { stop(); return; }
+  if (idx >= data.frames.length - 1) idx = 0;
+  playing = true;
+  document.getElementById('btn-play').textContent = '⏸ Pause';
+  advance();
+}
+
+function navigate(dir) {
+  stop();
+  idx = Math.max(0, Math.min(data.frames.length - 1, idx + dir));
+  render();
+}
+
+/* ── JSON loader ──────────────────────────────────────────────────────────── */
+function loadJSON() {
+  const raw = document.getElementById('json-input').value.trim();
+  const errEl = document.getElementById('paste-error');
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed.frames || !Array.isArray(parsed.frames)) throw new Error('Missing frames array');
+    data = parsed;
+    Object.keys(nameMap).forEach(k => delete nameMap[k]);
+    buildNameMap();
+    idx = 0; prevBF = new Set();
+    stop();
+    render();
+    errEl.textContent = '';
+    document.getElementById('paste-panel').removeAttribute('open');
+  } catch (e) {
+    errEl.textContent = '✗ ' + e.message;
+  }
+}
+
+/* ── Keyboard shortcuts ───────────────────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'ArrowRight' || e.key === 'l') navigate(1);
+  if (e.key === 'ArrowLeft'  || e.key === 'h') navigate(-1);
+  if (e.key === ' ' || e.key === 'k') { e.preventDefault(); togglePlay(); }
+});
+
+/* ── Card hover popup ─────────────────────────────────────────────────────── */
+const popup    = document.getElementById('card-popup');
+const popupImg = document.getElementById('card-popup-img');
+const POPUP_W  = 280; // must match CSS width
+const POPUP_H  = 391; // approx height (280 * 1.396 aspect ratio)
+const OFFSET   = 16;  // gap from cursor
+
+let popupCache = {}; // cardName → large image URL (avoid re-fetching)
+
+function sfUrlLarge(name) {
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=large`;
+}
+
+function showPopup(name, e) {
+  if (!popupCache[name]) popupCache[name] = sfUrlLarge(name);
+  if (popupImg.dataset.name !== name) {
+    popupImg.src = popupCache[name];
+    popupImg.dataset.name = name;
+  }
+  popup.classList.add('visible');
+  positionPopup(e);
+}
+
+function positionPopup(e) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let x = e.clientX + OFFSET;
+  let y = e.clientY + OFFSET;
+  // Flip left if too close to right edge
+  if (x + POPUP_W > vw - 8) x = e.clientX - POPUP_W - OFFSET;
+  // Flip up if too close to bottom
+  if (y + POPUP_H > vh - 8) y = e.clientY - POPUP_H - OFFSET;
+  // Clamp to viewport
+  x = Math.max(8, x);
+  y = Math.max(8, y);
+  popup.style.left = x + 'px';
+  popup.style.top  = y + 'px';
+}
+
+function hidePopup() {
+  popup.classList.remove('visible');
+}
+
+/* ── Boot ─────────────────────────────────────────────────────────────────── */
+buildNameMap();
+render();
+
+/* ── Height-fit scaling ───────────────────────────────────────────────────── */
+// Base card dimensions (px) at 225% of original (68×95 → 153×215)
+const BASE_W = 153, BASE_H = 215;
+// Minimum card size we'll ever scale down to
+const MIN_W = 80, MIN_H = 112;
+
+function scaleCards() {
+  const bf = document.getElementById('bf-zone');
+  if (!bf) return;
+  const availH = bf.clientHeight - 16; // minus padding
+  if (availH < 120) return; // too small to bother
+
+  // Target: one row of cards fits comfortably in the battlefield height.
+  // Clamp between MIN and BASE.
+  const targetH = Math.min(BASE_H, Math.max(MIN_H, availH - 16));
+  const scale   = targetH / BASE_H;
+  const cardW   = Math.round(BASE_W * scale);
+  const cardH   = Math.round(BASE_H * scale);
+  const smW     = Math.round(72 * scale);
+  const smH     = Math.round(101 * scale);
+
+  const root = document.documentElement;
+  root.style.setProperty('--card-w',    cardW  + 'px');
+  root.style.setProperty('--card-h',    cardH  + 'px');
+  root.style.setProperty('--card-sm-w', smW    + 'px');
+  root.style.setProperty('--card-sm-h', smH    + 'px');
+}
+
+// Watch the battlefield zone for size changes (window resize or layout shifts)
+if (window.ResizeObserver) {
+  new ResizeObserver(scaleCards).observe(document.getElementById('bf-zone'));
+} else {
+  window.addEventListener('resize', scaleCards);
+  scaleCards();
+}
+</script>
+</body>
+</html>
