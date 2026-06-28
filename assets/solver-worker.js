@@ -1525,10 +1525,11 @@ class GameState {
     let s = this.removeFromHand(cardKey);
     if (!s) return null;
     s = s.addToGraveyard(0, cardName);
-    const msg = reason
-      ? `Discard ${cardName} (${reason})`
-      : `Discard ${cardName} (cleanup, end of turn ${this.turn})`;
-    s = s.log(msg);
+    // Only log for end-of-turn cleanup — when called as a spell/ability cost the
+    // caller's own log line already names the discarded card.
+    if (!reason) {
+      s = s.log(`Discard ${cardName} (cleanup, end of turn ${this.turn})`);
+    }
     return s;
   }
 
@@ -6526,6 +6527,23 @@ var CARDS = {
 
   invasion_of_ikoria: {
     name: 'Invasion of Ikoria', types: ['battle'], subtypes: ['Siege'], cost: 'XGG',
+    canCast(state) {
+      var cards = CARDS;
+      var { parseCost: pc } = _GSM;
+      const x = state.mana.total();
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (!def?.types.includes('creature') || !def.cost) continue;
+        if (def.subtypes?.includes('Human')) continue;
+        const parsed = pc(def.cost);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+        if (mv <= x) return true;
+      }
+      return false;
+    },
     // Oracle: When this Siege enters, search your library and/or graveyard for a
     // non-Human creature card with mana value X or less and put it onto the battlefield.
     // C-23 fix: previously branched over all eligible library creatures. Now picks best.
@@ -6721,7 +6739,22 @@ var CARDS = {
 
   chord_of_calling: {
     name: 'Chord of Calling', types: ['instant'], subtypes: [], cost: 'XGGG',
-    // Oracle: Convoke. Search library for creature with MV ≤ X, put onto battlefield.
+    canCast(state) {
+      var cards = CARDS;
+      var { parseCost: pc } = _GSM;
+      const x = state.mana.total();
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (!def || !def.types.includes('creature') || !def.cost) continue;
+        const parsed = pc(def.cost);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+        if (mv <= x) return true;
+      }
+      return false;
+    },
     // C-23 fix: previously branched over all library creatures within MV budget.
     // Now picks the single highest-TUTOR_PRIORITY_SCORE creature.
     castFn(state) {
@@ -7326,7 +7359,17 @@ var CARDS = {
   },
   worldly_tutor: {
     name: 'Worldly Tutor', types: ['instant'], subtypes: [], cost: 'G',
-    // Oracle: Search library for a creature, REVEAL it, then SHUFFLE and put on TOP of library.
+    canCast(state) {
+      var cards = CARDS;
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (def?.types.includes('creature')) return true;
+      }
+      return false;
+    },
     // Sets state.topDecked so startNewTurn knows to draw exactly that card into hand.
     // C-23 fix: previously branched over all library creatures. Now picks best target.
     castFn(state) {
@@ -7401,8 +7444,23 @@ var CARDS = {
   green_suns_zenith: {
     name: "Green Sun's Zenith", types: ['sorcery'], subtypes: [], cost: 'XG',
     reshufflesIntoLibrary: true, // oracle: "Shuffle Green Sun's Zenith into its owner's library"
-    // C-23 fix: previously branched over all green creatures within MV budget.
-    // Now picks the single highest-TUTOR_PRIORITY_SCORE green creature.
+    canCast(state) {
+      // Don't offer GSZ if there's no green creature in the library within the mana budget.
+      var cards = CARDS;
+      const xMax = state.mana.total();
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (!def || !def.types.includes('creature')) continue;
+        if (!def.cost || !def.cost.includes('G')) continue;
+        const parsed = parseCost(def.cost);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a,b)=>a+b,0);
+        if (mv <= xMax) return true;
+      }
+      return false;
+    },
     castFn(state) {
       var cards = CARDS;
       const xMax = state.mana.total();
@@ -7656,7 +7714,22 @@ var CARDS = {
   },
   natures_rhythm: {
     name: "Nature's Rhythm", types: ['sorcery'], subtypes: [], cost: 'XGG',
-    // Oracle: Search library for creature with MV ≤ X → battlefield. Shuffle.
+    canCast(state) {
+      var cards = CARDS;
+      var { parseCost: pc } = _GSM;
+      const x = state.mana.total();
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (!def || !def.types.includes('creature') || !def.cost) continue;
+        const parsed = pc(def.cost);
+        const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+        if (mv <= x) return true;
+      }
+      return false;
+    },
     // Harmonize: recastable from graveyard (ignored for solver simplicity).
     // Essentially a second Green Sun's Zenith — same implementation.
     //
@@ -7705,7 +7778,17 @@ var CARDS = {
   },
   turntimber_symbiosis: {
     name: 'Turntimber Symbiosis', types: ['sorcery'], subtypes: [], cost: '4GGG',
-    // Oracle: Look at top 7 cards, put a creature onto battlefield, rest on bottom.
+    canCast(state) {
+      var cards = CARDS;
+      const seen = new Set();
+      for (const ck of state.players[0].library) {
+        if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
+        seen.add(ck);
+        const def = cards[ck];
+        if (def?.types.includes('creature')) return true;
+      }
+      return false;
+    },
     // Simplified: treat as a tutor for any creature in library (non-deterministic top-7
     // ignored; in a 99-card deck the best creature is effectively always in top 7).
     // C-23b: select only the highest-priority target — prevents O(library) fan-out.
