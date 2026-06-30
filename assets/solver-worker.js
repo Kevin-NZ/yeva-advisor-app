@@ -1551,12 +1551,18 @@ class GameState {
     if (!p) return null;
     p.tapped = false;
     // When a permanent is untapped mid-turn (e.g. by Quirion Ranger bouncing itself
-    // to untap Hope Tender), once-per-tap ability flags should reset so the creature
-    // can activate again. The exert flag (exert_two_lands) is preserved — exert
-    // persists until the creature's NEXT untap step, not cleared by mid-turn untaps.
+    // to untap Hope Tender), once-per-TAP ability flags should reset so the creature
+    // can activate its {T} ability again (untap_one_land, draw_pay_life — these tap
+    // the creature as a cost). But once-per-TURN abilities that do NOT tap the
+    // creature (Quirion/Scryb Ranger bounce_forest, Wirewood Symbiote bounce_elf)
+    // are limited "once during each of your turns" regardless of tap state, so
+    // untapping must NOT let them fire again — clearing them was a false-loop bug.
+    // exert_two_lands likewise persists until the creature's NEXT untap step.
     if (p.abilitiesUsed && Object.keys(p.abilitiesUsed).length > 0) {
       const preserved = {};
-      if (p.abilitiesUsed.exert_two_lands) preserved.exert_two_lands = true;
+      for (const k of ['exert_two_lands', 'bounce_forest', 'bounce_elf']) {
+        if (p.abilitiesUsed[k]) preserved[k] = true;
+      }
       p.abilitiesUsed = preserved;
     }
     return s;
@@ -4358,7 +4364,12 @@ var CARDS = {
           const token = s.battlefield[s.battlefield.length - 1];
           if (token) {
             token.power = 4; token.toughness = 4; token.isToken = true;
-            token.summoningSick = false; // tokens ETB with sickness; solver removes for combo paths
+            // [audit] Do NOT force summoningSick=false here. The token enters with
+            // summoning sickness like any creature (enterBattlefield sets it), and
+            // the static layer there already clears it when a haste enabler is
+            // present (Concordant Crossroads / Thousand-Year Elixir / Surrak /
+            // Shang-Chi). Forcing it false let the token tap for mana the same
+            // turn it was created — illegal absent haste, and a false-mana source.
           }
           return [s.log('Fanatic of Rhonas: Eternalize → 4/4 Zombie Snake token')];
         },
@@ -4736,7 +4747,8 @@ var CARDS = {
           const token = s.battlefield[s.battlefield.length - 1];
           if (token) {
             token.power = 4; token.toughness = 4; token.isToken = true;
-            token.summoningSick = false;
+            // [audit] Token keeps the summoning sickness enterBattlefield assigns
+            // (cleared there only under a haste enabler). See Fanatic of Rhonas.
           }
           return [s.log('Timeless Witness: Eternalize → 4/4 Zombie Human Shaman token')];
         },
@@ -11298,6 +11310,28 @@ var WIN_CONDITIONS = [
         return lib.every(ck => ck === 'unknown') && lib.length > 0;
       })();
 
+      // ── Draw-outlet feasibility guard (for LAND tutors) ───────────────────
+      // Land tutors (Sylvan Scrying, Crop Rotation, Sowing Mycospawn) only win
+      // via the line: fetch a repeatable draw-outlet land → draw the deck to a
+      // finisher. That line requires a draw-outlet LAND to be available — NOT a
+      // creature in the library. The relevant lands are War Room, Geier Reach
+      // Sanitarium, and Mikokoro. A land already on the battlefield (untapped)
+      // also counts — though if it's already in play the tutor isn't needed.
+      // Same unknown-library optimism as libHasCreature: if the library is all
+      // unknown we assume the deck is intact and allow the win.
+      const DRAW_OUTLET_LAND_KEYS = ['war_room', 'geier_reach', 'mikokoro'];
+      const DRAW_OUTLET_LAND_NAMES = ['War Room', 'Geier Reach Sanitarium', 'Mikokoro, Center of the Sea'];
+      const libHasDrawOutlet = (() => {
+        // Already on battlefield (untapped) → outlet is available without fetching.
+        const onBF = state.battlefield.some(p =>
+          p.is('land') && !p.tapped && DRAW_OUTLET_LAND_NAMES.includes(p.name)
+        );
+        if (onBF) return true;
+        if (lib.some(ck => DRAW_OUTLET_LAND_KEYS.includes(ck))) return true;
+        // All-unknown library: assume intact, allow.
+        return lib.length > 0 && lib.every(ck => ck === 'unknown');
+      })();
+
       // ── Hand tutors that find a creature ─────────────────────────────────
       // Instant/sorcery tutors in hand (cast directly)
       const handSpellTutors = [
@@ -11310,12 +11344,32 @@ var WIN_CONDITIONS = [
         'eldritch_evolution', // {1GG}: sacrifice → creature 2 MV higher → battlefield
         'natural_order',      // {2GG}: sacrifice green → any green creature → battlefield
         'worldly_tutor',      // {G}: creature → top of library (drawn next turn)
-        'sylvan_scrying',     // {1G}: any land → hand (War Room → draw to finisher)
+        // NOTE: sylvan_scrying is a LAND tutor — handled in the land-tutor
+        // branch below (gated on libHasDrawOutlet, not libHasCreature).
       ];
       if (state.hand && libHasCreature) {
         for (const k of handSpellTutors) {
           if (state.hand.includes(k)) return true;
         }
+      }
+
+      // ── Land tutors (in hand) → fetch a draw-outlet land → draw to finisher ─
+      // These find a LAND, not a creature, so they are gated on libHasDrawOutlet
+      // (War Room / Geier Reach / Mikokoro available), NOT libHasCreature.
+      // Sowing Mycospawn is an on-cast land tutor; Sylvan Scrying / Crop Rotation
+      // fetch directly. Crop Rotation additionally needs a land to sacrifice.
+      const handLandTutors = [
+        'sylvan_scrying',    // {1G}: any land → hand
+        'sowing_mycospawn',  // on-cast: fetch a land
+      ];
+      if (state.hand && libHasDrawOutlet) {
+        for (const k of handLandTutors) {
+          if (state.hand.includes(k)) return true;
+        }
+        // Crop Rotation: {G}, sacrifice a land → search any land → battlefield.
+        // Needs a land to sacrifice (Ashaya makes creatures into Forests, so the
+        // board almost always has one, but require it explicitly).
+        if (state.hand.includes('crop_rotation') && state.lands().length > 0) return true;
       }
 
       // ── Graveyard tutors castable via Harmonize ───────────────────────────
@@ -11400,10 +11454,20 @@ var WIN_CONDITIONS = [
       }
 
       // ── ETB tutors reachable from hand ───────────────────────────────────
-      // Woodland Bellower ETB finds nonlegendary green MV≤3 (Duskwatch is MV 2)
-      if (inHandOrField(state, 'Woodland Bellower', 'woodland_bellower')) return true;
-      // Fierce Empath ETB finds MV≥6 (Woodland Bellower MV 6) → then Bellower → Duskwatch
-      if (inHandOrField(state, 'Fierce Empath', 'fierce_empath')) return true;
+      // These win via an ETB chain that ends at a creature finisher
+      // (… → Duskwatch Recruiter, or any fetched creature). Every link must
+      // still be findable in the library — verify the chain targets exist
+      // rather than firing on the hand/board piece alone. (libHasCreature
+      // already handles the all-unknown-library optimism.)
+      const libHas = (key) => lib.includes(key) ||
+        (lib.length > 0 && lib.every(ck => ck === 'unknown'));
+      // Woodland Bellower ETB finds nonlegendary green MV≤3 (Duskwatch is MV 2).
+      // Win requires a fetchable creature target in the library.
+      if (inHandOrField(state, 'Woodland Bellower', 'woodland_bellower') && libHasCreature) return true;
+      // Fierce Empath ETB finds MV≥6 (Woodland Bellower MV 6) → then Bellower → Duskwatch.
+      // Win requires Woodland Bellower (the MV≥6 target) still in the library.
+      if (inHandOrField(state, 'Fierce Empath', 'fierce_empath') &&
+          libHas('woodland_bellower')) return true;
 
       // ── Glademuse: YOU draw when YOU cast a spell on an opponent's turn ───
       // [O-34] Glademuse's actual oracle (see O-26): "Whenever a player casts
@@ -11419,16 +11483,8 @@ var WIN_CONDITIONS = [
         return true;
       }
 
-      // ── Crop Rotation → War Room: fetch → pay life to draw → find finisher ─
-      if (state.hand && state.hand.includes('crop_rotation') && state.lands().length > 0) return true;
-
-      // ── Sowing Mycospawn (in hand): on-cast trigger fetches a land → battlefield.
-      //    With War Room or Geier Reach in the library, the fetched land draws to a finisher.
-      //    Unlike Crop Rotation, Mycospawn needs no land already in play to sacrifice.
-      if (state.hand && state.hand.includes('sowing_mycospawn')) {
-        const DRAW_LANDS = new Set(['war_room', 'geier_reach']);
-        if (lib.some(ck => DRAW_LANDS.has(ck))) return true;
-      }
+      // ── Crop Rotation / Sowing Mycospawn land tutors ─────────────────────
+      // Handled above in the land-tutor branch (gated on libHasDrawOutlet).
 
       // NOTE: Library contents are NOT checked here. A win only fires if the
       // finisher or tutor is in hand or on the battlefield. If Duskwatch (or
@@ -11889,8 +11945,8 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':      ['selvala','quirion_ranger'],
   "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":        ['kogla','karametra_acolyte'],
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote'],
-  'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22]': ['temur_sabertooth','concordant_crossroads'],
-  'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 57]': ['hyrax_tower_scout','temur_sabertooth'],
+  'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]': ['temur_sabertooth','concordant_crossroads'],
+  'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]': ['hyrax_tower_scout','temur_sabertooth'],
   'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]': ['hyrax_tower_scout','kogla'],
   'Infinite Mana (Earthcraft + Ashaya + Quirion Ranger + Basic Forest)  [Combo Summary #4]': ['earthcraft','ashaya','quirion_ranger'],
   'Infinite Green Mana (Ashaya + Quirion Ranger + Arbor Elf + Enchanted Land)': ['ashaya','quirion_ranger','arbor_elf'],
@@ -11907,6 +11963,21 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
   'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':  ['great_oak_guardian','temur_sabertooth'],
   'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)': ['ashaya','quirion_ranger'],
+  'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]': ['ashaya','quirion_ranger'],
+  "Infinite Mana (Ashaya + Ranger + Animated Gaea's Cradle)":                    ['ashaya','quirion_ranger','gaeas_cradle'],
+  // Shang-Chi bounce-recast loops
+  'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':       ['temur_sabertooth','shang_chi'],
+  'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':            ['kogla','shang_chi'],
+  'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]': ['ashaya','shang_chi','hope_tender','formidable_speaker'],
+  // Argothian Elder / Ley Weaver + Hyrax / Symbiote loops with Cradle/Nykthos (66, 67, 68)
+  'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)': ['argothian_elder','hyrax_tower_scout'],
+  'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Cloudstone Curio + Cradle/Nykthos)': ['argothian_elder','hyrax_tower_scout','cloudstone_curio'],
+  'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)': ['argothian_elder','wirewood_symbiote','temur_sabertooth'],
+  // Combo 68 has alternatives on every axis (untapper: Magus/Speaker/Hope Tender;
+  // untap-source: Hyrax/Symbiote; reset: Temur/Kogla). No single card is required
+  // across all variants, so requiredKeys lists the canonical Hyrax+Temur variant
+  // for near-miss hinting (same convention as the Hyrax+Temur detector).
+  'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)': ['hyrax_tower_scout','temur_sabertooth'],
   'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':                 ['beast_whisperer'],
   'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance'],
   'Win: Duskwatch Recruiter (find all creatures)':                              ['duskwatch_recruiter'],
@@ -12084,7 +12155,7 @@ var _DETECTOR_PREFILTER = {
     { all: ['temur_sabertooth', 'wirewood_symbiote'] },
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
     { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
-  'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 22, 29, 37]':
+  'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]':
     { all: ['temur_sabertooth'],
       any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
   'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]':
@@ -12162,6 +12233,34 @@ for (const d of [...DETECTORS, ...WIN_CONDITIONS]) {
   d._prefilterAll = pf?.all ?? null;
   d._prefilterAny = pf?.any ?? null;
 }
+
+// ── Load-time drift guard (F3) ────────────────────────────────────────────
+// Both DETECTOR_REQUIRED_KEYS and _DETECTOR_PREFILTER are keyed on the full
+// detector display name, which embeds the `[COMBO …]` annotation. When an
+// annotation changes in one place but not the other, an entry silently stops
+// matching its detector — requiredKeys falls to [] (near-miss reporting goes
+// dark) or the prefilter stops applying. Both maps SHOULD list exactly the
+// runtime detector/win names. Fail loudly here so the next rename can't drift
+// past review unnoticed (the test suite alone never exercised these names).
+(() => {
+  const liveNames = new Set([...DETECTORS, ...WIN_CONDITIONS].map(d => d.name));
+  const orphans = [];
+  for (const name of Object.keys(DETECTOR_REQUIRED_KEYS)) {
+    if (!liveNames.has(name)) orphans.push(`DETECTOR_REQUIRED_KEYS["${name}"]`);
+  }
+  for (const name of Object.keys(_DETECTOR_PREFILTER)) {
+    if (!liveNames.has(name)) orphans.push(`_DETECTOR_PREFILTER["${name}"]`);
+  }
+  if (orphans.length) {
+    throw new Error(
+      'combos.js: detector-metadata drift — these table keys match no live ' +
+      'detector/win name (a name was renamed in one place but not the other):\n  ' +
+      orphans.join('\n  ') +
+      '\nUpdate the table key to the current detector name (see DETECTORS / ' +
+      'WIN_CONDITIONS .name).'
+    );
+  }
+})();
 
 /**
  * [E11] Test whether the caller's `present` Set satisfies a detector's
@@ -13283,11 +13382,23 @@ function generateActions(state, _presentHint = null) {
         (p.levelCounters && p.levelCounters !== 0) || p.namedCard !== undefined || p.luckCounter) {
       return null; // has a distinguishing field — never dedup, always emit its own action
     }
+    // [audit] fingerprint() also distinguishes permanents by power / toughness /
+    // isForest. Omitting them here let two same-cardKey mana creatures with
+    // DIFFERENT power (e.g. a Vines-of-Vastwood-pumped Marwyn vs an unpumped
+    // copy) collapse to one tap action, skipping a state the fingerprint treats
+    // as distinct. Latent on the default decklist (no tapForMana creature has
+    // >1 copy) but reachable with custom libraries, and power-gated mana output
+    // (Marwyn/Topiary) plus power-gated combos depend on it. Fold these into the
+    // signature (rather than bailing) so equal-P/T/animation perms still dedup
+    // while differing ones each get their own action.
+    const powKey = (p.power !== undefined ? p.power : '') + '/' +
+                   (p.toughness !== undefined ? p.toughness : '');
+    const forestKey = p.isForest ? 'F' : '';
     const countersKey = (p.counters && Object.keys(p.counters).some(k => p.counters[k]))
       ? JSON.stringify(p.counters) : '';
     const usedKey = (p.abilitiesUsed && Object.keys(p.abilitiesUsed).some(k => p.abilitiesUsed[k]))
       ? JSON.stringify(p.abilitiesUsed) : '';
-    return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${countersKey}:${usedKey}`;
+    return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
   }
 
   for (const perm of state.battlefield) {
@@ -14419,6 +14530,35 @@ function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefi
             if (results && results.some(r => checkVictory(r)?.achieved)) {
               searchPenalty = true;
               break; // one winning search spell is enough
+            }
+          }
+        }
+      }
+
+      // Survival of the Fittest / Fauna Shaman are enchantments (not in
+      // SEARCH_SPELL_KEYS), but function as creature tutors.  When one is in
+      // hand and castable, and the Survival/Fauna infinite-mana detector would
+      // fire after casting + one activation (fetching Ashaya/QR), boost priority
+      // the same way we do for instant/sorcery search spells.
+      if (!searchPenalty) {
+        const ENCHANT_TUTORS = ['survival_fittest', 'fauna_shaman'];
+        for (const k of ENCHANT_TUTORS) {
+          if (!state.hand?.includes(k)) continue;
+          const def = CARDS[k];
+          if (!def) continue;
+          const ec = effectiveCost(state, def);
+          if (!state.mana.canPay(ec)) continue;
+          // Check if any activation result from the castFn would produce
+          // a checkCombos/checkVictory hit (Survival/Fauna puts itself on BF;
+          // the detector fires on that BF state when pieces are assembled).
+          const afterPay = state.payMana(ec);
+          const fromHand = afterPay?.removeFromHand(k);
+          if (!fromHand) continue;
+          if (def.castFn) {
+            const results = def.castFn(fromHand);
+            if (results && results.some(r => checkVictory(r)?.achieved)) {
+              searchPenalty = true;
+              break;
             }
           }
         }
