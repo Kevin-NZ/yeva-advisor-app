@@ -424,6 +424,21 @@ var _CDM = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, 
  *   exile       — string[] of card names in your exile
  */
 
+// [perf] cards.js and GameState.js are circularly dependent (cards.js requires
+// GameState for ManaPool/Permanent inside its functions), so cards cannot be
+// required at top-level here — it would capture a half-initialised export.
+// The established pattern is a lazy `CARDS` inside each method, but
+// that runs on the hottest paths (fingerprint, clone, enterBattlefield,
+// startNewTurn) — and while require() is cached, the module-registry lookup
+// still costs ~0.4µs/call, which adds up over ~hundreds of thousands of state
+// encodings per solve. Memoise it once on first use: by the time any state
+// method executes, both modules are fully loaded, so the cached reference is
+// always the complete export.
+var _cardsModule = null;
+function _cards() {
+  return _cardsModule ?? (_cardsModule = CARDS);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  Constants
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1252,7 +1267,7 @@ class GameState {
 
   forestsInHand() {
     return this.hand.filter(c => {
-      var def = CARDS;
+      const def = _cards()[c];
       return def && def.subtypes && def.subtypes.includes('Forest');
     });
   }
@@ -1519,7 +1534,7 @@ class GameState {
    * @param {string} [reason] - log message suffix; defaults to 'cleanup, end of turn N'
    */
   discardFromHand(cardKey, reason) {
-    var cards = CARDS;
+    const cards = _cards();
     const def = cards[cardKey];
     const cardName = def ? def.name : cardKey;
     let s = this.removeFromHand(cardKey);
@@ -1569,7 +1584,7 @@ class GameState {
   }
 
   enterBattlefield(cardKey, extra = {}, { skipETB = false } = {}) {
-    var cards = CARDS;
+    const cards = _cards();
     const def = cards[cardKey];
     if (!def) throw new Error(`Unknown card: ${cardKey}`);
     let s = this.clone();
@@ -1936,7 +1951,7 @@ class GameState {
     // Fierce Empath ETB: search library for creature with MV ≥ 6, put in hand.
     // Targets: Woodland Bellower (MV 6), Kogla (MV 6), Regal Force (MV 7), etc.
     if (!skipETB && cardKey === 'fierce_empath') {
-      var cardsModule = CARDS;
+      const cardsModule = _cards();
       var { parseCost: pc } = _GSM;
       // Pick the highest-priority MV≥6 creature in library
       var { NAME_TO_KEY: N2K } = _ACM;
@@ -1966,7 +1981,7 @@ class GameState {
     // The cast path in actions.js calls cards.js onEnter which CAN branch; the
     // direct-enter path uses this deterministic fallback.
     if (!skipETB && cardKey === 'treefolk_harbinger') {
-      var cardsModule = CARDS;
+      const cardsModule = _cards();
       let bestKey = null, bestScore = -1;
       const seenLib = new Set();
       for (const ck of s.players[0].library) {
@@ -1995,7 +2010,7 @@ class GameState {
     // Unlike Fierce Empath (MV ≥ 6), Harbinger can find ANY Elf — including
     // Priest of Titania, Selvala, Quirion Ranger, etc.
     if (!skipETB && cardKey === 'elvish_harbinger') {
-      var cardsModule = CARDS;
+      const cardsModule = _cards();
       let bestKey = null, bestScore = -1;
       const seenLib = new Set();
       for (const ck of s.players[0].library) {
@@ -2275,7 +2290,7 @@ class GameState {
     // engine in the solver — Mycospawn could fetch a Cradle and tap it the
     // same turn for {G}. Corrected in C-15.
     if (!skipETB && cardKey === 'sowing_mycospawn') {
-      var cardsModule = CARDS;
+      const cardsModule = _cards();
       var { TUTOR_PRIORITY_SCORE: TPS } = _CDM;
       var { NAME_TO_KEY: N2K } = _ACM;
       // Find the highest-priority land in library
@@ -2464,6 +2479,7 @@ class GameState {
     // If it can't, the player loses immediately (life set to 0).
     if (s.pactOwed) {
       s.pactOwed = false; // clear regardless — either paid or lost
+      const CARDS = _cards();
       // Candidates: untapped permanents that can produce mana right now.
       const candidates = [];
       for (const p of s.battlefield) {
@@ -2538,6 +2554,7 @@ class GameState {
     // This models the practical benefit: avoid drawing dead cards mid-combo.
     if (s.hasPermanent("Lifecrafter's Bestiary") &&
         s.players[0].library.length >= 2) {
+      const CARDS = _cards();
       const topKey = s.players[0].library[0];
       const topScore = TUTOR_PRIORITY_SCORE[topKey] ?? 0;
       // If the top card is low-priority, move it to the bottom (scry to bottom)
@@ -2582,6 +2599,7 @@ class GameState {
         while (lo < hi) { const mid = (lo + hi) >>> 1; if (h[mid] <= drawnKey) lo = mid + 1; else hi = mid; }
         s.hand = [...h.slice(0, lo), drawnKey, ...h.slice(lo)];
       }
+      const CARDS = _cards();
       s.history = [...s.history, {
         turn: s.turn,
         msg: `Draw ${CARDS[drawnKey].name}`,
@@ -2645,7 +2663,7 @@ class GameState {
     //
     // Correctness is preserved: every field that can affect dedup correctness
     // is still encoded, in the same order, with the same delimiter syntax.
-    var _fpCards = CARDS;
+    const _fpCards = _cards();
     const bfArr = this.battlefield;
     const segs = new Array(bfArr.length);
     let _encMap = null;  // built lazily on first enchantedLandId hit
@@ -2811,7 +2829,11 @@ function simpleTap(label, colorPairs) {
     if (perm.tapped || perm.summoningSick) return [];
     let s = state.tapPermanent(perm.id);
     if (!s) return [];
-    for (const [color, amt] of colorPairs) for (let i = 0; i < amt; i++) s = s.addMana(color);
+    // [perf] addMana(color, amount) clones once; the old per-unit loop
+    // (addMana(color) × amount) cloned the whole GameState `amount` times for a
+    // single tap. tapForMana runs for every mana source in every
+    // generateActions, so this removed a large share of clone churn.
+    for (const [color, amt] of colorPairs) s = s.addMana(color, amt);
     s = s.log(`Tap ${perm.name} → ${label}`);
     return [s];
   };
@@ -3167,7 +3189,7 @@ var CARDS = {
     name: 'Ancient Tomb', types: ['land'], subtypes: [], cost: null,
     tapForMana(state, perm) {
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      s.life -= 2; s = s.addMana('C').addMana('C');
+      s.life -= 2; s = s.addMana('C', 2);
       return [s.log(`Tap ${perm.name} → {C}{C} (pay 2 life, life now ${s.life})`)];
     },
   },
@@ -3177,7 +3199,7 @@ var CARDS = {
     tapForMana(state, perm) {
       const n = state.creatures().length; if (n === 0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i = 0; i < n; i++) s = s.addMana('G');
+      s = s.addMana('G', n);
       return [s.log(`Tap ${perm.name} → {G}x${n} (${n} creature${n !== 1 ? 's' : ''})`)];
     },
   },
@@ -3187,7 +3209,7 @@ var CARDS = {
     tapForMana(state, perm) {
       const n = state.creatures().length;
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i = 0; i <= n; i++) s = s.addMana('G');
+      s = s.addMana('G', n + 1);
       return [s.log(`Tap ${perm.name} → {G}x${n + 1}`)];
     },
   },
@@ -3201,7 +3223,7 @@ var CARDS = {
       const p2 = state.payMana('2');
       if (p2 && dev > 0) {
         let s2 = p2.tapPermanent(perm.id);
-        if (s2) { for (let i = 0; i < dev; i++) s2 = s2.addMana('G'); results.push(s2.log(`Tap ${perm.name} (devotion) → {G}x${dev}`)); }
+        if (s2) { s2 = s2.addMana('G', dev); results.push(s2.log(`Tap ${perm.name} (devotion) → {G}x${dev}`)); }
       }
       return results;
     },
@@ -3266,7 +3288,7 @@ var CARDS = {
           if (perm.tapped) return [];
           const ap = state.payMana('2GG'); if (!ap) return [];
           let s = ap.tapPermanent(perm.id); if (!s) return [];
-          for (let i = 0; i < 6; i++) s = s.addMana('G');
+          s = s.addMana('G', 6);
           return [s.log(`Castle Garenbrig → {G}x6`)];
         },
       },
@@ -3810,7 +3832,7 @@ var CARDS = {
           let s = state.tapPermanent(perm.id); if (!s) return [];
           s = s.removeFromBattlefield(perm.id, 'graveyard');
           if (!s) return [];
-          s = s.addMana('G'); s = s.addMana('G'); s = s.addMana('G');
+          s = s.addMana('G', 3);
           return [s.log('Havenwood Battleground: {T}, sacrifice → {G}{G}{G}')];
         },
       },
@@ -4118,7 +4140,7 @@ var CARDS = {
       const color   = 'G';
       const s = state.tapPermanent(perm.id);
       let ns = s;
-      for (let i = 0; i < manaAmt; i++) ns = ns.addMana(color);
+      ns = ns.addMana(color, manaAmt);
       return [ns.log(`Tap Joraga Treespeaker (lv${lvl}) → {${color.repeat(manaAmt)}}`)];
     },
     abilities: {
@@ -4325,7 +4347,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const n = countElves(state); if (n===0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<n;i++) s = s.addMana('G');
+      s = s.addMana('G', n);
       return [s.log(`Tap ${perm.name} → {G}x${n} (${n} Elves)`)];
     },
   },
@@ -4339,7 +4361,7 @@ var CARDS = {
       if (s1) results.push(s1.addMana('G').log(`Tap ${perm.name} → {G}`));
       if (state.creatures().some(c => (c.power||0) >= 4)) {
         let s2 = state.tapPermanent(perm.id);
-        if (s2) { for(let i=0;i<4;i++) s2=s2.addMana('G'); results.push(s2.log(`Tap ${perm.name} (Ferocious) → {G}x4`)); }
+        if (s2) { s2 = s2.addMana('G', 4); results.push(s2.log(`Tap ${perm.name} (Ferocious) → {G}x4`)); }
       }
       return results;
     },
@@ -4383,7 +4405,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const n = countElves(state); if (n===0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<n;i++) s = s.addMana('G');
+      s = s.addMana('G', n);
       return [s.log(`Tap ${perm.name} → {G}x${n} (${n} Elves)`)];
     },
   },
@@ -4394,7 +4416,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const n = state.creatures().length; if (n===0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<n;i++) s = s.addMana('G');
+      s = s.addMana('G', n);
       return [s.log(`Tap ${perm.name} → {G}x${n} (${n} creatures)`)];
     },
   },
@@ -4405,7 +4427,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const dev = devotionToGreen(state); if (dev===0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<dev;i++) s = s.addMana('G');
+      s = s.addMana('G', dev);
       return [s.log(`Tap ${perm.name} → {G}x${dev} (devotion ${dev})`)];
     },
   },
@@ -4418,7 +4440,7 @@ var CARDS = {
       // Oracle: {G},{T}: Add X mana. Must pay {G} activation cost first.
       const paid = state.payMana('G'); if (!paid) return [];
       let s = paid.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<maxP;i++) s = s.addMana('G');
+      s = s.addMana('G', maxP);
       return [s.log(`Tap ${perm.name} → {G}x${maxP} (paid {G}, net ${maxP-1}G)`)];
     },
   },
@@ -4429,7 +4451,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const p = perm.power||1; if (p===0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<p;i++) s = s.addMana('G');
+      s = s.addMana('G', p);
       return [s.log(`Tap ${perm.name} → {G}x${p}`)];
     },
   },
@@ -4445,7 +4467,7 @@ var CARDS = {
       if (p === 0) return [];
       let s = state.tapPermanent(perm.id);
       if (!s) return [];
-      for (let i = 0; i < p; i++) s = s.addMana('G');
+      s = s.addMana('G', p);
       return [s.log(`Tap ${perm.name} → {G}x${p}`)];
     },
   },
@@ -4456,7 +4478,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const n = countElves(state); if (n===0) return [];
       let s = state.tapPermanent(perm.id); if (!s) return [];
-      for (let i=0;i<n;i++) s = s.addMana('G');
+      s = s.addMana('G', n);
       return [s.log(`Tap ${perm.name} → {G}x${n} (${n} Elves)`)];
     },
   },
@@ -4549,7 +4571,7 @@ var CARDS = {
       const creatureCount = s.creatures().length;
       const amt = creatureCount >= 4 ? 2 : 1;
       let ns = s;
-      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      ns = ns.addMana('G', amt);
       return [ns.log(`Tap Leafkin Druid → {G}x${amt} (${creatureCount} creatures)`)];
     },
   },
@@ -4564,7 +4586,7 @@ var CARDS = {
       const hasPower4 = s.creatures().some(c => (c.power ?? 0) >= 4);
       const amt = hasPower4 ? 2 : 1;
       let ns = s;
-      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      ns = ns.addMana('G', amt);
       return [ns.log(`Tap Ilysian Caryatid → {G}x${amt}${hasPower4 ? ' (ferocious)' : ''}`)];
     },
   },
@@ -4580,7 +4602,7 @@ var CARDS = {
       const hasPower4 = s.creatures().some(c => (c.power ?? 0) >= 4);
       const amt = hasPower4 ? 2 : 1;
       let ns = s;
-      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      ns = ns.addMana('G', amt);
       return [ns.log(`Tap Whisperer of the Wilds → {G}x${amt}${hasPower4 ? ' (ferocious)' : ''}`)];
     },
   },
@@ -4595,7 +4617,7 @@ var CARDS = {
       const forests = s.lands().filter(l => l.isForest || l.subtypes?.includes('Forest')).length;
       if (forests === 0) return [];  // no Forests → no mana, suppress action
       let ns = s;
-      for (let i = 0; i < forests; i++) ns = ns.addMana('G');
+      ns = ns.addMana('G', forests);
       return [ns.log(`Tap Wose Pathfinder → {G}x${forests} (${forests} Forests)`)];
     },
   },
@@ -4633,7 +4655,7 @@ var CARDS = {
         newGY.splice(artifactIndices[j], 1);
       }
       ns.players[0].graveyard = newGY;
-      for (let i = 0; i < manaAmt; i++) ns = ns.addMana('G');
+      ns = ns.addMana('G', manaAmt);
       return [ns.log(`Tap Armored Scrapgorger: exile ${manaAmt} artifact(s) → {G}x${manaAmt}`)];
     },
   },
@@ -6013,7 +6035,7 @@ var CARDS = {
       const hasCounter = (perm.counters?.['+1/+1'] ?? 0) >= 1;
       const amt = hasCounter ? 3 : 1;
       let ns = s;
-      for (let i = 0; i < amt; i++) ns = ns.addMana('G');
+      ns = ns.addMana('G', amt);
       return [ns.log(`Tap Incubation Druid → {G}x${amt}${hasCounter ? ' (adapted)' : ''}`)];
     },
     abilities: {
