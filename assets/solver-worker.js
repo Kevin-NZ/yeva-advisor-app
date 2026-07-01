@@ -25,6 +25,7 @@ var COMBO_REQUIRED_KEYS = [
   ['ashaya','quirion_ranger','karametra_acolyte'],
   ['ashaya','quirion_ranger','selvala'],
   ['ashaya','quirion_ranger','fanatic_of_rhonas'],
+  ['ashaya','quirion_ranger','shang_chi'],                 // self-funded: Quirion taps itself (Forest) for {G}, Shang-Chi haste enables the recast loop
   ['ashaya','scryb_ranger','priest_of_titania'],
   ['ashaya','scryb_ranger','circle_of_dreams_druid'],
   ['ashaya','scryb_ranger','elvish_archdruid'],
@@ -32,6 +33,7 @@ var COMBO_REQUIRED_KEYS = [
   ['ashaya','scryb_ranger','karametra_acolyte'],
   ['ashaya','scryb_ranger','selvala'],
   ['ashaya','scryb_ranger','fanatic_of_rhonas'],
+  ['ashaya','scryb_ranger','shang_chi'],                   // self-funded variant (Scryb Ranger)
   ['ashaya','quirion_ranger'],                              // 1
   ['ashaya','scryb_ranger'],                               // (shared key for 3,7,11,14,21,26,27,41,49)
   ['ashaya','argothian_elder'],                            // 6
@@ -1278,13 +1280,23 @@ class GameState {
     // COW (copy-on-write) clone: battlefield and opponent players are shared.
     // Player 0 (active player) is cloned eagerly since nearly every action
     // mutates it. Opponents are shared and cloned lazily via _ensurePlayers().
+    //
+    // [perf] `hand` is also shared by reference. This is safe ONLY because every
+    // hand mutation in the codebase REPLACES the array (s.hand = [...slice...] /
+    // .filter(...)) — there is not a single in-place .push/.splice/[i]= on a
+    // hand anywhere (verified). So a child never mutates the array the parent
+    // points at; it swaps in a fresh one. The old eager `[...this.hand]` copy on
+    // every clone was therefore pure waste — the array got copied again at the
+    // next mutation regardless. IMPORTANT: if you ever mutate a hand in place,
+    // you must restore the eager copy here or COW-guard the hand like
+    // _ensureBF() does for the battlefield.
     const s = Object.create(GameState.prototype);
     s.turn          = this.turn;
     s.phase         = this.phase;
     s.endingTurn    = this.endingTurn;
     s.landDrops     = this.landDrops;
     s.landsPlayedThisTurn = this.landsPlayedThisTurn;
-    s.hand          = [...this.hand];
+    s.hand          = this.hand;            // shared (COW) — see note above
     s.battlefield   = this.battlefield;     // shared (COW)
     s.mana          = this.mana.clone();
     s.storm         = this.storm;
@@ -8648,8 +8660,18 @@ function hasGreenTapper(state) {
   const scActive = shangChiActive(state);
   return state.creatures().some(c => {
     if (c.tapped) return false;
-    if (c.summoningSick && !scActive) return false;
-    if (c.name === 'Quirion Ranger' || c.name === 'Scryb Ranger') return false;
+    const isRanger = c.name === 'Quirion Ranger' || c.name === 'Scryb Ranger';
+    // A Ranger funding the loop with its OWN Forest mana ability is recast every
+    // cycle — each fresh copy is summoning sick. "Not sick right now" (e.g. a
+    // copy that's simply been sitting on the battlefield) doesn't carry over to
+    // the recast copies, so a Ranger needs a real haste source (scActive) every
+    // time, unconditionally — unlike other dorks, which aren't being recast and
+    // so a currently-non-sick snapshot does imply they'll stay non-sick.
+    if (isRanger) {
+      if (!scActive) return false;
+    } else if (c.summoningSick) {
+      return false;
+    }
     if (c.name === 'Ashaya, Soul of the Wild') return false; // Ashaya is the combo piece
     const def = CARDS[c.cardKey];
     if (!def?.tapForMana) return false;
@@ -8660,6 +8682,41 @@ function hasGreenTapper(state) {
     }
     return false;
   });
+}
+
+// Max green mana any OTHER creature (excluding names in `excludeNames`) can
+// currently produce, covering both named mana dorks (same output logic as
+// the switch statements above) and the generic Forest-tap fallback — which,
+// since actions.js grants any Forest-creature with no native mana ability
+// a {T}: Add {G} option, now includes Ashaya herself (she makes herself a
+// Forest too) and Badgermole Cub. Used by the self-funded Ranger detector.
+function bestOtherGreenOutput(state, excludeNames) {
+  const scActive = shangChiActive(state);
+  let best = 0;
+  for (const p of state.battlefield) {
+    if (excludeNames.has(p.name)) continue;
+    if (p.name === 'Shang-Chi, Master of Kung Fu') continue; // his own mana is deliberately unmodeled (O-27)
+    if (!p.types || !p.types.includes('creature')) continue;
+    if (p.tapped) continue;
+    if (p.summoningSick && !scActive) continue;
+    let output = 0;
+    switch (p.name) {
+      case 'Priest of Titania':           output = elfCount(state); break;
+      case 'Circle of Dreams Druid':      output = creatureCount(state); break;
+      case 'Elvish Archdruid':            output = elfCount(state); break;
+      case 'Wirewood Channeler':          output = elfCount(state); break;
+      case "Karametra's Acolyte":         output = devotionG(state); break;
+      case 'Selvala, Heart of the Wilds': output = greatestPower(state); break;
+      case 'Fanatic of Rhonas':           output = greatestPower(state) >= 4 ? greatestPower(state) : 0; break;
+      case 'Marwyn, the Nurturer':        output = p.power || 0; break;
+      case 'Topiary Lecturer':            output = p.power || 0; break;
+      default:
+        if (p.isForest) output = 1; // generic Forest fallback (Ashaya, Badgermole Cub, etc.)
+        break;
+    }
+    if (output > best) best = output;
+  }
+  return best;
 }
 
 // ── Detector list ─────────────────────────────────────────────────────────
@@ -8739,6 +8796,49 @@ var DETECTORS = [
       });
     },
   },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  ASHAYA + QUIRION/SCRYB RANGER + HASTE ENABLER — SELF-FUNDED INFINITE
+  //  GREEN MANA (no separate mana dork required)
+  //
+  //  With a haste enabler (Shang-Chi et al), the Ranger taps ITSELF (a
+  //  Forest under Ashaya) for {G} — funding exactly its own {G} recast cost
+  //  (Quirion) or half of its {1G} recast cost (Scryb). Its bounce ability
+  //  is free (no mana cost, no tap symbol) and untaps any OTHER creature —
+  //  and since Ashaya makes EVERY nontoken creature she controls a Forest,
+  //  *including herself*, there is always at least one other Forest-creature
+  //  to target: Ashaya always qualifies even with nothing else on board.
+  //  That creature's tap (≥{G}, more with a real dork or Badgermole Cub) is
+  //  pure profit layered on top of the mana-neutral Ranger loop.
+  //
+  //  Quirion (cost {G}): self-tap alone already covers the full recast, so
+  //  ANY other green tapper — even bare Ashaya's {G} — is net positive.
+  //  Scryb (cost {1G}): self-tap only covers half; the other tapper needs
+  //  ≥2 green to also clear the remaining {1} and still net positive (bare
+  //  Ashaya's {G} alone only breaks even — that case is already covered by
+  //  the mana-neutral ETB detector below).
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Green Mana (Ashaya + Ranger + Shang-Chi, self-funded)',
+    description:
+      'With haste, Quirion/Scryb Ranger taps itself (a Forest under Ashaya) for ' +
+      '{G} to fund its own recast, then bounces itself (free) to untap any OTHER ' +
+      'Forest-creature — Ashaya herself always qualifies — for pure-profit {G} or ' +
+      'more. Net ≥{G}/cycle; no separate mana dork needed.',
+    check(state) {
+      if (!ashayaOut(state)) return false;
+      if (!hasGlobalHaste(state)) return false;
+      const isQuirion = quirionAvailable(state);
+      const isScryb   = !isQuirion && scrybAvailable(state);
+      if (!isQuirion && !isScryb) return false;
+      const recastCost = isQuirion ? 1 : 2; // {G} vs {1G}
+      const selfTap = 1; // the Ranger's own Forest tap
+      const other = bestOtherGreenOutput(state,
+        new Set(['Quirion Ranger', 'Scryb Ranger']));
+      return (selfTap + other) > recastCost;
+    },
+  },
+
 
   // ══════════════════════════════════════════════════════════════════════════
   //  ASHAYA + RANGER (Quirion or Scryb) — MANA-NEUTRAL ETB LOOP  (COMBO 1, 41)
@@ -9511,6 +9611,69 @@ var DETECTORS = [
       );
       if (!acolyte) return false;
       return devotionG(state) >= 6;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TEMUR SABERTOOTH / KOGLA + SHANG-CHI + ANY HIGH-OUTPUT DORK (GENERIC)
+  //
+  //  Generalizes the two named-dork detectors above to ANY creature with a
+  //  tap-for-mana ability whose output exceeds the loop cost — computed
+  //  dynamically from its actual tapForMana result and printed mana cost —
+  //  rather than a fixed switch-statement of specific cards. This catches
+  //  dorks whose output scales with something not enumerated above, e.g.
+  //  Wose Pathfinder (scales with Forest count — very large under Ashaya,
+  //  since every creature becomes a Forest).
+  //
+  //  Loop cost = bounce ({1}{G} = 2 total mana, same ability shape on both
+  //  Temur and Kogla) + the dork's own recast cost (from its printed mana
+  //  cost). Fires when the dork's CURRENT tap output is strictly greater
+  //  than that total, i.e. it "generates at least 1 net mana after paying
+  //  for both the bounce and recast costs" (the loop's own win condition).
+  //
+  //  Kogla can only bounce Humans ("Return target Human you control"); the
+  //  Kogla path here is gated accordingly. Temur has no type restriction.
+  //  Shang-Chi's own mana is deliberately excluded (unmodeled, see O-27).
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Temur Sabertooth / Kogla + Shang-Chi + High-Output Dork, generic)',
+    description:
+      'Generalizes the named bounce-recast loops above to any tap-dork whose ' +
+      'CURRENT output exceeds bounce ({1}{G}=2) + its own recast cost, computed ' +
+      'dynamically rather than from a fixed card list. Kogla is restricted to ' +
+      'Human dorks (his bounce ability targets Humans only); Temur has no type ' +
+      'restriction.',
+    check(state) {
+      const hasTemur = hasPerm(state, 'Temur Sabertooth');
+      const hasKogla = hasPerm(state, 'Kogla, the Titan Ape');
+      if (!hasTemur && !hasKogla) return false;
+      const scActive = state.battlefield.some(p => p.cardKey === 'shang_chi');
+      if (!scActive) return false;
+      const beforeG = state.mana?.G ?? 0;
+      return state.battlefield.some(p => {
+        if (p.cardKey === 'shang_chi') return false;        // unmodeled (O-27) — see actions.js
+        if (p.cardKey === 'temur_sabertooth' || p.cardKey === 'kogla') return false;
+        if (!p.types || !p.types.includes('creature')) return false;
+        if (p.tapped) return false;
+        const def = CARDS[p.cardKey];
+        if (!def?.tapForMana) return false;
+        const isHuman = p.subtypes && p.subtypes.includes('Human');
+        const bounceable = hasTemur || (hasKogla && isHuman);
+        if (!bounceable) return false;
+        // Shang-Chi bypasses summoning sickness for the tap ability (same
+        // rule as any creature tap ability — see actions.js note on CR 302.6).
+        const permForCheck = p.summoningSick
+          ? Object.assign(Object.create(Object.getPrototypeOf(p)), p, { summoningSick: false })
+          : p;
+        let successors;
+        try { successors = def.tapForMana(state, permForCheck) || []; } catch { return false; }
+        const output = successors.reduce((max, s2) => Math.max(max, (s2.mana?.G ?? 0) - beforeG), 0);
+        if (output <= 0) return false;
+        const recastCost = (def._parsedCost?.generic ?? 0) +
+          Object.values(def._parsedCost?.colored ?? {}).reduce((a, b) => a + b, 0);
+        const loopCost = 2 + recastCost; // {1}{G} bounce + recast
+        return output > loopCost;
+      });
     },
   },
 
@@ -11954,6 +12117,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Green Mana (Survival/Fauna Shaman → Ashaya + Ranger + Big Dork)':     ['survival_fittest','ashaya','quirion_ranger'],
   'Infinite Green Mana (Ashaya + Quirion Ranger + Mana Dork ≥2G)':               ['ashaya','quirion_ranger'],
   'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]':                 ['ashaya','scryb_ranger'],
+  'Infinite Green Mana (Ashaya + Ranger + Shang-Chi, self-funded)':          ['ashaya','quirion_ranger','shang_chi'],
   "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":            ['ashaya','hope_tender','gaeas_cradle'],
   'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':   ['ashaya','hope_tender','circle_of_dreams_druid'],
   'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':                   ['ashaya','hope_tender','marwyn'],
@@ -11990,6 +12154,7 @@ var DETECTOR_REQUIRED_KEYS = {
   // Shang-Chi bounce-recast loops
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':       ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':            ['kogla','shang_chi'],
+  'Infinite Mana (Temur Sabertooth / Kogla + Shang-Chi + High-Output Dork, generic)': ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]': ['ashaya','shang_chi','hope_tender','formidable_speaker'],
   // Argothian Elder / Ley Weaver + Hyrax / Symbiote loops with Cradle/Nykthos (66, 67, 68)
   'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)': ['argothian_elder','hyrax_tower_scout'],
@@ -13437,14 +13602,18 @@ function generateActions(state, _presentHint = null) {
 
     // Creatures with tap-for-mana need to not be summoning sick —
     // UNLESS Shang-Chi is active (grants haste for creature activated abilities).
-    // Dryad Arbor's tap is a land mana ability (not an activated ability), so
-    // Shang-Chi does NOT help it; the Arbor check below still applies.
+    // CR 302.6 restricts a CREATURE's tap/untap activated abilities regardless of
+    // which characteristic (creature side or land side) actually grants the
+    // ability — the restriction keys off the permanent being a creature, not off
+    // the ability's source. Real-table rulings confirm this for Dryad Arbor:
+    // haste-granting effects (Concordant Crossroads, etc.) let it tap for mana
+    // the turn it enters. Shang-Chi's "activate abilities of creatures... as
+    // though they had haste" applies the same way for ability activation (it's
+    // narrower than full haste only in that it doesn't grant haste to ATTACK).
+    // So this single check covers Dryad Arbor, Quirion/Scryb Ranger-as-Forest
+    // (under Ashaya), and any other creature-land uniformly — no card-specific
+    // carve-out needed.
     if (def.types.includes('creature') && perm.summoningSick && !shangChiActive) continue;
-
-    // Dryad Arbor is a land creature — tap ability is a land mana ability,
-    // NOT an activated ability, so it IS suppressed by summoning sickness
-    // (but not by Null Rod/Collector Ouphe since it's a land ability).
-    if (perm.name === 'Dryad Arbor' && perm.summoningSick) continue;
 
     // Pre-check: get all mana options now. Most cards return exactly 1 result.
     // Some (Fanatic ferocious, Nykthos devotion) return multiple — generate one
@@ -13559,9 +13728,51 @@ function generateActions(state, _presentHint = null) {
     }
   }
 
+  // ── 4a-bis. Generic Forest mana ability for creatures made into Forests ────
+  // A land that's a Forest has the intrinsic "{T}: Add {G}" ability (see
+  // Ashaya's own reminder text). When an effect (Ashaya, Yavimaya) makes a
+  // creature into a Forest in addition to its other types, that creature
+  // gains this ability too — independent of whatever its own card text says.
+  // This loop only fires for creatures with NO native tapForMana of their
+  // own (Priest of Titania etc. already have a strictly-at-least-as-good
+  // mana ability, so the redundant Forest option isn't worth the extra
+  // branching — a rare 0-output edge case is left uncovered as a deliberate
+  // tradeoff). This covers Ashaya herself (she makes herself a Forest too),
+  // Badgermole Cub, Quirion/Scryb Ranger, and any other vanilla-ish body.
+  // Summoning sickness is gated the same way as any creature ability —
+  // bypassed by Shang-Chi et al, per CR 302.6 (see note above).
+  for (const perm of state.battlefield) {
+    if (perm.tapped) continue;
+    if (!perm.isForest) continue;
+    if (perm.cardKey === 'shang_chi') continue; // his own mana is deliberately unmodeled (O-27) — don't reopen it via a Forest backdoor
+    const def = CARDS[perm.cardKey];
+    if (!def) continue;
+    if (def.tapForMana) continue;             // has its own (at-least-as-good) mana ability
+    if (def.types.includes('land')) continue; // already an intrinsic land — handled above
+    if (!def.types.includes('creature')) continue;
+    if (perm.summoningSick && !shangChiActive) continue;
+
+    actions.push({
+      type: 'tap_for_mana',
+      label: `Tap ${perm.name} for mana (Forest)`,
+      priority: 7,
+      apply(s) {
+        const live = s.getPermanentById(perm.id);
+        if (!live || live.tapped) return null;
+        const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
+        if (live.summoningSick && !scActive) return null;
+        let ns = s.tapPermanent(live.id);
+        if (!ns) return null;
+        ns = ns.addMana('G').log(`Tap ${live.name} → {G} (Forest)`);
+        return addQuestCounter(applyTapBonuses(ns, live));
+      },
+    });
+  }
+
   // ── 4b. Agatha's Soul Cauldron — grafted activated abilities ────────────────
   // When Agatha's Cauldron exiles a creature, it sets cauldronAbilityKey on the
   // creature that received the +1/+1 counter. All creatures with +1/+1 counters
+
   // (counters > 0) that have a cauldronAbilityKey get to use that card's
   // tapForMana as an additional tap action.
   //
