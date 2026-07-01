@@ -13588,6 +13588,52 @@ function generateActions(state, _presentHint = null) {
     return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
   }
 
+  // Quest for Renewal: when a non-attacking creature taps for mana, add a quest counter.
+  // We add the counter whenever a creature tapForMana fires on YOUR turn.
+  // Declared here (function scope, not inside either tap-for-mana loop below)
+  // so it's always defined — a block-scoped `function` declared inside a
+  // `for` loop only becomes callable elsewhere in this function if some
+  // iteration of that specific loop actually runs far enough to execute the
+  // declaration (Annex B hoisting is conditional on that), which isn't
+  // guaranteed (e.g. a board with only Forest-fallback creatures and no
+  // card with a native tapForMana never reaches such a declaration in the
+  // first loop, leaving the second loop's calls to throw ReferenceError).
+  function addQuestCounter(ns) {
+    if (ns.isOpponentTurn) return ns;
+    if (!ns.hasPermanent('Quest for Renewal')) return ns;
+    const questPerm = ns.getPermanent('Quest for Renewal');
+    if (!questPerm) return ns;
+    ns = ns.clone(); ns._ensureBF();
+    const live = ns.getPermanentById(questPerm.id);
+    if (!live) return ns;
+    live.counters = { ...live.counters, quest: (live.counters?.quest ?? 0) + 1 };
+    return ns;
+  }
+
+  // Shared bonus-application helper (Leyline, Badgermole, Auras) — see note above.
+  function applyTapBonuses(ns, live) {
+    // Use live.is('creature') rather than def.types.includes('creature') so
+    // that dynamically-animated creature-lands (e.g. Gaea's Cradle after
+    // Badgermole's ETB earthbend) correctly receive Leyline/Badgermole bonuses.
+    // def.types is the static card definition captured at action-generation
+    // time — it won't reflect runtime type changes like earthbend animation.
+    if (live.is('creature')) {
+      if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
+      if (ns.hasPermanent('Badgermole Cub') && live.name !== 'Badgermole Cub') ns = ns.addMana('G');
+    }
+    if (live.types.includes('land')) {
+      const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
+      if (sprawl) ns = ns.addMana('G');
+      const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
+      if (wildG) ns = ns.addMana('G');
+      if (live.elvishGuidance) {
+        const elfCount = ns.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
+        for (let i = 0; i < elfCount; i++) ns = ns.addMana('G');
+      }
+    }
+    return ns;
+  }
+
   for (const perm of state.battlefield) {
     if (perm.tapped) continue;
     const def = CARDS[perm.cardKey];
@@ -13633,44 +13679,6 @@ function generateActions(state, _presentHint = null) {
         if (_seenTapSignatures.has(sig)) continue; // identical to an already-emitted permanent — skip
         _seenTapSignatures.add(sig);
       }
-    }
-
-    // Quest for Renewal: when a non-attacking creature taps for mana, add a quest counter.
-    // We add the counter whenever a creature tapForMana fires on YOUR turn.
-    function addQuestCounter(ns) {
-      if (ns.isOpponentTurn) return ns;
-      if (!ns.hasPermanent('Quest for Renewal')) return ns;
-      const questPerm = ns.getPermanent('Quest for Renewal');
-      if (!questPerm) return ns;
-      ns = ns.clone(); ns._ensureBF();
-      const live = ns.getPermanentById(questPerm.id);
-      if (!live) return ns;
-      live.counters = { ...live.counters, quest: (live.counters?.quest ?? 0) + 1 };
-      return ns;
-    }
-
-    // Shared bonus-application helper (Leyline, Badgermole, Auras)
-    function applyTapBonuses(ns, live) {
-      // Use live.is('creature') rather than def.types.includes('creature') so
-      // that dynamically-animated creature-lands (e.g. Gaea's Cradle after
-      // Badgermole's ETB earthbend) correctly receive Leyline/Badgermole bonuses.
-      // def.types is the static card definition captured at action-generation
-      // time — it won't reflect runtime type changes like earthbend animation.
-      if (live.is('creature')) {
-        if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
-        if (ns.hasPermanent('Badgermole Cub') && live.name !== 'Badgermole Cub') ns = ns.addMana('G');
-      }
-      if (live.types.includes('land')) {
-        const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
-        if (sprawl) ns = ns.addMana('G');
-        const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
-        if (wildG) ns = ns.addMana('G');
-        if (live.elvishGuidance) {
-          const elfCount = ns.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
-          for (let i = 0; i < elfCount; i++) ns = ns.addMana('G');
-        }
-      }
-      return ns;
     }
 
     if (preResults.length === 1) {
