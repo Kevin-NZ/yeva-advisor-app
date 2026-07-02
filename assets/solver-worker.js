@@ -12913,9 +12913,62 @@ function effectiveCost(state, def) {
 // ── Hand-size limit (Magic rule 402.2) ───────────────────────────────────
 var MAX_HAND_SIZE = 7;
 
+// ── Forest-tap-dominated creatures (O-38 follow-up) ──────────────────────
+// Creatures whose own ability costs {T} and untaps some OTHER permanent for
+// free or cheap — that ability almost always dominates a flat generic
+// {T}: Add {G} once Ashaya (or similar) makes the creature a Forest too,
+// since recovering an existing land's tap (often boosted by Wild Growth /
+// Utopia Sprawl) or untapping any permanent is worth at least as much as,
+// usually more than, 1 flat green. Skipped by default in the generic
+// Forest-tap loop (see below) to cut a rarely-useful branch; `exhaustive`
+// mode restores each one for the real edge case where its own ability has
+// no legal target (nothing tapped to untap) and would otherwise offer
+// nothing that turn. Verified against each card's actual fn() before
+// listing it here — every entry requires ≥1 currently-tapped target and
+// returns [] otherwise, matching Arbor Elf's original case exactly:
+//   arbor_elf               — {T}: untap target Forest
+//   magus_of_the_candelabra — {X},{T}: untap X target lands
+//   hope_tender             — {1},{T}: untap target land (or exert for two)
+//   argothian_elder         — {T}: untap two target lands (fully free)
+//   ley_weaver              — {T}: untap two target lands (Argothian
+//                             Elder's twin, identical ability)
+//   formidable_speaker      — {1},{T}: untap another target permanent
+//   saryth                  — {1},{T}: untap another creature or land
+//                             (Formidable Speaker's near-twin, narrower
+//                             target set)
+// None of these 7 are in DEFAULT_DECKLIST except arbor_elf/magus/hope_
+// tender/argothian_elder/formidable_speaker; ley_weaver and saryth are
+// valid custom-library cards.
+//
+// This list is the result of an exhaustive pass over EVERY creature in
+// cards.js with no native tapForMana but SOME other ability (28 candidates
+// total, checked against real oracle text in ref/card_data.md, not just
+// code inspection — a prior partial pass missed ley_weaver by scoping to
+// DEFAULT_DECKLIST only). The other 21 were checked and correctly excluded:
+//   • No {T} in the real cost at all (so the ability and the Forest-tap
+//     are independent/additive, not competing for the same tap):
+//     Allosaurus Shepherd, Quirion Ranger, Scryb Ranger, Wirewood Symbiote
+//     (all share/resemble the no-tap bounce pattern), Temur Sabertooth,
+//     Kogla, Ulvenwald Oddity, Endurance, Scavenging Ooze, Outland
+//     Liberator, Beastrider Vanguard, Destiny Spinner, Nylea Keen-Eyed,
+//     Insidious Fungus.
+//   • Has {T} but trades a REAL resource beyond the tap + minor mana, so
+//     the tradeoff is situational rather than unconditionally dominant —
+//     left as genuine (if usually secondary) options:
+//     Elvish Reclaimer (sacrifices a land + pays {2}), Eladamri (taps two
+//     OTHER creatures), Fauna Shaman (discards a card), Yisan (pays {2}{G}
+//     on top), Skyshroud Poacher (pays {3} for a tutor+deploy, no mana
+//     returned), Magus of the Order (sacrifices a creature — an even
+//     bigger cost than a discard), Ulvenwald Tracker ({1}{G} for a fight —
+//     a combat/removal effect, not value recovery, and can backfire).
+var FOREST_TAP_DOMINATED_KEYS = new Set([
+  'arbor_elf', 'magus_of_the_candelabra', 'hope_tender',
+  'argothian_elder', 'ley_weaver', 'formidable_speaker', 'saryth',
+]);
+
 // ── Main action generator ─────────────────────────────────────────────────
 
-function generateActions(state, _presentHint = null) {
+function generateActions(state, _presentHint = null, exhaustive = false) {
   const actions = [];
 
   // ── 0. Loss pruning ──────────────────────────────────────────────────────
@@ -13758,6 +13811,21 @@ function generateActions(state, _presentHint = null) {
     if (def.tapForMana) continue;             // has its own (at-least-as-good) mana ability
     if (def.types.includes('land')) continue; // already an intrinsic land — handled above
     if (!def.types.includes('creature')) continue;
+
+    // Skip creatures whose own {T}-costed ability dominates this flat
+    // fallback (see FOREST_TAP_DOMINATED_KEYS above for the full rationale
+    // and the list of verified cases). Heuristic, not a hard rule —
+    // `exhaustive` mode restores each one for its no-legal-target edge case.
+    if (FOREST_TAP_DOMINATED_KEYS.has(perm.cardKey) && !exhaustive) continue;
+
+    // Disruptor Flute: if this creature's name is targeted, its tap-for-mana
+    // ability (an activated ability, same as any other) costs {3} more.
+    // Skip if we can't afford it. Same prefilter as the native-tapForMana
+    // loop above — this ability is granted by being a Forest, but it's
+    // still an activated ability "of" this named source (CR/Flute wording
+    // doesn't distinguish land-granted vs creature-granted abilities).
+    if (fluteNamedCards.has(perm.name) && !state.payMana('3')) continue;
+
     if (perm.summoningSick && !shangChiActive) continue;
 
     actions.push({
@@ -13767,6 +13835,12 @@ function generateActions(state, _presentHint = null) {
       apply(s) {
         const live = s.getPermanentById(perm.id);
         if (!live || live.tapped) return null;
+        // Disruptor Flute: pay {3} extra for named creature's activated ability
+        // (rebuilt from the live state — see note on the native-mana loop above).
+        const flutedNames = new Set();
+        for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
+        for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
+        if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
         const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
         if (live.summoningSick && !scActive) return null;
         let ns = s.tapPermanent(live.id);
@@ -14883,6 +14957,10 @@ class Solver {
 
     // Visited map: fingerprint → best depth seen at that state
     this.visited = new Map();
+    // Mana-dominance frontier: structural-fingerprint (mana stripped) →
+    // antichain of mana vectors seen at that structural state. See
+    // _isManaDominated() for the full soundness argument.
+    this.manaFrontier = new Map();
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -14935,6 +15013,67 @@ class Solver {
     };
     if (this.opts.allLines) result.allLines = this.allWinLines;
     return result;
+  }
+
+  // ── Mana-dominance pruning ───────────────────────────────────────────────
+  // A child state is DOMINATED if some other already-seen state is
+  // identical in every respect except having component-wise ≥ mana in
+  // every color (W/U/B/R/G/C). Soundness: anything the dominated state
+  // could do, the dominator can also do (it can pay every cost the
+  // dominated state could pay), and doing so leaves it with component-wise
+  // ≥ mana afterward too (same spend, started with more) — so the
+  // dominator can reach anything reachable from the dominated state, via
+  // an action sequence of the SAME length. Pruning the dominated state can
+  // therefore never cost a win, and can never make a found win's line
+  // longer than the dominator would have found on its own.
+  //
+  // Mana in this engine only resets at startNewTurn() (CR 500.4/514 — an
+  // entire turn is modeled as one continuous mana-pool scope, not drained
+  // phase-by-phase), so "more mana now" cleanly implies "more mana at
+  // every later point this turn too" — the soundness argument holds
+  // within a turn without qualification. Cross-turn comparisons never
+  // happen here because `turn` is part of the structural key below (via
+  // the fingerprint it's derived from), so a "dominator" and "dominated"
+  // pair are always states within the very same turn.
+  //
+  // Implementation: `structKey` is the state's fingerprint with the mana
+  // segment (`|M:W:U:B:R:G:C`) sliced out — reusing the fingerprint
+  // string the caller already computed for the exact-dedup check, rather
+  // than building a second key from scratch. `manaFrontier` maps each
+  // structural key to a small antichain of mana vectors (mutually
+  // non-dominating points — e.g. 3 green vs. 2 green + 1 white are
+  // incomparable). In this mono-green-leaning deck the antichain is
+  // almost always size 1 in practice.
+  //
+  // Gated off in exhaustive mode, same as every other approximate pruning
+  // in this file — exhaustive guarantees a complete search.
+  _isManaDominated(next, fp) {
+    const mIdx = fp.indexOf('|M:');
+    const lIdx = fp.indexOf('|L:', mIdx);
+    const structKey = fp.slice(0, mIdx) + fp.slice(lIdx);
+
+    const m = next.mana;
+    const vec = [m.W, m.U, m.B, m.R, m.G, m.C];
+    const frontier = this.manaFrontier.get(structKey);
+    if (!frontier) {
+      this.manaFrontier.set(structKey, [vec]);
+      return false;
+    }
+    for (const existing of frontier) {
+      if (existing[0] >= vec[0] && existing[1] >= vec[1] && existing[2] >= vec[2] &&
+          existing[3] >= vec[3] && existing[4] >= vec[4] && existing[5] >= vec[5]) {
+        return true; // dominated by an already-seen state
+      }
+    }
+    // Not dominated — a genuinely new point on the frontier. Drop any
+    // existing entries THIS one now dominates (they're redundant to keep).
+    const filtered = frontier.filter(existing => !(
+      vec[0] >= existing[0] && vec[1] >= existing[1] && vec[2] >= existing[2] &&
+      vec[3] >= existing[3] && vec[4] >= existing[4] && vec[5] >= existing[5]
+    ));
+    filtered.push(vec);
+    this.manaFrontier.set(structKey, filtered);
+    return false;
   }
 
   // ── DFS ───────────────────────────────────────────────────────────────────
@@ -15035,7 +15174,7 @@ class Solver {
     // statesExplored accounting is preserved exactly: a child rejected here would
     // have entered _dfs, incremented the counter, and returned at the same filter.
     // We replicate that +1 so state counts stay identical to the un-reordered code.
-    const actions = generateActions(state, analysis.present);
+    const actions = generateActions(state, analysis.present, this.opts.exhaustive);
     const children = [];
     const childDepth = depth + 1;
     const childExceedsTurn = false; // turn check handled in child _dfs (cheap)
@@ -15066,6 +15205,15 @@ class Solver {
       const childFp = next.fingerprint();
       const prevSeen = this.visited.get(childFp);
       if (prevSeen !== undefined && prevSeen <= childDepth) {
+        if (this.statesExplored > this.opts.maxStates) break;
+        this.statesExplored++; this.pruned++;
+        continue;
+      }
+      // 2b) Mana-dominance prune — a state identical to an already-seen one
+      //     except for strictly-less-or-equal mana in every color adds
+      //     nothing exact dedup wouldn't already catch if the mana matched
+      //     too. See _isManaDominated() for the full soundness argument.
+      if (!this.opts.exhaustive && this._isManaDominated(next, childFp)) {
         if (this.statesExplored > this.opts.maxStates) break;
         this.statesExplored++; this.pruned++;
         continue;
@@ -15158,6 +15306,7 @@ class Solver {
     for (let t = 1; t <= savedMaxTurns; t++) {
       this.opts.maxTurns = t;
       this.visited       = new Map();          // fresh dedup map each pass
+      this.manaFrontier  = new Map();          // fresh mana-dominance frontier each pass
       this._dfs(initialState, null, 0);
       if (this.bestLine) break;                // win found — done
       if (this.statesExplored >= this.opts.maxStates) break; // budget exhausted
@@ -15230,12 +15379,12 @@ class Solver {
         // [E11] present already built above; pass into analyzeState to skip rebuild.
         // [E14] Reuse the parent-computed analysis when available.
         const nodeAnalysis = pre ? pre.analysis : analyzeState(state, infiniteMana, present);
-        const actions = generateActions(state, nodeAnalysis.present);
+        const actions = generateActions(state, nodeAnalysis.present, this.opts.exhaustive);
         const children = [];
         for (const action of actions) {
           let next;
           try { next = action.apply(state); }
-          catch (e) { continue; }
+          catch (e) { if (this.opts.verbose) console.warn(`[${action.label}]`, e.message); continue; }
           if (!next || next.turn > this.opts.maxTurns) continue;
           // [E11] Per-child present set + prefilter — same pattern as DFS.
           const childPresent = buildPresentSet(next);
@@ -15264,6 +15413,12 @@ class Solver {
           // _bfs so its children cannot dedupe back to it.
           const childFp = next.fingerprint();
           if (this.visited.has(childFp)) {
+            this.pruned++;
+            continue;
+          }
+          // Mana-dominance prune — same mechanism as DFS. See
+          // _isManaDominated() for the full soundness argument.
+          if (!this.opts.exhaustive && this._isManaDominated(next, childFp)) {
             this.pruned++;
             continue;
           }
@@ -15303,6 +15458,7 @@ class Solver {
     this.linesFound     = 0;
     this.pruned         = 0;
     this.visited       = new Map();
+    this.manaFrontier  = new Map();
     // fallbackWin: stores the best undeployed win (infinite mana + win pieces
     // in hand but not yet on battlefield). Used only if no fully-deployed win
     // is found within the search budget.
