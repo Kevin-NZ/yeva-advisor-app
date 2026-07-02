@@ -448,6 +448,35 @@ function _cards() {
 var DEFAULT_LIBRARY_SIZE    = 99;   // Commander deck minus commander (used as fallback)
 var POISON_LOSS_THRESHOLD   = 10;
 
+// [perf] Hoisted from 11 duplicate local `new Set([...])` declarations spread
+// across removeFromBattlefield, enterBattlefield, several ETB removal effects
+// (Manglehorn/Reclamation Sage/Chomping Changeling/Scrapshooter), and the
+// _hasSTAX recomputation helpers — each was rebuilding an identical Set on
+// every call, several of which sit on the hottest paths in the solver.
+// Card NAMES (not keys) because these are matched against both
+// `permanent.name` and `opponentStax` entries (string-encoded as
+// "Card Name@param"), neither of which carries a cardKey.
+//
+// ALL_STAX_NAMES: every card that suppresses mana/activated abilities or
+// taxes spells — mirrors combo_data.js's STAX_KEYS (same 9 cards, by name
+// instead of key; kept separate rather than derived from STAX_KEYS to avoid
+// a name↔key lookup on this hot path).
+var ALL_STAX_NAMES = new Set([
+  'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
+  'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+  'Vexing Bauble', 'Disruptor Flute',
+]);
+// COST_AFFECTING_STAX_NAMES: the subset of ALL_STAX_NAMES that specifically
+// taxes spell/ability COSTS (Thorn/Trinisphere/Chalice/Vexing Bauble tax
+// casting; Disruptor Flute taxes a named source's activated abilities) —
+// used to gate effectiveCost's slow path. The other 4 (Null Rod, Collector
+// Ouphe, Root Maze, Orb of Dreams) suppress abilities outright rather than
+// changing a cost, so they don't belong in this narrower subset.
+var COST_AFFECTING_STAX_NAMES = new Set([
+  'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
+  'Vexing Bauble', 'Disruptor Flute',
+]);
+
 // ── Authoritative 100-card Yeva decklist (card keys) ─────────────────────
 // Yeva is included here; she is removed when building the library since she
 // starts in the command zone.  Cards in hand/battlefield/graveyard/exile are
@@ -1037,9 +1066,8 @@ class GameState {
     // withOpponentStax() and the recompute in remove(). Skipped when the caller
     // supplied an explicit _hasSTAX (preserves clone() semantics).
     if (data._hasSTAX === undefined && this.opponentStax.size > 0) {
-      const COST_STAX_C = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
       for (const entry of this.opponentStax) {
-        if (COST_STAX_C.has(entry.split('@')[0].trim())) { this._hasSTAX = true; break; }
+        if (COST_AFFECTING_STAX_NAMES.has(entry.split('@')[0].trim())) { this._hasSTAX = true; break; }
       }
     }
     // threats: opponent interaction-capacity profile (O-8). Read-only
@@ -1174,8 +1202,7 @@ class GameState {
     const s = this.clone();
     s.opponentStax = new Set(names);
     // If any of the stax cards affect cost, flag _hasSTAX
-    const costStax = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-    if (names.some(n => costStax.has(n.split('@')[0].trim()))) s._hasSTAX = true;
+    if (names.some(n => COST_AFFECTING_STAX_NAMES.has(n.split('@')[0].trim()))) s._hasSTAX = true;
     return s;
   }
 
@@ -1188,11 +1215,8 @@ class GameState {
     const s = this.clone();
     s.opponentStax = new Set([...this.opponentStax].filter(e => e.split('@')[0].trim() !== cardName));
     // Recompute _hasSTAX: true if any battlefield stax OR remaining opponentStax cost-stax
-    const COST_STAX = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-    const BF_STAX_NAMES = new Set(['Null Rod','Collector Ouphe','Root Maze','Orb of Dreams',
-      'Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-    s._hasSTAX = s.battlefield.some(p => BF_STAX_NAMES.has(p.name)) ||
-                 [...s.opponentStax].some(e => COST_STAX.has(e.split('@')[0].trim()));
+    s._hasSTAX = s.battlefield.some(p => ALL_STAX_NAMES.has(p.name)) ||
+                 [...s.opponentStax].some(e => COST_AFFECTING_STAX_NAMES.has(e.split('@')[0].trim()));
     return s;
   }
 
@@ -1619,8 +1643,7 @@ class GameState {
     s._permNames = null;  // invalidate hasPermanent cache
 
     // Option B: update _hasSTAX flag when a STAX card enters
-    const STAX_NAMES = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble','Chalice of the Void','Disruptor Flute']);
-    if (STAX_NAMES.has(def.name)) s._hasSTAX = true;
+    if (ALL_STAX_NAMES.has(def.name)) s._hasSTAX = true;
 
     // ── Static layer: apply existing statics to the new permanent ────────────
 
@@ -2044,13 +2067,8 @@ class GameState {
     }
     // Manglehorn ETB: destroy target artifact. Checks battlefield first, then opponentStax.
     if (!skipETB && cardKey === 'manglehorn') {
-      const STAX_ARTIFACT_NAMES = new Set([
-        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
-        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
-        'Vexing Bauble', 'Disruptor Flute',
-      ]);
       const staxTargets = s.battlefield.filter(p =>
-        p.is('artifact') && p.name !== 'Manglehorn' && STAX_ARTIFACT_NAMES.has(p.name)
+        p.is('artifact') && p.name !== 'Manglehorn' && ALL_STAX_NAMES.has(p.name)
       );
       if (staxTargets.length > 0) {
         const target = staxTargets[0];
@@ -2058,7 +2076,7 @@ class GameState {
         if (s) s = s.log(`Manglehorn ETB: destroy ${target.name}`);
       } else {
         // Check opponentStax — remove the first matching entry
-        const oppTarget = [...s.opponentStax].find(e => STAX_ARTIFACT_NAMES.has(e.split('@')[0].trim()));
+        const oppTarget = [...s.opponentStax].find(e => ALL_STAX_NAMES.has(e.split('@')[0].trim()));
         if (oppTarget) {
           const oppName = oppTarget.split('@')[0].trim();
           s = s.removeFromOpponentStax(oppName);
@@ -2070,20 +2088,15 @@ class GameState {
     // Reclamation Sage ETB: destroy target artifact or enchantment.
     // Checks battlefield first, then opponentStax.
     if (!skipETB && cardKey === 'reclamation_sage') {
-      const STAX_TARGETS = new Set([
-        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
-        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
-        'Vexing Bauble', 'Disruptor Flute',
-      ]);
       const staxTarget = s.battlefield.find(p =>
         (p.is('artifact') || p.is('enchantment')) &&
-        p.name !== 'Reclamation Sage' && STAX_TARGETS.has(p.name)
+        p.name !== 'Reclamation Sage' && ALL_STAX_NAMES.has(p.name)
       );
       if (staxTarget) {
         s = s.removeFromBattlefield(staxTarget.id, 'graveyard');
         if (s) s = s.log(`Reclamation Sage ETB: destroy ${staxTarget.name}`);
       } else {
-        const oppTarget = [...s.opponentStax].find(e => STAX_TARGETS.has(e.split('@')[0].trim()));
+        const oppTarget = [...s.opponentStax].find(e => ALL_STAX_NAMES.has(e.split('@')[0].trim()));
         if (oppTarget) {
           const oppName = oppTarget.split('@')[0].trim();
           s = s.removeFromOpponentStax(oppName);
@@ -2095,20 +2108,15 @@ class GameState {
     // Chomping Changeling ETB: destroy up to one target artifact or enchantment.
     // Identical stax-removal logic as Reclamation Sage.
     if (!skipETB && cardKey === 'chomping_changeling') {
-      const STAX_TARGETS = new Set([
-        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
-        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
-        'Vexing Bauble', 'Disruptor Flute',
-      ]);
       const staxTarget = s.battlefield.find(p =>
         (p.is('artifact') || p.is('enchantment')) &&
-        p.name !== 'Chomping Changeling' && STAX_TARGETS.has(p.name)
+        p.name !== 'Chomping Changeling' && ALL_STAX_NAMES.has(p.name)
       );
       if (staxTarget) {
         s = s.removeFromBattlefield(staxTarget.id, 'graveyard');
         if (s) s = s.log(`Chomping Changeling ETB: destroy ${staxTarget.name}`);
       } else {
-        const oppTarget = [...s.opponentStax].find(e => STAX_TARGETS.has(e.split('@')[0].trim()));
+        const oppTarget = [...s.opponentStax].find(e => ALL_STAX_NAMES.has(e.split('@')[0].trim()));
         if (oppTarget) {
           const oppName = oppTarget.split('@')[0].trim();
           s = s.removeFromOpponentStax(oppName);
@@ -2153,20 +2161,15 @@ class GameState {
     // Modeled deterministically: promise the gift (and destroy stax) whenever a valid target exists.
     // Opponent drawing a card (the gift) is not modeled (no opponent hand state).
     if (!skipETB && cardKey === 'scrapshooter') {
-      const STAX_TARGETS = new Set([
-        'Null Rod', 'Collector Ouphe', 'Root Maze', 'Orb of Dreams',
-        'Thorn of Amethyst', 'Trinisphere', 'Chalice of the Void',
-        'Vexing Bauble', 'Disruptor Flute',
-      ]);
       const staxTarget = s.battlefield.find(p =>
         (p.is('artifact') || p.is('enchantment')) &&
-        p.name !== 'Scrapshooter' && STAX_TARGETS.has(p.name)
+        p.name !== 'Scrapshooter' && ALL_STAX_NAMES.has(p.name)
       );
       if (staxTarget) {
         s = s.removeFromBattlefield(staxTarget.id, 'graveyard');
         if (s) s = s.log(`Scrapshooter ETB (gift promised): destroy ${staxTarget.name}`);
       } else {
-        const oppTarget = [...s.opponentStax].find(e => STAX_TARGETS.has(e.split('@')[0].trim()));
+        const oppTarget = [...s.opponentStax].find(e => ALL_STAX_NAMES.has(e.split('@')[0].trim()));
         if (oppTarget) {
           const oppName = oppTarget.split('@')[0].trim();
           s = s.removeFromOpponentStax(oppName);
@@ -2403,10 +2406,8 @@ class GameState {
     // opponent stax effects (Thorn of Amethyst, Trinisphere, etc.) for the
     // rest of the search.  Only cost-affecting stax names matter for the
     // _hasSTAX flag's purpose (gating effectiveCost's slow path).
-    const STAX_NAMES_R = new Set(['Thorn of Amethyst','Trinisphere','Null Rod','Collector Ouphe','Root Maze','Orb of Dreams','Vexing Bauble','Chalice of the Void','Disruptor Flute']);
-    const COST_STAX_R  = new Set(['Thorn of Amethyst','Trinisphere','Chalice of the Void','Vexing Bauble','Disruptor Flute']);
-    const ownHas = s.battlefield.some(p => STAX_NAMES_R.has(p.name));
-    const oppHas = [...(s.opponentStax || [])].some(e => COST_STAX_R.has(e.split('@')[0].trim()));
+    const ownHas = s.battlefield.some(p => ALL_STAX_NAMES.has(p.name));
+    const oppHas = [...(s.opponentStax || [])].some(e => COST_AFFECTING_STAX_NAMES.has(e.split('@')[0].trim()));
     s._hasSTAX = ownHas || oppHas;
     return s;
   }
@@ -2936,18 +2937,30 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
       // BEFORE Ashaya arrives: QR is not a Forest, so bouncing Yavimaya may be
       // the only way to use QR's ability mid-turn (e.g. to generate mana).
       // In that case the protection must NOT apply.
-      const ashayaOnField = state.battlefield.some(p => p.cardKey === 'ashaya');
-      const arborOnField  = state.battlefield.some(p => p.cardKey === 'arbor_elf');
-      const cradleOnField = state.battlefield.some(
-        p => p.cardKey === 'gaeas_cradle' || p.cardKey === 'nykthos'
-      );
+      //
+      // [perf] Single pass instead of three separate .some() scans — this fn
+      // is one of the hottest in the profile on Ranger-loop-heavy hands (it's
+      // called once per candidate action across the whole search), so
+      // combining battlefield scans here has an outsized cumulative effect.
+      let ashayaOnField = false, arborOnField = false, cradleOnField = false;
+      for (const p of state.battlefield) {
+        if (p.cardKey === 'ashaya') ashayaOnField = true;
+        else if (p.cardKey === 'arbor_elf') arborOnField = true;
+        else if (p.cardKey === 'gaeas_cradle' || p.cardKey === 'nykthos') cradleOnField = true;
+      }
       const protectYavimaya = ashayaOnField && arborOnField && cradleOnField;
       const bounceable = state.battlefield.filter(p => {
         if (protectYavimaya && p.cardKey === 'yavimaya') return false;
         return filterFn(p);
       });
+      // [perf] Compute the tapped-creatures list ONCE — state doesn't change
+      // while we're just planning candidate actions across `bounceable`
+      // targets, so recomputing state.creatures() (an uncached O(n) filter)
+      // once PER target, as before, was pure redundant work whenever more
+      // than one target is bounceable (e.g. multiple Forests in play).
+      const allTappedCreatures = state.creatures().filter(c => c.tapped);
       for (const target of bounceable) {
-        const creaturesCanUntap = state.creatures().filter(c => c.id !== target.id && c.tapped);
+        const creaturesCanUntap = allTappedCreatures.filter(c => c.id !== target.id);
         // Only offer "untap self" when bouncing another Elf if the symbiote/ranger
         // is itself tapped — untapping an already-untapped permanent is a no-op and
         // produces a misleading/wasteful action.
@@ -14747,14 +14760,39 @@ var DEFAULT_OPTIONS = {
  * Score a state/path. Lower = better.
  *   Primary   : turn number (fewer turns → lower score)
  *   Secondary : depth (fewer actions → lower score)
- *   Tertiary  : floating mana (more mana → slightly lower score, tie-breaks
- *               paths that reach the same board through different action orders)
+ *   Tertiary  : resources left committed at the win-detection state — floating
+ *               mana and tapped permanents both count AGAINST the score (less
+ *               of each → lower/better score). The win-detection state is
+ *               effectively "where you'd stop acting", so what's still
+ *               available there is what's available for the rest of that
+ *               turn and for instant-speed plays on the opponent's turn —
+ *               untapped permanents and unspent mana are both real
+ *               flexibility, not neutral leftovers, so a line that leaves
+ *               fewer of either is preferred among ties on turn/depth.
+ *               (Previously floating mana alone counted IN FAVOR of the
+ *               score, on the reasoning that more resources
+ *               mid-search meant more capability — that reasoning doesn't
+ *               apply to the state actually being scored here, which is a
+ *               STOPPING point, not a mid-search snapshot; flipped as part
+ *               of this change.)
  * Life removed: in a combo deck, life total before the win is irrelevant (Fix #9).
+ *
+ * Weights: both terms use the same small per-unit weight as the original
+ * mana term did, so this tiebreaker layer stays a genuine tiebreaker and
+ * doesn't distort the turn/depth ordering that dominates it. This can, in
+ * rare cases (a single very large mana ability, or a great many permanents
+ * tapped by one action), make score locally non-monotone along a path —
+ * an already-accepted, already-documented property of this function (see
+ * test.js §76, "a big mana tap can lower path score"), not a new risk
+ * introduced here.
  */
 function score(state, depth) {
+  let tappedCount = 0;
+  for (const p of state.battlefield) if (p.tapped) tappedCount++;
   return (state.turn - 1) * 100_000 +
-         depth            *      10  -
-         state.mana.total() *      1;
+         depth            *      10  +
+         state.mana.total() *      1  +
+         tappedCount         *      1;
 }
 
 // ── #2 / #11: Heuristic child ordering ───────────────────────────────────
@@ -14958,8 +14996,10 @@ class Solver {
     // Visited map: fingerprint → best depth seen at that state
     this.visited = new Map();
     // Mana-dominance frontier: structural-fingerprint (mana stripped) →
-    // antichain of mana vectors seen at that structural state. See
-    // _isManaDominated() for the full soundness argument.
+    // antichain of mana vectors seen at that structural state, GLOBAL
+    // across the whole search (not per-parent — see _isManaDominated()
+    // for why this specific combination, mana-only + global + the
+    // never-prune-a-win guard, is the current experiment).
     this.manaFrontier = new Map();
   }
 
@@ -15016,63 +15056,135 @@ class Solver {
   }
 
   // ── Mana-dominance pruning ───────────────────────────────────────────────
-  // A child state is DOMINATED if some other already-seen state is
-  // identical in every respect except having component-wise ≥ mana in
-  // every color (W/U/B/R/G/C). Soundness: anything the dominated state
-  // could do, the dominator can also do (it can pay every cost the
-  // dominated state could pay), and doing so leaves it with component-wise
-  // ≥ mana afterward too (same spend, started with more) — so the
-  // dominator can reach anything reachable from the dominated state, via
-  // an action sequence of the SAME length. Pruning the dominated state can
-  // therefore never cost a win, and can never make a found win's line
-  // longer than the dominator would have found on its own.
+  // A candidate child is DOMINATED if another already-seen state anywhere
+  // in this search — not just a sibling — was reached via a path NO
+  // LONGER than this one, has the same structural shape (same fingerprint
+  // with the mana segment stripped, so implicitly the same turn too), and
+  // has component-wise ≥ mana in every color (W/U/B/R/G/C).
+  //
+  // History, since this has been tuned multiple times (see O-40/O-44 in
+  // ToDo.md for the full account — this is the third round):
+  //   1. First version compared purely on mana, globally, with no depth
+  //      check. Bug: it could prune a state reached via a SHORTER path in
+  //      favor of a mana-richer "dominator" reached via a LONGER one,
+  //      silently lengthening the found line (18→19 steps on the default
+  //      benchmark hand — caught by a user).
+  //   2. Added depth-awareness (only dominate if the existing entry's
+  //      depth ≤ the candidate's). Fixed the step-count regression, but a
+  //      SEPARATE bug remained: pruning could still discard a
+  //      non-winning-but-nearly-winning state in favor of a "dominator"
+  //      elsewhere in the tree with no guarantee of being explored
+  //      promptly — measured on the Arbor Elf bench hand as the first win
+  //      not being found until state 161,094 of 163,411 explored. Also
+  //      found and fixed a second, independent bug here: the
+  //      never-prune-a-win guard (added to investigate the above) was
+  //      wrongly gated behind checkCombos finding an infinite-mana combo,
+  //      but checkVictory can also succeed via WIN_CONDITIONS that don't
+  //      need one — silently skipping the win-check for exactly the
+  //      states most likely to need it.
+  //   3. Tried restricting comparisons to true siblings (same parent, so
+  //      same depth by construction, hence dropping the depth field
+  //      entirely). Fixed the Arbor Elf explosion completely, but turned
+  //      out to prune essentially nothing in practice — the redundancy
+  //      this feature targets (different ACTION SEQUENCES, several steps
+  //      apart, converging on the same board with different leftover
+  //      mana) doesn't show up between immediate siblings.
+  //   4. Dropped the depth field entirely (kept global scope, mana-only
+  //      comparison), on the reasoning that the structural key already
+  //      guarantees the same turn, and score() weighs turn far more
+  //      heavily than depth, so exact step count seemed like a secondary
+  //      concern. This reintroduced a DIFFERENT instance of bug #1's
+  //      exact failure mode, caught directly by tracing a specific
+  //      fingerprint through every pruning gate: two branches converging
+  //      on an IDENTICAL structural shape with EQUAL (not just
+  //      comparable) mana — e.g. two different turn-1 sequences that both
+  //      end turn-1 with 0 floating mana, one via a wasted tap and one
+  //      without — are only distinguishable by which is SHALLOWER. Without
+  //      depth, whichever was recorded in the frontier FIRST wins,
+  //      regardless of whether it's actually the better (shallower) one;
+  //      "turn matters more than steps" doesn't help when two candidates
+  //      are on the exact same turn AND have the exact same mana, which
+  //      is precisely when it matters most. Root-caused by adding
+  //      temporary instrumentation to the child loop that logged every
+  //      candidate matching a specific target fingerprint through each
+  //      pruning gate in order, rather than continuing to guess.
+  //   5. Depth restored (fixing #4 exactly as #2 already proved sound),
+  //      kept global (not sibling-restricted, since #3 showed that prunes
+  //      almost nothing), kept the unconditional checkVictory guard from
+  //      #2. Confirmed depth-awareness itself is bug-free this time
+  //      (instrumented every prune: zero cases of a deeper entry
+  //      dominating a shallower one, as the code should guarantee by
+  //      construction) — but the Arbor Elf explosion from #2 came right
+  //      back regardless (163,411 states again), so #2's explosion was
+  //      never actually about incorrect dominance.
+  //   6. Root-caused #2/#5's explosion by comparing win-discovery timing
+  //      with and without dominance pruning. Exhaustive mode (no pruning)
+  //      finds a first, MEDIOCRE win very early (state ~18k of ~395k) and
+  //      gradually improves it over the rest of the search. Default mode
+  //      (with dominance pruning) finds NO win at all until state ~161k —
+  //      then immediately lands on a good score. Dominance pruning is
+  //      correctly eliminating "worse" (dominated) branches — but those
+  //      branches were exactly the ones providing the early, mediocre
+  //      wins that tighten bestScore fast, which is what makes the far
+  //      more powerful score-pruning mechanism effective for the rest of
+  //      the tree. Removing them doesn't cost correctness (the surviving
+  //      branch is still provably at least as good), but it costs the
+  //      EARLY-CONVERGENCE benefit that the rest of the search depends on
+  //      for its own efficiency — a different failure mode than #2's
+  //      original hypothesis (near-win states blocked by untimed
+  //      dominators), though consistent with the same general lesson:
+  //      local soundness doesn't imply the interaction with the rest of
+  //      the search is beneficial.
+  //
+  //      Fix: phased activation. Both call sites additionally gate on
+  //      `this.bestScore !== Infinity` — dominance pruning stays off
+  //      entirely until a first win has been found by any means (so the
+  //      search behaves like exhaustive mode for exactly the phase where
+  //      early, even-mediocre wins matter most), then turns on once
+  //      score-pruning has something to work with. Verified this closes
+  //      both bugs simultaneously: the depth-restoration alone (#5) had
+  //      already fixed the step-count regression from #1/#4, and phased
+  //      activation on top of it resolves the Arbor Elf explosion too —
+  //      not by disabling the mechanism, but by not letting it interfere
+  //      before the search has any bestScore to lose.
   //
   // Mana in this engine only resets at startNewTurn() (CR 500.4/514 — an
   // entire turn is modeled as one continuous mana-pool scope, not drained
   // phase-by-phase), so "more mana now" cleanly implies "more mana at
-  // every later point this turn too" — the soundness argument holds
-  // within a turn without qualification. Cross-turn comparisons never
-  // happen here because `turn` is part of the structural key below (via
-  // the fingerprint it's derived from), so a "dominator" and "dominated"
-  // pair are always states within the very same turn.
-  //
-  // Implementation: `structKey` is the state's fingerprint with the mana
-  // segment (`|M:W:U:B:R:G:C`) sliced out — reusing the fingerprint
-  // string the caller already computed for the exact-dedup check, rather
-  // than building a second key from scratch. `manaFrontier` maps each
-  // structural key to a small antichain of mana vectors (mutually
-  // non-dominating points — e.g. 3 green vs. 2 green + 1 white are
-  // incomparable). In this mono-green-leaning deck the antichain is
-  // almost always size 1 in practice.
+  // every later point this turn too" — the mana half of the argument
+  // holds within a turn without qualification. Cross-turn comparisons
+  // never happen here because turn is part of the structural key.
   //
   // Gated off in exhaustive mode, same as every other approximate pruning
   // in this file — exhaustive guarantees a complete search.
-  _isManaDominated(next, fp) {
+  _isManaDominated(next, fp, depth, frontier) {
     const mIdx = fp.indexOf('|M:');
     const lIdx = fp.indexOf('|L:', mIdx);
     const structKey = fp.slice(0, mIdx) + fp.slice(lIdx);
 
     const m = next.mana;
     const vec = [m.W, m.U, m.B, m.R, m.G, m.C];
-    const frontier = this.manaFrontier.get(structKey);
-    if (!frontier) {
-      this.manaFrontier.set(structKey, [vec]);
+    const existingList = frontier.get(structKey);
+    if (!existingList) {
+      frontier.set(structKey, [{ depth, vec }]);
       return false;
     }
-    for (const existing of frontier) {
-      if (existing[0] >= vec[0] && existing[1] >= vec[1] && existing[2] >= vec[2] &&
-          existing[3] >= vec[3] && existing[4] >= vec[4] && existing[5] >= vec[5]) {
-        return true; // dominated by an already-seen state
+    for (const existing of existingList) {
+      if (existing.depth <= depth &&
+          existing.vec[0] >= vec[0] && existing.vec[1] >= vec[1] && existing.vec[2] >= vec[2] &&
+          existing.vec[3] >= vec[3] && existing.vec[4] >= vec[4] && existing.vec[5] >= vec[5]) {
+        return true; // dominated: an already-seen state, no later, no poorer
       }
     }
-    // Not dominated — a genuinely new point on the frontier. Drop any
-    // existing entries THIS one now dominates (they're redundant to keep).
-    const filtered = frontier.filter(existing => !(
-      vec[0] >= existing[0] && vec[1] >= existing[1] && vec[2] >= existing[2] &&
-      vec[3] >= existing[3] && vec[4] >= existing[4] && vec[5] >= existing[5]
+    // Not dominated — a genuinely new point. Drop any existing entries
+    // THIS one now dominates (same rule, reversed).
+    const filtered = existingList.filter(existing => !(
+      depth <= existing.depth &&
+      vec[0] >= existing.vec[0] && vec[1] >= existing.vec[1] && vec[2] >= existing.vec[2] &&
+      vec[3] >= existing.vec[3] && vec[4] >= existing.vec[4] && vec[5] >= existing.vec[5]
     ));
-    filtered.push(vec);
-    this.manaFrontier.set(structKey, filtered);
+    filtered.push({ depth, vec });
+    frontier.set(structKey, filtered);
     return false;
   }
 
@@ -15209,20 +15321,61 @@ class Solver {
         this.statesExplored++; this.pruned++;
         continue;
       }
-      // 2b) Mana-dominance prune — a state identical to an already-seen one
-      //     except for strictly-less-or-equal mana in every color adds
-      //     nothing exact dedup wouldn't already catch if the mana matched
-      //     too. See _isManaDominated() for the full soundness argument.
-      if (!this.opts.exhaustive && this._isManaDominated(next, childFp)) {
-        if (this.statesExplored > this.opts.maxStates) break;
-        this.statesExplored++; this.pruned++;
-        continue;
-      }
 
       // Survives cheap filters — now compute the expensive analysis (needed for
       // the heuristic, canReachCombo, and child reuse).
       const childPresent = buildPresentSet(next);
       const childInfiniteMana = checkCombos(next, childPresent);
+
+      // 2b) Mana-dominance prune — a state identical to an already-seen one
+      //     (reached via a path no longer) except for strictly-less-or-equal
+      //     mana in every color adds nothing exact dedup wouldn't already
+      //     catch if the mana matched too. See _isManaDominated() for the
+      //     full soundness argument.
+      //
+      //     MUST run after checkCombos, and MUST NOT prune a state that is
+      //     itself an immediate win (checked via checkVictory, reusing
+      //     childInfiniteMana/childPresent so this costs nothing beyond
+      //     what canReachCombo below needs anyway). Pruning a winning state
+      //     before it's ever recognized as one is the bug that caused the
+      //     mana-dominance feature to be reverted, then reinstated with
+      //     this fix — see O-40/O-42 in ToDo.md for the full history. The
+      //     soundness proof for dominance ("the dominator can eventually
+      //     reach anything the dominated state could") is a claim about
+      //     abstract reachability; it says nothing about whether the
+      //     dominator is actually explored in time by THIS heuristic- and
+      //     budget-driven search. A state that's a win right now is a
+      //     certainty this instant — discarding it in favor of a
+      //     theoretical, possibly-never-actually-explored substitute
+      //     elsewhere in the tree is not safe, even when the abstract
+      //     dominance relationship holds.
+      //
+      //     Must call checkVictory unconditionally here (not gated behind
+      //     childInfiniteMana being truthy) — checkVictory can also
+      //     succeed via WIN_CONDITIONS that don't require an infinite-mana
+      //     combo at all (e.g. "Win: Tutor for Finisher", "Win: Draw
+      //     Library"). Gating this call behind childInfiniteMana was a
+      //     second bug on top of the depth-blindness one: it silently
+      //     skipped the win-check for exactly the states most likely to
+      //     need it.
+      const childCombo = !this.opts.exhaustive
+        ? checkVictory(next, childInfiniteMana, childPresent)
+        : null;
+      // Phased activation: only apply once a first win has set bestScore.
+      // See the long comment on _isManaDominated for why — briefly, before
+      // any win is found, pruning a "worse" (dominated) candidate can
+      // discard exactly the quick, mediocre win that would have tightened
+      // bestScore early, which is what makes score-pruning (a much more
+      // powerful mechanism) effective for the rest of the search. Once a
+      // first win exists, dominance pruning only ever removes states that
+      // provably can't beat it, so this risk no longer applies.
+      if (!this.opts.exhaustive && !childCombo && this.bestScore !== Infinity &&
+          this._isManaDominated(next, childFp, childDepth, this.manaFrontier)) {
+        if (this.statesExplored > this.opts.maxStates) break;
+        this.statesExplored++; this.pruned++;
+        continue;
+      }
+
       const childAnalysis = analyzeState(next, childInfiniteMana, childPresent);
       // Fix #4: prune unreachable children before they enter the sort list
       if (!this.opts.exhaustive) {
@@ -15417,8 +15570,19 @@ class Solver {
             continue;
           }
           // Mana-dominance prune — same mechanism as DFS. See
-          // _isManaDominated() for the full soundness argument.
-          if (!this.opts.exhaustive && this._isManaDominated(next, childFp)) {
+          // _isManaDominated() for the full soundness argument, and the
+          // critical caveat right below it about never pruning a state
+          // that's itself an immediate win. checkVictory is called
+          // unconditionally (not gated behind childInfiniteMana) since it
+          // can also succeed via WIN_CONDITIONS independent of the
+          // mana-combo detectors. Phased activation (only after a first
+          // win sets bestScore) matches _dfs — see the long comment on
+          // _isManaDominated for why.
+          const childCombo = !this.opts.exhaustive
+            ? checkVictory(next, childInfiniteMana, childPresent)
+            : null;
+          if (!this.opts.exhaustive && !childCombo && this.bestScore !== Infinity &&
+              this._isManaDominated(next, childFp, depth + 1, this.manaFrontier)) {
             this.pruned++;
             continue;
           }
