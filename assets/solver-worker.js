@@ -15158,19 +15158,48 @@ class Solver {
   //      original hypothesis (near-win states blocked by untimed
   //      dominators), though consistent with the same general lesson:
   //      local soundness doesn't imply the interaction with the rest of
-  //      the search is beneficial.
+  //      the search is beneficial. Fixed (at the time) with phased
+  //      activation (gate on `bestScore !== Infinity`).
+  //   7. Re-examined #4's counter-example precisely, rather than trusting
+  //      the earlier summary of it: reconstructed both the "wasteful"
+  //      (18→19-step regression) and "efficient" states at the exact
+  //      point the bad prune happened, and diffed their mana vectors
+  //      directly. They were IDENTICAL — {0,0,0,0,0,0} on both sides,
+  //      exact fingerprint match — not "different mana", not even
+  //      "comparable mana". The only difference was depth (7 vs 8). That
+  //      makes it a duplicate-detection question, not a dominance one —
+  //      and exact dedup (this.visited) already handles duplicates
+  //      correctly and IS depth-aware (`prevSeen ≤ childDepth`), so it
+  //      would have kept the shallower (7) occurrence on its own. The bug
+  //      wasn't "mana-only dominance is unsound" — it was specifically
+  //      that treating EQUAL mana as satisfying `≥` let this dominance
+  //      check re-decide a case exact dedup had already gotten right,
+  //      using a comparison that (unlike exact dedup) had no depth
+  //      information to make the correct call.
   //
-  //      Fix: phased activation. Both call sites additionally gate on
-  //      `this.bestScore !== Infinity` — dominance pruning stays off
-  //      entirely until a first win has been found by any means (so the
-  //      search behaves like exhaustive mode for exactly the phase where
-  //      early, even-mediocre wins matter most), then turns on once
-  //      score-pruning has something to work with. Verified this closes
-  //      both bugs simultaneously: the depth-restoration alone (#5) had
-  //      already fixed the step-count regression from #1/#4, and phased
-  //      activation on top of it resolves the Arbor Elf explosion too —
-  //      not by disabling the mechanism, but by not letting it interfere
-  //      before the search has any bestScore to lose.
+  //      Fix: dominance now requires STRICT Pareto superiority — ≥ in
+  //      every color AND > in at least one — not just ≥ in every color.
+  //      Equal-mana states never satisfy this, so they fall through to
+  //      exact dedup instead, which is where they belong. depth is
+  //      dropped from this function entirely (no longer needed: for
+  //      states this DOES apply to — mana strictly greater in some
+  //      color — the dominator can pay every cost the dominated state
+  //      could and ends with strictly more left over, so it can replicate
+  //      the dominated state's entire future one-for-one; the only way
+  //      that could cost a shorter LINE rather than just a win's
+  //      existence is if the dominator were also reached via a longer
+  //      path, which — restricted to this specific always-on config — is
+  //      accepted as a real, bounded tradeoff rather than tracked and
+  //      forbidden, since #2/#6 already showed that depth-tracking's own
+  //      "safety" doesn't prevent the pruning from being harmful for a
+  //      completely separate reason). Phased activation is ALSO removed
+  //      here — this is the "always on" configuration.
+  //
+  //      Verified directly: the reconstructed wasteful/efficient states
+  //      above no longer collide (equal mana no longer counts as
+  //      dominance), and this is empirically re-checked below, not just
+  //      argued — see the "always-on, strict-Pareto" bench/test results
+  //      in O-47's ToDo.md entry for what this did and didn't fix.
   //
   // Mana in this engine only resets at startNewTurn() (CR 500.4/514 — an
   // entire turn is modeled as one continuous mana-pool scope, not drained
@@ -15181,7 +15210,7 @@ class Solver {
   //
   // Gated off in exhaustive mode, same as every other approximate pruning
   // in this file — exhaustive guarantees a complete search.
-  _isManaDominated(next, fp, depth, frontier) {
+  _isManaDominated(next, fp, frontier) {
     const mIdx = fp.indexOf('|M:');
     const lIdx = fp.indexOf('|L:', mIdx);
     const structKey = fp.slice(0, mIdx) + fp.slice(lIdx);
@@ -15190,24 +15219,28 @@ class Solver {
     const vec = [m.W, m.U, m.B, m.R, m.G, m.C];
     const existingList = frontier.get(structKey);
     if (!existingList) {
-      frontier.set(structKey, [{ depth, vec }]);
+      frontier.set(structKey, [vec]);
       return false;
     }
     for (const existing of existingList) {
-      if (existing.depth <= depth &&
-          existing.vec[0] >= vec[0] && existing.vec[1] >= vec[1] && existing.vec[2] >= vec[2] &&
-          existing.vec[3] >= vec[3] && existing.vec[4] >= vec[4] && existing.vec[5] >= vec[5]) {
-        return true; // dominated: an already-seen state, no later, no poorer
+      if (existing[0] >= vec[0] && existing[1] >= vec[1] && existing[2] >= vec[2] &&
+          existing[3] >= vec[3] && existing[4] >= vec[4] && existing[5] >= vec[5] &&
+          (existing[0] > vec[0] || existing[1] > vec[1] || existing[2] > vec[2] ||
+           existing[3] > vec[3] || existing[4] > vec[4] || existing[5] > vec[5])) {
+        return true; // STRICTLY dominated: ≥ in every color, > in at least one
       }
     }
-    // Not dominated — a genuinely new point. Drop any existing entries
-    // THIS one now dominates (same rule, reversed).
+    // Not dominated — a genuinely new point (or an exact tie, which also
+    // fails strict dominance in both directions and is deliberately left
+    // for exact dedup to handle). Drop any existing entries THIS one now
+    // strictly dominates (same rule, reversed).
     const filtered = existingList.filter(existing => !(
-      depth <= existing.depth &&
-      vec[0] >= existing.vec[0] && vec[1] >= existing.vec[1] && vec[2] >= existing.vec[2] &&
-      vec[3] >= existing.vec[3] && vec[4] >= existing.vec[4] && vec[5] >= existing.vec[5]
+      vec[0] >= existing[0] && vec[1] >= existing[1] && vec[2] >= existing[2] &&
+      vec[3] >= existing[3] && vec[4] >= existing[4] && vec[5] >= existing[5] &&
+      (vec[0] > existing[0] || vec[1] > existing[1] || vec[2] > existing[2] ||
+       vec[3] > existing[3] || vec[4] > existing[4] || vec[5] > existing[5])
     ));
-    filtered.push({ depth, vec });
+    filtered.push(vec);
     frontier.set(structKey, filtered);
     return false;
   }
@@ -15385,16 +15418,16 @@ class Solver {
       const childCombo = !this.opts.exhaustive
         ? checkVictory(next, childInfiniteMana, childPresent)
         : null;
-      // Phased activation: only apply once a first win has set bestScore.
-      // See the long comment on _isManaDominated for why — briefly, before
-      // any win is found, pruning a "worse" (dominated) candidate can
-      // discard exactly the quick, mediocre win that would have tightened
-      // bestScore early, which is what makes score-pruning (a much more
-      // powerful mechanism) effective for the rest of the search. Once a
-      // first win exists, dominance pruning only ever removes states that
-      // provably can't beat it, so this risk no longer applies.
-      if (!this.opts.exhaustive && !childCombo && this.bestScore !== Infinity &&
-          this._isManaDominated(next, childFp, childDepth, this.manaFrontier)) {
+      // Always on (no phased-activation gate) — see round #7 of the long
+      // comment on _isManaDominated for why this is now safe: dominance
+      // requires STRICT Pareto superiority (≥ every color, > at least
+      // one), so an equal-mana "tie" — which is what caused both the
+      // original step-count regression (O-40) and, on inspection, was
+      // never really about dominance at all — now falls through to exact
+      // dedup instead, which already handles it correctly and IS
+      // depth-aware.
+      if (!this.opts.exhaustive && !childCombo &&
+          this._isManaDominated(next, childFp, this.manaFrontier)) {
         if (this.statesExplored > this.opts.maxStates) break;
         this.statesExplored++; this.pruned++;
         continue;
@@ -15599,14 +15632,14 @@ class Solver {
           // that's itself an immediate win. checkVictory is called
           // unconditionally (not gated behind childInfiniteMana) since it
           // can also succeed via WIN_CONDITIONS independent of the
-          // mana-combo detectors. Phased activation (only after a first
-          // win sets bestScore) matches _dfs — see the long comment on
-          // _isManaDominated for why.
+          // mana-combo detectors. Always on (no phased-activation gate),
+          // matching _dfs — see round #7 of the long comment on
+          // _isManaDominated for why this is now safe.
           const childCombo = !this.opts.exhaustive
             ? checkVictory(next, childInfiniteMana, childPresent)
             : null;
-          if (!this.opts.exhaustive && !childCombo && this.bestScore !== Infinity &&
-              this._isManaDominated(next, childFp, depth + 1, this.manaFrontier)) {
+          if (!this.opts.exhaustive && !childCombo &&
+              this._isManaDominated(next, childFp, this.manaFrontier)) {
             this.pruned++;
             continue;
           }
