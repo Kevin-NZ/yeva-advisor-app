@@ -2400,16 +2400,40 @@ class GameState {
       if (zone === 'graveyard') s.players[pi] = s.players[pi].putInGraveyard(removed.name);
       if (zone === 'exile')     s.players[pi] = s.players[pi].putInExile(removed.name);
     }
+
+    // [state-based action, CR 704.5m] An Aura attached to nothing is put
+    // into its owner's graveyard. Scoped to enchantedLandId-style auras
+    // (Wild Growth, Utopia Sprawl) — the only attachment mechanism this
+    // engine tracks via an explicit reference to another permanent's id.
+    // Without this, an aura whose enchanted land just left (e.g. bounced
+    // by Quirion Ranger) silently "goes dead" — its boost stops applying,
+    // since nothing on the battlefield has a matching id — but it keeps
+    // occupying a battlefield slot with a stale reference indefinitely.
+    // This is wrong on the rules (the aura should be gone) and a real
+    // search-quality problem: a zombie permanent that clutters every
+    // subsequent fingerprint (and hence every subsequent dedup/dominance
+    // comparison) without ever doing anything again. Found investigating
+    // why a Wild-Growth-involving dead-end subtree explored far more
+    // states than expected — see O-46 in ToDo.md.
+    // Single pass, not recursive: enchantedLandId auras only ever
+    // reference LANDS, never other auras, so removing one can't make a
+    // second one newly dangling — nothing here can chain.
+    let result = s;
+    const danglingAuras = result.battlefield.filter(p => p.enchantedLandId === id);
+    for (const aura of danglingAuras) {
+      result = result.removeFromBattlefield(aura.id, 'graveyard', pi) ?? result;
+    }
+
     // Recompute _hasSTAX from BOTH our battlefield AND opponent stax.
     // Bug fix (2026-05-05): previously this only checked our battlefield, so
     // sacrificing/destroying any of our permanents would silently turn off
     // opponent stax effects (Thorn of Amethyst, Trinisphere, etc.) for the
     // rest of the search.  Only cost-affecting stax names matter for the
     // _hasSTAX flag's purpose (gating effectiveCost's slow path).
-    const ownHas = s.battlefield.some(p => ALL_STAX_NAMES.has(p.name));
-    const oppHas = [...(s.opponentStax || [])].some(e => COST_AFFECTING_STAX_NAMES.has(e.split('@')[0].trim()));
-    s._hasSTAX = ownHas || oppHas;
-    return s;
+    const ownHas = result.battlefield.some(p => ALL_STAX_NAMES.has(p.name));
+    const oppHas = [...(result.opponentStax || [])].some(e => COST_AFFECTING_STAX_NAMES.has(e.split('@')[0].trim()));
+    result._hasSTAX = ownHas || oppHas;
+    return result;
   }
 
   removeFromHand(cardKey) {
