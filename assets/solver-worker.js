@@ -14600,6 +14600,38 @@ function _tutorCounts(state) {
     counts.creature += 1;
   }
 
+  // ── Opponent-turn-window draw engines ──────────────────────────────────
+  // Heartwood Storyteller and Runic Armasaur each trigger once per
+  // opponent's end-step window (3 windows per round, one per opponent —
+  // see the pass_turn / opponent-window handlers in actions.js) — a
+  // built-in, automatic part of any multi-turn search, independent of
+  // --draw-each-turn. Untapped-ness doesn't matter here; these are
+  // triggered abilities, not activated ones, and they aren't counted by
+  // TUTOR_REACH at all (they're card-advantage engines, not tutors) — so
+  // without this, a state with one of these on the battlefield still gets
+  // the full untutored cost-3-per-missing-piece penalty even though, in
+  // practice, a handful of opponent windows can dig up any missing piece
+  // directly. Checked in HAND as well as on the battlefield: the state
+  // where this matters most is the one being rejected BEFORE the engine
+  // is ever cast (canReachCombo runs at every depth, including before the
+  // creature has mana available yet) — restricting this to "already on
+  // the battlefield" would miss exactly the case that motivated the fix.
+  // Found via a user-reported hand where the default search found nothing
+  // but --exhaustive found a win using exactly this mechanism (Heartwood
+  // Storyteller draws → finds a tutor → finds the last combo piece) — see
+  // O-49 in ToDo.md.
+  //
+  // A fixed, generous bonus rather than one proportional to turnsLeft:
+  // _tutorCounts has no visibility into turnsLeft (analyzeState is called
+  // before canReachCombo receives it), and the unsafe direction for a
+  // pruning heuristic is UNDER-counting access, not over-counting it — a
+  // deliberately generous constant costs at most some search efficiency;
+  // an insufficient one costs a missed win, exactly the bug being fixed.
+  if (state.battlefield.some(p => p.name === 'Heartwood Storyteller' || p.name === 'Runic Armasaur') ||
+      handSet.has('heartwood_storyteller') || handSet.has('runic_armasaur')) {
+    counts.any += 10;
+  }
+
   return counts;
 }
 
