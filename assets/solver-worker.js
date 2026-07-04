@@ -1145,10 +1145,14 @@ class GameState {
     // Lazily computed; set to null whenever state changes (see invalidateFp).
     // Hand is stored sorted so fingerprint can skip sort().
     this._fp = null;
+    // Companion cache: the same fingerprint with the mana segment omitted —
+    // see structKey() below. Always computed together with _fp (inside
+    // fingerprint()), so it's invalidated at exactly the same call sites.
+    this._structKey = null;
   }
 
   /** Invalidate fingerprint cache.  Call after any in-place mutation. */
-  invalidateFp() { this._fp = null; }
+  invalidateFp() { this._fp = null; this._structKey = null; }
 
   // ── Convenience zone accessors for active player (players[0]) ────────────
 
@@ -1342,6 +1346,7 @@ class GameState {
     s.flashThisTurn = this.flashThisTurn;
     s.pactOwed      = this.pactOwed;
     s._fp           = null;
+    s._structKey    = null;
     s._plOwned      = true;   // players array is owned (new array), but opponents inside are shared
     return s;
   }
@@ -1413,6 +1418,7 @@ class GameState {
     s.flashThisTurn = this.flashThisTurn;
     s.pactOwed      = this.pactOwed;
     s._fp           = null;
+    s._structKey    = null;
     return s;
   }
 
@@ -2806,8 +2812,14 @@ class GameState {
 
     const cmd = [...this.commandZone].sort().join(',') + ':' + this.commanderTax;
 
-    this._fp = 'T' + this.turn + '|H:' + hand + '|BF:' + bf + '|M:' + m +
-               '|L:' + this.landDrops + '|P:' + players + '|CZ:' + cmd +
+    // Everything before the mana segment, and everything after it, factored
+    // into named pieces so _fp and structKey() are built from the exact same
+    // string fragments and can never silently drift apart if a field is ever
+    // added here — string concatenation is associative, so regrouping these
+    // pieces changes nothing about the resulting _fp string versus the
+    // single-expression form this replaced.
+    const prefix = 'T' + this.turn + '|H:' + hand + '|BF:' + bf;
+    const suffix = '|L:' + this.landDrops + '|P:' + players + '|CZ:' + cmd +
                (this.flashThisTurn  ? '|FL' : '') +
                (this.pactOwed       ? '|PC' : '') +
                (this.landsPlayedThisTurn > 0 ? '|LP:' + this.landsPlayedThisTurn : '') +
@@ -2816,7 +2828,33 @@ class GameState {
                (this.endingTurn     ? '|ET' : '') +
                ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
                (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
+
+    this._fp = prefix + '|M:' + m + suffix;
+    // Companion cache: the same fingerprint with the mana segment omitted
+    // entirely — used by Solver._isManaDominated, which needs to group
+    // candidate states by "everything except floating mana" (see its own
+    // comment for the full soundness argument). Previously computed by
+    // re-parsing the finished _fp string (two indexOf scans to find the
+    // '|M:'/'|L:' boundaries, then slice+concat to stitch the two halves
+    // back together) on every dominance check — this computes the
+    // equivalent string directly, for free, using pieces already built for
+    // _fp, rather than paying to rediscover boundaries that were known at
+    // the moment _fp was assembled.
+    this._structKey = prefix + suffix;
     return this._fp;
+  }
+
+  /**
+   * The fingerprint with the mana segment omitted — everything that
+   * matters for grouping "the same board, different floating mana" states
+   * together (used by Solver._isManaDominated's frontier map). Always
+   * computed together with fingerprint() and cached the same way; calling
+   * this before fingerprint() has ever run on this object simply triggers
+   * that computation first; calling it after is a plain cache read.
+   */
+  structKey() {
+    if (this._structKey === null) this.fingerprint();
+    return this._structKey;
   }
 
   // ── Display ───────────────────────────────────────────────────────────────
@@ -13281,22 +13319,45 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
               return null;
             }
 
+            // [perf] msgKey(r) is pure and deterministic for a given r, but was
+            // being re-invoked for the same r many times below: once in each of
+            // two separate .filter() passes over the SAME allResults array,
+            // then repeatedly inside a .sort() comparator (V8 can call a sort
+            // comparator O(n log n) times total, not just n), then once more
+            // per surviving result. Its slow path does a linear scan with a
+            // substring search over the entire NAME_TO_KEY map (one entry per
+            // card in the pool), so re-running it this many times for
+            // identical inputs was pure waste. Memoized by object identity —
+            // allResults entries are distinct GameState objects, reused BY
+            // REFERENCE throughout this scope (relevant/fallback/pool/sorted
+            // are all filtered/reordered VIEWS of the same underlying objects,
+            // never copies), so each result's key needs computing exactly
+            // once. Pure refactor: cachedMsgKey always returns exactly what
+            // msgKey would for the same input.
+            const _msgKeyCache = new Map();
+            function cachedMsgKey(r) {
+              if (_msgKeyCache.has(r)) return _msgKeyCache.get(r);
+              const k = msgKey(r);
+              _msgKeyCache.set(r, k);
+              return k;
+            }
+
             // Filter to combo-completing targets only, excluding redundant equivalents
             const relevant = allResults.filter(r => {
-              const k = msgKey(r);
+              const k = cachedMsgKey(r);
               return k && needed.has(k) && !isEquivRedundant(k);
             });
 
             // Fallback pool: all results minus redundant equivalents
             const fallback = allResults.filter(r => {
-              const k = msgKey(r);
+              const k = cachedMsgKey(r);
               return k !== null && !isEquivRedundant(k);
             });
 
             const pool = relevant.length > 0 ? relevant : fallback;
             const sorted = pool.slice().sort((a, b) =>
-              (TUTOR_PRIORITY_SCORE[msgKey(b)] ?? 0) -
-              (TUTOR_PRIORITY_SCORE[msgKey(a)] ?? 0)
+              (TUTOR_PRIORITY_SCORE[cachedMsgKey(b)] ?? 0) -
+              (TUTOR_PRIORITY_SCORE[cachedMsgKey(a)] ?? 0)
             );
 
             // Battlefield tutors: 1 action. Hand/topdeck tutors: up to 2.
@@ -13311,7 +13372,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
 
               // ── Capture planned decisions for deterministic replay ─────────
               // Extract the fetched card key from the planned result message.
-              const plannedTargetKey = msgKey(resultState);
+              const plannedTargetKey = cachedMsgKey(resultState);
 
               // For sacrifice-based tutors (EE, Natural Order): detect which creature
               // was sacrificed by comparing planning BF names to result BF names.
@@ -14542,6 +14603,16 @@ var TUTOR_REACH = {
   // Land tutors
   crop_rotation:          'land',
   sylvan_scrying:         'land',
+  // Land tutors — on-cast/ETB (Sowing Mycospawn) and battlefield activated
+  // ability ({2},{T}, sacrifice a land — Elvish Reclaimer). Found via a
+  // user report: a hand with Sowing Mycospawn already present found a win
+  // only with --exhaustive, never in default mode, because canReachCombo's
+  // minMissing treated its own land search as "no tutor access at all" —
+  // it was simply never in this map, the same class of gap as O-49's
+  // opponent-window draw engines, just a plain missing entry rather than a
+  // new mechanism. See O-50 in ToDo.md.
+  sowing_mycospawn:       'land',
+  elvish_reclaimer:       'land',
   // Fetch any permanent type
   archdruid_charm:        'any',
 };
@@ -14629,6 +14700,33 @@ function _tutorCounts(state) {
   // an insufficient one costs a missed win, exactly the bug being fixed.
   if (state.battlefield.some(p => p.name === 'Heartwood Storyteller' || p.name === 'Runic Armasaur') ||
       handSet.has('heartwood_storyteller') || handSet.has('runic_armasaur')) {
+    counts.any += 10;
+  }
+
+  // ── Normal draw step ────────────────────────────────────────────────
+  // When drawForTurn is set (--draw-each-turn), the player draws a card
+  // at the start of every turn — an ongoing, repeated source of library
+  // access, no different in KIND from the opponent-window draw engines
+  // just above, just triggered by the turn structure itself rather than
+  // a specific card. Without this, canReachCombo's minMissing treats
+  // EVERY --draw-each-turn search as if the player could never draw
+  // into anything they need — even though drawing normally is exactly
+  // the mechanism most --draw-each-turn hands are built around, and
+  // it's already unconditionally true whenever this flag is set (unlike
+  // Heartwood Storyteller, which at least required a specific card).
+  // Found via a third user report, same underlying pattern as O-49/O-50:
+  // a hand needing Chord of Calling (already a TUTOR_REACH entry) to
+  // find Quirion Ranger — but Chord itself was still in the library, not
+  // yet drawn, so _tutorCounts had nothing to count. This is the general
+  // case O-49's fix was a specific instance of; see O-51 in ToDo.md.
+  //
+  // Guarded on the library actually having cards left (state.players?.[0]?.
+  // library — the "legacy" single-array library this engine always uses;
+  // see buildDefaultLibrary and the GameState constructor's players-array
+  // path) — an empty library can't provide anything no matter how many
+  // turns are left, so there's no reason to apply this bonus there and
+  // give up real pruning power for a case where it can't possibly help.
+  if (state.drawForTurn && state.players?.[0]?.library?.length > 0) {
     counts.any += 10;
   }
 
@@ -15243,9 +15341,24 @@ class Solver {
   // Gated off in exhaustive mode, same as every other approximate pruning
   // in this file — exhaustive guarantees a complete search.
   _isManaDominated(next, fp, frontier) {
-    const mIdx = fp.indexOf('|M:');
-    const lIdx = fp.indexOf('|L:', mIdx);
-    const structKey = fp.slice(0, mIdx) + fp.slice(lIdx);
+    // [perf] next.structKey() (GameState.js) is the fast path: computed once
+    // alongside fingerprint() itself, from pieces already assembled there, and
+    // cached the same way — a plain property read here. Falls back to deriving
+    // it from fp the old way (two indexOf scans + slice/concat) only for
+    // callers that pass something other than a real GameState as `next` —
+    // section 80's unit tests exercise this function directly against small
+    // hand-built fixtures ({ mana: {...} }) that don't have a structKey()
+    // method, and this keeps those working unchanged rather than requiring
+    // every test fixture to become a full GameState. Every real call site in
+    // _dfs/_bfs always passes an actual GameState, so production traffic
+    // always takes the fast path; the fallback only ever executes in tests.
+    const structKey = typeof next.structKey === 'function'
+      ? next.structKey()
+      : (() => {
+          const mIdx = fp.indexOf('|M:');
+          const lIdx = fp.indexOf('|L:', mIdx);
+          return fp.slice(0, mIdx) + fp.slice(lIdx);
+        })();
 
     const m = next.mana;
     const vec = [m.W, m.U, m.B, m.R, m.G, m.C];
