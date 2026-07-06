@@ -194,6 +194,27 @@ var COMBO_REQUIRED_KEYS = [
   ['legolas_quick_reflexes', 'ashaya'],       // LQR tap loop: Ashaya-based loops have creatures to tap
   // Yavimaya + Arbor Elf combo
   ['yavimaya', 'arbor_elf', 'ashaya', 'quirion_ranger'], // Yavimaya makes Cradle a Forest → Arbor can untap it
+  // Combos 66-68: added when the manifest was brought up to date with the
+  // full 70-entry decklist_combos.txt (previously stopped at 62 here).
+  // Each tuple matches its manifest entry's cardKeys exactly.
+  //
+  // Combos 65, 69, 70 deliberately have NO routing tuple here: they require
+  // "infinite mana already established" as a separate prerequisite (per
+  // decklist_combos.txt's own Prerequisites section for each), not captured
+  // by any card key at all, then win via repeated combat this solver
+  // doesn't model (see combos_manifest.js's notes on those entries for the
+  // full reasoning). A naive tuple for e.g. just Ulvenwald Tracker would
+  // claim "missing only 1 piece" when the combo actually needs a whole
+  // separate mana engine on top of that piece — actively miscalibrating
+  // minMissing for every hand, not just ones with these cards, since
+  // COMBO_REQUIRED_KEYS is scanned unconditionally and a short tuple's
+  // artificially-low cost can dominate the minimum for ANY hand regardless
+  // of relevance. Confirmed directly: adding a 1-key tuple for Ulvenwald
+  // Tracker alone dropped the baseline no-tutor-present minMissing from 6
+  // to 3 for hands that don't even contain that card.
+  ['argothian_elder', 'hyrax_tower_scout'],                // 66
+  ['argothian_elder', 'wirewood_symbiote', 'temur_sabertooth'], // 67
+  ['hyrax_tower_scout', 'temur_sabertooth'],               // 68 (canonical variant; Magus/Speaker/Hope Tender + Kogla also work)
 ];
 
 // ── Tutor target priority ─────────────────────────────────────────────────
@@ -505,7 +526,7 @@ var DEFAULT_DECKLIST = [
   'urza_cave','utopia_sprawl','verdant_catacombs','war_room','wild_growth',
   'windswept_heath','wirewood_lodge','wirewood_symbiote','woodcaller_automaton',
   'wooded_foothills','woodland_bellower','worldly_tutor',
-  'yavimaya','yisan','yeva',
+  'yavimaya','yisan','yeva','chancellor_of_the_tangle'
 ];
 
 /**
@@ -578,6 +599,30 @@ for (const group of FINGERPRINT_EQUIVALENTS) {
   const sorted = [...group].sort();
   const canonicalKey = sorted[0];
   for (const k of group) _fingerprintCanonicalName.set(k, canonicalKey);
+}
+
+// [O-59] Shared gating logic for Chancellor of the Tangle's opening-hand
+// mana trigger. Extracted to a module-level function (rather than inlined
+// in the constructor, as it originally was in O-58) so the exact same
+// check can be reused by GameState.prototype.applyOpeningHandTriggers()
+// for callers that build up an initial state across multiple steps — see
+// that method and the constructor's own comment on deferOpeningHandTriggers
+// for the full explanation of why a single inline check wasn't enough.
+//
+// Returns the number of {G} to grant (0 if the gating conditions aren't
+// met, or none of the raw hand's first 7 cards are this card; >1 only if
+// multiple copies are present, each independently satisfying its own
+// "reveal this card" clause).
+function _chancellorOpeningHandBonus(turn, battlefieldLength, manaTotal, graveyardLength, exileLength, rawHand) {
+  if (turn !== 1 || battlefieldLength !== 0 || manaTotal !== 0 ||
+      graveyardLength !== 0 || exileLength !== 0 || !Array.isArray(rawHand)) {
+    return 0;
+  }
+  let count = 0;
+  for (const key of rawHand.slice(0, 7)) {
+    if (key === 'chancellor_of_the_tangle') count++;
+  }
+  return count;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1141,6 +1186,50 @@ class GameState {
       this.players.push(new Player({ name: `Opponent ${this.players.length}`, _sizeOnly: true }));
     }
 
+    // ── Chancellor of the Tangle ─────────────────────────────────────────
+    // Oracle: "You may reveal this card from your opening hand. If you do,
+    // at the beginning of your first main phase of the game, add {G}."
+    // This is inherently a one-time, pre-game/game-start event — not a
+    // repeatable ability — so it's modelled here, in the constructor,
+    // rather than as a castFn/onEnter/activated ability on the card itself.
+    // Since GameState.clone() (used for every state transition during
+    // search) bypasses this constructor entirely via Object.create(), this
+    // check can only ever run once per solve, at the true initial state —
+    // there's no risk of it re-firing on a later clone that happens to
+    // look similar (e.g. still has this card in hand).
+    //
+    // The "may reveal" choice has no downside worth modelling: there's no
+    // hidden-information opponent whose responses could change based on
+    // knowing you have this card, so revealing (and taking the free mana)
+    // is always at least as good as not revealing. Treated as always
+    // taken rather than branching on a choice that could never be correct
+    // to decline.
+    //
+    // Gated on genuinely being at an untouched game start — turn 1, no
+    // permanents, no floating mana, empty graveyard/exile — rather than
+    // just "is this card in the hand", so a GameState constructed directly
+    // to represent some other point in the game (e.g. a test fixture with
+    // turn:3 and an existing board) can never accidentally trigger this.
+    //
+    // [O-59] deferOpeningHandTriggers: callers that build up an initial
+    // state across MULTIPLE steps — construct first, then add battlefield
+    // permanents afterward via a separate .enterBattlefield() loop
+    // (index.js's --battlefield flag, Analyzer.js's mulliganAnalyze and
+    // buildState) — see an EMPTY battlefield right here, at construction
+    // time, even though their final intended state has one or more
+    // permanents already in play. That's not a genuine untouched game
+    // start, so the gate above would incorrectly pass and grant the bonus.
+    // Those callers pass deferOpeningHandTriggers:true to skip this block
+    // entirely, then call applyOpeningHandTriggers() explicitly once ALL
+    // setup (battlefield included) is actually complete — see that method
+    // for the shared gating logic.
+    if (!data.deferOpeningHandTriggers) {
+      const bonus = _chancellorOpeningHandBonus(
+        this.turn, this.battlefield.length, this.mana.total(),
+        this.graveyard.length, this.exile.length, data.hand);
+      if (bonus > 0) this.mana = this.mana.add('G', bonus);
+    }
+
     // ── Fingerprint cache ─────────────────────────────────────────────────
     // Lazily computed; set to null whenever state changes (see invalidateFp).
     // Hand is stored sorted so fingerprint can skip sort().
@@ -1153,6 +1242,39 @@ class GameState {
 
   /** Invalidate fingerprint cache.  Call after any in-place mutation. */
   invalidateFp() { this._fp = null; this._structKey = null; }
+
+  /**
+   * [O-59] Explicit, deferred application of opening-hand reveal triggers
+   * (currently: Chancellor of the Tangle). For callers constructed with
+   * `deferOpeningHandTriggers: true` — meaning the constructor skipped its
+   * own automatic check because the caller intended to add battlefield
+   * permanents (or other setup) across multiple steps AFTER construction,
+   * and calling the check too early would have seen a still-empty
+   * battlefield that's about to become non-empty. Call this once ALL
+   * initial setup is actually complete (battlefield, mana, etc.) to apply
+   * the same gating logic against the TRUE final initial state.
+   *
+   * Immutable, like every other state-transition method on this class:
+   * returns a new state with the bonus applied, or `this` unchanged if the
+   * gating conditions aren't met or no eligible card is present. Never
+   * mutates the caller's reference.
+   *
+   * @param {string[]} rawHandOrder  The hand in its ORIGINAL, as-supplied
+   *   order (e.g. straight from a --hand CLI argument or a hand array
+   *   passed to mulliganAnalyze/buildState) — NOT `this.hand`, which the
+   *   constructor always stores alphabetically sorted ([E6], for
+   *   fingerprint efficiency), losing the positional information "first
+   *   7 cards" depends on.
+   */
+  applyOpeningHandTriggers(rawHandOrder) {
+    const bonus = _chancellorOpeningHandBonus(
+      this.turn, this.battlefield.length, this.mana.total(),
+      this.graveyard.length, this.exile.length, rawHandOrder);
+    if (bonus === 0) return this;
+    const s = this.clone();
+    s.mana = s.mana.add('G', bonus);
+    return s;
+  }
 
   // ── Convenience zone accessors for active player (players[0]) ────────────
 
@@ -2071,6 +2193,10 @@ class GameState {
         }
       }
     }
+    // Formidable Speaker ETB: see the existing, working implementation
+    // further below in this function (search "Formidable Speaker ETB") —
+    // confirmed present and already exercising this exact mechanic before
+    // adding a second, competing copy here.
     // Manglehorn ETB: destroy target artifact. Checks battlefield first, then opponentStax.
     if (!skipETB && cardKey === 'manglehorn') {
       const staxTargets = s.battlefield.filter(p =>
@@ -2239,8 +2365,20 @@ class GameState {
           const discardable = handCopy.filter(k =>
             (TUTOR_PRIORITY_SCORE[k] ?? 0) < PROTECT_THRESHOLD || present.has(k)
           );
-          // Use first available discard candidate (or any card if all are protected)
-          const discardKey = discardable[0] ?? handCopy[0];
+          // [O-53] Previously fell back to `?? handCopy[0]` when nothing
+          // safe to discard existed — forcing a discard of a protected,
+          // high-value card (e.g. an uncast combo piece) just to fetch a
+          // DIFFERENT creature, even though the effect is optional ("you
+          // may discard"). Fauna Shaman / Survival of the Fittest already
+          // made this exact call deliberately the other way (see their own
+          // comments: "if every creature in hand is a protected combo
+          // piece, return [] — the solver picks something more productive"
+          // — fixed 2026-04-30 after the old permissive version caused
+          // self-cancelling chains, discarding a card just tutored the
+          // step before). Formidable Speaker's discard-ANY-card cost never
+          // got the same fix. No fallback now: decline the "may" entirely
+          // when nothing on the discardable list qualifies.
+          const discardKey = discardable[0];
           if (discardKey) {
             s._ensurePlayers();
             s.players[0] = s.players[0].clone();
@@ -2988,7 +3126,7 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
       // ability only ONCE per turn. Check the permanent's abilitiesUsed map.
       if (perm.abilitiesUsed && perm.abilitiesUsed[abilityKey]) return [];
 
-      var cards = CARDS;
+      const cards = CARDS;
       const results = [];
       // Protect Yavimaya, Cradle of Growth from being bounced when Ashaya is
       // already on the battlefield AND Arbor Elf + a big land are present.
@@ -3109,7 +3247,7 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
  * @returns {Set<string>} card keys currently in hand that came from a tutor
  */
 function _freshlyTutoredKeys(state) {
-  var cards = CARDS;
+  const cards = CARDS;
   const tutorRe = /^(?:Survival of the Fittest|Fauna Shaman): .*?→\s+(.+?)\s+to hand/;
   const castRe  = /^Cast\s+(.+?)(?:\s+\(|\s*$)/;
 
@@ -3161,7 +3299,7 @@ function _freshlyTutoredKeys(state) {
  * @returns {string|null}    Card key of the best fetch target, or null if none found.
  */
 function _bestCreatureTutorTarget(state) {
-  var cards = CARDS;
+  const cards = CARDS;
 
   // Build present set: hand + battlefield
   const present = new Set(state.hand);
@@ -3412,7 +3550,7 @@ var CARDS = {
           // Check delirium: 4+ card types in graveyard
           const gy = state.players[0].graveyard ?? [];
           if (gy.length === 0) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           const gyTypes = new Set();
           for (const name of gy) {
             const key = Object.keys(cards).find(k => cards[k]?.name === name);
@@ -3448,7 +3586,7 @@ var CARDS = {
     tapForMana(state, perm) {
       if (perm.tapped) return [];
       if (perm.copyKey) {
-        var cards = CARDS;
+        const cards = CARDS;
         const copyDef = cards[perm.copyKey];
         if (copyDef?.tapForMana) return copyDef.tapForMana(state, perm);
       }
@@ -3610,7 +3748,7 @@ var CARDS = {
             for (let pi = 1; pi < ns.players.length; pi++) {
               ns = ns.modifyPlayer(pi, { librarySize: -1 });
             }
-            var cards = CARDS;
+            const cards = CARDS;
             const cardName = cards[cardKey]?.name ?? cardKey;
             ns = ns.log(`Geier Reach Sanitarium: each player draws then discards (you discard ${cardName})`);
             results.push(ns);
@@ -3695,7 +3833,7 @@ var CARDS = {
           s = s.removeFromBattlefield(perm.id, 'exile');
           if (!s) return [];
 
-          var cards = CARDS;
+          const cards = CARDS;
 
           // Identify "historic" cards in your graveyard:
           // legendary supertype, artifact card type, or Saga subtype
@@ -3796,7 +3934,7 @@ var CARDS = {
           // Remove Urza's Cave from battlefield (sacrifice)
           const at = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!at) return [];
           // Search library for any land
-          var cards = CARDS;
+          const cards = CARDS;
           const library = at.players[0].library;
           const landKeys = [...new Set(library)].filter(k => {
             const def = cards[k];
@@ -3994,7 +4132,7 @@ var CARDS = {
     // If you do, put it onto the battlefield. If you don't, put it into its owner's graveyard.
     // Modeled as castFn: must discard a land from hand or it goes to graveyard.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const results = [];
       // Find lands in hand (after removing Mox Diamond itself)
       const handWithout = state.hand.filter((k, i) => i !== state.hand.indexOf('mox_diamond'));
@@ -4069,7 +4207,7 @@ var CARDS = {
           // This is called after a nonartifact enters. Enumerate bounce targets.
           // We look for any permanent on BF (other than itself) that shares a type
           // with the most recently entered permanent.
-          var cards = CARDS;
+          const cards = CARDS;
           const results = [];
           // Find the last non-artifact permanent that entered (highest id)
           const nonArtifacts = state.battlefield.filter(p =>
@@ -4112,7 +4250,7 @@ var CARDS = {
           if (perm.tapped) return [];
           // Find creature cards in any graveyard (we model only player 0's graveyard)
           const gy = state.players[0].graveyard ?? [];
-          var cards = CARDS;
+          const cards = CARDS;
           const gyCreatures = [...new Set(gy)].filter(name => {
             const key = Object.keys(cards).find(k => cards[k]?.name === name);
             return key && cards[key]?.types?.includes('creature');
@@ -4322,7 +4460,7 @@ var CARDS = {
       sac_draw_land: {
         label: '{2}, Sacrifice: Draw a card, then put a land from hand onto battlefield tapped',
         fn(state, perm) {
-          var cards = CARDS;
+          const cards = CARDS;
           const ap = state.payMana('2'); if (!ap) return [];
           let s = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!s) return [];
           s = s.playerDraws(0, 1);
@@ -4366,7 +4504,7 @@ var CARDS = {
           const tapped = ap.tapPermanent(perm.id); if (!tapped) return [];
           const lands = tapped.lands().filter(l => l.id !== perm.id);
           if (lands.length === 0) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           // Sacrifice cheapest/least-valuable land
           const KEEP_LANDS = new Set(['gaeas_cradle','nykthos','deserted_temple','ancient_tomb']);
           const sacLand = lands.find(l => !KEEP_LANDS.has(NAME_TO_KEY[l.name])) ?? lands[0];
@@ -4720,7 +4858,7 @@ var CARDS = {
       if (perm.tapped || perm.summoningSick) return [];
       const s = state.tapPermanent(perm.id); if (!s) return [];
       // Check our own graveyard for artifact cards to exile
-      var cards = CARDS;
+      const cards = CARDS;
       const gy = s.players[0].graveyard ?? [];
       const artifactIndices = [];
       for (let i = 0; i < gy.length && artifactIndices.length < 2; i++) {
@@ -5060,7 +5198,7 @@ var CARDS = {
       tap_creature_untap_land: {
         label: 'Tap untapped creature: Untap target basic land',
         fn(state, perm) {
-          var cards = CARDS;
+          const cards = CARDS;
           const results = [];
           const untapped = state.creatures().filter(c=>!c.tapped&&!c.summoningSick);
           // Oracle: "Untap target BASIC land." — must check the card definition's isBasic flag,
@@ -5087,7 +5225,7 @@ var CARDS = {
           // {T}/{Q} abilities.  Temur's bounce is {1G} with no tap cost —
           // legal on a sick Temur.  See ToDo C-33 audit.
           const ap = state.payMana('1G'); if (!ap) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           const seen = new Set();
           return state.creatures().filter(c=>c.id!==perm.id).flatMap(c => {
             let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
@@ -5112,7 +5250,7 @@ var CARDS = {
         label: '{1}{G}: Return target Human you control to hand',
         fn(state, perm) {
           const ap = state.payMana('1G'); if (!ap) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           const seen = new Set();
           return state.creatures().filter(c=>c.subtypes&&c.subtypes.includes('Human')).flatMap(c => {
             let s = ap.removeFromBattlefield(c.id, null); if (!s) return [];
@@ -5213,7 +5351,7 @@ var CARDS = {
             c.id !== perm.id && !c.tapped && !c.summoningSick
           );
           if (others.length < 2) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           const creaturesInHand = [...new Set(ap.hand)].filter(k =>
             cards[k] && cards[k].types.includes('creature')
           );
@@ -5266,7 +5404,7 @@ var CARDS = {
       tutor_small_green: {
         label: 'ETB: Put a nonlegendary green creature (MV≤3) from library onto battlefield',
         fn(state, perm) {
-          var cards = CARDS;
+          const cards = CARDS;
           const results = [];
           // Proxy: check hand for CMC-3 green nonlegendary creatures
           const eligible = [...new Set(state.hand)].filter(k => {
@@ -5342,7 +5480,7 @@ var CARDS = {
         label: 'Evoke: Exile a green card from hand (ETB fires, then sacrifice)',
         fn(state, perm) {
           // Find green cards in hand (simplified: any non-land card qualifies as green)
-          var cards = CARDS;
+          const cards = CARDS;
           const greenCards = state.hand.filter(k => {
             const def = cards[k];
             return def && !def.types.includes('land') && (def.cost || '').includes('G');
@@ -5389,7 +5527,7 @@ var CARDS = {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('3'); if (!ap) return [];
           const s0 = ap.tapPermanent(perm.id); if (!s0) return [];
-          var cards = CARDS;
+          const cards = CARDS;
 
           // C-26 pattern: return only the single best-priority Elf target rather than
           // fanning out over every Elf in the library.  Branching over all Elves compounds
@@ -5861,7 +5999,7 @@ var CARDS = {
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('G'); if (!ap) return [];
-          var cards = CARDS;
+          const cards = CARDS;
 
           const creaturesInHand = [...new Set(ap.hand)].filter(k =>
             cards[k]?.types.includes('creature')
@@ -5947,7 +6085,7 @@ var CARDS = {
     // Modelled as: find the best nonland permanent in library with MV ≤ X, put it to BF.
     // (Non-deterministic top-X reveal simplified to full library access.)
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total(); // post-payment remaining = X
       const results = [];
@@ -6164,7 +6302,7 @@ var CARDS = {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('G'); if (!ap) return [];
           const s = ap.tapPermanent(perm.id); if (!s) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           // Find a green creature to sacrifice (prefer the least-valuable one)
           const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
                                 'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
@@ -6216,7 +6354,7 @@ var CARDS = {
           const ap = state.payMana('1G'); if (!ap) return [];
           const s = ap.tapPermanent(perm.id); if (!s) return [];
           // Find opponent stax creatures — tracked as opponentStax permanents
-          var cards = CARDS;
+          const cards = CARDS;
           const staxPerms = s.battlefield.filter(p =>
             p.controller === 'opponent' || STAX_CARDS.has(p.cardKey)
           );
@@ -6407,7 +6545,7 @@ var CARDS = {
           const afterPay = state.payMana('G');
           if (!afterPay) return [];
 
-          var cards = CARDS;
+          const cards = CARDS;
 
           const creaturesInHand = [...new Set(afterPay.hand)].filter(k =>
             cards[k]?.types.includes('creature')
@@ -6533,7 +6671,7 @@ var CARDS = {
     //              (end-step approximation — player won't cast more creatures before EOT
     //               in a winning line, so the count is stable).
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
 
       // Enter Growing Rites onto the battlefield
       let base = state.enterBattlefield('growing_rites');
@@ -6652,7 +6790,7 @@ var CARDS = {
   invasion_of_ikoria: {
     name: 'Invasion of Ikoria', types: ['battle'], subtypes: ['Siege'], cost: 'XGG',
     canCast(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       const seen = new Set();
@@ -6672,7 +6810,7 @@ var CARDS = {
     // non-Human creature card with mana value X or less and put it onto the battlefield.
     // C-23 fix: previously branched over all eligible library creatures. Now picks best.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       let best = null, bestScore = -Infinity;
@@ -6789,7 +6927,7 @@ var CARDS = {
     // We always kick (spend 2G total) when we have the extra mana, for the +4/+4.
     castFn(state) {
       const results = [];
-      var cards = CARDS;
+      const cards = CARDS;
       // Base mode: 1G — no mechanical effect in solver (protection not tracked)
       {
         const s = drainMana(state);
@@ -6824,7 +6962,7 @@ var CARDS = {
     //           at X=3 find combo pieces; at X=4+ find high-impact creatures.
     // We pick the top TUTOR_PRIORITY_SCORE creatures of exactly that MV.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       if (x < 1) return [drainMana(state).log('Uncage the Menagerie: X=0, no creatures found')];
@@ -6864,7 +7002,7 @@ var CARDS = {
   chord_of_calling: {
     name: 'Chord of Calling', types: ['instant'], subtypes: [], cost: 'XGGG',
     canCast(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       const seen = new Set();
@@ -6882,7 +7020,7 @@ var CARDS = {
     // C-23 fix: previously branched over all library creatures within MV budget.
     // Now picks the single highest-TUTOR_PRIORITY_SCORE creature.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       let best = null, bestScore = -Infinity;
@@ -6911,7 +7049,7 @@ var CARDS = {
     // reveal them, put them into your hand, then shuffle.
     // Strategy: find the two highest-priority missing combo pieces.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
 
       // Priority scores for combo-relevant creatures (higher = more important)
       const PRIORITY = {
@@ -7009,7 +7147,7 @@ var CARDS = {
     // results). Now picks the single highest-TUTOR_PRIORITY_SCORE green creature,
     // matching the approach of Green Sun's Zenith and Chord of Calling.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
@@ -7036,7 +7174,7 @@ var CARDS = {
     // C-23 fix: previously branched over all library creatures + lands. Now picks best
     // creature (to hand) and best land (to battlefield, tapped) — 2 results max.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
                              'wirewood_lodge','geier_reach_sanitarium','boseiju','forest'];
       const onBF = new Set(state.battlefield.map(p =>
@@ -7444,7 +7582,7 @@ var CARDS = {
     // Strategy: put the highest-priority missing combo piece from OUR graveyard on top.
     // Sets topDecked so startNewTurn draws it deterministically next turn.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const gy = state.players[0].graveyard; // array of card names
       if (gy.length === 0) return [state.log('Noxious Revival: empty graveyard')];
 
@@ -7484,7 +7622,7 @@ var CARDS = {
   worldly_tutor: {
     name: 'Worldly Tutor', types: ['instant'], subtypes: [], cost: 'G',
     canCast(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -7497,7 +7635,7 @@ var CARDS = {
     // Sets state.topDecked so startNewTurn knows to draw exactly that card into hand.
     // C-23 fix: previously branched over all library creatures. Now picks best target.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
@@ -7523,7 +7661,7 @@ var CARDS = {
     name: 'Crop Rotation', types: ['instant'], subtypes: [], cost: 'G',
     // Oracle: As an additional cost, sacrifice a land. Search → put land onto battlefield → shuffle.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const lands = state.lands();
       if (lands.length === 0) return [];
       const KEEP = new Set(['gaeas_cradle','nykthos','yavimaya','wirewood_lodge','geier_reach','deserted_temple']);
@@ -7570,7 +7708,7 @@ var CARDS = {
     reshufflesIntoLibrary: true, // oracle: "Shuffle Green Sun's Zenith into its owner's library"
     canCast(state) {
       // Don't offer GSZ if there's no green creature in the library within the mana budget.
-      var cards = CARDS;
+      const cards = CARDS;
       const xMax = state.mana.total();
       const seen = new Set();
       for (const ck of state.players[0].library) {
@@ -7586,7 +7724,7 @@ var CARDS = {
       return false;
     },
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const xMax = state.mana.total();
       let best = null, bestScore = -Infinity;
       const seen = new Set();
@@ -7615,7 +7753,7 @@ var CARDS = {
     // Solver: with infinite mana X is unbounded → fetch the best creature available.
     // The win condition (X≥10 giving haste) is handled in checkVictory.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       // C-23 fix: pick single best target from library (highest score within MV)
@@ -7667,7 +7805,7 @@ var CARDS = {
     // Oracle: Sacrifice a green creature as additional cost. Search → any green creature onto BF → shuffle.
     // C-23 fix: previously branched over all green library creatures. Now picks best target.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
                             'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
       const greenCreatures = state.creatures().filter(c => {
@@ -7733,7 +7871,7 @@ var CARDS = {
     // Calling are modelled. The solver is still correct because it explores
     // every sac candidate; the branching is now O(unique sac names) ≤ 6.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const results = [];
 
@@ -7810,7 +7948,7 @@ var CARDS = {
     // C-23 fix: previously branched over all lands in library (~20 results).
     // Now picks the single highest-priority land not already on the battlefield.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const LAND_PRIORITY = ['gaeas_cradle','nykthos','deserted_temple','yavimaya','ancient_tomb',
                              'wirewood_lodge','geier_reach_sanitarium','boseiju',
                              'emergence_zone','forest'];
@@ -7839,7 +7977,7 @@ var CARDS = {
   natures_rhythm: {
     name: "Nature's Rhythm", types: ['sorcery'], subtypes: [], cost: 'XGG',
     canCast(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
       const seen = new Set();
@@ -7864,7 +8002,7 @@ var CARDS = {
     // select only the single highest-TUTOR_PRIORITY_SCORE target, matching
     // Green Sun's Zenith / Chord of Calling / Eldritch Evolution behaviour.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       var { parseCost: pc } = _GSM;
       const x = state.mana.total();
 
@@ -7903,7 +8041,7 @@ var CARDS = {
   turntimber_symbiosis: {
     name: 'Turntimber Symbiosis', types: ['sorcery'], subtypes: [], cost: '4GGG',
     canCast(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       const seen = new Set();
       for (const ck of state.players[0].library) {
         if (seen.has(ck) || ck === 'unknown' || isStax(ck)) continue;
@@ -7920,7 +8058,7 @@ var CARDS = {
     // DFC land back: Turntimber, Serpentine Wood — {T}: Add {G}; enters tapped unless
     // you pay 3 life. Playable as a land drop from hand via handAbilities.
     castFn(state) {
-      var cards = CARDS;
+      const cards = CARDS;
       let best = null, bestScore = -Infinity;
       const seen = new Set();
       for (const ck of state.players[0].library) {
@@ -8050,7 +8188,7 @@ var CARDS = {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('2G'); if (!ap) return [];
           const s = ap.tapPermanent(perm.id); if (!s) return [];
-          var cards = CARDS;
+          const cards = CARDS;
           // Find best creature in library (simulates top reveal with library knowledge)
           let bestKey = null, bestScore = -1;
           for (const ck of s.players[0].library) {
@@ -8067,6 +8205,21 @@ var CARDS = {
         },
       },
     },
+  },
+
+  // Oracle: "You may reveal this card from your opening hand. If you do, at
+  // the beginning of your first main phase of the game, add {G}." / Vigilance, reach
+  // The reveal-and-mana trigger is a one-time, pre-game event, not something
+  // that happens on cast or ETB — it's modelled entirely in GameState's
+  // constructor (search "Chancellor of the Tangle" there), which checks the
+  // raw starting hand and adds {G} to the initial mana pool directly when
+  // the conditions hold. Nothing here needs an onEnter/castFn for that
+  // effect; this entry only needs to exist so the card can also be cast
+  // normally like any other creature (its own Vigilance/Reach keywords
+  // don't affect mana or combo logic, so no abilities block is needed).
+  chancellor_of_the_tangle: {
+    name: 'Chancellor of the Tangle', types: ['creature'], subtypes: ['Phyrexian','Beast'],
+    cost: '4GGG', power: 6, toughness: 7, externallyImplemented: true,
   },
 };
 
@@ -10491,7 +10644,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)',
+    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)  [COMBO 66]',
     description:
       "Hyrax ETB untaps Argothian Elder / Ley Weaver; it (free) untaps the big land, tapped each cycle. " +
       "Temur/Kogla bounce-recast Hyrax ({1G}+{2G}=5 mana/cycle). " +
@@ -10615,7 +10768,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)',
+    name: 'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)  [COMBO 67]',
     description:
       "Symbiote (return an Elf) untaps Argothian Elder / Ley Weaver; it (free) untaps the big land. " +
       "Temur bounce-recasts Symbiote to reset its once-per-turn ({1G}+{G}), plus recast the " +
@@ -10691,7 +10844,7 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)',
+    name: 'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)  [COMBO 68]',
     description:
       "Hyrax ETB (or Wirewood Symbiote) untaps the {1}-cost land-untapper (Magus of the " +
       "Candelabra, Formidable Speaker, or Hope Tender); it pays {1} to untap the big land, tapped each cycle. " +
@@ -12232,14 +12385,14 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Temur Sabertooth / Kogla + Shang-Chi + High-Output Dork, generic)': ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]': ['ashaya','shang_chi','hope_tender','formidable_speaker'],
   // Argothian Elder / Ley Weaver + Hyrax / Symbiote loops with Cradle/Nykthos (66, 67, 68)
-  'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)': ['argothian_elder','hyrax_tower_scout'],
+  'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)  [COMBO 66]': ['argothian_elder','hyrax_tower_scout'],
   'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Cloudstone Curio + Cradle/Nykthos)': ['argothian_elder','hyrax_tower_scout','cloudstone_curio'],
-  'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)': ['argothian_elder','wirewood_symbiote','temur_sabertooth'],
+  'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)  [COMBO 67]': ['argothian_elder','wirewood_symbiote','temur_sabertooth'],
   // Combo 68 has alternatives on every axis (untapper: Magus/Speaker/Hope Tender;
   // untap-source: Hyrax/Symbiote; reset: Temur/Kogla). No single card is required
   // across all variants, so requiredKeys lists the canonical Hyrax+Temur variant
   // for near-miss hinting (same convention as the Hyrax+Temur detector).
-  'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)': ['hyrax_tower_scout','temur_sabertooth'],
+  'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)  [COMBO 68]': ['hyrax_tower_scout','temur_sabertooth'],
   'Infinite Draw (Beast Whisperer / Glademuse + Creature Loop)':                 ['beast_whisperer'],
   'Win: Geier Reach Sanitarium Mill (Hitzel\'s Sequence)':                       ['geier_reach','endurance'],
   'Win: Duskwatch Recruiter (find all creatures)':                              ['duskwatch_recruiter'],
@@ -14600,6 +14753,19 @@ var TUTOR_REACH = {
   elvish_harbinger:       'creature',
   fierce_empath:          'creature',
   woodland_bellower:      'creature',
+  // ETB tutor (cast from hand, then triggers): "When this creature enters,
+  // you may discard a card. If you do, search your library for a creature
+  // card... put it into your hand." Found reading ref/primer.md, which
+  // specifically calls this out as a key repeatable tutor ("Elvish
+  // Harbinger... can get Formidable Speaker. And if it can get Formidable
+  // Speaker, it can get anything") — cross-checked against the codebase and
+  // confirmed missing from this map (same class of gap as O-50's land
+  // tutors: already correctly handled by the WIN_CONDITIONS detector for
+  // Duskwatch Recruiter specifically, per its own comment, but with no
+  // entry here canReachCombo's pre-infinite-mana minMissing estimate had no
+  // way to know this card can find anything AT ALL for combos that need it
+  // as a setup piece rather than a finisher).
+  formidable_speaker:     'creature',
   // Land tutors
   crop_rotation:          'land',
   sylvan_scrying:         'land',
@@ -14613,6 +14779,67 @@ var TUTOR_REACH = {
   // new mechanism. See O-50 in ToDo.md.
   sowing_mycospawn:       'land',
   elvish_reclaimer:       'land',
+  // Battlefield activated ability ({3},{T}, sacrifice Urza's Cave: search
+  // library for a land, battlefield tapped). Found reading ref/primer.md
+  // ("Urza's Cave: Land tutor. Directly fetches Gaea's Cradle or Nykthos"),
+  // cross-checked against the codebase: the ability itself is already a
+  // real, fully-branching action (cards.js's sac_tutor, correctly
+  // enumerating every distinct land in the library as a separate result —
+  // no gap there), but this card was simply never added to this map, so
+  // canReachCombo had no way to credit it. Same class of gap as O-50's
+  // Sowing Mycospawn/Elvish Reclaimer, this time caught via primer
+  // cross-reference. Correctly subject to the existing untapped-only rule
+  // for battlefield tutors (the generic loop above already enforces
+  // !p.tapped for every battlefield permanent) — sacrificing itself as
+  // part of the cost is a real cost the actual search still pays in full;
+  // this map only needs to know reaching-for-a-land is possible at all.
+  urza_cave:              'land',
+  // ── O-55: systematic searchLibraryFor cross-reference ──────────────────
+  // O-49 through O-54 were each found one card at a time (a user report, or
+  // a single primer mention). Given the pattern was always the same shape
+  // — "a real, working tutor mechanism in cards.js/GameState.js that was
+  // simply never added to this map" — searched more systematically:
+  // grepped every card key containing a searchLibraryFor call (22 total),
+  // cross-referenced against this map's existing keys. 8 were missing; one
+  // (Growing Rites of Itlimoc, "look at top 4, take a creature") was
+  // deliberately excluded as inconsistent with this map's existing
+  // semantics — every current entry is a guaranteed, unrestricted (or
+  // near-unrestricted) library search, not a probabilistic look-at-N
+  // effect, and Growing Rites' own implementation correctly respects that
+  // limitation (top4 slice) rather than approximating full library
+  // knowledge. The other 7 are all guaranteed, "search your library for
+  // [type]" effects functionally identical in shape to tutors already
+  // covered here (several explicitly noted in their own cards.js comments
+  // as "functionally identical to Natural Order" or similar):
+  genesis_hydra:          'creature',  // reveal top X, put nonland MV≤X to BF (modelled as full search)
+  invasion_of_ikoria:     'creature',  // search for non-Human creature MV≤X, to BF
+  magus_of_the_order:     'creature',  // sac a green creature: search any green creature to BF
+  nylea_keen_eyed:        'creature',  // reveal top card, if creature to hand (modelled as full search)
+  skyshroud_poacher:      'creature',  // search for an Elf permanent, to BF
+  uncage_the_menagerie:   'creature',  // search for up to X same-MV creatures, to hand
+  // Treefolk Harbinger can find EITHER a Treefolk (creature) or a
+  // Forest-subtype card (land, e.g. Dryad Arbor or a basic Forest) — the
+  // only one of these 7 that isn't creature-only, so 'any' rather than
+  // 'creature' like its siblings above.
+  treefolk_harbinger:     'any',
+  // Second systematic sweep: cards manipulating .library/addToHand directly
+  // without going through the searchLibraryFor helper (catches tutor-like
+  // effects implemented via a different code path). Most hits were false
+  // positives on closer reading — Reclaim and Abstergo Entertainment move
+  // cards FROM the graveyard, not from the library; Cloudstone Curio is a
+  // bounce-on-ETB engine; Kogla and Temur Sabertooth's addToHand calls are
+  // their own bounce mechanics returning an already-battlefield creature to
+  // hand, not a library search. Nature's Rhythm was already covered
+  // (`natures_rhythm: 'creature'` above). Turntimber Symbiosis is the one
+  // genuine gap: real Oracle text is "look at top 7, may put a creature
+  // onto the battlefield" (probabilistic, like Growing Rites — normally
+  // excluded), but this card's own implementation deliberately simplifies
+  // to a full guaranteed library scan (its own comment: "non-deterministic
+  // top-7 ignored... the best creature is effectively always in top 7"),
+  // matching Nylea Keen-Eyed's precedent rather than Growing Rites' —
+  // canReachCombo needs to track what's actually simulated, not the true
+  // Oracle text, once the two have already deliberately diverged.
+  turntimber_symbiosis:   'creature',
   // Fetch any permanent type
   archdruid_charm:        'any',
 };
@@ -17689,7 +17916,11 @@ function analyze(hand, options = {}) {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function buildState(hand, battlefield = [], mana = null) {
-  let s = new GameState({ hand: [...hand], landDrops: 1, life: 40, mana: mana ?? undefined });
+  // [O-59] Deferred: the battlefield loop below can turn an initially-empty
+  // battlefield into a non-empty one, which must gate out opening-hand
+  // triggers like Chancellor of the Tangle (they require a genuinely
+  // untouched game start). Applied explicitly once the loop is done.
+  let s = new GameState({ hand: [...hand], landDrops: 1, life: 40, mana: mana ?? undefined, deferOpeningHandTriggers: true });
   s.history.push({ turn: 1, msg: '-- Begin Turn 1 --' });
   for (const key of battlefield) {
     s = s.enterBattlefield(key);
@@ -17698,6 +17929,7 @@ function buildState(hand, battlefield = [], mana = null) {
     const added = s.battlefield[s.battlefield.length - 1];
     if (added) added.summoningSick = false;
   }
+  s = s.applyOpeningHandTriggers(hand);
   return s;
 }
 
@@ -17790,6 +18022,11 @@ function mulliganAnalyze(hand, options = {}) {
       : buildDefaultLibrary({ hand, battlefield });
 
     // Construct the initial state with drawForTurn enabled
+    // [O-59] deferOpeningHandTriggers: the battlefield loop just below can
+    // turn an initially-empty battlefield into a non-empty one, which must
+    // gate out opening-hand triggers like Chancellor of the Tangle (they
+    // require a genuinely untouched game start). Applied explicitly once
+    // the loop is done.
     let state = new GameState({
       players: [
         { name: 'You',        life: 40, library: trialLibrary,    poison: 0 },
@@ -17801,6 +18038,7 @@ function mulliganAnalyze(hand, options = {}) {
       landDrops:   1,
       drawForTurn: true,   // ← enables real draws at each turn boundary (BUT not the first!)
       mana:        mana ?? undefined,
+      deferOpeningHandTriggers: true,
     });
 
     // Place battlefield cards (pre-existing permanents, e.g. commander)
@@ -17809,6 +18047,7 @@ function mulliganAnalyze(hand, options = {}) {
       const added = state.battlefield[state.battlefield.length - 1];
       if (added) added.summoningSick = false;
     }
+    state = state.applyOpeningHandTriggers(hand);
 
     state.history.push({ turn: 1, msg: '-- Begin Turn 1 (mulligan trial) --' });
 
