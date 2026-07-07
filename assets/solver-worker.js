@@ -526,7 +526,7 @@ var DEFAULT_DECKLIST = [
   'urza_cave','utopia_sprawl','verdant_catacombs','war_room','wild_growth',
   'windswept_heath','wirewood_lodge','wirewood_symbiote','woodcaller_automaton',
   'wooded_foothills','woodland_bellower','worldly_tutor',
-  'yavimaya','yisan','yeva','chancellor_of_the_tangle'
+  'yavimaya','yisan','yeva',
 ];
 
 /**
@@ -1227,7 +1227,16 @@ class GameState {
       const bonus = _chancellorOpeningHandBonus(
         this.turn, this.battlefield.length, this.mana.total(),
         this.graveyard.length, this.exile.length, data.hand);
-      if (bonus > 0) this.mana = this.mana.add('G', bonus);
+      if (bonus > 0) {
+        this.mana = this.mana.add('G', bonus);
+        // Direct history push (not this.log(), which clones and is meant
+        // to be the LAST mutation on an already-built state) — the
+        // constructor is still assembling `this` in place at this point,
+        // matching how this.history is populated elsewhere in this
+        // constructor (see data.history above).
+        this.history.push({ turn: this.turn,
+          msg: `Chancellor of the Tangle: revealed from opening hand → add {${'G'.repeat(bonus)}}` });
+      }
     }
 
     // ── Fingerprint cache ─────────────────────────────────────────────────
@@ -1273,7 +1282,7 @@ class GameState {
     if (bonus === 0) return this;
     const s = this.clone();
     s.mana = s.mana.add('G', bonus);
-    return s;
+    return s.log(`Chancellor of the Tangle: revealed from opening hand → add {${'G'.repeat(bonus)}}`);
   }
 
   // ── Convenience zone accessors for active player (players[0]) ────────────
