@@ -1070,6 +1070,12 @@ class GameState {
     this.comboAchieved = data.comboAchieved ?? false;
     this.comboName     = data.comboName     ?? null;
     this._nextId       = data._nextId       ?? 1;
+    // [F-3 perf] history is now stored as a persistent linked list
+    // (_histNode) with a lazily-materialized array cache (_histArr) exposed
+    // through the `history` accessor pair defined on the prototype below.
+    // This assignment invokes the setter, which builds the chain from the
+    // given array (constructor-only O(n) — the hot path never comes here).
+    this._histNode = null; this._histArr = null;   // stable shape before setter
     this.history       = data.history       ? [...data.history] : [];
 
     // ── Command zone ─────────────────────────────────────────────────────────
@@ -1079,6 +1085,17 @@ class GameState {
     this.commanderTax   = data.commanderTax ?? 0;
     // isOpponentTurn: true when modelling a flash window on an opponent's turn
     this.isOpponentTurn = data.isOpponentTurn ?? false;
+    // [O-63] endStepReached: true once something has resolved that only
+    // triggers "at the beginning of your end step" (currently: Growing
+    // Rites of Itlimoc's transform into Itlimoc, Cradle of the Sun). The
+    // end step is the last step of a turn before cleanup — once reached,
+    // no further sorcery-speed actions (playing a land, casting a
+    // sorcery/creature/enchantment/artifact without flash) are legal this
+    // turn, same restriction as isOpponentTurn, just for your own turn
+    // instead of an opponent's. See canCastNow() in actions.js, which
+    // gates on both flags identically. Reset by startNewTurn(), same as
+    // isOpponentTurn.
+    this.endStepReached = data.endStepReached ?? false;
     // opponentTurnsThisRound: how many opponent turns have been taken this round
     // (0–3 in Commander with 3 opponents). Seedborn Muse / Yeva flash windows
     // are available once per opponent turn, so at most 3 windows per round.
@@ -1234,7 +1251,7 @@ class GameState {
         // constructor is still assembling `this` in place at this point,
         // matching how this.history is populated elsewhere in this
         // constructor (see data.history above).
-        this.history.push({ turn: this.turn,
+        this.pushHistory({ turn: this.turn,
           msg: `Chancellor of the Tangle: revealed from opening hand → add {${'G'.repeat(bonus)}}` });
       }
     }
@@ -1462,12 +1479,14 @@ class GameState {
     s.comboAchieved = this.comboAchieved;
     s.comboName     = this.comboName;
     s._nextId       = this._nextId;
-    s.history       = this.history;         // shared (COW — log() copies on write)
+    s._histNode     = this._histNode;       // [F-3] persistent list — shared, immutable
+    s._histArr      = this._histArr;         // share the materialization cache too (same chain)
     // Player 0 cloned eagerly; opponents shared (COW)
     s.players       = [this.players[0].clone(), this.players[1], this.players[2], this.players[3]];
     s.commandZone   = this.commandZone;     // shared (rarely mutated)
     s.commanderTax  = this.commanderTax;
     s.isOpponentTurn = this.isOpponentTurn;
+    s.endStepReached = this.endStepReached;
     s.opponentTurnsThisRound = this.opponentTurnsThisRound;
     s.topDecked     = this.topDecked;
     s.drawForTurn   = this.drawForTurn;
@@ -1479,6 +1498,8 @@ class GameState {
     s._fp           = null;
     s._structKey    = null;
     s._plOwned      = true;   // players array is owned (new array), but opponents inside are shared
+    s._bfArrOwned   = false;  // [perf] per-perm COW: fresh clone owns nothing
+    s._ownedPerms   = null;
     return s;
   }
 
@@ -1489,6 +1510,116 @@ class GameState {
       this._bfOwned = true;
       this._permNames = null;  // invalidate hasPermanent cache
     }
+  }
+
+  /** [perf] Own the battlefield ARRAY only (shallow copy — Permanent objects
+   *  stay shared with the parent). Sufficient for pure array-shape mutations
+   *  (splice/push) that do not write to any permanent's fields, e.g.
+   *  removeFromBattlefield. ~N× cheaper than _ensureBF on an N-perm board.
+   *  The name cache is NOT invalidated here — callers that change the set of
+   *  names (splice) must null _permNames themselves, exactly as they already
+   *  do after _ensureBF. */
+  _ensureBFArray() {
+    if (!this._bfOwned && !this._bfArrOwned) {
+      this.battlefield = this.battlefield.slice();
+      this._bfArrOwned = true;
+    }
+  }
+
+  /** [perf] Own exactly ONE permanent for in-place field mutation, sharing the
+   *  other N-1 Permanent objects with the parent state. Returns the privately
+   *  owned Permanent (safe to mutate), or null if `id` is not on the
+   *  battlefield. Replaces the _ensureBF() + getPermanentById(id) pair in the
+   *  hottest single-permanent mutators (tapPermanent, untapPermanent,
+   *  markAbilityUsed), which profiling showed were responsible for the bulk
+   *  of all Permanent.clone() calls — each deep-copying the whole board to
+   *  flip one field on one permanent.
+   *
+   *  Ownership contract (mirrors _bfOwned):
+   *    - clone() resets _bfArrOwned/_ownedPerms (fresh clone owns nothing);
+   *    - log() propagates them (same shared-array linear-chain contract as
+   *      _bfOwned — see the [perf] comment in log());
+   *    - _ensureBF() supersedes: once _bfOwned is true every perm is owned and
+   *      this returns the existing object without cloning. */
+  _ensureOwnPerm(id) {
+    const bf0 = this.battlefield;
+    let idx = -1;
+    for (let i = 0; i < bf0.length; i++) { if (bf0[i].id === id) { idx = i; break; } }
+    if (idx === -1) return null;
+    if (this._bfOwned) return bf0[idx];          // whole board already owned
+    this._ensureBFArray();
+    const bf = this.battlefield;
+    if (this._ownedPerms) {
+      if (this._ownedPerms.has(id)) return bf[idx];  // this perm already owned
+    } else {
+      this._ownedPerms = new Set();
+    }
+    const c = bf[idx].clone();
+    bf[idx] = c;
+    this._ownedPerms.add(id);
+    return c;
+  }
+
+  // ── History (persistent linked list) ──────────────────────────────────────
+  // [F-3 perf] `history` used to be a plain array copied in full on every
+  // log() (`[...this.history, entry]`) — 845K element copies / 28.6K array
+  // allocations per arbor_elf solve. It is now stored as a persistent
+  // (immutable, structurally-shared) linked list in `_histNode`
+  // ({ e: {turn, msg}, prev }) with a lazily-built array cache in `_histArr`.
+  //
+  // The public `.history` property is preserved EXACTLY via this accessor
+  // pair: reads materialize (once — cached until the next append) a plain
+  // array of the SAME entry objects, oldest-first, so every existing reader
+  // (`history[history.length-1]`, `.slice(prevLen)`, `.filter`, tests) works
+  // unchanged. Entry objects are shared across states and never mutated
+  // (verified: no `.msg =` / `.turn =` writes exist outside constructors).
+  //
+  // Contract for writers:
+  //   - log()            — O(1), appends a node (returns a NEW state as before)
+  //   - pushHistory(e)   — O(1), appends IN PLACE on this state (replaces the
+  //                        old `state.history.push(e)` seeding idiom, which
+  //                        would now desynchronize the cache from the chain)
+  //   - `.history = arr` — O(n) setter, rebuilds the chain (constructor and
+  //                        rare cold paths only)
+  // NEVER mutate the array returned by the getter — it is a cache view.
+  get history() {
+    let a = this._histArr;
+    if (a === null || a === undefined) {
+      a = [];
+      for (let n = this._histNode; n; n = n.prev) a.push(n.e);
+      a.reverse();
+      // Freeze the cache view: a future `state.history.push(e)` (the old
+      // seeding idiom) would mutate the cache while leaving the chain stale —
+      // a silent desync. Frozen, it throws immediately under 'use strict'
+      // instead. All legitimate mutators go through pushHistory()/log()/the
+      // setter. Materialization is cold (zero occurrences during a solve's
+      // search phase — measured), so the freeze cost is irrelevant.
+      Object.freeze(a);
+      this._histArr = a;
+    }
+    return a;
+  }
+
+  set history(arr) {
+    let node = null;
+    for (let i = 0; i < arr.length; i++) node = { e: arr[i], prev: node };
+    this._histNode = node;
+    this._histArr  = arr;
+  }
+
+  /** Append one history entry IN PLACE on this state (O(1)). Replaces the
+   *  old `state.history.push(entry)` idiom — pushing into the getter's cache
+   *  array would leave the underlying chain stale. */
+  pushHistory(entry) {
+    this._histNode = { e: entry, prev: this._histNode };
+    this._histArr  = null;
+  }
+
+  /** O(1) read of the most recent history message (or undefined when empty).
+   *  Hot-path replacement for `state.history[state.history.length - 1]?.msg`,
+   *  which forces a full O(n) materialization right after every log(). */
+  lastHistMsg() {
+    return this._histNode ? this._histNode.e.msg : undefined;
   }
 
   /** Deep-copy opponent players (1-3). Call before mutating opponents. */
@@ -1525,6 +1656,8 @@ class GameState {
     // ~11x slower _ensureBF() on a 10-perm battlefield when flags are missing.
     s._bfOwned      = this._bfOwned;
     s._plOwned      = this._plOwned;
+    s._bfArrOwned   = this._bfArrOwned;   // [perf] per-perm COW flags — log()
+    s._ownedPerms   = this._ownedPerms;   // shares the same array, so ownership carries over
     // [perf] Propagate the hasPermanent() name-cache.  log() shares the same
     // battlefield array, so the cache is still valid — no rebuild needed.
     // Without this, every hasPermanent() call after any action (which ends in
@@ -1535,11 +1668,17 @@ class GameState {
     s.comboAchieved = this.comboAchieved;
     s.comboName     = this.comboName;
     s._nextId       = this._nextId;
-    s.history       = [...this.history, { turn: this.turn, msg }];
+    // [F-3 perf] O(1) append: history is a persistent linked list. The old
+    // `[...this.history, entry]` copied the whole array on EVERY action —
+    // measured 845K element copies / 28.6K array allocations per arbor_elf
+    // solve. Now: one entry object + one node object, no copying.
+    s._histNode     = { e: { turn: this.turn, msg }, prev: this._histNode };
+    s._histArr      = null;
     s.players       = this.players;         // shared
     s.commandZone   = this.commandZone;     // shared
     s.commanderTax  = this.commanderTax;
     s.isOpponentTurn = this.isOpponentTurn;
+    s.endStepReached = this.endStepReached;
     s.opponentTurnsThisRound = this.opponentTurnsThisRound;
     s.topDecked     = this.topDecked;
     s.drawForTurn   = this.drawForTurn;
@@ -1725,8 +1864,7 @@ class GameState {
 
   tapPermanent(id) {
     const s = this.clone();
-    s._ensureBF();
-    const p = s.getPermanentById(id);
+    const p = s._ensureOwnPerm(id);   // [perf] own ONE perm, share the rest
     if (!p || p.tapped) return null;
     p.tapped = true;
     return s;
@@ -1734,8 +1872,7 @@ class GameState {
 
   untapPermanent(id) {
     const s = this.clone();
-    s._ensureBF();
-    const p = s.getPermanentById(id);
+    const p = s._ensureOwnPerm(id);   // [perf] own ONE perm, share the rest
     if (!p) return null;
     p.tapped = false;
     // When a permanent is untapped mid-turn (e.g. by Quirion Ranger bouncing itself
@@ -1746,7 +1883,12 @@ class GameState {
     // are limited "once during each of your turns" regardless of tap state, so
     // untapping must NOT let them fire again — clearing them was a false-loop bug.
     // exert_two_lands likewise persists until the creature's NEXT untap step.
-    if (p.abilitiesUsed && Object.keys(p.abilitiesUsed).length > 0) {
+    // [F-6 perf] "has any key" without materializing Object.keys() — this ran
+    // on every untap in the search. for-in over a plain object literal visits
+    // exactly the own enumerable keys, so the semantics match keys().length>0.
+    let _hasUsedKeys = false;
+    if (p.abilitiesUsed) { for (const _k in p.abilitiesUsed) { _hasUsedKeys = true; break; } }
+    if (_hasUsedKeys) {
       const preserved = {};
       for (const k of ['exert_two_lands', 'bounce_forest', 'bounce_elf']) {
         if (p.abilitiesUsed[k]) preserved[k] = true;
@@ -2109,8 +2251,11 @@ class GameState {
         .map(p => p.power ?? 0);
       const maxOther = otherPowers.length > 0 ? Math.max(...otherPowers) : -1;
       if (enteredPower > maxOther) {
+        const drawnKey = s.players[0].library[0];
         s = s.playerDraws(0, 1);
-        s = s.log(`Selvala trigger: ${perm.name} (power ${enteredPower}) is greatest → draw 1`);
+        const cardsModule = _cards();
+        const drawnName = drawnKey && drawnKey !== 'unknown' ? (cardsModule[drawnKey]?.name ?? drawnKey) : '(empty library)';
+        s = s.log(`Selvala trigger: ${perm.name} (power ${enteredPower}) is greatest → draw ${drawnName}`);
       }
     }
 
@@ -2539,7 +2684,7 @@ class GameState {
    */
   removeFromBattlefield(id, zone = 'graveyard', pi = 0) {
     const s = this.clone();
-    s._ensureBF();
+    s._ensureBFArray();               // [perf] splice needs array ownership only
     const idx = s.battlefield.findIndex(p => p.id === id);
     if (idx === -1) return null;
     const [removed] = s.battlefield.splice(idx, 1);
@@ -2572,9 +2717,16 @@ class GameState {
     // reference LANDS, never other auras, so removing one can't make a
     // second one newly dangling — nothing here can chain.
     let result = s;
-    const danglingAuras = result.battlefield.filter(p => p.enchantedLandId === id);
-    for (const aura of danglingAuras) {
-      result = result.removeFromBattlefield(aura.id, 'graveyard', pi) ?? result;
+    // [F-4 perf] Allocation-free scan: the .filter() here built an array on
+    // EVERY removal, though dangling auras are rare. Collect lazily.
+    let danglingAuras = null;
+    for (const p of result.battlefield) {
+      if (p.enchantedLandId === id) (danglingAuras ??= []).push(p);
+    }
+    if (danglingAuras !== null) {
+      for (const aura of danglingAuras) {
+        result = result.removeFromBattlefield(aura.id, 'graveyard', pi) ?? result;
+      }
     }
 
     // Recompute _hasSTAX from BOTH our battlefield AND opponent stax.
@@ -2583,9 +2735,29 @@ class GameState {
     // opponent stax effects (Thorn of Amethyst, Trinisphere, etc.) for the
     // rest of the search.  Only cost-affecting stax names matter for the
     // _hasSTAX flag's purpose (gating effectiveCost's slow path).
-    const ownHas = result.battlefield.some(p => ALL_STAX_NAMES.has(p.name));
-    const oppHas = [...(result.opponentStax || [])].some(e => COST_AFFECTING_STAX_NAMES.has(e.split('@')[0].trim()));
-    result._hasSTAX = ownHas || oppHas;
+    //
+    // [F-4 perf] Recompute ONLY when the removed permanent is itself a stax
+    // name. This is exact, not heuristic: _hasSTAX = ownHas || oppHas, and
+    //   - removing a non-stax permanent leaves ownHas unchanged (the set of
+    //     stax names on our battlefield is untouched), and
+    //   - removeFromBattlefield never modifies opponentStax, so oppHas is
+    //     unchanged too;
+    // hence the flag is provably identical and the O(board) rescan + Set
+    // spread can be skipped — the overwhelmingly common case (every bounce,
+    // sacrifice, and Cauldron exile in the search hit this path). Dangling
+    // auras removed above can't be stax names, and their recursive calls run
+    // this same exact rule for themselves.
+    // Note the flag can only ever be preserved or recomputed exactly — a
+    // stale-TRUE value costs a slow-path check (perf), never correctness,
+    // and this change can't introduce a false-negative.
+    if (ALL_STAX_NAMES.has(removed.name)) {
+      const ownHas = result.battlefield.some(p => ALL_STAX_NAMES.has(p.name));
+      let oppHas = false;
+      for (const e of (result.opponentStax || [])) {   // [F-4] no [...spread]
+        if (COST_AFFECTING_STAX_NAMES.has(e.split('@')[0].trim())) { oppHas = true; break; }
+      }
+      result._hasSTAX = ownHas || oppHas;
+    }
     return result;
   }
 
@@ -2624,8 +2796,7 @@ class GameState {
 
   markAbilityUsed(id, abilityKey) {
     const s = this.clone();
-    s._ensureBF();
-    const p = s.getPermanentById(id);
+    const p = s._ensureOwnPerm(id);   // [perf] own ONE perm, share the rest
     if (!p) return null;
     p.abilitiesUsed = { ...p.abilitiesUsed, [abilityKey]: true };
     return s;
@@ -2640,6 +2811,7 @@ class GameState {
     s.landsPlayedThisTurn = 0;
     s.storm = 0;
     s.isOpponentTurn = false;
+    s.endStepReached = false;  // [O-63] fresh turn — no end step has happened yet
     s.opponentTurnsThisRound = 0; // fresh round: all 3 opponent windows available again
     s.flashThisTurn  = false;
     s.endingTurn     = false;  // cleanup complete; fresh turn
@@ -2694,13 +2866,14 @@ class GameState {
         s._ensurePlayers();
         s.players[0] = s.players[0].clone();
         s.players[0].life = -1; // triggers youLost()
-        s.history = [...s.history, {
+        s.pushHistory({
           turn: s.turn,
           msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
-        }, {
+        });
+        s.pushHistory({
           turn: s.turn,
           msg: `Summoner's Pact upkeep: cannot pay {2}{G}{G} — YOU LOSE`,
-        }];
+        });
         return s;
       }
       // [O-28] Actually CONSUME the mana sources used to pay {2}{G}{G} —
@@ -2725,13 +2898,14 @@ class GameState {
         const live = s.getPermanentById(id);
         if (live) live.tapped = true;
       }
-      s.history = [...s.history, {
+      s.pushHistory({
         turn: s.turn,
         msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
-      }, {
+      });
+      s.pushHistory({
         turn: s.turn,
         msg: `Summoner's Pact upkeep: pay {2}{G}{G} ✓ (tapped ${toTap.length} permanent(s))`,
-      }];
+      });
       s._ensurePlayers();
       s.players[0] = s.players[0].draw(0); // no-op clone to own player
       return s._afterDraw(s);
@@ -2754,24 +2928,32 @@ class GameState {
         lib.push(lib.shift()); // move top to bottom
         s.players[0] = s.players[0].clone();
         s.players[0].library = lib;
-        s.history = [...s.history, {
+        s.pushHistory({
           turn: s.turn,
           msg: `Lifecrafter's Bestiary: scry 1 → ${CARDS[topKey]?.name ?? topKey} to bottom`,
-        }];
+        });
       } else {
-        s.history = [...s.history, {
+        s.pushHistory({
           turn: s.turn,
           msg: `Lifecrafter's Bestiary: scry 1 → keep ${CARDS[topKey]?.name ?? topKey} on top`,
-        }];
+        });
       }
     }
 
     // ── Normal turn (no pact) ────────────────────────────────────────────────
-    s.history = [...s.history, {
+    s.pushHistory({
       turn: s.turn,
       msg: `-- Begin Turn ${s.turn} (lib: ${s.players[0].librarySize}) --`,
-    }];
+    });
     s._ensurePlayers();  // draw step mutates players
+    // [O-62] drawnCardKey is set by whichever branch below actually drew a
+    // card, then logged once after the if/else — keeping this here (rather
+    // than pushing to s.history inside each branch) keeps both branches at
+    // their original length, so the single _ensurePlayers() call above
+    // stays within this file's static "guard must be within N lines of the
+    // player mutation it protects" check for BOTH branches, not just the
+    // first one.
+    let drawnCardKey = null;
     if (s.topDecked !== null) {
       const topCard = s.topDecked;
       s.topDecked = null;
@@ -2780,6 +2962,7 @@ class GameState {
       const h = s.hand; let lo = 0, hi = h.length;
       while (lo < hi) { const mid = (lo + hi) >>> 1; if (h[mid] <= topCard) lo = mid + 1; else hi = mid; }
       s.hand = [...h.slice(0, lo), topCard, ...h.slice(lo)];
+      drawnCardKey = topCard;
     } else if (s.drawForTurn && s.players[0].library.length > 0) {
       const drawnKey = s.players[0].library[0];
       s.players[0] = s.players[0].draw(1);
@@ -2789,11 +2972,20 @@ class GameState {
         while (lo < hi) { const mid = (lo + hi) >>> 1; if (h[mid] <= drawnKey) lo = mid + 1; else hi = mid; }
         s.hand = [...h.slice(0, lo), drawnKey, ...h.slice(lo)];
       }
+      drawnCardKey = drawnKey;
+    }
+    if (drawnCardKey) {
+      // Both branches above are the same rules-level event (draw for
+      // turn) — a topDecked card is just one whose outcome was already
+      // known from a prior tutor (Elvish Harbinger, Nylea Keen-Eyed,
+      // etc.), not a different kind of draw. Previously only the
+      // drawForTurn branch logged anything; the topDecked branch silently
+      // put the card in hand with no visible step at all.
       const CARDS = _cards();
-      s.history = [...s.history, {
+      s.pushHistory({
         turn: s.turn,
-        msg: `Draw ${CARDS[drawnKey].name}`,
-      }];
+        msg: `Draw ${CARDS[drawnCardKey]?.name ?? drawnCardKey}`,
+      });
     }
     for (let i = 1; i < s.players.length; i++) {
       s.players[i] = s.players[i].draw(1);
@@ -2803,6 +2995,10 @@ class GameState {
 
   // Helper: complete the draw step after pact payment (avoids code duplication)
   _afterDraw(s) {
+    // [O-62] Neither branch here logged the draw at all — same gap as
+    // startNewTurn()'s topDecked branch, but this helper (used after an
+    // upkeep cost like Summoner's Pact is paid) was missing the log entry
+    // in BOTH branches, not just the topDecked one.
     if (s.topDecked !== null) {
       const topCard = s.topDecked;
       s.topDecked = null;
@@ -2812,6 +3008,11 @@ class GameState {
       const h = s.hand; let lo = 0, hi = h.length;
       while (lo < hi) { const mid = (lo + hi) >>> 1; if (h[mid] <= topCard) lo = mid + 1; else hi = mid; }
       s.hand = [...h.slice(0, lo), topCard, ...h.slice(lo)];
+      const CARDS = _cards();
+      s.pushHistory({
+        turn: s.turn,
+        msg: `Draw ${CARDS[topCard]?.name ?? topCard}`,
+      });
     } else if (s.drawForTurn && s.players[0].library.length > 0) {
       const drawnKey = s.players[0].library[0];
       s._ensurePlayers();
@@ -2822,6 +3023,11 @@ class GameState {
         while (lo < hi) { const mid = (lo + hi) >>> 1; if (h[mid] <= drawnKey) lo = mid + 1; else hi = mid; }
         s.hand = [...h.slice(0, lo), drawnKey, ...h.slice(lo)];
       }
+      const CARDS = _cards();
+      s.pushHistory({
+        turn: s.turn,
+        msg: `Draw ${CARDS[drawnKey]?.name ?? drawnKey}`,
+      });
     }
     for (let i = 1; i < s.players.length; i++) {
       s.players[i] = s.players[i].draw(1);
@@ -2973,6 +3179,7 @@ class GameState {
                (this.isOpponentTurn ? '|OT' : '') +
                (this.opponentTurnsThisRound > 0 ? '|OTR:' + this.opponentTurnsThisRound : '') +
                (this.endingTurn     ? '|ET' : '') +
+               (this.endStepReached ? '|ES' : '') +
                ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
                (this.topDecked      ? '|TD:' + this.topDecked : '');  // [E1] topDecked aliasing fix
 
@@ -3214,7 +3421,7 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
       // expensive to build — each is a full COW clone chain).
       const seenLabels = new Set();
       return results.filter(r => {
-        const msg = r.history.at(-1)?.msg ?? '';
+        const msg = r.lastHistMsg() ?? '';   // [F-3] O(1) last-entry read
         if (seenLabels.has(msg)) return false;
         seenLabels.add(msg);
         return true;
@@ -6744,18 +6951,30 @@ var CARDS = {
         let ts = s.removeFromBattlefield(self.id, null); // DFC transform (leaves the game zone)
         if (!ts) return s;
         // [rules] "At the beginning of your end step, if you control four or
-        // more creatures, transform Growing Rites of Itlimoc." The transform
-        // happens in the END STEP — after that, no more sorcery-speed
-        // (non-flash) spells can be cast this turn. So Itlimoc's mana can't
-        // be chained into casting another creature THIS turn unless Yeva,
-        // Nature's Herald (or another "creature spells have flash" effect)
-        // is already on the battlefield, in which case the timing doesn't
-        // matter. Enter tapped in the no-flash case to block that illegal
-        // chain; Itlimoc untaps normally on the next untap step regardless.
+        // more creatures, transform Growing Rites of Itlimoc." Transforming
+        // itself doesn't tap or untap a permanent — official ruling:
+        // "Transforming a permanent doesn't cause it to become tapped or
+        // untapped." Growing Rites (an enchantment) has no tapped state to
+        // begin with, so Itlimoc enters untapped, same as any other new
+        // permanent — verified via search before changing this from the
+        // previous "enters tapped" approximation.
+        //
+        // [O-63] The actual restriction this transform imposes — no more
+        // sorcery-speed spells this turn, since it only happens in the END
+        // STEP — is enforced properly via endStepReached (see canCastNow()
+        // in actions.js), not by denying Itlimoc's own mana specifically.
+        // The old "enter tapped" approach was both rules-inaccurate (per
+        // the ruling above) AND easily bypassed: a later untap effect this
+        // same turn (Hope Tender, Magus of the Candelabra, etc.) would
+        // simply untap it again, silently reopening the illegal window —
+        // exactly what a user-reported line demonstrated. endStepReached
+        // blocks the real illegal action directly, regardless of which
+        // mana source would have paid for it.
+        ts = ts.enterBattlefield('itlimoc');
+        ts.endStepReached = true;
         const hasFlashForCreatures = ts.hasPermanent("Yeva, Nature's Herald");
-        ts = ts.enterBattlefield('itlimoc', { tapped: !hasFlashForCreatures });
         ts = ts.log(`Growing Rites transforms → Itlimoc, Cradle of the Sun (${creatureCount} creatures)` +
-          (hasFlashForCreatures ? '' : ' — enters tapped (transforms in end step; no flash to cast more this turn)'));
+          (hasFlashForCreatures ? '' : ' — no more sorcery-speed spells this turn (transforms in end step)'));
         return ts;
       }
     },
@@ -8359,6 +8578,23 @@ function inHandOrField(state, name, cardKey) {
     (state.hand && state.hand.includes(cardKey));
 }
 
+// [O-67] True if Legolas's Quick Reflexes is available to cast: either in
+// hand directly, or in the graveyard with a recursion engine (Eternal
+// Witness / Noxious Revival) able to bring it back. LQR is an instant, so
+// after resolving it always lands in the graveyard — the recursion path is
+// the common case in an actual loop, not an edge case. Extracted as a
+// shared helper so the "Win: Ulvenwald Tracker Fight Loop / Legolas Tap
+// Loop" win condition and the mana-neutral-ETB detector's own "is this
+// combo actually useful" gate can't drift apart on what "LQR available"
+// means.
+function hasLQRAvailable(state) {
+  if (state.hand && state.hand.includes('legolas_quick_reflexes')) return true;
+  const gy = state.players?.[0]?.graveyard ?? [];
+  if (!gy.includes("Legolas's Quick Reflexes")) return false;
+  return inHandOrField(state, 'Eternal Witness', 'eternal_witness') ||
+    inHandOrField(state, 'Noxious Revival', 'noxious_revival');
+}
+
 function permReady(state, name) {
   return state.battlefield.some(p => p.name === name && !p.tapped && !p.summoningSick);
 }
@@ -9106,11 +9342,54 @@ var DETECTORS = [
       'untap any creature. Recast costs {G}/{1G}; if the available green tapper ' +
       'produces only {G}, the loop is mana-neutral but generates infinite ETB / ' +
       'landfall / LTB / storm. Combo 1 (Quirion) and combo 41 (Scryb + Joraga) ' +
-      'both reduce to this base form.',
+      'both reduce to this base form. Only counts as achieved when something ' +
+      'can actually convert those triggers into progress (a draw engine, or ' +
+      'Legolas\'s Quick Reflexes) — otherwise the loop exists but does nothing.',
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state) && !scrybAvailable(state)) return false;
-      return hasGreenTapper(state);
+      if (!hasGreenTapper(state)) return false;
+      // [O-67] User request: "I don't think we should consider Infinite ETB
+      // as a valid combo without some ability to use those ETB/landfalls to
+      // obtain a Win." A mana-neutral loop that just sits there producing
+      // triggers nobody can use isn't real progress — every downstream
+      // consumer of checkCombos (heuristic ordering, analyzeState's
+      // minMissing, canReachCombo's pruning, the win-recording gate, and
+      // mana-dominance pruning) previously treated "this fired" as
+      // unconditionally good, which is what actually caused a user-reported
+      // false "win condition not yet on battlefield" result. Gating the
+      // DETECTOR itself — rather than patching every downstream consumer
+      // individually, which was tried and caused a catastrophic state-count
+      // explosion by disabling this solver's primary pruning mechanism for
+      // entire subtrees — means checkCombos correctly returns null for a
+      // genuinely useless loop, and nothing downstream needs to know this
+      // distinction exists at all.
+      //
+      // Matches WIN_CONDITIONS' own requirements for the two entries that
+      // already accept MANA_NEUTRAL_ETB ("Win: Draw Library", "Win:
+      // Ulvenwald Tracker Fight Loop / Legolas Tap Loop"), rather than
+      // inventing separate, driftable criteria:
+      //   - Beast Whisperer: draws a card per creature cast — the Ranger
+      //     recast each cycle IS a creature cast. Battlefield only (not
+      //     hand) — casting it costs {2}{G}, which this mana-neutral loop
+      //     cannot fund on top of its own recast cost.
+      //   - Glademuse: draws when YOU cast a spell on an opponent's turn —
+      //     needs Yeva's flash (battlefield or command zone) to actually
+      //     cast the Ranger recast at instant speed during that window.
+      //     Battlefield only, same reasoning as Beast Whisperer.
+      //   - Legolas's Quick Reflexes: turns each tap in the loop into
+      //     removal. Uses the shared hasLQRAvailable() helper (hand, or
+      //     graveyard + a recursion engine) — not battlefield-only, since
+      //     LQR costs only {G}, cheap enough that a single cycle of this
+      //     very loop can plausibly fund casting it without needing a
+      //     separate mana source.
+      if (hasPerm(state, 'Beast Whisperer')) return true;
+      if (hasPerm(state, 'Glademuse') &&
+          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva'))) {
+        return true;
+      }
+      if (hasLQRAvailable(state)) return true;
+      return false;
     },
   },
 
@@ -9681,6 +9960,85 @@ var DETECTORS = [
         (!p.summoningSick || hasHaste)
       );
       if (devotionG(state) >= 7 && acolyteReady) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  SELVALA + TEMUR SABERTOOTH + HASTE ENABLER — BREAK-EVEN ETB ENGINE
+  //  (COMBO 22)
+  //
+  //  The detector above requires greatest power ≥7 because the loop —
+  //  {G}+tap Selvala (+P), {1}{G} bounce, {1}{G}{G} recast — costs exactly
+  //  6 mana per cycle, so P ≥ 7 nets positive mana. At P = 6 (Surrak and
+  //  Goreclaw, the very card acting as the haste enabler) the loop is
+  //  BREAK-EVEN: net 0 mana, but each cycle is still a creature CAST, an
+  //  ETB, an LTB, and +1 storm — a self-sustaining trigger engine needing
+  //  no infinite mana, only its own float. That is exactly the combo-1
+  //  (Ashaya + Ranger) MANA_NEUTRAL_ETB shape, and pairs with the same
+  //  converters through the same win conditions ("Win: Draw Library"
+  //  accepts MANA_NEUTRAL_ETB: Beast Whisperer draws per Selvala recast).
+  //
+  //  decklist_combos.txt lists combo 22 as {G} (mana-positive), which is
+  //  arithmetically wrong (see the manifest note) — but the combo IS real
+  //  as a neutral engine, which is what this detector encodes.
+  //
+  //  Steady-state power note: this check measures greatest power among
+  //  creatures EXCLUDING Selvala, unlike the ≥7 detector above. Selvala's
+  //  own counters/pumps do not survive the bounce (she re-enters fresh at
+  //  2/2, +1/+1 from Surrak's trigger → 3/3), so counting her current
+  //  power would overstate the loop's sustainable X. Non-Selvala creatures
+  //  are never bounced by this loop, so their power is steady.
+  //
+  //  [O-67] Same converter gate as combo 1: a neutral loop only counts as
+  //  achieved when something can turn the triggers into progress —
+  //  Beast Whisperer (battlefield only: the neutral loop cannot fund a
+  //  {2}{G} cast on top of its own costs), Glademuse + Yeva flash (same
+  //  battlefield-only reasoning), or Legolas's Quick Reflexes (cheap
+  //  enough that one cycle's float can plausibly fund it; hand or
+  //  recurrable — shared hasLQRAvailable helper).
+  //
+  //  Priority: registered at 9999 in _DETECTOR_PRIORITY (alongside the
+  //  combo-1 neutral detector) so every net-positive variant — including
+  //  the ≥7 Selvala case above — wins the classification race first.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Infinite ETB / Storm (Selvala + Temur Sabertooth + Haste Enabler, break-even)  [COMBO 22]',
+    loopType: LOOP_TYPE.MANA_NEUTRAL_ETB,
+    description:
+      "Selvala taps for X = greatest power ({G}+{T}); Sabertooth bounces her ({1}{G}); " +
+      "recast ({1}{G}{G}) with haste from Surrak and Goreclaw / Concordant Crossroads / " +
+      "Thousand-Year Elixir / Shang-Chi. At steady-state X = 6 (e.g. Surrak, 6/5) the " +
+      "loop is mana-neutral and generates infinite creature casts / ETB / LTB / storm. " +
+      "Counts as achieved only with a trigger converter: Beast Whisperer, " +
+      "Glademuse + Yeva, or Legolas's Quick Reflexes (O-67).",
+    check(state) {
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      const hasHaste =
+        hasPerm(state, 'Concordant Crossroads') ||
+        hasPerm(state, 'Thousand-Year Elixir') ||
+        hasPerm(state, 'Surrak and Goreclaw') ||
+        state.battlefield.some(p => p.cardKey === 'shang_chi');
+      if (!hasHaste) return false;
+      // Same Selvala readiness prerequisite as the ≥7 net-positive detector.
+      if (!state.battlefield.some(p =>
+        p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return false;
+      // Steady-state X: greatest power among NON-Selvala creatures (see note).
+      let steadyX = 0;
+      for (const p of state.creatures()) {
+        if (p.name === 'Selvala, Heart of the Wilds') continue;
+        const pw = p.power ?? 0;
+        if (pw > steadyX) steadyX = pw;
+      }
+      if (steadyX < 6) return false;   // loop cost is 6 — below that it decays
+      // [O-67] converter gate — mirrors combo 1 exactly.
+      if (hasPerm(state, 'Beast Whisperer')) return true;
+      if (hasPerm(state, 'Glademuse') &&
+          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva'))) {
+        return true;
+      }
+      if (hasLQRAvailable(state)) return true;
       return false;
     },
   },
@@ -12162,17 +12520,11 @@ var WIN_CONDITIONS = [
       }
 
       // ── Path 2: Legolas's Quick Reflexes on a tap-loop creature ──────────
-      // LQR must be in hand, OR in graveyard with a recursion engine available
-      // (Eternal Witness, Noxious Revival recur it; it goes to GY after use).
-      const gy = state.players?.[0]?.graveyard ?? [];
-      const lqrInHand = state.hand && state.hand.includes('legolas_quick_reflexes');
-      const lqrInGY   = gy.includes("Legolas's Quick Reflexes");
-      const hasLQR = lqrInHand ||
-        (lqrInGY && (
-          inHandOrField(state, 'Eternal Witness', 'eternal_witness') ||
-          inHandOrField(state, 'Noxious Revival', 'noxious_revival')
-        ));
-      if (!hasLQR) return false;
+      // [O-67] hasLQRAvailable() covers "in hand, or in graveyard with a
+      // recursion engine (Eternal Witness / Noxious Revival)" — extracted
+      // as a shared helper so this and the mana-neutral-ETB detector's own
+      // "is this loop actually useful" gate can't drift apart.
+      if (!hasLQRAvailable(state)) return false;
 
       // The infinite tap loop (already confirmed by the calling mana_positive
       // detector) involves a creature tapping for mana. That creature is the
@@ -12369,6 +12721,10 @@ var DETECTOR_REQUIRED_KEYS = {
   "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":        ['kogla','karametra_acolyte'],
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote'],
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]': ['temur_sabertooth','concordant_crossroads'],
+  // Break-even Selvala loop (COMBO 22): the 'concordant_crossroads' key here is the
+  // representative of the haste-enabler equivalence slot, same convention as the
+  // net-positive entry directly above.
+  'Infinite ETB / Storm (Selvala + Temur Sabertooth + Haste Enabler, break-even)  [COMBO 22]': ['selvala','temur_sabertooth','concordant_crossroads'],
   'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]': ['hyrax_tower_scout','temur_sabertooth'],
   'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]': ['hyrax_tower_scout','kogla'],
   'Infinite Mana (Earthcraft + Ashaya + Quirion Ranger + Basic Forest)  [Combo Summary #4]': ['earthcraft','ashaya','quirion_ranger'],
@@ -12582,6 +12938,8 @@ var _DETECTOR_PREFILTER = {
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]':
     { all: ['temur_sabertooth'],
       any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
+  'Infinite ETB / Storm (Selvala + Temur Sabertooth + Haste Enabler, break-even)  [COMBO 22]':
+    { all: ['selvala', 'temur_sabertooth'] },
   'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]':
     { all: ['temur_sabertooth', 'hyrax_tower_scout'] },
   'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]':
@@ -12741,6 +13099,10 @@ var _DETECTOR_PRIORITY = new Map([
   // higher than the unlisted-detector default (999) so this runs after every
   // detector that doesn't have an explicit priority entry.
   ['Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]',                               9999],
+  // Same reasoning as combo 1 directly above: the break-even Selvala loop is a
+  // strict superset of the ≥7 net-positive Selvala case (both fire when power
+  // ≥7 and a converter is present) — the positive classification must win.
+  ['Infinite ETB / Storm (Selvala + Temur Sabertooth + Haste Enabler, break-even)  [COMBO 22]',                 9999],
 ]);
 DETECTORS.sort((a, b) => {
   const pa = _DETECTOR_PRIORITY.get(a.name) ?? 999;
@@ -12930,7 +13292,7 @@ function smartTutorTarget(state, allResults) {
   let best = allResults[0];
   let bestScore = -1;
   for (const r of allResults) {
-    const msg = r.history[r.history.length - 1]?.msg ?? '';
+    const msg = r.lastHistMsg() ?? '';   // [F-3] O(1) last-entry read
     // Extract card key from message text by matching known names
     const key = Object.keys(CARDS).find(k => msg.includes(CARDS[k]?.name)) ?? '';
     const score = TUTOR_PRIORITY_SCORE[key] ?? 0;
@@ -13276,11 +13638,15 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
   // When Yeva is on the battlefield, you may cast green creature spells as
   // though they had flash (i.e. at instant speed, including opponent turns).
   // When Emergence Zone has been sacrificed this turn, ALL spells have flash.
-  // When it's an opponent's turn (state.isOpponentTurn), only instant-speed
-  // actions are available unless Yeva or Emergence Zone grants flash.
+  // When it's an opponent's turn (state.isOpponentTurn), OR your own end
+  // step has already been reached this turn (state.endStepReached — e.g.
+  // Growing Rites of Itlimoc transformed into Itlimoc, Cradle of the Sun),
+  // only instant-speed actions are available unless Yeva or Emergence Zone
+  // grants flash.
   const yevaOnBattlefield = state.hasPermanent('Yeva, Nature\'s Herald');
   const flashThisTurn     = state.flashThisTurn ?? false;
   const isOpponentTurn    = state.isOpponentTurn ?? false;
+  const endStepReached    = state.endStepReached ?? false; // [O-63]
 
   // Shang-Chi static: "You may activate abilities of creatures you control as
   // though those creatures had haste."  Active as soon as Shang-Chi is on the
@@ -13290,16 +13656,19 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
   /**
    * Returns true if this card can be cast right now given the turn phase.
    * Lands are handled separately. Instants are always ok. Creatures with
-   * Yeva's flash grant are ok on opponent turns. Sorceries/enchantments/
-   * artifacts require your main phase (not opponent turn), unless
-   * Emergence Zone has granted flash this turn.
+   * Yeva's flash grant are ok on opponent turns and once your own end step
+   * has been reached (Yeva's grant is "as though it had flash," not
+   * turn-dependent, so the same exception covers both restricted windows).
+   * Sorceries/enchantments/artifacts require your main phase — not an
+   * opponent turn, and not after your own end step — unless Emergence
+   * Zone has granted flash this turn.
    */
   function canCastNow(def) {
     if (def.types.includes('instant')) return true;
     if (def.hasFlash) return true;           // innate flash (e.g. Yeva herself)
     if (flashThisTurn) return true;          // Emergence Zone: all spells have flash
-    if (isOpponentTurn) {
-      // On opponent turn: only instants and Yeva-granted flash for green creatures.
+    if (isOpponentTurn || endStepReached) {
+      // Only instants and Yeva-granted flash for green creatures.
       // Yeva must be ON THE BATTLEFIELD — being in the command zone does not grant
       // flash until she has been cast and resolved. yevaInCommandZone only justifies
       // opening the window (so you can cast Yeva herself, then creatures afterwards).
@@ -13333,8 +13702,10 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
   }
 
   // ── 2. Play a land ────────────────────────────────────────────────────────
-  // Playing a land is a sorcery-speed action — only on your turn.
-  if (!isOpponentTurn && state.landDrops > 0) {
+  // Playing a land is a sorcery-speed action — only on your turn, and only
+  // before your own end step has been reached (same restriction as an
+  // opponent's turn — see canCastNow() above for the full reasoning).
+  if (!isOpponentTurn && !endStepReached && state.landDrops > 0) {
     for (const cardKey of uniqueCards(state.hand)) {
       const def = CARDS[cardKey];
       if (!def?.types.includes('land')) continue;
@@ -13449,7 +13820,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
             if (def.isRemoval) {
               for (const r of allResults) {
                 actions.push({
-                  type: 'cast_spell', label: `Cast ${def.name}: ${r.history[r.history.length-1]?.msg ?? ''}`,
+                  type: 'cast_spell', label: `Cast ${def.name}: ${r.lastHistMsg() ?? ''}`,
                   apply: (_s) => r,
                 });
               }
@@ -13471,7 +13842,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
             // Extract fetched card key from a result's last history message.
             // Fast path: check needed keys first. Slow path: full NAME_TO_KEY scan.
             function msgKey(r) {
-              const msg = r.history[r.history.length - 1]?.msg ?? '';
+              const msg = r.lastHistMsg() ?? '';   // [F-3] O(1) last-entry read
               for (const k of needed) {
                 if (CARDS[k] && msg.includes(CARDS[k].name)) return k;
               }
@@ -13523,12 +13894,12 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
             );
 
             // Battlefield tutors: 1 action. Hand/topdeck tutors: up to 2.
-            const firstMsg = sorted[0]?.history[sorted[0].history.length - 1]?.msg ?? '';
+            const firstMsg = sorted[0]?.lastHistMsg() ?? '';   // [F-3]
             const isBF = firstMsg.includes('fetch ') || firstMsg.includes('Zenith →');
             const maxBranches = isBF ? 1 : 2;
 
             for (const resultState of sorted.slice(0, maxBranches)) {
-              const msg = resultState.history[resultState.history.length - 1]?.msg ?? `Cast ${def.name}`;
+              const msg = resultState.lastHistMsg() ?? `Cast ${def.name}`;   // [F-3]
               const spellGoesToGraveyard = (def.types.includes('instant') || def.types.includes('sorcery'))
                 && !def.reshufflesIntoLibrary;
 
@@ -13582,7 +13953,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
                   const res = def.castFn(ns);
                   if (!res || res.length === 0) return null;
                   const matched = res.find(r =>
-                    (r.history[r.history.length-1]?.msg ?? '') === msg
+                    (r.lastHistMsg() ?? '') === msg
                   );
                   let result = matched ?? smartTutorTarget(s, res);
                   if (result && spellGoesToGraveyard) {
@@ -13631,9 +14002,13 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         // WE draw when WE cast on an opponent's turn (requires flash via Yeva /
         // Emergence Zone). Checked on the pre-cast state (s) so casting Glademuse
         // itself does not trigger — it wasn't on the battlefield when cast.
+        // [O-64] Same "show what was drawn" treatment as Heartwood Storyteller/
+        // Runic Armasaur below, for consistency.
         if (isOpponentTurn && s.hasPermanent('Glademuse')) {
+          const drawnKey = ns.players[0].library[0];
           ns = ns.playerDraws(0, 1);
-          ns = ns.log('Glademuse: you cast on opponent\'s turn → draw 1');
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          ns = ns.log(`Glademuse: you cast on opponent's turn → draw ${drawnName}`);
         }
 
         // Beast Whisperer: draw a card when you cast a creature spell.
@@ -14003,11 +14378,19 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         apply(s) {
           const live = s.getPermanentById(perm.id);
           if (!live || live.tapped) return null;
-          // Disruptor Flute: pay {3} extra for named creature's activated ability
-          const flutedNames = new Set();
-          for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
-          for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
-          if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
+          // Disruptor Flute: pay {3} extra for named creature's activated ability.
+          // [F-2 perf] Rebuild the named-card set from the live state ONLY when
+          // the generation-time set was non-empty. apply() is always invoked on
+          // the generating state (Solver x2, repl regenerates per state), so an
+          // empty set at generation time is empty here too — skipping the Set
+          // allocation + full battlefield scan that previously ran on EVERY
+          // tap-for-mana application even with no Flute anywhere in the game.
+          if (fluteNamedCards.size !== 0) {
+            const flutedNames = new Set();
+            for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
+            for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
+            if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
+          }
           // Shang-Chi active = simply present on battlefield (sickness irrelevant)
           const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
           if (live.is('creature') && live.summoningSick && !scActive) return null;
@@ -14023,7 +14406,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
       // Multi-option case (ferocious, devotion variants, etc.): one action per result.
       for (let ri = 0; ri < preResults.length; ri++) {
         const resultIndex = ri;
-        const optionMsg = preResults[ri].history[preResults[ri].history.length - 1]?.msg ?? `option ${ri}`;
+        const optionMsg = preResults[ri].lastHistMsg() ?? `option ${ri}`;   // [F-3]
         actions.push({
           type: 'tap_for_mana',
           label: `Tap ${perm.name} for mana: ${optionMsg}`,
@@ -14031,10 +14414,13 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           apply(s) {
             const live = s.getPermanentById(perm.id);
             if (!live || live.tapped) return null;
-            const flutedNames = new Set();
-            for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
-            for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
-            if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
+            // [F-2 perf] Same guard as the single-option case above.
+            if (fluteNamedCards.size !== 0) {
+              const flutedNames = new Set();
+              for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
+              for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
+              if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
+            }
             const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
             if (live.is('creature') && live.summoningSick && !scActive) return null;
             const liveForAbil = (scActive && live.summoningSick && live.is('creature'))
@@ -14097,10 +14483,13 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         if (!live || live.tapped) return null;
         // Disruptor Flute: pay {3} extra for named creature's activated ability
         // (rebuilt from the live state — see note on the native-mana loop above).
-        const flutedNames = new Set();
-        for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
-        for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
-        if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
+        // [F-2 perf] Same emptiness guard as the native-mana loop.
+        if (fluteNamedCards.size !== 0) {
+          const flutedNames = new Set();
+          for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
+          for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
+          if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
+        }
         const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
         if (live.summoningSick && !scActive) return null;
         let ns = s.tapPermanent(live.id);
@@ -14246,7 +14635,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         actions.push({
           type: 'ability',
           label: `${perm.name}: ${ability.label ?? abilKey}` +
-                 (results.length > 1 ? ` [opt ${i + 1}/${results.length} : ${result.history.at(-1).msg}]` : ''),
+                 (results.length > 1 ? ` [opt ${i + 1}/${results.length} : ${result.lastHistMsg()}]` : ''),
           priority: 6,
           apply(_s) {
             // Re-pay Flute tax from live state if required.
@@ -14467,9 +14856,15 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         // wasn't that player's turn, each other player may draw a card."
         // In practice each opponent casts at least one noncreature spell per round
         // (counterspell, tutor, etc.). Model: draw 1 card per opponent turn.
+        // [O-64] Look at the top of library BEFORE drawing to name the drawn
+        // card in the log, matching the "Draw X" convention established for
+        // the normal draw-for-turn step (O-62) — same reasoning: showing
+        // WHICH card appeared is more useful than a bare "draw 1".
         if (ns.hasPermanent('Heartwood Storyteller')) {
+          const drawnKey = ns.players[0].library[0];
           ns = ns.playerDraws(0, 1);
-          ns = ns.log('Heartwood Storyteller: opponent casts noncreature spell → draw 1');
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          ns = ns.log(`Heartwood Storyteller: opponent casts noncreature spell → draw ${drawnName}`);
         }
 
         // Runic Armasaur: "Whenever an opponent activates an ability of a creature or
@@ -14478,8 +14873,10 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         // abilities, cycling lands, etc. Model: draw 1 card per opponent turn
         // (conservative — one non-mana activation per opponent per turn is the floor).
         if (ns.hasPermanent('Runic Armasaur')) {
+          const drawnKey = ns.players[0].library[0];
           ns = ns.playerDraws(0, 1);
-          ns = ns.log('Runic Armasaur: opponent activates non-mana ability → draw 1');
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          ns = ns.log(`Runic Armasaur: opponent activates non-mana ability → draw ${drawnName}`);
         }
 
         return ns.log(`Opponent ${oppNum} of 3 end step`);
@@ -14530,12 +14927,16 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
             }
           }
           if (ns.hasPermanent('Heartwood Storyteller')) {
+            const drawnKey = ns.players[0].library[0];
             ns = ns.playerDraws(0, 1);
-            ns = ns.log('Heartwood Storyteller: opponent casts noncreature spell → draw 1');
+            const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+            ns = ns.log(`Heartwood Storyteller: opponent casts noncreature spell → draw ${drawnName}`);
           }
           if (ns.hasPermanent('Runic Armasaur')) {
+            const drawnKey = ns.players[0].library[0];
             ns = ns.playerDraws(0, 1);
-            ns = ns.log('Runic Armasaur: opponent activates non-mana ability → draw 1');
+            const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+            ns = ns.log(`Runic Armasaur: opponent activates non-mana ability → draw ${drawnName}`);
           }
           return ns.log(`Opponent ${nextOppNum} of 3 end step`);
         },
@@ -15223,12 +15624,38 @@ function score(state, depth) {
 // experiment) but needs careful per-bench validation and weight tuning
 // before shipping.  See the [readiness-signal] item under Open ideas in
 // ToDo.md for follow-up.
-function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefined, _searchSpellWins = undefined) {
+function heuristic(minMissing, state, exhaustive = false, _infiniteMana = undefined, _searchSpellWins = undefined, _checkedVictory = undefined) {
   // [E3] Use pre-computed checkCombos result when available.
   // The minMissing===0 short-circuit still fires when the caller has detected
   // a firing combo on this state — push it to the front of the queue.
   const fired = (_infiniteMana !== undefined) ? _infiniteMana : (minMissing === 0 ? checkCombos(state) : null);
-  if (minMissing === 0 && fired) return -1_000_000 - state.mana.total();
+  if (minMissing === 0 && fired) {
+    // [O-65] A firing combo only earns this maximal "closest to done" score
+    // if it's either genuinely useful on its own — MANA_POSITIVE, since
+    // true infinite mana is always valuable progress even before a
+    // specific win condition has been found or deployed yet — or
+    // checkVictory has already confirmed a real, deployed win for
+    // whatever weaker loop type fired (e.g. MANA_NEUTRAL_ETB paired with
+    // Beast Whisperer's draw engine, which DOES turn infinite ETBs into
+    // real progress). Without this gate, a mana-neutral ETB loop with
+    // nothing to actually benefit from it (no draw engine, no win
+    // condition ready — e.g. Ashaya+Ranger with no haste enabler) scored
+    // as if it were an outright win, causing the search to commit to
+    // exploring "what more can we do from here" ahead of trying entirely
+    // different lines that might actually reach a win.
+    const usefulOnItsOwn = fired.loopType === LOOP_TYPE.MANA_POSITIVE;
+    // [O-65 correction] checkVictory ALWAYS returns a truthy object once a
+    // combo has fired — even its own "no real win yet" fallback case sets
+    // `deployed: true` with `winCondition: null` (see the "Win condition
+    // not yet on battlefield" fallback at the end of checkVictory). A bare
+    // `!!checkVictory(...)` check is therefore always true whenever `fired`
+    // is truthy, silently defeating this entire gate. The correct signal
+    // is `winCondition !== null` — that field is null specifically when no
+    // real WIN_CONDITIONS entry matched.
+    const victoryResult = _checkedVictory !== undefined ? _checkedVictory : checkVictory(state, fired);
+    const hasRealWin = !!victoryResult && victoryResult.winCondition != null;
+    if (usefulOnItsOwn || hasRealWin) return -1_000_000 - state.mana.total();
+  }
 
   // [C-32] Base score: just floating mana.  minMissing*1000 was dropped —
   // see function-level note.
@@ -15596,18 +16023,24 @@ class Solver {
           return fp.slice(0, mIdx) + fp.slice(lIdx);
         })();
 
+    // [F-5 perf] Compare against the frontier field-by-field WITHOUT
+    // materializing the candidate's mana vector — a `[m.W,...]` array was
+    // being allocated for every generated child that reached this check,
+    // including the majority that are dominated (return true) or merely
+    // scanned. The vec array is now built only when the candidate is
+    // actually inserted into the frontier.
     const m = next.mana;
-    const vec = [m.W, m.U, m.B, m.R, m.G, m.C];
+    const W = m.W, U = m.U, B = m.B, R = m.R, G = m.G, C = m.C;
     const existingList = frontier.get(structKey);
     if (!existingList) {
-      frontier.set(structKey, [vec]);
+      frontier.set(structKey, [[W, U, B, R, G, C]]);
       return false;
     }
     for (const existing of existingList) {
-      if (existing[0] >= vec[0] && existing[1] >= vec[1] && existing[2] >= vec[2] &&
-          existing[3] >= vec[3] && existing[4] >= vec[4] && existing[5] >= vec[5] &&
-          (existing[0] > vec[0] || existing[1] > vec[1] || existing[2] > vec[2] ||
-           existing[3] > vec[3] || existing[4] > vec[4] || existing[5] > vec[5])) {
+      if (existing[0] >= W && existing[1] >= U && existing[2] >= B &&
+          existing[3] >= R && existing[4] >= G && existing[5] >= C &&
+          (existing[0] > W || existing[1] > U || existing[2] > B ||
+           existing[3] > R || existing[4] > G || existing[5] > C)) {
         return true; // STRICTLY dominated: ≥ in every color, > in at least one
       }
     }
@@ -15615,14 +16048,23 @@ class Solver {
     // fails strict dominance in both directions and is deliberately left
     // for exact dedup to handle). Drop any existing entries THIS one now
     // strictly dominates (same rule, reversed).
-    const filtered = existingList.filter(existing => !(
-      vec[0] >= existing[0] && vec[1] >= existing[1] && vec[2] >= existing[2] &&
-      vec[3] >= existing[3] && vec[4] >= existing[4] && vec[5] >= existing[5] &&
-      (vec[0] > existing[0] || vec[1] > existing[1] || vec[2] > existing[2] ||
-       vec[3] > existing[3] || vec[4] > existing[4] || vec[5] > existing[5])
-    ));
-    filtered.push(vec);
-    frontier.set(structKey, filtered);
+    //
+    // [F-5 perf] The old `existingList.filter(...)` allocated a fresh array
+    // on EVERY insertion even when nothing was dominated (the common case).
+    // Scan first; mutate in place via splice only when a drop actually
+    // occurs. In-place mutation of the frontier list is safe: `frontier` is
+    // solver-private (this.manaFrontier), never shared with game states,
+    // and no caller retains a reference to the list across calls.
+    for (let i = existingList.length - 1; i >= 0; i--) {
+      const existing = existingList[i];
+      if (W >= existing[0] && U >= existing[1] && B >= existing[2] &&
+          R >= existing[3] && G >= existing[4] && C >= existing[5] &&
+          (W > existing[0] || U > existing[1] || B > existing[2] ||
+           R > existing[3] || G > existing[4] || C > existing[5])) {
+        existingList.splice(i, 1);   // reverse iteration keeps indices valid
+      }
+    }
+    existingList.push([W, U, B, R, G, C]);
     return false;
   }
 
@@ -15828,7 +16270,9 @@ class Solver {
         // [O-8] heuristicBias is null by default — `+ 0` is a guaranteed
         // no-op so existing state counts/bench.js results are unaffected
         // unless a caller (AdversarialSolver) explicitly supplies one.
-        h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive, childInfiniteMana) +
+        // [O-65] childCombo (already computed above) is passed through so
+        // heuristic() doesn't need to re-run checkVictory itself.
+        h: heuristic(childAnalysis.minMissing, next, this.opts.exhaustive, childInfiniteMana, undefined, childCombo) +
            (this.opts.heuristicBias ? this.opts.heuristicBias(next) : 0),
         // [E14] Carry the values computed here so the recursive _dfs call on this
         // child reuses them instead of recomputing buildPresentSet/checkCombos/
@@ -16032,7 +16476,9 @@ class Solver {
           children.push({
             next,
             // [O-8] see DFS site above — null by default, guaranteed no-op.
-            h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana) +
+            // [O-65] childCombo (already computed above) is passed through so
+            // heuristic() doesn't need to re-run checkVictory itself.
+            h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana, undefined, childCombo) +
                (this.opts.heuristicBias ? this.opts.heuristicBias(next) : 0),
             pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: ca },
           });
@@ -17930,7 +18376,7 @@ function buildState(hand, battlefield = [], mana = null) {
   // triggers like Chancellor of the Tangle (they require a genuinely
   // untouched game start). Applied explicitly once the loop is done.
   let s = new GameState({ hand: [...hand], landDrops: 1, life: 40, mana: mana ?? undefined, deferOpeningHandTriggers: true });
-  s.history.push({ turn: 1, msg: '-- Begin Turn 1 --' });
+  s.pushHistory({ turn: 1, msg: '-- Begin Turn 1 --' });
   for (const key of battlefield) {
     s = s.enterBattlefield(key);
     // Mark the most recently entered permanent as not summoning sick
@@ -18058,7 +18504,7 @@ function mulliganAnalyze(hand, options = {}) {
     }
     state = state.applyOpeningHandTriggers(hand);
 
-    state.history.push({ turn: 1, msg: '-- Begin Turn 1 (mulligan trial) --' });
+    state.pushHistory({ turn: 1, msg: '-- Begin Turn 1 (mulligan trial) --' });
 
     // Start game by drawing a card
     if (state.players[0].library.length > 0) {
