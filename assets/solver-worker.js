@@ -18451,6 +18451,32 @@ function cardRole(key) {
  *                                             remain random.  When omitted the library is
  *                                             built from the default decklist via
  *                                             buildDefaultLibrary (excluding hand/battlefield).
+ * @param {boolean}  [options.firstWin=true]   Stop each trial's search at the FIRST
+ *                                             deployed winning line instead of exhausting
+ *                                             the budget looking for the best-scored one.
+ *                                             Only meaningful with strategy:'dfs' — the
+ *                                             default 'iddfs' strategy is firstWin per
+ *                                             pass by construction.
+ * @param {string}   [options.strategy='iddfs'] Per-trial search strategy. The default
+ *                                             'iddfs' (iterative deepening, each pass
+ *                                             firstWin) measured 13x faster than the old
+ *                                             exhaust-the-budget DFS on winning hands
+ *                                             AND more accurate: plain DFS can burn its
+ *                                             whole state budget inside turn-4 subtrees
+ *                                             before reaching a turn-3 win, producing
+ *                                             budget-exhaustion FALSE NEGATIVES that
+ *                                             IDDFS's turn-bounded passes structurally
+ *                                             avoid (measured: a strong hand's
+ *                                             infiniteManaPercent rose 84 -> 100 under
+ *                                             the same seed, byTurn snapped to the true
+ *                                             earliest turn, and no-win hands paid no
+ *                                             penalty). winPercent samples the returned
+ *                                             line's winCondition, which under any
+ *                                             firstWin variant is the first line's
+ *                                             rather than the best-scored line's —
+ *                                             noise-level drift, documented in PERF-2.
+ *                                             Pass 'dfs' with firstWin:false for the
+ *                                             pre-2026-07-09 behaviour.
  * @returns {MulliganAnalysis}
  */
 function mulliganAnalyze(hand, options = {}) {
@@ -18462,6 +18488,8 @@ function mulliganAnalyze(hand, options = {}) {
     battlefield = [],
     library     = null,   // optional: caller-supplied library; null → buildDefaultLibrary
     mana        = null,   // optional: initial floating mana (ManaPool or plain object)
+    firstWin    = true,   // stop each trial at the first win (see JSDoc above)
+    strategy    = 'iddfs', // per-trial search strategy (see JSDoc above)
   } = options;
 
   let infiniteManaWins = 0;
@@ -18522,6 +18550,8 @@ function mulliganAnalyze(hand, options = {}) {
       maxStates,
       allLines: false,
       verbose:  false,
+      firstWin,   // [PERF-2] stop at the first deployed win per trial (default true)
+      strategy,
     });
 
     const result = quietSolve(solver, state);
