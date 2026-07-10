@@ -2410,12 +2410,12 @@ class GameState {
         }
       }
     }
-    // King of the Coldblood Curse ETB: target creature loses all abilities, becomes 4/4 Lizard.
+    // Lizard, Connors's Curse ETB: target creature loses all abilities, becomes 4/4 Lizard.
     // Fires if a stax creature (Collector Ouphe) is on the battlefield OR in opponentStax.
-    if (!skipETB && cardKey === 'king_coldblood') {
+    if (!skipETB && cardKey === 'lizard_connors_curse') {
       const STAX_CREATURE_NAMES = new Set(['Collector Ouphe']);
       const staxTarget = s.battlefield.find(p =>
-        p.is('creature') && p.name !== 'King of the Coldblood Curse' &&
+        p.is('creature') && p.name !== "Lizard, Connors's Curse" &&
         STAX_CREATURE_NAMES.has(p.name)
       );
       if (staxTarget) {
@@ -2431,14 +2431,14 @@ class GameState {
             counters: {}, abilitiesUsed: {},
           });
           s.battlefield = [...s.battlefield, blank];
-          s = s.log(`King of the Coldblood Curse ETB: ${staxTarget.name} loses all abilities → 4/4 Lizard`);
+          s = s.log(`Lizard, Connors's Curse ETB: ${staxTarget.name} loses all abilities → 4/4 Lizard`);
         }
       } else {
         // Check opponentStax for Collector Ouphe (strips artifact-ability suppression)
         const oppOuphe = [...s.opponentStax].find(e => e.split('@')[0].trim() === 'Collector Ouphe');
         if (oppOuphe) {
           s = s.removeFromOpponentStax('Collector Ouphe');
-          s = s.log(`King of the Coldblood Curse ETB: opponent's Collector Ouphe loses all abilities`);
+          s = s.log(`Lizard, Connors's Curse ETB: opponent's Collector Ouphe loses all abilities`);
         }
       }
     }
@@ -4565,7 +4565,7 @@ var CARDS = {
   fyndhorn_elves:  { name: 'Fyndhorn Elves',  types:['creature'], subtypes:['Elf','Druid'],   cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{G}',[['G',1]]) },
   boreal_druid:    { name: 'Boreal Druid',    types:['creature'], subtypes:['Elf','Druid'],   cost:'G',   power:1,toughness:1, tapForMana: simpleTap('{C}',[['C',1]]) },
   birds_of_paradise:{ name:'Birds of Paradise',types:['creature'],subtypes:['Bird'],           cost:'G',   power:0,toughness:1, tapForMana: simpleTap('{any}',[['G',1]]) },
-  delighted_halfling:{ name:'Delighted Halfling',types:['creature'],subtypes:['Halfling','Citizen'],cost:'G',power:1,toughness:1, tapForMana: simpleTap('{C}',[['C',1]]) },
+  delighted_halfling:{ name:'Delighted Halfling',types:['creature'],subtypes:['Halfling','Citizen'],cost:'G',power: 1, toughness: 2, tapForMana: simpleTap('{C}',[['C',1]]) },  // [P/T verified 2026-07-10 vs card DB; was 1/1]
   joraga_treespeaker: {
     name: 'Joraga Treespeaker', types:['creature'], subtypes:['Elf','Druid'],
     cost:'G', power:1, toughness:1,
@@ -4636,7 +4636,7 @@ var CARDS = {
   },
   insidious_fungus: {
     name: 'Insidious Fungus', types: ['creature'], subtypes: ['Fungus'], cost: 'G',
-    power: 1, toughness: 1,
+    power: 1, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 1/1]
     // Oracle: {2}, Sacrifice this creature: Choose one —
     // • Destroy target artifact.
     // • Destroy target enchantment.
@@ -4701,14 +4701,14 @@ var CARDS = {
   },
   treefolk_harbinger: {
     externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
-    name: 'Treefolk Harbinger', types:['creature'], subtypes:['Treefolk','Druid'], cost:'G', power:1,toughness:1,
+    name: 'Treefolk Harbinger', types:['creature'], subtypes:['Treefolk','Druid'], cost:'G', power: 0, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 1/1]
     // ETB: search library for a Treefolk or Forest-subtype card, reveal it, put on top.
     // Implemented in GameState.enterBattlefield (deterministic: best TUTOR_PRIORITY_SCORE match).
     // cards.js onEnter removed (2026-05-12) to prevent double-fire when cast via actions.js.
   },
     elvish_reclaimer: {
     name: 'Elvish Reclaimer', types: ['creature'], subtypes: ['Elf','Warrior'], cost: 'G',
-    power: 1, toughness: 1,
+    power: 1, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 1/1]
     // Oracle: {2},{T}, Sacrifice a land: Search library for a land, put it onto the battlefield tapped.
     // Key use: fetch Gaea's Cradle, Nykthos, Deserted Temple, War Room, etc.
     abilities: {
@@ -4794,7 +4794,7 @@ var CARDS = {
   },
 
   fanatic_of_rhonas: {
-    name: 'Fanatic of Rhonas', types:['creature'], subtypes:['Snake','Druid'], cost:'1G', power:2,toughness:2,
+    name: 'Fanatic of Rhonas', types:['creature'], subtypes:['Snake','Druid'], cost:'1G', power: 1, toughness: 4,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     tapForMana(state, perm) {
       if (perm.tapped || perm.summoningSick) return [];
       const results = [];
@@ -4925,7 +4925,7 @@ var CARDS = {
   },
 
   magus_of_the_candelabra: {
-    name: 'Magus of the Candelabra', types:['creature'], subtypes:['Human','Wizard'], cost:'G', power:1,toughness:1,
+    name: 'Magus of the Candelabra', types:['creature'], subtypes:['Human','Wizard'], cost:'G', power: 1, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 1/1]
     abilities: {
       untap_x_lands: {
         label: '{X}, {T}: Untap X target lands',
@@ -4984,7 +4984,7 @@ var CARDS = {
 
   druid_of_the_cowl: {
     name: 'Druid of the Cowl', types: ['creature'], subtypes: ['Elf', 'Druid'],
-    cost: '1G', power: 1, toughness: 2,
+    cost: '1G', power: 1, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 1/2]
     tapForMana: simpleTap('{G}', [['G', 1]]),
   },
 
@@ -5019,7 +5019,7 @@ var CARDS = {
 
   ilysian_caryatid: {
     name: 'Ilysian Caryatid', types: ['creature'], subtypes: ['Plant'],
-    cost: '1G', power: 0, toughness: 3,
+    cost: '1G', power: 1, toughness: 1,  // [P/T verified 2026-07-10 vs card DB; was 0/3]
     // {T}: Add one mana of any color. If you control a creature with power 4+, add two mana instead.
     tapForMana(state, perm) {
       if (perm.tapped || perm.summoningSick) return [];
@@ -5033,8 +5033,8 @@ var CARDS = {
   },
 
   whisperer_of_the_wilds: {
-    name: 'Whisperer of the Wilds', types: ['creature'], subtypes: ['Human', 'Druid'],
-    cost: '1G', power: 1, toughness: 2,
+    name: 'Whisperer of the Wilds', types: ['creature'], subtypes: ['Human', 'Shaman'],  // [subtypes verified 2026-07-10; was Human,Druid]
+    cost: '1G', power: 0, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 1/2]
     // {T}: Add {G}. Ferocious — {T}: Add {G}{G} if you control a creature with power 4+.
     // Both are mana abilities. Model: always produces the better amount.
     tapForMana(state, perm) {
@@ -5049,8 +5049,8 @@ var CARDS = {
   },
 
   wose_pathfinder: {
-    name: 'Wose Pathfinder', types: ['creature'], subtypes: ['Treefolk', 'Scout'],
-    cost: '1G', power: 1, toughness: 2,
+    name: 'Wose Pathfinder', types: ['creature'], subtypes: ['Human', 'Shaman'],  // [subtypes verified 2026-07-10; was Treefolk,Scout — a real behavior fix: now a legal Kogla bounce target and no longer a Treefolk Harbinger tutor hit]
+    cost: '1G', power: 1, toughness: 1,  // [P/T verified 2026-07-10 vs card DB; was 1/2]
     // {T}: Add {G} for each Forest you control.
     tapForMana(state, perm) {
       if (perm.tapped || perm.summoningSick) return [];
@@ -5064,8 +5064,8 @@ var CARDS = {
   },
 
   armored_scrapgorger: {
-    name: 'Armored Scrapgorger', types: ['creature'], subtypes: ['Squirrel'],
-    cost: '1G', power: 2, toughness: 2,
+    name: 'Armored Scrapgorger', types: ['creature'], subtypes: ['Phyrexian','Beast'],  // [subtypes verified 2026-07-10 vs card DB; was Squirrel]
+    cost: '1G', power: 0, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     // {T}: Exile up to two target cards from a single graveyard. Add {G} for each artifact exiled.
     // Modeled as a mana ability — taps to exile opponents' artifacts from graveyard for {G} each.
     // Simplified: if any artifact names are in graveyard, exile up to 2 for {G}{G};
@@ -5103,7 +5103,7 @@ var CARDS = {
 
   somberwald_sage: {
     name: 'Somberwald Sage', types: ['creature'], subtypes: ['Human', 'Druid'],
-    cost: '2G', power: 1, toughness: 1,
+    cost: '2G', power: 0, toughness: 1,  // [P/T verified 2026-07-10 vs card DB; was 1/1]
     // {T}: Add three mana in any combination of colors. Spend only on creature spells.
     // The restriction (creature-only mana) is not modeled in the mana pool,
     // but the solver primarily casts creatures so this is functionally correct.
@@ -5179,7 +5179,7 @@ var CARDS = {
   },
 
   voice_of_many: {
-    name: 'Voice of Many', types: ['creature'], subtypes: ['Elf', 'Warrior'],
+    name: 'Voice of Many', types: ['creature'], subtypes: ['Elf', 'Druid'],  // [subtypes verified 2026-07-10; was Elf,Warrior]
     cost: '2GG', power: 3, toughness: 3,
     // ETB: draw a card for each opponent who controls fewer creatures than you.
     // In 1v1 (commander), draw 1 if you have more creatures than opponent.
@@ -5189,7 +5189,7 @@ var CARDS = {
 
   timeless_witness: {
     name: 'Timeless Witness', types: ['creature'], subtypes: ['Human', 'Shaman'],
-    cost: '2GG', power: 2, toughness: 2,
+    cost: '2GG', power: 2, toughness: 1,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     // ETB: return target card from graveyard to hand.
     // Eternalize {4}{G}{G}: exile from GY, create 4/4 Zombie token copy.
     externallyImplemented: true,  // ETB return in GameState.enterBattlefield
@@ -5222,7 +5222,7 @@ var CARDS = {
   // ─── CREATURES — Untappers ────────────────────────────────────────────────
 
   hope_tender: {
-    name: 'Hope Tender', types:['creature'], subtypes:['Human','Druid'], cost:'1G', power:1,toughness:1,
+    name: 'Hope Tender', types:['creature'], subtypes:['Human','Druid'], cost:'1G', power: 2, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 1/1]
     abilities: {
       untap_one_land: {
         label: '{1}, {T}: Untap target land',
@@ -5336,7 +5336,10 @@ var CARDS = {
   },
 
   ley_weaver: {
-    name: 'Ley Weaver', types:['creature'], subtypes:['Human','Druid'], cost:'3G', power:2,toughness:2,
+    name: 'Ley Weaver', types:['creature'], subtypes:['Human','Druid'], cost:'3G', power: 2, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 1/3]
+    // [P/T re-verified 2026-07-10] 2/2 IS correct (Scryfall BBD #21). The 2026-07-09
+    // "fix" to 1/3 was itself wrong — made from memory, which is exactly the failure
+    // mode the card-DB verification pass now guards against.
     abilities: {
       untap_two_lands: {
         label: '{T}: Untap two target lands',
@@ -5361,7 +5364,7 @@ var CARDS = {
   },
 
   saryth: {
-    name: "Saryth, the Viper's Fang", types:['creature'], subtypes:['Human','Warlock'], cost:'2GG', power:3,toughness:3,
+    name: "Saryth, the Viper's Fang", types:['creature'], subtypes:['Human','Warlock'], cost:'2GG', power: 3, toughness: 4,  // [P/T verified 2026-07-10 vs card DB; was 3/3]
     abilities: {
       untap_permanent: {
         label: '{1}, {T}: Untap another creature or land',
@@ -5384,7 +5387,7 @@ var CARDS = {
   },
 
   formidable_speaker: {
-    name: 'Formidable Speaker', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power:2,toughness:2,
+    name: 'Formidable Speaker', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power: 2, toughness: 4,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     abilities: {
       untap_permanent: {
         label: '{1}, {T}: Untap another target permanent',
@@ -5528,6 +5531,7 @@ var CARDS = {
 
   ashaya: {
     name: 'Ashaya, Soul of the Wild', types:['creature'], subtypes:['Elemental'], cost:'3GG', power:0,toughness:0,
+    variablePT: true,   // */* — P/T = number of lands you control; the 0 above is a placeholder
     // Power/toughness = number of lands you control (including herself, since she is a Forest land).
     // GameState.enterBattlefield already sets isForest=true, adds 'land'/'Forest' types on the
     // Ashaya ETB block (the loop at cardKey==='ashaya' iterates all creatures including herself).
@@ -5554,7 +5558,7 @@ var CARDS = {
   },
   eladamri: {
     name: 'Eladamri, Korvecdal', types: ['creature'], subtypes: ['Elf','Warrior'],
-    cost: '1GG', power: 2, toughness: 3,
+    cost: '1GG', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/3]
     // See top of library, cast creatures from top.
     // {G}, {T}, tap two untapped creatures: put a creature from top/hand onto battlefield.
     abilities: {
@@ -5734,7 +5738,7 @@ var CARDS = {
   // [drift-detector] Collector Ouphe suppresses artifact activated abilities — modeled via _hasSTAX in GameState.js
   skyshroud_poacher: {
     name: 'Skyshroud Poacher', types: ['creature'], subtypes: ['Human','Rebel'],
-    cost: '2GG', power: 2, toughness: 4,
+    cost: '2GG', power: 2, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 2/4]
     // {3}, {T}: Search your library for an Elf permanent card, put it onto the battlefield.
     abilities: {
       tutor_elf: {
@@ -5862,7 +5866,7 @@ var CARDS = {
   },
   glademuse: {
     name: 'Glademuse', types: ['creature'], subtypes: ['Beast'], cost: '2G',
-    power: 3, toughness: 3,
+    power: 2, toughness: 4,  // [P/T verified 2026-07-10 vs card DB; was 3/3]
     // Whenever a player casts a spell on someone else's turn, that player draws a card.
     // This engine models only your turns, so this triggers when opponents cast during your turn.
     // Simplified: gives you card draw when opponents cast instants.
@@ -5883,13 +5887,13 @@ var CARDS = {
   },
   runic_armasaur: {
     name: 'Runic Armasaur', types: ['creature'], subtypes: ['Dinosaur'],
-    cost: '1GG', power: 2, toughness: 3,
+    cost: '1GG', power: 2, toughness: 5,  // [P/T verified 2026-07-10 vs card DB; was 2/3]
     // Whenever an opponent activates a non-mana ability of a creature or land, draw a card.
     // Not modeled in the solver (triggers on opponent actions).
   },
   heartwood_storyteller:{ name:'Heartwood Storyteller',     types:['creature'],subtypes:['Treefolk'],          cost:'1GG',  power:2,toughness:3 },
   destiny_spinner: {
-    name: 'Destiny Spinner', types:['creature','enchantment'], subtypes:['Human'], cost:'1G', power:2,toughness:2,
+    name: 'Destiny Spinner', types:['creature','enchantment'], subtypes:['Human'], cost:'1G', power: 2, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     // Static 1: creature and enchantment spells can't be countered (not enforced — single-player).
     // Static 2: {3}{G}: Target land you control becomes an X/X Elemental with trample and haste
     //           until end of turn, where X = number of enchantments you control. It's still a land.
@@ -5942,8 +5946,9 @@ var CARDS = {
     // the Elf type (elfCount for Priest/Archdruid, Symbiote/Ranger fodder) and the
     // Human type (Kogla bounces Humans), so we list both alongside 'Shapeshifter'.
     // (Other creature types are not used by any current detector.)
+    changeling: true,  // machine-readable: subtype divergence from the reference is deliberate
     name:'Chomping Changeling', types:['creature'], subtypes:['Shapeshifter','Elf','Human'],
-    cost:'2G', power:3, toughness:3,
+    cost:'2G', power: 1, toughness: 2,  // [P/T verified 2026-07-10 vs card DB; was 3/3]
     // ETB: destroy up to one target artifact or enchantment.
     // Identical to Reclamation Sage ETB — implemented in GameState.enterBattlefield.
     // Targets stax artifacts/enchantments on battlefield first, then opponentStax.
@@ -5958,7 +5963,7 @@ var CARDS = {
   },
   nissa_animist: {
     externallyImplemented: true,  // [drift-detector] landfall triggers in actions.js play_land section
-    name: 'Nissa, Resurgent Animist', types:['creature'], subtypes:['Elf','Scout'], cost:'2G', power:2,toughness:3,
+    name: 'Nissa, Resurgent Animist', types:['creature'], subtypes:['Elf','Scout'], cost:'2G', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/3]
     // Landfall — Whenever a land enters the battlefield under your control:
     //   • Add one mana of any color.
     //   • If this is the second time a land entered this turn, you may look at the
@@ -6049,7 +6054,7 @@ var CARDS = {
   sowing_mycospawn: {
     name: 'Sowing Mycospawn', types: ['creature'], subtypes: ['Eldrazi','Fungus'],
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
-    cost: '3G', power: 4, toughness: 4,
+    cost: '3G', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 4/4]
     // Oracle: When Sowing Mycospawn enters, search your library for a basic
     // land card or Eldrazi land card, put it onto the battlefield TAPPED,
     // then shuffle. Kicker {2}: ETB exiles target land (not modelled —
@@ -6196,7 +6201,7 @@ var CARDS = {
   scrapshooter: {
     externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Scrapshooter', types: ['creature'], subtypes: ['Raccoon','Archer'],
-    cost: '1GG', power: 3, toughness: 3,
+    cost: '1GG', power: 4, toughness: 4,  // [P/T verified 2026-07-10 vs card DB; was 3/3]
     // Gift a card (promise opponent a gift → they draw a card when this enters).
     // Reach.
     // ETB (if gift was promised): destroy target artifact or enchantment an opponent controls.
@@ -6296,6 +6301,7 @@ var CARDS = {
   genesis_hydra: {
     name: 'Genesis Hydra', types: ['creature'], subtypes: ['Plant','Hydra'], cost: 'XGG',
     power: 0, toughness: 0,
+    variablePT: true,   // 0/0, enters with X +1/+1 counters; the 0 above is a placeholder
     // Oracle on-cast: reveal top X, put a nonland permanent with MV ≤ X onto battlefield.
     // The Hydra itself enters with X +1/+1 counters.
     // Modelled as: find the best nonland permanent in library with MV ≤ X, put it to BF.
@@ -6330,9 +6336,9 @@ var CARDS = {
       return [drainMana(state).log(`Genesis Hydra X=${x}: no nonland permanent found in top X`)];
     },
   },
-  king_coldblood: {
-    name: 'King of the Coldblood Curse', types: ['creature'], subtypes: ['Lizard','Villain'],
-    cost: '2GG', power: 4, toughness: 4,
+  lizard_connors_curse: {
+    name: "Lizard, Connors's Curse", types: ['creature'], subtypes: ['Lizard','Villain'],
+    cost: '2GG', power: 5, toughness: 5,  // [P/T verified 2026-07-10 vs card DB; was 4/4]
     // ETB: up to one other target creature loses all abilities and becomes a 4/4 green Lizard.
     // Combo-relevant: can disable stax creatures (Collector Ouphe, etc.) by stripping abilities.
     // Modeled: on ETB, if a stax creature is on the battlefield, strip its abilities
@@ -6345,7 +6351,7 @@ var CARDS = {
         'Collector Ouphe', 'Null Rod', // artifact-ability suppression creatures
       ]);
       const target = state.battlefield.find(p =>
-        p.is('creature') && p.name !== 'King of the Coldblood Curse' &&
+        p.is('creature') && p.name !== "Lizard, Connors's Curse" &&
         STAX_CREATURE_NAMES.has(p.name)
       );
       if (!target) return state; // no useful target — ETB is optional ("up to one")
@@ -6353,7 +6359,7 @@ var CARDS = {
       // We keep it on the battlefield (it's still a creature) but without stax effects.
       let s = state.removeFromBattlefield(target.id, null); // doesn't go to GY (stays as new perm)
       if (!s) return state;
-      // Re-enter as a blank 4/4 Lizard (cardKey: king_coldblood_blank to avoid re-triggering)
+      // Re-enter as a blank 4/4 Lizard (cardKey: blank_lizard, to avoid re-triggering this ETB)
       s = s.clone(); s._ensureBF();
       const blankId = s._nextId++;
       const blank = new Permanent({
@@ -6363,13 +6369,13 @@ var CARDS = {
         counters: {}, abilitiesUsed: {},
       });
       s.battlefield = [...s.battlefield, blank];
-      return s.log(`King of the Coldblood Curse ETB: ${target.name} loses all abilities → 4/4 Lizard`);
+      return s.log(`Lizard, Connors's Curse ETB: ${target.name} loses all abilities → 4/4 Lizard`);
     },
   },
   disciple_freyalise: {
     externallyImplemented: true,  // [drift-detector] ETB in GameState.enterBattlefield
     name: 'Disciple of Freyalise', types: ['creature'], subtypes: ['Elf','Druid'],
-    cost: '3GGG', power: 4, toughness: 4,
+    cost: '3GGG', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 4/4]
     // ETB: you may sacrifice another creature. If you do, gain X life and draw X cards
     // where X = that creature's power.
     // Implementation in GameState.enterBattlefield: sacrifices lowest-power non-key
@@ -6417,12 +6423,13 @@ var CARDS = {
   hyrax_tower_scout: {
     name: 'Hyrax Tower Scout', types: ['creature'], subtypes: ['Human','Scout'],
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
-    cost: '2G', power: 2, toughness: 2,
+    cost: '2G', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     // ETB: untap target creature — handled in GameState.enterBattlefield (untaps first tapped creature).
   },
   woodcaller_automaton: {
     name: 'Woodcaller Automaton', types: ['creature','artifact'], subtypes: ['Construct'],
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
+    prototypePT: true,  // P/T reference lists the {10} face (8/8); model uses Prototype (see below)
     // Modelled at its Prototype cost {2GG} — 3/3. This is virtually always how it
     // is cast in this deck; the {10} base cost is irrelevant in practice.
     // Oracle: "When this creature enters, if you cast it, untap target land you control.
@@ -6508,7 +6515,7 @@ var CARDS = {
 
   magus_of_the_order: {
     name: 'Magus of the Order', types: ['creature'], subtypes: ['Human', 'Wizard'],
-    cost: '2GG', power: 2, toughness: 2,
+    cost: '2GG', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     // {G}, {T}, Sacrifice a green creature: Search library → any green creature onto BF.
     // Functionally identical to Natural Order.
     abilities: {
@@ -8704,6 +8711,23 @@ function greatestPower(state) {
   return Math.max(0, ...state.creatures().map(c => c.power || 0));
 }
 
+// Steady-state greatest power for Selvala bounce loops: greatest power among
+// creatures EXCLUDING Selvala herself. Selvala is the creature being bounced
+// and recast each cycle — her counters/pumps do NOT survive the bounce (she
+// re-enters fresh; +1/+1 from Surrak's trigger at most), so counting her
+// current power would overstate the loop's sustainable X. All other creatures
+// are untouched by the loop, so their power is steady. Used by both the ≥7
+// net-positive detector and the break-even [COMBO 22] detector.
+function steadyStateSelvalaPower(state) {
+  let max = 0;
+  for (const c of state.creatures()) {
+    if (c.name === 'Selvala, Heart of the Wilds') continue;
+    const pw = c.power || 0;
+    if (pw > max) max = pw;
+  }
+  return max;
+}
+
 // Mana value of a card from its cost string (counts generic digits + colour pips).
 // "G" → 1, "1G" → 2, "2GG" → 4, null/"" → 0.
 function cardMV(cardKey) {
@@ -9949,7 +9973,11 @@ var DETECTORS = [
       if (!hasHaste) return false;
       // Check each haste-loop variant
       if (permReady(state, 'Circle of Dreams Druid') && creatureCount(state) >= 6) return true;
-      if (greatestPower(state) >= 7 &&
+      // [2026-07-09] Steady-state rule (was greatestPower(state) >= 7, which
+      // counted Selvala's OWN power — a Selvala pumped to 7 with nothing else
+      // big would fire this detector on a loop that actually decays, since her
+      // counters don't survive the bounce). See steadyStateSelvalaPower().
+      if (steadyStateSelvalaPower(state) >= 7 &&
           state.battlefield.some(p => p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return true;
       // Thousand-Year Elixir and Shang-Chi let Acolyte tap even with summoning sickness —
       // skip the SS check when either is the haste enabler (Combo 29, 37).
@@ -10025,13 +10053,7 @@ var DETECTORS = [
       if (!state.battlefield.some(p =>
         p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return false;
       // Steady-state X: greatest power among NON-Selvala creatures (see note).
-      let steadyX = 0;
-      for (const p of state.creatures()) {
-        if (p.name === 'Selvala, Heart of the Wilds') continue;
-        const pw = p.power ?? 0;
-        if (pw > steadyX) steadyX = pw;
-      }
-      if (steadyX < 6) return false;   // loop cost is 6 — below that it decays
+      if (steadyStateSelvalaPower(state) < 6) return false;   // loop cost is 6 — below that it decays
       // [O-67] converter gate — mirrors combo 1 exactly.
       if (hasPerm(state, 'Beast Whisperer')) return true;
       if (hasPerm(state, 'Glademuse') &&
@@ -16073,7 +16095,7 @@ class Solver {
 
   _dfs(state, parentNode, depth, pre) {
     this.statesExplored++;
-    if (this.statesExplored > this.opts.maxStates) return;
+    if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
     if (depth > this.opts.maxDepth)  return;
     if (state.turn > this.opts.maxTurns) return;
 
@@ -16137,8 +16159,14 @@ class Solver {
         // Fully deployed — this is a terminal win, stop exploring this branch
         this._recordWin(reconstructPath(node), combo, s);
         if (this.opts.firstWin) {
-	  // Stop exploring as we've found the first winning line
-          this.opts.maxStates = this.statesExplored -1;
+          // Stop exploring — first winning line found. [BUG FIX 2026-07-09]
+          // This used to clamp this.opts.maxStates = statesExplored - 1, which
+          // PERMANENTLY mutated the solver's options: a second solve() on the
+          // same instance silently returned null after ~20 states. The
+          // _stopSearch flag trips the same budget checks with identical
+          // control flow inside this solve, but is reset by _reset() (and per
+          // IDDFS pass), so solver instances are safely reusable.
+          this._stopSearch = true;
         }
         return;
       }
@@ -16186,7 +16214,7 @@ class Solver {
       if (!this.opts.exhaustive) {
         const cut = this.opts.allLines ? (childScore > this.bestScore) : (childScore >= this.bestScore);
         if (cut) {
-          if (this.statesExplored > this.opts.maxStates) break;
+          if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
           this.statesExplored++; this.pruned++;
           continue;
         }
@@ -16197,7 +16225,7 @@ class Solver {
       const childFp = next.fingerprint();
       const prevSeen = this.visited.get(childFp);
       if (prevSeen !== undefined && prevSeen <= childDepth) {
-        if (this.statesExplored > this.opts.maxStates) break;
+        if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
         this.statesExplored++; this.pruned++;
         continue;
       }
@@ -16251,7 +16279,7 @@ class Solver {
       // depth-aware.
       if (!this.opts.exhaustive && !childCombo &&
           this._isManaDominated(next, childFp, this.manaFrontier)) {
-        if (this.statesExplored > this.opts.maxStates) break;
+        if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
         this.statesExplored++; this.pruned++;
         continue;
       }
@@ -16292,9 +16320,9 @@ class Solver {
       // Budget pre-check: child generation above may have consumed budget via
       // early-rejects, so stop before entering _dfs if we're already at the
       // ceiling — otherwise the _dfs entry increment could push past maxStates+1.
-      if (this.statesExplored > this.opts.maxStates) return;
+      if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
       this._dfs(next, node, depth + 1, childPre);
-      if (this.statesExplored > this.opts.maxStates) return;
+      if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
     }
   }
 
@@ -16342,6 +16370,8 @@ class Solver {
       this.opts.maxTurns = t;
       this.visited       = new Map();          // fresh dedup map each pass
       this.manaFrontier  = new Map();          // fresh mana-dominance frontier each pass
+      this._stopSearch   = false;              // each pass starts unstopped (hygiene —
+                                               // a winning pass breaks the loop below anyway)
       this._dfs(initialState, null, 0);
       if (this.bestLine) break;                // win found — done
       if (this.statesExplored >= this.opts.maxStates) break; // budget exhausted
@@ -16511,6 +16541,7 @@ class Solver {
     // in hand but not yet on battlefield). Used only if no fully-deployed win
     // is found within the search budget.
     this.fallbackWin   = null;
+    this._stopSearch   = false;   // firstWin stop flag (see _dfs win handler)
   }
 
   _recordWin(path, combo, s) {
@@ -18166,7 +18197,12 @@ function whatIfAnalysisSync(hand, baseResult, options = {}) {
   for (const removeKey of [...new Set(hand)]) {
     const reducedHand = removeCard(hand, removeKey);
     const state = buildState(reducedHand, [], mana);
-    const solver = new Solver({ maxTurns, maxDepth, maxStates, verbose: false });
+    // [PERF-2b] IDDFS: this solve's only consumed signal is the earliest win
+    // TURN (turnsWithout, compared against the full hand's turn). IDDFS is
+    // earliest-turn EXACT and blowout-proof, where plain best-of-DFS can burn
+    // its whole state budget in deep subtrees and return a false
+    // "breaks_combo" / late turn (the PERF-2 false-negative mechanism).
+    const solver = new Solver({ maxTurns, maxDepth, maxStates, verbose: false, strategy: 'iddfs' });
     const result = quietSolve(solver, state);
 
     const turnsWithout = result
@@ -18490,12 +18526,50 @@ function mulliganAnalyze(hand, options = {}) {
     mana        = null,   // optional: initial floating mana (ManaPool or plain object)
     firstWin    = true,   // stop each trial at the first win (see JSDoc above)
     strategy    = 'iddfs', // per-trial search strategy (see JSDoc above)
+    seed        = null,   // optional: integer seed → deterministic trial libraries
+                          // (mulberry32 over Math.random, restored on exit). The seed
+                          // is echoed in the result so any analysis can be re-run
+                          // exactly. Null (default) keeps true randomness.
+    earlyStop   = true,   // stop trialling once the KEEP/MULLIGAN verdict is
+                          // statistically decided (95% Wilson interval clear of
+                          // both verdict thresholds; ≥30-trial floor). `trials`
+                          // remains the hard cap. All reported percentages use
+                          // the actual number of trials run (trialsRun).
   } = options;
+
+  // [#4a] Optional deterministic RNG for reproducible analyses.
+  const origRandom = Math.random;
+  if (seed !== null) {
+    let s = seed | 0;
+    Math.random = () => {
+      s = (s + 0x6D2B79F5) | 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // [#5] Wilson 95% score interval for a binomial proportion — used to stop
+  // trialling early once the verdict can no longer change. Returns [lo, hi].
+  const wilson = (wins, n) => {
+    if (n === 0) return [0, 1];
+    const z = 1.96, z2 = z * z, p = wins / n;
+    const denom  = 1 + z2 / n;
+    const center = (p + z2 / (2 * n)) / denom;
+    const half   = (z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))) / denom;
+    return [Math.max(0, center - half), Math.min(1, center + half)];
+  };
+  const KEEP_T = 0.60, BORDER_T = 0.35;   // must match the verdict block below
+  const MIN_TRIALS = 30;
 
   let infiniteManaWins = 0;
   let fullWins         = 0;
   const trialResults   = [];
+  let trialsRun        = 0;
+  let earlyStopped     = false;
 
+  try {
   for (let t = 0; t < trials; t++) {
     // Build a freshly shuffled library for this trial.
     // If the caller supplied a custom library, shuffle a fresh copy of it each
@@ -18571,10 +18645,26 @@ function mulliganAnalyze(hand, options = {}) {
       comboName:          result?.combo?.manaCombo ?? result?.combo?.name ?? null,
       winCondition:       result?.combo?.winCondition ?? null,
     });
+    trialsRun = t + 1;
+
+    // [#5] Verdict-decided early stop: once the 95% Wilson interval for
+    // infiniteManaPercent is clear of BOTH verdict thresholds (doesn't
+    // straddle 60% or 35%), more trials cannot change KEEP / KEEP(borderline)
+    // / MULLIGAN — only sharpen the percentage. Floor of 30 trials keeps the
+    // normal approximation honest and the reported percentages meaningful.
+    if (earlyStop && trialsRun >= MIN_TRIALS && trialsRun < trials) {
+      const [lo, hi] = wilson(infiniteManaWins, trialsRun);
+      const clearOfKeep   = lo >= KEEP_T   || hi < KEEP_T;
+      const clearOfBorder = lo >= BORDER_T || hi < BORDER_T;
+      if (clearOfKeep && clearOfBorder) { earlyStopped = true; break; }
+    }
+  }
+  } finally {
+    if (seed !== null) Math.random = origRandom;   // [#4a] always restore
   }
 
-  const infiniteManaPercent = Math.round((infiniteManaWins / trials) * 1000) / 10;
-  const winPercent          = Math.round((fullWins         / trials) * 1000) / 10;
+  const infiniteManaPercent = Math.round((infiniteManaWins / trialsRun) * 1000) / 10;
+  const winPercent          = Math.round((fullWins         / trialsRun) * 1000) / 10;
 
   // Turn breakdown: how many trials combo'd on each specific turn
   const infiniteManaByTurn = {};
@@ -18590,10 +18680,10 @@ function mulliganAnalyze(hand, options = {}) {
 
   // Convert raw counts → percentages
   for (const k of Object.keys(infiniteManaByTurn)) {
-    infiniteManaByTurn[k] = Math.round((infiniteManaByTurn[k] / trials) * 1000) / 10;
+    infiniteManaByTurn[k] = Math.round((infiniteManaByTurn[k] / trialsRun) * 1000) / 10;
   }
   for (const k of Object.keys(winByTurn)) {
-    winByTurn[k] = Math.round((winByTurn[k] / trials) * 1000) / 10;
+    winByTurn[k] = Math.round((winByTurn[k] / trialsRun) * 1000) / 10;
   }
 
   // Verdict
@@ -18611,7 +18701,10 @@ function mulliganAnalyze(hand, options = {}) {
 
   return {
     hand,
-    trials,
+    trials,               // the requested cap
+    trialsRun,            // [#5] trials actually executed (== trials unless earlyStopped)
+    earlyStopped,         // [#5] true when the verdict was statistically decided early
+    seed,                 // [#4a] echo for exact re-runs (null = true randomness)
     maxTurns,
     infiniteManaPercent,
     winPercent,
@@ -19126,7 +19219,11 @@ function mulliganCutAdvisor(hand, options = {}) {
   } = options;
 
   const baseState  = buildState(hand, []);
-  const baseSolver = new Solver({ maxTurns, maxDepth, maxStates, allLines: false, verbose: false });
+  // [PERF-2b] IDDFS for the same reason as whatIfAnalysisSync above — and the
+  // base solve MUST use the same strategy as the per-cut solves below, or the
+  // turnDelta comparison mixes earliest-turn-exact numbers with
+  // budget-dependent ones.
+  const baseSolver = new Solver({ maxTurns, maxDepth, maxStates, allLines: false, verbose: false, strategy: 'iddfs' });
   const baseResult = quietSolve(baseSolver, baseState);
   const baseTurn   = baseResult ? baseResult.line[baseResult.line.length - 1].turn : Infinity;
   const baseCombo  = baseResult ? (baseResult.combo.manaCombo ?? baseResult.combo.name ?? null) : null;
@@ -19137,7 +19234,7 @@ function mulliganCutAdvisor(hand, options = {}) {
   for (const cutKey of uniqueKeys) {
     const reducedHand = removeCard(hand, cutKey);
     const state  = buildState(reducedHand, []);
-    const solver = new Solver({ maxTurns, maxDepth, maxStates, allLines: false, verbose: false });
+    const solver = new Solver({ maxTurns, maxDepth, maxStates, allLines: false, verbose: false, strategy: 'iddfs' });
     const result = quietSolve(solver, state);
     const turn   = result ? result.line[result.line.length - 1].turn : Infinity;
     const combo  = result ? (result.combo.manaCombo ?? result.combo.name ?? null) : null;
