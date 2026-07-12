@@ -255,7 +255,7 @@ var TUTOR_PRIORITY_SCORE = {
   'return_of_the_wildspeaker':  48,  // draw greatestPower cards — huge refill
   'incubation_druid':           38,  // 3-mana dork when adapted; high combo value
   'quest_for_renewal':          36,  // Seedborn Muse for creatures — very strong in loops
-  'kamahls_will':               34,  // mass removal of opponent stax
+  'kamahls_will':               34,  // single-target removal of Collector Ouphe (fight-style damage; [2026-07-10] was mislabeled "mass removal")
   'generous_patron':            30,  // ETB support + draw on counter placement
   'ulvenwald_tracker':          22,  // fight stax threats
   'reclaim':                    28,  // instant-speed tutor-to-top from GY
@@ -281,7 +281,7 @@ var TUTOR_PRIORITY_SCORE = {
   'whisperer_of_the_wilds': 24, // ferocious: {G}{G}
   'druid_of_the_cowl': 22,      // 1/2 plain {G} dork
   'armored_scrapgorger': 20,    // GY-hate dork (situational)
-  'wose_pathfinder': 21,        // scales with Forests
+  'wose_pathfinder': 21,        // 1/1 any-color dork [2026-07-10: was wrongly "scales with Forests" — see cards.js]
   // Lands
   'havenwood_battleground': 29, // sac for {G}{G}{G} — strong burst mana
   'tranquil_thicket': 23,       // Forest cycling land — cycle or tap
@@ -2038,12 +2038,17 @@ class GameState {
       if (target) s = s.untapPermanent(target.id);
     }
 
-    // Surrak and Goreclaw ETB: existing creatures lose summoning sickness (haste)
-    if (cardKey === 'surrak_goreclaw') {
-      for (const bf of s.battlefield) {
-        if (bf.is('creature') && bf.id !== perm.id) bf.summoningSick = false;
-      }
-    }
+    // [2026-07-11 bug fix — see ToDo.md IMP-4] Surrak and Goreclaw's real oracle only
+    // affects OTHER nontoken creatures that enter AFTER it ("whenever another nontoken
+    // creature you control enters, put a +1/+1 counter on it; it gains haste until end
+    // of turn") — it does NOT retroactively grant haste to creatures already on the
+    // battlefield when Surrak itself enters. A block that unconditionally un-sickened
+    // every pre-existing creature on Surrak's own ETB used to live here; it modeled a
+    // fictional effect (free retroactive haste for your whole existing board) that
+    // doesn't exist on the real card and could let the search find lines that wouldn't
+    // work in an actual game. The CORRECT forward-direction trigger — new creatures
+    // entering while Surrak is present gain haste AND a +1/+1 counter — is implemented
+    // in actions.js's cast_spell handler (search "Surrak and Goreclaw" there).
 
     // Ulvenwald Oddity ETB: has haste — remove its own summoning sickness
     if (cardKey === 'ulvenwald_oddity') {
@@ -2598,10 +2603,13 @@ class GameState {
     // (This is an on-cast trigger, not ETB — but enterBattlefield is the closest hook.)
     // In practice, treating it as ETB is close enough for the solver.
     //
-    // Per oracle: the fetched land enters TAPPED. The previous version of
-    // this block didn't pass `tapped: true`, which produced an over-strong
-    // engine in the solver — Mycospawn could fetch a Cradle and tap it the
-    // same turn for {G}. Corrected in C-15.
+    // [2026-07-11 correction — see ToDo.md IMP-4] The C-15 fix below (this comment
+    // predates today) added `tapped: true` believing the real card enters the fetched
+    // land tapped. Independently re-verified via Scryfall (English + German/Portuguese/
+    // Italian/Japanese translations, all matching): the real oracle text has NO "tapped"
+    // clause at all — "search your library for a land card, put it onto the battlefield,
+    // then shuffle." The land enters UNTAPPED, same as a plain Rampant Growth-style
+    // fetch. C-15's premise was mistaken; reverted to match the real card.
     if (!skipETB && cardKey === 'sowing_mycospawn') {
       const cardsModule = _cards();
       var { TUTOR_PRIORITY_SCORE: TPS } = _CDM;
@@ -2621,9 +2629,9 @@ class GameState {
       if (bestLandKey) {
         const { state: ns, cardKey: lk } = s.searchLibraryFor(k => k === bestLandKey);
         if (lk) {
-          s = ns.enterBattlefield(lk, { tapped: true });
+          s = ns.enterBattlefield(lk);
           const landName = cardsModule[lk]?.name ?? lk;
-          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield tapped`);
+          s = s.log(`Sowing Mycospawn trigger → search library, put ${landName} onto battlefield`);
         }
       }
     }
@@ -3724,6 +3732,7 @@ var CARDS = {
     tapForMana: simpleTap('{G}', [['G', 1]]),
     abilities: {
       big_green: {
+        manaAbility: true,   // [2026-07-10] excepted from Disruptor Flute's activation lock (real card exempts mana abilities)
         label: '{2}{G}{G}, {T}: Add {G}x6 (for creatures)',
         fn(state, perm) {
           if (perm.tapped) return [];
@@ -4137,7 +4146,7 @@ var CARDS = {
     },
   },
   urza_cave: {
-    name: "Urza's Cave", types: ['land'], subtypes: [], cost: null,
+    name: "Urza's Cave", types: ['land'], subtypes: ["Urza's", 'Cave'], cost: null,  // [subtype verified 2026-07-10; was [] — real card has these two subtypes, though neither is consumed by any current game logic]
     tapForMana: simpleTap('{C}', [['C',1]]),
     // {3}, {T}, Sacrifice Urza's Cave: Search your library for a land card,
     // put it onto the battlefield tapped, then shuffle.
@@ -4267,6 +4276,7 @@ var CARDS = {
     tapForMana: simpleTap('{G}', [['G', 1]]),
     abilities: {
       sac_for_mana: {
+        manaAbility: true,   // [2026-07-10] excepted from Disruptor Flute's activation lock (real card exempts mana abilities)
         label: '{T}, Sacrifice Havenwood Battleground: Add {G}{G}{G}',
         fn(state, perm) {
           if (perm.tapped) return [];
@@ -4281,9 +4291,8 @@ var CARDS = {
   },
 
   tranquil_thicket: {
-    name: 'Tranquil Thicket', types: ['land'], subtypes: ['Forest'], cost: null,
+    name: 'Tranquil Thicket', types: ['land'], subtypes: [], cost: null,  // [subtype verified 2026-07-10 vs card DB + Scryfall; was ['Forest'] — real card has no basic land type]
     // Enters tapped. {T}: Add {G}. Cycling {G}: discard, draw a card.
-    isForest: true,
     tapForMana: simpleTap('{G}', [['G', 1]]),
     handAbilities: {
       cycling: {
@@ -4527,8 +4536,12 @@ var CARDS = {
   // will not cast or fetch it, but it suppresses opponent engines when placed.
   disruptor_flute: {
     name: 'Disruptor Flute', types: ['artifact'], subtypes: [], cost: '2',
-    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
-    // Named card tracked in perm.namedCard at placement; no active ability in solver.
+    externallyImplemented: true,  // [drift-detector] impl in actions.js: fluteNamedCardSet(),
+    // effectiveCost() (spell-casting tax), and the section-5 abilities loop (activation lock).
+    // [2026-07-10 oracle correction] Named card tracked in perm.namedCard at placement.
+    // Real effect (was wrong until this date — see ToDo.md IMP-3): named SPELLS cost {3}
+    // more to CAST; named source's non-mana ACTIVATED ABILITIES are locked out entirely
+    // (mana abilities excepted). Flash is not modeled (no timing distinction matters here).
   },
   vexing_bauble: {
     name: 'Vexing Bauble', types: ['artifact'], subtypes: [], cost: '1',
@@ -5051,16 +5064,15 @@ var CARDS = {
   wose_pathfinder: {
     name: 'Wose Pathfinder', types: ['creature'], subtypes: ['Human', 'Shaman'],  // [subtypes verified 2026-07-10; was Treefolk,Scout — a real behavior fix: now a legal Kogla bounce target and no longer a Treefolk Harbinger tutor hit]
     cost: '1G', power: 1, toughness: 1,  // [P/T verified 2026-07-10 vs card DB; was 1/2]
-    // {T}: Add {G} for each Forest you control.
-    tapForMana(state, perm) {
-      if (perm.tapped || perm.summoningSick) return [];
-      const s = state.tapPermanent(perm.id); if (!s) return [];
-      const forests = s.lands().filter(l => l.isForest || l.subtypes?.includes('Forest')).length;
-      if (forests === 0) return [];  // no Forests → no mana, suppress action
-      let ns = s;
-      ns = ns.addMana('G', forests);
-      return [ns.log(`Tap Wose Pathfinder → {G}x${forests} (${forests} Forests)`)];
-    },
+    // [2026-07-10 oracle correction — see ToDo.md IMP-3] Real text: "{T}: Add one mana
+    // of any color. / {6}{G}, {T}: Another target creature gets +3/+3 and gains trample
+    // until end of turn." The previous model ("{T}: Add {G} for each Forest you control")
+    // does not match any printing of this card — it fabricated a Forest-count-scaling
+    // mana ability, which in a Forest-heavy deck could produce far more mana than the
+    // real 1-mana-any-color dork ever can. Fixed to match Paradise Druid's identical
+    // any-color pattern. The {6}{G} pump ability is not modeled — no attacking/combat is
+    // simulated in this solver (same convention as Kamahl's Will's land-animation mode).
+    tapForMana: simpleTap('{any}', [['G', 1]]),
   },
 
   armored_scrapgorger: {
@@ -5122,7 +5134,7 @@ var CARDS = {
 
   llanowar_visionary: {
     name: 'Llanowar Visionary', types: ['creature'], subtypes: ['Elf', 'Druid'],
-    cost: '1GG', power: 2, toughness: 2,
+    cost: '2G', power: 2, toughness: 2,  // [cost verified 2026-07-10 vs card DB + Scryfall; was 1GG]
     // ETB: draw a card. {T}: Add {G}.
     externallyImplemented: true,  // ETB draw in GameState.enterBattlefield
     tapForMana: simpleTap('{G}', [['G', 1]]),
@@ -6055,10 +6067,14 @@ var CARDS = {
     name: 'Sowing Mycospawn', types: ['creature'], subtypes: ['Eldrazi','Fungus'],
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
     cost: '3G', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 4/4]
-    // Oracle: When Sowing Mycospawn enters, search your library for a basic
-    // land card or Eldrazi land card, put it onto the battlefield TAPPED,
-    // then shuffle. Kicker {2}: ETB exiles target land (not modelled —
-    // no opponent permanents to target).
+    // Oracle: When Sowing Mycospawn enters, search your library for a land
+    // card, put it onto the battlefield, then shuffle. Kicker {1}{C}: also
+    // exile target land (not modelled — no opponent permanents to target).
+    // [2026-07-11 correction] A prior comment here claimed the fetched land
+    // enters TAPPED — independently re-verified false via Scryfall (English +
+    // 4 translations, all matching): no "tapped" clause exists on the real
+    // card. The land enters untapped, same as a plain fetch. See the [2026-07-11
+    // correction] note in GameState.js at the actual trigger implementation.
     //
     // The trigger is implemented in src/GameState.js inside enterBattlefield
     // (search for "Sowing Mycospawn on-cast trigger") rather than as a
@@ -6417,7 +6433,7 @@ var CARDS = {
   // Garden of Freyalise — land back face of Disciple of Freyalise MDFC
   // Entered via the handAbilities above; not played directly from hand.
   garden_of_freyalise: {
-    name: 'Garden of Freyalise', types: ['land'], subtypes: ['Forest'], cost: null,
+    name: 'Garden of Freyalise', types: ['land'], subtypes: [], cost: null,  // [subtype verified 2026-07-10; was ['Forest'] — real card has no basic land type, despite "a simple Forest" being common shorthand for its effect]
     tapForMana: simpleTap('{G}', [['G', 1]]),
   },
   hyrax_tower_scout: {
@@ -6516,27 +6532,37 @@ var CARDS = {
   magus_of_the_order: {
     name: 'Magus of the Order', types: ['creature'], subtypes: ['Human', 'Wizard'],
     cost: '2GG', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
-    // {G}, {T}, Sacrifice a green creature: Search library → any green creature onto BF.
-    // Functionally identical to Natural Order.
+    // [2026-07-10 oracle correction — see ToDo.md IMP-3] Real text: "{G}, {T}, Sacrifice
+    // this creature and another green creature: Search your library for a green creature
+    // card, put it onto the battlefield, then shuffle." This is a ONE-SHOT effect (Magus
+    // sacrifices ITSELF as part of the cost, alongside another green creature) — the
+    // previous implementation only sacrificed the other creature, leaving Magus alive and
+    // (once untapped again) repeatably reusable, which the real card can never be.
+    // Functionally identical to Natural Order, except Natural Order only requires
+    // sacrificing one creature (itself is a sorcery, not a permanent with a cost).
     abilities: {
       natural_order_effect: {
-        label: '{G}, {T}, Sacrifice a green creature: tutor any green creature onto battlefield',
+        label: '{G}, {T}, Sacrifice this creature and another green creature: tutor any green creature onto battlefield',
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const ap = state.payMana('G'); if (!ap) return [];
           const s = ap.tapPermanent(perm.id); if (!s) return [];
           const cards = CARDS;
-          // Find a green creature to sacrifice (prefer the least-valuable one)
+          // Find ANOTHER green creature to sacrifice (Magus itself is sacrificed too, below,
+          // and is therefore excluded from this search — it can't sacrifice itself twice).
           const KEEP = new Set(['Ashaya, Soul of the Wild','Temur Sabertooth','Kogla, the Titan Ape',
                                 'Selvala, Heart of the Wilds','Quirion Ranger','Scryb Ranger','Hope Tender']);
           const greenCreatures = s.creatures().filter(c => {
+            if (c.id === perm.id) return false;   // Magus itself doesn't count as "another"
             const ck = NAME_TO_KEY[c.name];
             return cards[ck]?.cost?.includes('G');
           });
           if (greenCreatures.length === 0) return [];
           const expendable = greenCreatures.filter(c => !KEEP.has(c.name));
           const sacCreature = expendable.length > 0 ? expendable[0] : greenCreatures[0];
-          const afterSac = s.removeFromBattlefield(sacCreature.id, 'graveyard');
+          let afterSac = s.removeFromBattlefield(sacCreature.id, 'graveyard');
+          if (!afterSac) return [];
+          afterSac = afterSac.removeFromBattlefield(perm.id, 'graveyard');  // Magus sacrifices itself too
           if (!afterSac) return [];
           const sacKey = NAME_TO_KEY[sacCreature.name];
           // Find best green creature in library
@@ -6555,7 +6581,7 @@ var CARDS = {
           const { state: ns, cardKey } = afterSac.searchLibraryFor(k => k === best.ck);
           if (!cardKey) return [];
           return [ns.enterBattlefield(cardKey).log(
-            `Magus of the Order: sac ${sacCreature.name} → ${best.def.name}`)];
+            `Magus of the Order: sac itself + ${sacCreature.name} → ${best.def.name}`)];
         },
       },
     },
@@ -6617,11 +6643,17 @@ var CARDS = {
   // ─── ENCHANTMENTS ────────────────────────────────────────────────────────
 
   quest_for_renewal: {
-    name: 'Quest for Renewal', types: ['enchantment'], subtypes: [], cost: 'G',
-    // Whenever a non-attacking creature you control becomes tapped, add a quest counter.
-    // With 4+ counters: untap all creatures during each opponent's untap step.
-    // Counter accumulation: modelled as an ability that fires in actions.js when any
-    // creature taps for mana (tracked via perm.abilitiesUsed).
+    name: 'Quest for Renewal', types: ['enchantment'], subtypes: [], cost: '1G',  // [cost verified 2026-07-10 vs card DB + Scryfall; was 'G']
+    // Real oracle: "Whenever a creature you control becomes tapped, you may put a quest
+    // counter on this enchantment." With 4+ counters: untap all creatures you control
+    // during each other player's untap step.
+    // [2026-07-10] Simplification note: implemented in actions.js as "when a creature
+    // taps FOR MANA" (a narrower trigger than the real "becomes tapped for any reason") —
+    // this solver has no combat/attacking model, so the real oracle's practical scope in
+    // this deck is "any tap," including non-mana activated-ability taps (e.g. Quirion
+    // Ranger's bounce, which taps itself as a cost) that this implementation does not
+    // currently count toward quest counters. Counter accumulation is tracked via
+    // perm.abilitiesUsed after a mana tap resolves.
     // The untap effect is identical to Seedborn Muse (creatures only, not lands).
     externallyImplemented: true,  // [drift-detector] counter tracking + untap in actions.js
   },
@@ -7130,26 +7162,53 @@ var CARDS = {
   },
 
   kamahls_will: {
-    name: "Kamahl's Will", types: ['sorcery'], subtypes: [], cost: '3G',
-    // Choose one or both:
-    //   Animate target lands as 1/1 Elemental creatures with haste until EOT.
-    //   Destroy all nonland permanents not controlled by a player who controls a Forest.
-    // Solver: use for mass removal of opponent stax/threats (second mode).
-    // Land animation is largely irrelevant in the solver (no attacking).
+    name: "Kamahl's Will", types: ['instant'], subtypes: [], cost: '3G',
+    isRemoval: true,   // bypasses the combo-tutor target filter — matches Lignify's pattern
+    // [Oracle corrected 2026-07-10 — see ToDo.md IMP-2] Real text (Scryfall/Gatherer,
+    // Commander Legends CMR #238/#680): Choose one. If you control a commander as you
+    // cast this spell, you may choose both. •  Until end of turn, any number of target
+    // lands you control become 1/1 Elemental creatures with vigilance, indestructible,
+    // and haste. They're still lands. •  Choose target creature you don't control. Each
+    // creature you control deals damage equal to its power to that creature.
+    // This is an INSTANT (was wrongly modeled as a sorcery — a real legality bug: sorcery
+    // typing gates a spell behind main-phase/empty-stack in this solver's canCastNow(),
+    // instants bypass that check entirely). Mode 2 is a single-target FIGHT-STYLE damage
+    // effect, not a sweeper — the previous implementation destroyed every opponent-tagged
+    // nonland permanent (a homebrew effect matching no real printing of this card; it
+    // cannot touch artifacts or enchantments at all, and can remove at most ONE creature,
+    // only if our creatures' combined power is enough to be lethal).
+    // Solver: mode 1 (land animation) has no effect here — no attacking is modeled. Mode
+    // 2's only legal target in this deck's stax suite is Collector Ouphe: it is the only
+    // creature-type entry in STAX_KEYS (Null Rod/Chalice of the Void/Trinisphere/Orb of
+    // Dreams/Vexing Bauble/Disruptor Flute are artifacts; Root Maze/Thorn of Amethyst are
+    // enchantments) — its printed toughness is 2, so total damage from creatures we
+    // control must be ≥ 2 to be lethal.
     castFn(state) {
-      // Destroy all nonland permanents on opponent side (those tagged controller:'opponent'
-      // or STAX_CARDS). We control a Forest (Yavimaya or actual Forest), so our perms survive.
-      const toDestroy = state.battlefield.filter(p =>
-        p.controller === 'opponent' || STAX_CARDS.has(p.cardKey)
-      );
-      let s = drainMana(state);
-      for (const p of toDestroy) {
-        s = s.removeFromBattlefield(p.id, 'graveyard') ?? s;
+      const OUPHE = 'Collector Ouphe';
+      // "Each creature you control" — exclude opponent-controlled creatures (Ouphe itself
+      // may be sitting on our battlefield tagged controller:'opponent'; state.creatures()
+      // does not filter by controller, so this must be done explicitly or Ouphe's own
+      // power would count toward its own lethal damage total).
+      const totalPower = state.creatures()
+        .filter(c => c.controller !== 'opponent')
+        .reduce((sum, c) => sum + (c.power || 0), 0);
+      if (totalPower < 2) return [];   // below Ouphe's toughness — not lethal, no useful line
+      const results = [];
+      // Target physically on our battlefield (e.g. a stolen/opponent-controlled permanent)
+      const bfTarget = state.battlefield.find(p => p.name === OUPHE);
+      if (bfTarget) {
+        let s = drainMana(state);
+        s = s.removeFromBattlefield(bfTarget.id, 'graveyard') ?? s;
+        results.push(s.log(`Kamahl's Will: ${totalPower} damage destroys ${OUPHE}`));
       }
-      const msg = toDestroy.length > 0
-        ? `Kamahl's Will: destroy ${toDestroy.map(p => p.name).join(', ')}`
-        : "Kamahl's Will: no opponent nonland permanents to destroy";
-      return [s.log(msg)];
+      // Target in the abstracted opponentStax set
+      const oppOuphe = [...state.opponentStax].find(e => e.split('@')[0].trim() === OUPHE);
+      if (oppOuphe) {
+        let s = drainMana(state);
+        s = s.removeFromOpponentStax(OUPHE);
+        results.push(s.log(`Kamahl's Will: ${totalPower} damage destroys opponent's ${OUPHE}`));
+      }
+      return results;   // empty when Ouphe isn't present — nothing to legally/usefully target
     },
   },
 
@@ -8338,7 +8397,7 @@ var CARDS = {
   // Turntimber, Serpentine Wood — back face of Turntimber Symbiosis DFC
   // Entered directly via the handAbility above or via enterBattlefield('turntimber_land').
   turntimber_land: {
-    name: 'Turntimber, Serpentine Wood', types: ['land'], subtypes: ['Forest'], cost: null,
+    name: 'Turntimber, Serpentine Wood', types: ['land'], subtypes: [], cost: null,  // [subtype verified 2026-07-10; was ['Forest'] — real card has no basic land type]
     tapForMana: simpleTap('{G}', [['G', 1]]),
   },
 
@@ -8363,7 +8422,7 @@ var CARDS = {
 
   // Tanglespan Bridgeworks — back face of Bridgeworks Battle DFC
   tanglespan_bridgeworks: {
-    name: 'Tanglespan Bridgeworks', types: ['land'], subtypes: ['Forest'], cost: null,
+    name: 'Tanglespan Bridgeworks', types: ['land'], subtypes: [], cost: null,  // [subtype verified 2026-07-10; was ['Forest'] — real card has no basic land type]
     tapForMana: simpleTap('{G}', [['G', 1]]),
   },
 
@@ -13476,6 +13535,31 @@ function defilerGreenReduction(state, def) {
  * Returns the effective cost string or null if the card is uncounterable-free.
  */
 // Option A: import parseCost once at module level
+/** [2026-07-10 oracle correction] Disruptor Flute's real text: "Spells with
+ *  the chosen name cost {3} more to cast. Activated abilities of sources
+ *  with the chosen name can't be activated unless they're mana abilities."
+ *  This is TWO distinct effects — a cost tax on CASTING named spells (used
+ *  by effectiveCost below), and a hard LOCK (not a tax) on the named
+ *  source's non-mana activated abilities (used by the abilities loop in
+ *  generateActions). Until this date the code modeled neither correctly:
+ *  mana abilities were wrongly taxed {3} (the real card explicitly excepts
+ *  them), non-mana abilities were wrongly taxed {3} instead of locked out
+ *  entirely, and no cost increase was ever applied to casting spells at all.
+ *  Shared here so effectiveCost and generateActions build the identical set
+ *  from a live state without duplicating the battlefield/opponentStax scan. */
+function fluteNamedCardSet(state) {
+  const names = new Set();
+  for (const p of state.battlefield) {
+    if (p.name === 'Disruptor Flute' && p.namedCard) names.add(p.namedCard);
+  }
+  for (const entry of (state.opponentStax ?? [])) {
+    if (entry.startsWith('Disruptor Flute@')) {
+      names.add(entry.slice('Disruptor Flute@'.length).trim());
+    }
+  }
+  return names;
+}
+
 function effectiveCost(state, def) {
   // ── Ultra-fast path ─────────────────────────────────────────────────────
   // In the vast majority of states (no STAX, no Defiler, no cost reducers)
@@ -13519,7 +13603,10 @@ function effectiveCost(state, def) {
   // Slow path: STAX present — apply Thorn and Trinisphere checks
   const reduction = costReductions(state, def);
   const thorn = thornTax(state, def);
-  let generic = Math.max(0, raw.generic - reduction) + thorn;
+  // [2026-07-10] Disruptor Flute: named SPELLS cost {3} more to CAST (the
+  // real card's first clause — see fluteNamedCardSet's comment above).
+  const fluteTax = fluteNamedCardSet(state).has(def.name) ? 3 : 0;
+  let generic = Math.max(0, raw.generic - reduction) + thorn + fluteTax;
   const colored = { ...raw.colored };
   if (greenCut > 0 && colored.G > 0) colored.G = Math.max(0, colored.G - greenCut);
   const coloredTotal = Object.values(colored).reduce((a, b) => a + b, 0);
@@ -14157,7 +14244,13 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           if (after) ns = Array.isArray(after) ? after[0] : after;
         }
 
-        // Surrak and Goreclaw: nontoken creatures entering get haste (summoningSick = false).
+        // Surrak and Goreclaw: nontoken creatures entering get a +1/+1 counter and
+        // haste (summoningSick = false). [2026-07-11 fix] The +1/+1 counter was
+        // missing entirely — only haste was applied — despite combos.js's own
+        // documentation elsewhere already assuming it happens (e.g. "Selvala...
+        // re-enters fresh at 2/2, +1/+1 from Surrak's trigger -> 3/3"). Follows the
+        // same counters+power+toughness convention used for Support elsewhere in
+        // this file (search "+1/+1 counter also raises power/toughness").
         // ns may be the result of onEnter returning a log() state — COW-shared battlefield.
         // Must call _ensureBF() before mutating to avoid writing through the shared array.
         if (isCreature && ns.hasPermanent('Surrak and Goreclaw')) {
@@ -14165,6 +14258,9 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           const entered = ns.battlefield[ns.battlefield.length - 1];
           if (entered && entered.name !== 'Surrak and Goreclaw') {
             entered.summoningSick = false;
+            entered.counters = { ...entered.counters, '+1/+1': (entered.counters?.['+1/+1'] ?? 0) + 1 };
+            entered.power = (entered.power ?? 0) + 1;
+            entered.toughness = (entered.toughness ?? 0) + 1;
           }
         }
 
@@ -14245,18 +14341,14 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
     }
   }
 
-  // ── Disruptor Flute: named card's activated abilities cost {3} more ─────────
-  // Built here (before section 4) because mana abilities in section 4 are also
-  // activated abilities and should be taxed when the named card is targeted.
-  const fluteNamedCards = new Set();
-  for (const p of state.battlefield) {
-    if (p.name === 'Disruptor Flute' && p.namedCard) fluteNamedCards.add(p.namedCard);
-  }
-  for (const entry of (state.opponentStax ?? [])) {
-    if (entry.startsWith('Disruptor Flute@')) {
-      fluteNamedCards.add(entry.slice('Disruptor Flute@'.length).trim());
-    }
-  }
+  // ── Disruptor Flute: named source's non-mana abilities are LOCKED ──────────
+  // [2026-07-10 oracle correction] Real card: named SPELLS cost {3} more to
+  // CAST (handled in effectiveCost — mana abilities are NOT spells and are
+  // never taxed there either); named source's non-mana ACTIVATED ABILITIES
+  // can't be activated at all (a hard lock, applied in section 5 below —
+  // mana abilities are explicitly excepted, see manaAbility:true). Section 4
+  // (tap-for-mana) is entirely unaffected: it only grants mana abilities.
+  const fluteNamedCards = fluteNamedCardSet(state);
 
   // ── 4. Tap permanents for mana ────────────────────────────────────────────
   // [perf] Symmetry-breaking dedup: when N permanents are completely
@@ -14298,8 +14390,11 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
     return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
   }
 
-  // Quest for Renewal: when a non-attacking creature taps for mana, add a quest counter.
-  // We add the counter whenever a creature tapForMana fires on YOUR turn.
+  // Quest for Renewal: real oracle triggers on ANY tap ("becomes tapped"), not just
+  // mana taps — this solver has no combat model, so "non-attacking" is vacuous here;
+  // the real narrowing is that non-mana taps (e.g. an activated ability's {T} cost)
+  // are NOT currently counted. See the [2026-07-10] note on quest_for_renewal in
+  // cards.js. We add the counter whenever a creature tapForMana fires on YOUR turn.
   // Declared here (function scope, not inside either tap-for-mana loop below)
   // so it's always defined — a block-scoped `function` declared inside a
   // `for` loop only becomes callable elsewhere in this function if some
@@ -14352,9 +14447,10 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
     // Null Rod / Collector Ouphe suppresses artifact mana abilities
     if (def.types.includes('artifact') && artifactAbilitiesSuppressed(state)) continue;
 
-    // Disruptor Flute: if this creature's name is targeted, its tap-for-mana
-    // ability (an activated ability) costs {3} more. Skip if we can't afford it.
-    if (fluteNamedCards.has(perm.name) && !state.payMana('3')) continue;
+    // [2026-07-10] Disruptor Flute does NOT affect mana abilities at all (the
+    // real card explicitly excepts them from its activation lock, and its
+    // cost tax applies only to CASTING spells, not activating abilities) —
+    // no check needed here; see the comment above fluteNamedCards's declaration.
 
     // Creatures with tap-for-mana need to not be summoning sick —
     // UNLESS Shang-Chi is active (grants haste for creature activated abilities).
@@ -14400,19 +14496,8 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         apply(s) {
           const live = s.getPermanentById(perm.id);
           if (!live || live.tapped) return null;
-          // Disruptor Flute: pay {3} extra for named creature's activated ability.
-          // [F-2 perf] Rebuild the named-card set from the live state ONLY when
-          // the generation-time set was non-empty. apply() is always invoked on
-          // the generating state (Solver x2, repl regenerates per state), so an
-          // empty set at generation time is empty here too — skipping the Set
-          // allocation + full battlefield scan that previously ran on EVERY
-          // tap-for-mana application even with no Flute anywhere in the game.
-          if (fluteNamedCards.size !== 0) {
-            const flutedNames = new Set();
-            for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
-            for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
-            if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
-          }
+          // [2026-07-10] Disruptor Flute does not affect mana abilities — see
+          // the comment above fluteNamedCards's declaration.
           // Shang-Chi active = simply present on battlefield (sickness irrelevant)
           const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
           if (live.is('creature') && live.summoningSick && !scActive) return null;
@@ -14436,13 +14521,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           apply(s) {
             const live = s.getPermanentById(perm.id);
             if (!live || live.tapped) return null;
-            // [F-2 perf] Same guard as the single-option case above.
-            if (fluteNamedCards.size !== 0) {
-              const flutedNames = new Set();
-              for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
-              for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
-              if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
-            }
+            // [2026-07-10] Disruptor Flute does not affect mana abilities.
             const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
             if (live.is('creature') && live.summoningSick && !scActive) return null;
             const liveForAbil = (scActive && live.summoningSick && live.is('creature'))
@@ -14486,13 +14565,8 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
     // `exhaustive` mode restores each one for its no-legal-target edge case.
     if (FOREST_TAP_DOMINATED_KEYS.has(perm.cardKey) && !exhaustive) continue;
 
-    // Disruptor Flute: if this creature's name is targeted, its tap-for-mana
-    // ability (an activated ability, same as any other) costs {3} more.
-    // Skip if we can't afford it. Same prefilter as the native-tapForMana
-    // loop above — this ability is granted by being a Forest, but it's
-    // still an activated ability "of" this named source (CR/Flute wording
-    // doesn't distinguish land-granted vs creature-granted abilities).
-    if (fluteNamedCards.has(perm.name) && !state.payMana('3')) continue;
+    // [2026-07-10] Disruptor Flute does not affect mana abilities (see the
+    // comment above fluteNamedCards's declaration) — no check needed here.
 
     if (perm.summoningSick && !shangChiActive) continue;
 
@@ -14503,15 +14577,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
       apply(s) {
         const live = s.getPermanentById(perm.id);
         if (!live || live.tapped) return null;
-        // Disruptor Flute: pay {3} extra for named creature's activated ability
-        // (rebuilt from the live state — see note on the native-mana loop above).
-        // [F-2 perf] Same emptiness guard as the native-mana loop.
-        if (fluteNamedCards.size !== 0) {
-          const flutedNames = new Set();
-          for (const p of s.battlefield) if (p.name === 'Disruptor Flute' && p.namedCard) flutedNames.add(p.namedCard);
-          for (const entry of (s.opponentStax ?? [])) if (entry.startsWith('Disruptor Flute@')) flutedNames.add(entry.slice(16).trim());
-          if (flutedNames.has(live.name)) { const paid = s.payMana('3'); if (!paid) return null; s = paid; }
-        }
+        // [2026-07-10] Disruptor Flute does not affect mana abilities.
         const scActive = s.battlefield.some(p => p.cardKey === 'shang_chi');
         if (live.summoningSick && !scActive) return null;
         let ns = s.tapPermanent(live.id);
@@ -14592,11 +14658,9 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
     // Null Rod / Collector Ouphe / Titania's Song: suppress ALL artifact activated abilities
     if (def.types.includes('artifact') && artifactAbilitiesSuppressed(state)) continue;
 
-    // Disruptor Flute: abilities of the named permanent cost {3} more.
-    // We model this as: if this permanent's name is named by Flute, skip the ability
-    // unless the state has at least {3} extra mana above the ability's own cost.
-    // Simpler model: mark abilities of named permanents as "costs {3} extra" by
-    // pre-checking whether payMana('3') would succeed alongside the ability's own cost.
+    // [2026-07-10 oracle correction] Real card: the named source's non-mana
+    // activated abilities CAN'T BE ACTIVATED AT ALL — a hard lock, not a tax
+    // (mana abilities are explicitly excepted; see manaAbility:true below).
     const fluteBlocked = fluteNamedCards.has(perm.name);
 
     for (const [abilKey, ability] of Object.entries(def.abilities)) {
@@ -14604,6 +14668,9 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
       if (perm.abilitiesUsed?.[abilKey]) continue;
 
       if (typeof ability.fn !== 'function') continue;
+
+      // Disruptor Flute: hard lock on this named source's non-mana abilities.
+      if (fluteBlocked && !ability.manaAbility) continue;
 
       // Shang-Chi static: creatures may activate abilities as though they had haste.
       // Pass a cloned perm with summoningSick=false so ability fns see no sickness.
@@ -14615,15 +14682,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         permForAbility.summoningSick = false;
       }
 
-      // Disruptor Flute: pre-pay the extra {3} before running the ability fn
-      let preState = state;
-      if (fluteBlocked) {
-        const afterFlute = state.payMana('3');
-        if (!afterFlute) continue; // can't afford the Flute tax
-        preState = afterFlute;
-      }
-
-      const raw = ability.fn(preState, permForAbility);
+      const raw = ability.fn(state, permForAbility);
       const results = raw === null || raw === undefined
         ? []
         : Array.isArray(raw) ? raw : [raw];
