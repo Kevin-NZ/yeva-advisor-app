@@ -2150,10 +2150,17 @@ class GameState {
     // Generous Patron ETB: support 2 — put a +1/+1 counter on each of up to 2 other creatures.
     // Priority: Incubation Druid first (enables 3-mana mode), then any creature.
     // No opponent draw trigger modelled (no opponent creatures in solo solver).
+    // [2026-07-11 fix — see ToDo.md IMP-7] Support has no summoning-sickness
+    // restriction on its targets — summoning sickness only prevents attacking
+    // and using {T}/{Q} abilities, not being the target of a counter-placement
+    // effect. A stray `!p.summoningSick` filter here would incorrectly exclude
+    // freshly-cast creatures from being valid Support targets, potentially
+    // missing the best (or only) target and understating what a real cast of
+    // Generous Patron can accomplish.
     if (!skipETB && cardKey === 'generous_patron') {
       s._ensureBF();
       const targets = s.battlefield.filter(p =>
-        p.is('creature') && p.id !== perm.id && !p.summoningSick
+        p.is('creature') && p.id !== perm.id
       );
       // Prefer Incubation Druid (adapt trigger), else biggest/first creatures
       targets.sort((a, b) => {
@@ -2264,9 +2271,17 @@ class GameState {
       }
     }
 
-    // Regal Force ETB: draw a card for each green creature you control
+    // Regal Force ETB: draw a card for each green creature you control.
+    // [2026-07-11 verified — see ToDo.md IMP-7] Uses total creature count, not a
+    // green-specific filter. This is safe ONLY because every creature currently
+    // modeled in cards.js is green: either it has a green pip in its cost, or
+    // (Dryad Arbor specifically) it has a color indicator making it green despite
+    // {0} mana value (verified rules point — Dryad Arbor is a well-known green-
+    // by-indicator exception, not colorless like most 0-cost lands). If a
+    // non-green creature is ever added to cards.js, this line must be updated to
+    // filter by green, or it will silently over-count draws.
     if (!skipETB && cardKey === 'regal_force') {
-      const greenCreatures = s.creatures().length; // simplified: all creatures
+      const greenCreatures = s.creatures().length;
       s = s.playerDraws(0, greenCreatures);
     }
 
@@ -2451,6 +2466,17 @@ class GameState {
     // Scrapshooter ETB: Gift a card — if gift was promised, destroy target artifact or enchantment.
     // Modeled deterministically: promise the gift (and destroy stax) whenever a valid target exists.
     // Opponent drawing a card (the gift) is not modeled (no opponent hand state).
+    // Scrapshooter ETB: "Gift a card... if the gift was promised, destroy target
+    // artifact/enchantment an opponent controls."
+    // [2026-07-11 verified — see ToDo.md IMP-7] Modeled as: the gift is always
+    // promised when a stax target exists (destroy always fires). This is a
+    // deliberate, examined assumption, not an oversight: promising the gift only
+    // costs the OPPONENT a card draw, and this solver doesn't track opponent hand
+    // quality/resources as something that can change the player's own available
+    // actions or win condition — so "always promise" is the dominant rational
+    // choice a searcher would make in every case that matters to THIS solver
+    // (unlike e.g. Defiler of Vigor's life cost, which genuinely can cause a
+    // checked loss and therefore needed a real conditional guard).
     if (!skipETB && cardKey === 'scrapshooter') {
       const staxTarget = s.battlefield.find(p =>
         (p.is('artifact') || p.is('enchantment')) &&
@@ -4265,6 +4291,39 @@ var CARDS = {
             results.push(s.log(`Maze of Ith → untap ${c.name}`));
           }
           return results;
+        },
+      },
+    },
+  },
+
+  // [2026-07-11 added — see ToDo.md IMP-7] Treasure token, created by Tireless
+  // Provisioner's landfall (see actions.js's play_land landfall block). Not a
+  // real card — a token definition, matching the isToken pattern used
+  // elsewhere (Fanatic of Rhonas / Timeless Witness Eternalize copies).
+  // Genuinely a SEPARATE permanent+action from the land drop that creates it:
+  // the mana requires a later, distinct {T}+Sacrifice activation, exactly
+  // like Havenwood Battleground's sac-for-mana pattern above. This matters:
+  // it means the mana is NOT available the instant the token is created (it's
+  // a mana ABILITY on a DIFFERENT permanent, gated by summoning-sickness-style
+  // legality the same as any other {T} ability — though artifacts don't have
+  // summoning sickness for {T} abilities that aren't attacking-related, a
+  // Treasure token can be sacrificed the turn it's created), and it IS an
+  // artifact activated ability — correctly suppressible by Null Rod / Collector
+  // Ouphe (via the shared artifactAbilitiesSuppressed() check used everywhere
+  // else), unlike the direct-mana shortcut this replaces.
+  treasure_token: {
+    name: 'Treasure', types: ['artifact'], subtypes: [], cost: null,
+    abilities: {
+      sac_for_mana: {
+        manaAbility: true,   // excepted from Disruptor Flute's activation lock
+        label: '{T}, Sacrifice Treasure: Add one mana of any color',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          let s = state.tapPermanent(perm.id); if (!s) return [];
+          s = s.removeFromBattlefield(perm.id, 'graveyard');  // token — vanishes, doesn't pollute graveyard
+          if (!s) return [];
+          s = s.addMana('G', 1);  // "any color" — this deck only ever wants G
+          return [s.log('Treasure: {T}, sacrifice → {G}')];
         },
       },
     },
@@ -13524,6 +13583,15 @@ function defilerGreenReduction(state, def) {
     (def.types.includes('creature') || def.types.includes('enchantment') ||
      def.types.includes('artifact') || def.types.includes('planeswalker'));
   if (!isGreenPermanent) return 0;
+  // [2026-07-11 fix — see ToDo.md IMP-6] The real cost is OPTIONAL ("you MAY
+  // pay 2 life"), but this function used to apply it unconditionally whenever
+  // Defiler was present — a rational player would decline when paying 2 life
+  // would be lethal (life <= 0 is a checked loss condition — see
+  // Player.hasLost()). Guarding here keeps this in sync with the matching
+  // guard on the life-payment site in actions.js's cast_spell handler; both
+  // must agree or the spell could be cast at the discounted cost without
+  // paying for it (worse than the original bug).
+  if (state.life <= 2) return 0;
   for (const perm of state.battlefield) {
     if (perm.name === 'Defiler of Vigor') return 1;
   }
@@ -13859,7 +13927,18 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           // abilities, not triggered ones — so it is irrelevant here.
           for (const perm of ns.battlefield) {
             if (perm.name === 'Lotus Cobra') ns = ns.addMana('G');
-            if (perm.name === 'Tireless Provisioner') ns = ns.addMana('G');
+            // [2026-07-11 fix — see ToDo.md IMP-7] Tireless Provisioner's real
+            // oracle creates a Food OR Treasure token — it does NOT add mana
+            // directly. The direct-mana shortcut this replaces skipped an
+            // entire actionable step (the token requires a LATER, separate
+            // {T}+Sacrifice activation to become mana) and bypassed Null Rod
+            // /Collector Ouphe's artifact-ability suppression entirely, since
+            // no artifact permanent was ever actually created. Always create
+            // Treasure (never Food) — Food's life gain has no combo value in
+            // this solver's win-finding search, matching the same
+            // "always take the dominant choice" simplification used
+            // elsewhere for optional/either-or triggers this session.
+            if (perm.name === 'Tireless Provisioner') ns = ns.enterBattlefield('treasure_token', { isToken: true });
             if (perm.name === 'Nissa, Resurgent Animist') {
               ns = ns.addMana('G');
               // Second landfall this turn: find an Elf or Elemental from library
@@ -14174,11 +14253,34 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         // This is an ETB trigger (fires after the creature enters), so checking
         // ns (post-enter state) is correct. Guardian Project is an enchantment
         // so it can never be the creature entering -- no self-cast issue.
-        // TODO: uniqueness clause ("doesn't share a name with another creature
-        // you control or in graveyard") is not currently enforced.
+        // [2026-07-11 fix — see ToDo.md IMP-7] Real oracle: "...if it doesn't have
+        // the same name as another creature you control or a creature card in your
+        // graveyard, draw a card." This uniqueness clause was NOT enforced (a
+        // TODO comment previously marked it as a known gap) — Guardian Project drew
+        // unconditionally on every creature entry.
+        // Practical scope, confirmed computationally: this deck's core "infinite
+        // ETB loop" combos (Ashaya+Ranger, Temur Sabertooth, Kogla) BOUNCE a
+        // creature to hand before recasting it, so at the moment of recast the
+        // creature is on neither the battlefield (it just left) nor in the
+        // graveyard (it went to hand) — the uniqueness clause is satisfied on
+        // EVERY iteration, and this fix does not block those loops at all
+        // (verified: Sabertooth bouncing+recasting Llanowar Elves draws every
+        // single time, matching the real card). The clause only matters for
+        // scenarios singleton Commander mostly forecloses anyway (two
+        // simultaneous copies of the same name) — this fix is a correctness
+        // improvement for edge cases (e.g. a token copy of an existing creature
+        // name), not a guard against the deck's actual combo shape.
         if (isCreature && ns.hasPermanent('Guardian Project')) {
-          ns = ns.playerDraws(0, 1);
-          ns = ns.log('Guardian Project: draw a card');
+          ns._ensureBF();
+          const entered = ns.battlefield[ns.battlefield.length - 1];
+          const dupOnBattlefield = entered && ns.battlefield.some(p =>
+            p.id !== entered.id && p.is('creature') && p.name === entered.name);
+          const dupInGraveyard = entered &&
+            ns.players[0].graveyard.includes(entered.name);
+          if (entered && !dupOnBattlefield && !dupInGraveyard) {
+            ns = ns.playerDraws(0, 1);
+            ns = ns.log('Guardian Project: draw a card');
+          }
         }
 
         // Primordial Sage: whenever you cast a creature spell, you may draw a card.
@@ -14216,10 +14318,20 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         // put a +1/+1 counter on EACH creature you control.
         // The {G} cost reduction (pay 2 life instead) is handled in costReductions();
         // here we deduct the 2-life additional cost from life total.
+        // [2026-07-11 fix — see ToDo.md IMP-6] Real cost is optional ("you MAY pay
+        // 2 life") — guarded on ns.life > 2 to match defilerGreenReduction()'s
+        // generation-time guard (both must agree, checked from the LIVE apply-time
+        // state per this file's established live-state-governs convention — see
+        // effectiveCost's recomputation pattern used for cast_spell generally).
+        // Without this guard, a rational player at critically low life who would
+        // decline the optional payment (life<=0 is a checked loss condition — see
+        // Player.hasLost()) was instead forced to pay it — a false-negative risk:
+        // the search could conclude a winning line "loses" from self-inflicted
+        // life loss that a real player would simply have avoided by declining.
         const _isGreenPerm = def.cost?.includes('G') &&
           (def.types.includes('creature') || def.types.includes('enchantment') ||
            def.types.includes('artifact') || def.types.includes('planeswalker'));
-        if (ns.hasPermanent('Defiler of Vigor') && _isGreenPerm) {
+        if (ns.hasPermanent('Defiler of Vigor') && _isGreenPerm && ns.life > 2) {
           ns.life -= 2;
           ns = ns.log(`Defiler of Vigor: pay 2 life for {G} reduction (life: ${ns.life})`);
           ns._ensureBF();
