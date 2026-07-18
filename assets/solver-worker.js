@@ -16209,7 +16209,43 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
     // true.
     const moreWindowsAvailable = simulateOpponentTurns && oppTurnsDoneNow < 3 && hasOpponentTurnValue;
 
-    if (moreWindowsAvailable) {
+    // [2026-07-11 — see ToDo.md IMP-32] If this exact opponent-turn state has
+    // generated NO other legal action so far (actions.length === 0 at this
+    // point — this chaining block is the last thing added to `actions`
+    // before the function returns, so nothing else is coming), chaining to
+    // the next window would land on an IDENTICAL state (same battlefield,
+    // hand, mana — only opponentTurnsThisRound increments and abilitiesUsed
+    // resets, both no-ops when nothing was used here) and would therefore
+    // recursively offer the exact same "nothing to do" conclusion. Skip
+    // straight to "pass back to your turn" instead of exploring N+1, N+2
+    // separately — a genuine reduction, not an approximation, PROVIDED
+    // nothing makes the transition itself valuable independent of taking an
+    // action. Four cards do exactly that (all handled in the window-entry
+    // apply() below, unconditionally, whether or not any other action is
+    // taken): Seedborn Muse and Quest for Renewal (4+ counters) untap
+    // permanents on transition; Heartwood Storyteller and Runic Armasaur
+    // each draw a card on transition. Confirmed directly against each
+    // site's own apply() logic before writing this check, not assumed.
+    //
+    // Seedborn Muse and Quest for Renewal are refined further: their
+    // "value" is untapping something, so it's only REAL value if
+    // something is actually tapped for them to untap (excluding exerted
+    // permanents — abilitiesUsed.exert_two_lands — which never untap via
+    // either effect anyway, per the exact same skip these two effects'
+    // own apply() logic already applies). With nothing eligible tapped,
+    // their automatic untap is itself a no-op, so it does NOT block the
+    // skip. Heartwood Storyteller and Runic Armasaur get no such
+    // refinement — a card draw always has value regardless of board
+    // state, so their mere presence keeps blocking the skip.
+    const seedbornWouldUntapSomething = seedbornActive &&
+      state.battlefield.some(p => p.tapped && !p.abilitiesUsed?.exert_two_lands);
+    const questWouldUntapSomething = questActive &&
+      state.creatures().some(p => p.tapped && !p.abilitiesUsed?.exert_two_lands);
+    const transitionHasIntrinsicValue = seedbornWouldUntapSomething || questWouldUntapSomething ||
+      state.hasPermanent('Heartwood Storyteller') || runicArmasaurActive;
+    const chainingWouldBeNoOp = actions.length === 0 && !transitionHasIntrinsicValue;
+
+    if (moreWindowsAvailable && !chainingWouldBeNoOp) {
       // Chain directly to the next opponent window — no free main phase in between.
       const nextOppNum = oppTurnsDoneNow + 1;
       actions.push({
@@ -16276,6 +16312,31 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         apply(s) {
           const ns = s.clone();
           ns.isOpponentTurn = false;
+          // [2026-07-11 — see ToDo.md IMP-32] Force to 3 (fully used) rather
+          // than leaving whatever value opponentTurnsThisRound already had.
+          // This branch is reached whenever no further window will open
+          // this round, for any of three reasons: all 3 were genuinely
+          // stepped through; hasOpponentTurnValue turned false partway
+          // through; or the chainingWouldBeNoOp skip above jumped here
+          // directly from window 1 or 2. All three cases mean the same
+          // thing going forward — "no more opponent windows this round" —
+          // and opponentTurnsThisRound is part of the dominance-comparable
+          // mana segment (IMP-16/29), so leaving it at whatever count was
+          // reached (1, 2, or 3) makes otherwise-identical post-window
+          // states look distinct to dedup/dominance for the remainder of
+          // this turn. Confirmed directly: this was the root cause of a
+          // measured bench regression when chainingWouldBeNoOp was added
+          // without this normalization (states increased instead of
+          // decreasing, since skipping ahead created NEW opponentTurnsThisRound
+          // values — 1 or 2 — that the old, always-chain-through-3 code
+          // path never produced, so what should have been the same
+          // post-window state now fragmented into several dominance-
+          // distinct ones). It's always safe to force to 3 here: this
+          // field resets to 0 unconditionally at the next startNewTurn()
+          // regardless of its value beforehand (see GameState.js), so
+          // this has no effect beyond correctly representing "this
+          // round's windows are done" for the remainder of the turn.
+          ns.opponentTurnsThisRound = 3;
           var { ManaPool: _MP } = _GSM;
           ns.mana = new _MP();
           return ns.log('-- back to your turn --');
