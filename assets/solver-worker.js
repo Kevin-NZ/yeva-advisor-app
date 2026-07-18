@@ -46,6 +46,14 @@ var COMBO_REQUIRED_KEYS = [
   ['ashaya','hope_tender','nykthos'],                      // 45
   ['ashaya','hope_tender','shang_chi'],                    // 63 (detector disabled — restricted mana only)
   ['ashaya','hope_tender','shang_chi','formidable_speaker'], // 64
+  // [2026-07-11 — see ToDo.md IMP-20] Temur Sabertooth/Kogla + Hope Tender +
+  // Gaea's Cradle (no Ashaya needed — see the matching combo detector in
+  // combos.js, added for IMP-19). Without these, temur_sabertooth/kogla
+  // never appear in missingCombo when hope_tender+gaeas_cradle+a haste
+  // enabler are already assembled, so a tutor would never recognize them
+  // as the one remaining piece worth fetching.
+  ['temur_sabertooth','hope_tender','gaeas_cradle','shang_chi'],
+  ['kogla','hope_tender','gaeas_cradle','shang_chi'],
   ['ashaya','marwyn'],                                     // 26 (Scryb+Marwyn), 61
   ['ashaya','wirewood_channeler'],                         // 49 (Scryb+Channeler), 62
 
@@ -216,6 +224,46 @@ var COMBO_REQUIRED_KEYS = [
   ['argothian_elder', 'wirewood_symbiote', 'temur_sabertooth'], // 67
   ['hyrax_tower_scout', 'temur_sabertooth'],               // 68 (canonical variant; Magus/Speaker/Hope Tender + Kogla also work)
 ];
+
+// [2026-07-11 — see ToDo.md IMP-24] User-requested principle: some cards
+// are valuable fetch targets NOT because they're the last missing piece
+// of ONE specific, already-known combo (what COMBO_REQUIRED_KEYS/
+// missingCombo captures), but because they're themselves a powerful,
+// generically useful engine — most obviously, ANOTHER tutor — worth
+// having regardless of which specific combo ends up being assembled.
+// Formidable Speaker is the motivating case: her tutor is repeatable
+// whenever a bounce engine is present (Temur Sabertooth, Wirewood
+// Symbiote, Quirion/Scryb Ranger under Ashaya — all common in this
+// deck), but every existing COMBO_REQUIRED_KEYS entry naming her also
+// requires Ashaya specifically, so she was invisible as a fetch target
+// at any earlier point where Ashaya hasn't been assembled yet (found and
+// documented as an explicit, deliberate gap in IMP-23).
+//
+// Cards listed here are merged directly into _creatureTutorCandidates'
+// missingCombo set (cards.js), so they compete on the SAME priority-
+// score-sorted, bounded footing as every other tier-1 candidate — this
+// does not special-case them above genuinely combo-verified (tier-0)
+// picks, and is still subject to the same maxCandidates bound per tutor
+// call site. Kept intentionally small and specific rather than "every
+// tutor/engine in the deck" — the whole point of the tiered, bounded
+// design (IMP-20) is to avoid unconditionally exploding the branching
+// factor; this is an opt-in exception for cards judged individually
+// worth the extra candidate slot, not a blanket category.
+var ALWAYS_RELEVANT_TUTOR_TARGETS = new Set([
+  'formidable_speaker',
+  // [2026-07-11 — see ToDo.md IMP-25] Same reasoning as Formidable
+  // Speaker: a genuinely powerful, repeatable engine (return an Elf to
+  // hand: untap a creature, once per turn — the exact bounce mechanism
+  // several of this deck's combos depend on) that was invisible as a
+  // fetch target at any point where its own combo partner
+  // (Temur Sabertooth, Circle of Dreams Druid, or Selvala — every
+  // existing COMBO_REQUIRED_KEYS entry naming her requires at least one
+  // of these) hasn't been assembled yet. Confirmed directly: at the
+  // exact user-reported hand's Formidable Speaker ETB decision point
+  // (Temur Sabertooth/Circle/Selvala all still in library), she did not
+  // appear even at top-5 before this addition.
+  'wirewood_symbiote',
+]);
 
 // ── Tutor target priority ─────────────────────────────────────────────────
 var TUTOR_PRIORITY_SCORE = {
@@ -1066,6 +1114,19 @@ class GameState {
       }
     }
     this.mana          = data.mana instanceof ManaPool ? data.mana : new ManaPool(data.mana ?? {});
+    // [2026-07-11 — see ToDo.md IMP-11] Shang-Chi's restricted mana: "{T}: Add
+    // two mana of any one color. Spend this mana only to activate abilities
+    // of creature sources." Modeled as a single green counter (this deck is
+    // mono-green, so "any one color" is always chosen as G in practice —
+    // same simplification convention used elsewhere for other "any color"
+    // abilities). Tracked SEPARATELY from the general pool (this.mana) so it
+    // can never be spent on spell casts or non-creature-ability costs — only
+    // callCreatureAbilityFn() (actions.js) can draw on it, via a temporary
+    // merge-and-reconcile around a single creature-sourced ability.fn() call.
+    // Resets to 0 at the start of each turn, same as the general mana pool
+    // (see startNewTurn) — matches this solver's "mana doesn't persist past
+    // your turn" simplification (real CR: pools empty every step/phase).
+    this.restrictedG   = data.restrictedG ?? 0;
     this.storm         = data.storm       ?? 0;
     this.comboAchieved = data.comboAchieved ?? false;
     this.comboName     = data.comboName     ?? null;
@@ -1475,6 +1536,7 @@ class GameState {
     s.hand          = this.hand;            // shared (COW) — see note above
     s.battlefield   = this.battlefield;     // shared (COW)
     s.mana          = this.mana.clone();
+    s.restrictedG   = this.restrictedG;
     s.storm         = this.storm;
     s.comboAchieved = this.comboAchieved;
     s.comboName     = this.comboName;
@@ -1664,6 +1726,7 @@ class GameState {
     // log()) rebuilds the Set from scratch (~4x slower per call).
     s._permNames    = this._permNames;
     s.mana          = this.mana;            // shared
+    s.restrictedG   = this.restrictedG;
     s.storm         = this.storm;
     s.comboAchieved = this.comboAchieved;
     s.comboName     = this.comboName;
@@ -1705,6 +1768,17 @@ class GameState {
     if (newPool === null) return null;
     const s = this.clone();
     s.mana = newPool;
+    return s;
+  }
+
+  /** [2026-07-11] Shang-Chi's "{T}: Add two mana of any one color, spend
+   *  this mana only to activate abilities of creature sources." Adds to the
+   *  SEPARATE restrictedG counter, never the general pool — see the
+   *  constructor comment on restrictedG and callCreatureAbilityFn() in
+   *  actions.js for how it's later spent. */
+  addRestrictedMana(amount = 1) {
+    const s = this.clone();
+    s.restrictedG += amount;
     return s;
   }
 
@@ -2528,6 +2602,23 @@ class GameState {
     // worth tutoring. Discard strategy: prefer the lowest-value non-combo card
     // in hand (to avoid losing pieces we need), then fetch the best combo
     // creature from the library (same TUTOR_PRIORITY_SCORE ranking as Survival).
+    //
+    // [2026-07-11 — see ToDo.md IMP-20] Deliberately NOT switched to the
+    // combo-aware _bestCreatureTutorTarget heuristic Fauna Shaman/Survival
+    // now use. Tried it during implementation: since this ETB can only ever
+    // return a single, non-branching choice (enterBattlefield returns one
+    // state, not several — unlike an activated ability's fn(), which can),
+    // switching just changes WHICH single target gets picked, without
+    // adding any new win-discovery capability. On the C-23 bench hand
+    // (Formidable Speaker already on the battlefield, re-triggerable via
+    // bounce effects during the search), the combo-aware version picked a
+    // different, more "interesting" target that opened a substantially
+    // larger subtree (156 -> 5,915+ states, ~38x) with no corresponding
+    // improvement in win quality — a bad trade for a single-choice
+    // decision. Reverted; the real value of this session's tutor work is
+    // Fauna Shaman/Survival's bounded MULTI-candidate branching, which
+    // actually lets the search explore alternate combo paths rather than
+    // just picking a different single one.
     if (!skipETB && cardKey === 'formidable_speaker' && s.hand.length > 0) {
       const libCards = s.players[0].library;
       const creaturesInLib = libCards.filter(k => cards[k]?.types.includes('creature'));
@@ -2852,6 +2943,7 @@ class GameState {
     // CR 500.4 / 514: mana pools empty at the end of each step and phase.
     // Any floating mana left at the end of your turn is lost.
     s.mana = new ManaPool();
+    s.restrictedG = 0;   // [2026-07-11] Shang-Chi's restricted mana empties too — same rule
     s._ensureBF();  // untap loop mutates permanents
     for (const p of s.battlefield) {
       // Exerted creatures don't untap on your next untap step.
@@ -3182,8 +3274,40 @@ class GameState {
     const bf = segs.sort().join('|');
 
     // Mana — fast colon-separated digits (avoids conditional string building)
+    // [2026-07-11] restrictedG (Shang-Chi's "creature abilities only" mana)
+    // appended as a 7th field — genuinely different game state from general
+    // mana of the same amount (can't pay for spells), so two states with
+    // identical general mana but different restrictedG must never alias to
+    // the same fingerprint. Kept OUT of structKey (below) deliberately: that
+    // key intentionally omits ALL floating-mana fields (both pools) so
+    // Solver._isManaDominated can group "same board, different mana" states
+    // — restrictedG is handled there as a separate dominance dimension
+    // instead (see _isManaDominated's comment in Solver.js).
+    //
+    // [2026-07-11 — see ToDo.md IMP-16] opponentTurnsThisRound appended as
+    // an 8th field, for the exact same reason and by the exact same
+    // mechanism as restrictedG above — it used to live in the suffix
+    // (structKey) below, where its inclusion prevented dominance pruning
+    // from ever comparing two states that differ only in how many of the 3
+    // opponent-turn windows have been used so far this round. That's
+    // "resource remaining", exactly like mana: a state with FEWER windows
+    // used (MORE remaining) can only ever have equal-or-more future options
+    // than an otherwise-identical state with more used — opening a window
+    // is always optional, so having more available never hurts. Moving it
+    // here (dominance-comparable, not structKey-partitioning) lets
+    // Solver._isManaDominated correctly collapse "did ability X in window 1
+    // then chained to window 2" against "did the same ability X, stayed in
+    // window 1" when the latter has strictly more windows left — previously
+    // these were forced into different structKey buckets purely by which
+    // window number the action happened in, even when otherwise identical,
+    // multiplying exploration across up to 3 windows per round with no
+    // corresponding gain. isOpponentTurn (the boolean "is it currently an
+    // opponent's turn at all") is NOT moved — it's a genuine phase
+    // distinction (different legal actions entirely, not a resource
+    // amount) and correctly stays in structKey.
     const mn = this.mana;
-    const m = mn.W + ':' + mn.U + ':' + mn.B + ':' + mn.R + ':' + mn.G + ':' + mn.C;
+    const m = mn.W + ':' + mn.U + ':' + mn.B + ':' + mn.R + ':' + mn.G + ':' + mn.C + ':' +
+              this.restrictedG + ':' + this.opponentTurnsThisRound;
 
     // Players — unrolled 4-player concat (avoids .map() lambda overhead)
     const p0 = this.players[0], p1 = this.players[1],
@@ -3211,7 +3335,6 @@ class GameState {
                (this.pactOwed       ? '|PC' : '') +
                (this.landsPlayedThisTurn > 0 ? '|LP:' + this.landsPlayedThisTurn : '') +
                (this.isOpponentTurn ? '|OT' : '') +
-               (this.opponentTurnsThisRound > 0 ? '|OTR:' + this.opponentTurnsThisRound : '') +
                (this.endingTurn     ? '|ET' : '') +
                (this.endStepReached ? '|ES' : '') +
                ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? '|OS:' + [...this.opponentStax].sort().join(',') : '') +
@@ -3288,7 +3411,7 @@ function countElves(state) {
 }
 
 function simpleTap(label, colorPairs) {
-  return function tapForMana(state, perm) {
+  const fn = function tapForMana(state, perm) {
     if (perm.tapped || perm.summoningSick) return [];
     let s = state.tapPermanent(perm.id);
     if (!s) return [];
@@ -3300,6 +3423,30 @@ function simpleTap(label, colorPairs) {
     s = s.log(`Tap ${perm.name} → ${label}`);
     return [s];
   };
+  // [2026-07-11 — see ToDo.md IMP-13] Marks this function as PROVABLY
+  // board-state-independent: colorPairs is captured in the closure at
+  // DEFINITION time and never re-evaluated against current game state, so
+  // this card's tap-for-mana output can never differ between two calls.
+  // Consumed by actions.js's _tapSignature to gate its non-exhaustive
+  // cross-cardKey merge — merging is ONLY eligible when BOTH permanents'
+  // tapForMana carries this marker. This is an opt-IN safety property: any
+  // hand-written custom tapForMana function (Priest of Titania's elf-count
+  // scaling, Karametra's Acolyte's devotion scaling, Circle of Dreams
+  // Druid's creature-count scaling, etc.) does NOT get this marker by
+  // default, and is therefore NEVER eligible for cross-cardKey merging —
+  // correctly, since such a source's CURRENT output can coincidentally
+  // match a truly-fixed source's output at one moment (e.g. Priest of
+  // Titania with exactly 1 elf on board produces {G}x1, matching a plain
+  // Llanowar Elves) while being fundamentally different: tapping it EARLY
+  // (merged with, and possibly chosen over, a genuinely fixed source) would
+  // wrongly lock in its current low value and lose the option to wait for
+  // it to scale higher later in the same turn. Comparing only INSTANTANEOUS
+  // produced mana (as an earlier version of this fix did) cannot detect
+  // this — it requires knowing the source can never produce something
+  // different, which only a definition-time, closure-based guarantee like
+  // simpleTap's colorPairs actually provides.
+  fn.isFixedOutput = true;
+  return fn;
 }
 
 /**
@@ -3409,6 +3556,21 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
       // once PER target, as before, was pure redundant work whenever more
       // than one target is bounceable (e.g. multiple Forests in play).
       const allTappedCreatures = state.creatures().filter(c => c.tapped);
+      // [2026-07-11 — see ToDo.md IMP-30] Deduplicate BEFORE building the
+      // expensive state, not after. Previously every (target, untap-target)
+      // pair built a full result state (markAbilityUsed + removeFromBattlefield
+      // + addToHand + untapPermanent + log — each a COW clone) UP FRONT, and
+      // only THEN discarded duplicates by comparing the resulting log
+      // message. With N interchangeable bounce targets (e.g. several
+      // identical Forests) and M interchangeable untap targets (e.g.
+      // several identical mana dorks), this built N×M full states to keep
+      // only a handful of genuinely distinct ones — confirmed directly: a
+      // board with 4 identical Forests and 3 identical tapped dorks built
+      // 12 full states to yield exactly 1 surviving result. This function
+      // was the single hottest function in a CPU profile on a hand with
+      // several Ranger/Symbiote-style bounce engines, so the wasted work
+      // has an outsized cumulative cost across the whole search.
+      const seenPairs = new Set();
       for (const target of bounceable) {
         const creaturesCanUntap = allTappedCreatures.filter(c => c.id !== target.id);
         // Only offer "untap self" when bouncing another Elf if the symbiote/ranger
@@ -3422,6 +3584,26 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
           : [...creaturesCanUntap, ...selfUntapOption];
         if (untapTargets.length === 0) continue;
         for (const ut of untapTargets) {
+          // Cheap, string-only dedup key — identical (target name, untap
+          // name) pairs always produce identical resulting states,
+          // regardless of which specific permanent instance was chosen.
+          // Use ut.name directly, NOT a sentinel for the _isSelf case. The
+          // explicit self-untap option is `{ ...perm, _isSelf: true }` — a
+          // spread copy of perm — so its .name ALREADY equals perm.name
+          // with no special-casing needed. Using a sentinel instead
+          // treated that explicit option as distinct from perm potentially
+          // ALSO appearing as an ordinary entry in creaturesCanUntap
+          // (that filter only excludes target.id, not perm.id, so perm
+          // herself can appear there too if she's a tapped creature) —
+          // even though both represent the exact same physical action
+          // (untap perm). Confirmed directly: this caused a real bench
+          // regression (+8,172 states on the Arbor Elf + Wild Growth +
+          // Ashaya + QR hand) despite identical, correct win quality —
+          // the extra states were genuinely redundant, not new coverage.
+          const pairKey = target.name + '|' + ut.name;
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+
           let s = state;
           // Mark the ability used on the permanent BEFORE any removal, so the
           // flag persists even if perm is bounced to hand (it's gone from BF).
@@ -3447,19 +3629,7 @@ function bounceToUntap(label, filterFn, selfKey, abilityKey) {
           results.push(s);
         }
       }
-      // Deduplicate: when multiple identical permanents exist (e.g. 3 Forests),
-      // bouncing any of them produces the same resulting state. Use label-based
-      // deduplication — identical labels mean identical (bounce, untap) pairs which
-      // produce identical result states. This avoids computing fingerprints on all
-      // result states (fingerprint() is fast but the result states themselves are
-      // expensive to build — each is a full COW clone chain).
-      const seenLabels = new Set();
-      return results.filter(r => {
-        const msg = r.lastHistMsg() ?? '';   // [F-3] O(1) last-entry read
-        if (seenLabels.has(msg)) return false;
-        seenLabels.add(msg);
-        return true;
-      });
+      return results;
     },
   };
 }
@@ -3548,8 +3718,29 @@ function _freshlyTutoredKeys(state) {
  * @param {GameState} state  State after discarding (library search happens here).
  * @returns {string|null}    Card key of the best fetch target, or null if none found.
  */
-function _bestCreatureTutorTarget(state) {
+// [2026-07-11 — see ToDo.md IMP-20] Bounded, multi-candidate version of the
+// tutor-target search below. The original function always collapsed to a
+// SINGLE "best" pick per tier, which meant a genuinely different, equally
+// legal combo path (see IMP-19's Temur Sabertooth/Kogla + Hope Tender +
+// Gaea's Cradle engine — no Ashaya needed) could never be explored by the
+// search whenever a higher-scored candidate like Ashaya ALSO qualified,
+// even though picking her locks in a different, sometimes worse or
+// unreachable line. Returns up to `maxCandidates` distinct creature keys,
+// preserving the original's strict tier ordering: ALL qualifying tier-0
+// candidates (verified — simulated entry immediately completes some
+// detected combo) come before ANY tier-1 candidate (unverified, merely
+// "one piece away" per COMBO_REQUIRED_KEYS), which come before the single
+// tier-2 fallback (no combo relevance at all — kept single-choice
+// deliberately, since expanding this tier would offer options with no
+// bearing on winning and only add search-space cost).
+//
+// Bounding to a small maxCandidates (3 by default) keeps the combinatorial
+// cost predictable: tier 0 is already a narrow, simulation-verified filter
+// (typically 1-2 hits in practice), and even the tier-1 top-N slice is
+// capped rather than exploring every missingCombo entry.
+function _creatureTutorCandidates(state, maxCandidates = 3) {
   const cards = CARDS;
+  var { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, ALWAYS_RELEVANT_TUTOR_TARGETS } = _CDM;
 
   // Build present set: hand + battlefield
   const present = new Set(state.hand);
@@ -3558,11 +3749,149 @@ function _bestCreatureTutorTarget(state) {
     if (ck) present.add(ck);
   }
 
-  // Step 1: creatures that complete a combo (one piece away)
+  // Step 1: creatures that complete a combo (one piece away), PLUS cards
+  // that are always worth fetching in their own right regardless of the
+  // specific combo landscape — see ALWAYS_RELEVANT_TUTOR_TARGETS' own
+  // comment (combo_data.js) for the full reasoning (IMP-24).
   const missingCombo = new Set();
   for (const required of COMBO_REQUIRED_KEYS) {
     const absent = required.filter(k => !present.has(k));
     if (absent.length === 1) missingCombo.add(absent[0]);
+  }
+  for (const ck of ALWAYS_RELEVANT_TUTOR_TARGETS) {
+    if (!present.has(ck)) missingCombo.add(ck);
+  }
+  // Remove functional-equivalent duplicates
+  for (const group of FUNCTIONAL_EQUIVALENTS) {
+    const hasOne = [...group].some(k => present.has(k));
+    if (hasOne) for (const k of group) missingCombo.delete(k);
+  }
+
+  // Collect all library creatures not already present
+  const seenLib = new Set();
+  const libCreatures = [];
+  for (const ck of state.players[0].library) {
+    if (ck === 'unknown' || isStax(ck) || seenLib.has(ck)) continue;
+    seenLib.add(ck);
+    if (present.has(ck)) continue;
+    const def = cards[ck];
+    if (!def?.types.includes('creature')) continue;
+    libCreatures.push(ck);
+  }
+
+  // Build a "projected" state where hand creatures whose combo partners are already
+  // on the battlefield are pre-entered. This lets tier-0 evaluate e.g.
+  // "Ashaya in hand + QR on BF → fetch Priest" as an immediate combo hit.
+  //
+  // Performance: we only project ck if it appears in some COMBO_REQUIRED_KEYS entry
+  // where every OTHER member is already on the battlefield. This is a tight filter —
+  // in the common case (all pieces on BF already, or hand has only simple dorks) zero
+  // clones are made, keeping the hot DFS path fast.
+  const bfKeySet = new Set(
+    state.battlefield.map(p => NAME_TO_KEY[p.name]).filter(Boolean)
+  );
+  let projectedState = state;
+  let didProject = false;
+  for (const ck of new Set(state.hand)) {                 // deduplicate
+    const def = cards[ck];
+    if (!def?.types.includes('creature')) continue;
+    if (bfKeySet.has(ck)) continue;                       // already on BF
+    // Only project if all OTHER members of some required combo are on BF
+    const isKeystone = COMBO_REQUIRED_KEYS.some(req => {
+      if (!req.includes(ck)) return false;
+      return req.every(k => k === ck || bfKeySet.has(k));
+    });
+    if (!isKeystone) continue;
+    projectedState = projectedState.enterBattlefield(ck);
+    const added = projectedState.battlefield[projectedState.battlefield.length - 1];
+    if (added) added.summoningSick = false;
+    didProject = true;
+  }
+
+  // Tier 0: ALL combo-completing creatures that immediately fire a combo
+  // when put on BF (verified by simulation), sorted best-first.
+  const tier0 = [];
+  for (const ck of libCreatures) {
+    if (!missingCombo.has(ck)) continue;
+    let testState = (didProject ? projectedState : state).enterBattlefield(ck);
+    const newPerm = testState.battlefield[testState.battlefield.length - 1];
+    if (newPerm) newPerm.summoningSick = false;
+    if (checkCombos(testState)) {
+      tier0.push({ ck, sc: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
+    }
+  }
+  tier0.sort((a, b) => b.sc - a.sc);
+  const picked = tier0.slice(0, maxCandidates).map(x => x.ck);
+  // [2026-07-11 — IMP-20 bug fix] The original single-target function's
+  // strict "if tier0Key, return it — never even look at tier 1" ordering
+  // was preserved too literally here at first: whenever ANY tier-0
+  // candidate existed, the function returned immediately, so a genuinely
+  // different, tier-1-only candidate (e.g. Temur Sabertooth, unverified at
+  // THIS exact board state because Gaea's Cradle happens to be tapped —
+  // see the IMP-19 detector's cradleUntapped requirement — even though
+  // she's the correct piece to fetch en route to untapping it) could never
+  // be offered alongside a tier-0 pick like Ashaya, even with room left in
+  // maxCandidates. Tier 0 still strictly OUTRANKS tier 1 (fills the
+  // candidate list first, exactly matching the single-target function's
+  // preference), but no longer blocks tier 1 from filling any REMAINING
+  // slots. Caught by direct testing against the user-reported hand, not
+  // assumed correct from the arithmetic alone.
+  if (picked.length >= maxCandidates) return picked;
+
+  // Tier 1: any combo-completing creature (unverified — in missingCombo but
+  // not confirmed to immediately fire), ranked by priority, filling any
+  // slots tier 0 didn't already use.
+  const tier0Set = new Set(picked);
+  const tier1 = [];
+  for (const ck of libCreatures) {
+    if (!missingCombo.has(ck) || tier0Set.has(ck)) continue;
+    tier1.push({ ck, sc: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
+  }
+  if (tier1.length > 0) {
+    tier1.sort((a, b) => b.sc - a.sc);
+    for (const x of tier1) {
+      if (picked.length >= maxCandidates) break;
+      picked.push(x.ck);
+    }
+  }
+  if (picked.length > 0) return picked;
+
+  // Tier 2: fallback — single highest-priority creature in library.
+  // Deliberately kept single-choice: no combo relevance at all here, so
+  // offering alternatives would only add search cost with no path to a win.
+  let tier2Key = null, tier2Score = -1;
+  for (const ck of libCreatures) {
+    const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
+    if (sc > tier2Score) { tier2Key = ck; tier2Score = sc; }
+  }
+  return tier2Key ? [tier2Key] : [];
+}
+
+function _bestCreatureTutorTarget(state) {
+  const cards = CARDS;
+  var { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, ALWAYS_RELEVANT_TUTOR_TARGETS } = _CDM;
+
+  // Build present set: hand + battlefield
+  const present = new Set(state.hand);
+  for (const p of state.battlefield) {
+    const ck = NAME_TO_KEY[p.name];
+    if (ck) present.add(ck);
+  }
+
+  // Step 1: creatures that complete a combo (one piece away), PLUS cards
+  // that are always worth fetching in their own right — see
+  // _creatureTutorCandidates' matching comment (IMP-24) for the full
+  // reasoning. Kept in sync with that function manually, same as every
+  // other change to this pair since IMP-20 — this one exists solely for
+  // the backward-compatibility test verifying it still matches
+  // _creatureTutorCandidates' first entry, not for any real caller.
+  const missingCombo = new Set();
+  for (const required of COMBO_REQUIRED_KEYS) {
+    const absent = required.filter(k => !present.has(k));
+    if (absent.length === 1) missingCombo.add(absent[0]);
+  }
+  for (const ck of ALWAYS_RELEVANT_TUTOR_TARGETS) {
+    if (!present.has(ck)) missingCombo.add(ck);
   }
   // Remove functional-equivalent duplicates
   for (const group of FUNCTIONAL_EQUIVALENTS) {
@@ -4311,6 +4640,32 @@ var CARDS = {
   // artifact activated ability — correctly suppressible by Null Rod / Collector
   // Ouphe (via the shared artifactAbilitiesSuppressed() check used everywhere
   // else), unlike the direct-mana shortcut this replaces.
+  // [2026-07-11 added — see ToDo.md IMP-9] Food token, the second option of
+  // Tireless Provisioner's landfall choice (the first being Treasure, above).
+  // Real oracle ability: "{2}, {T}, Sacrifice this artifact: You gain 3 life."
+  // Not free — requires paying {2} generic mana, same "genuine separate cost"
+  // principle as Treasure's own sac-for-mana ability.
+  food_token: {
+    name: 'Food', types: ['artifact'], subtypes: [], cost: null,
+    abilities: {
+      sac_for_life: {
+        manaAbility: false,  // this is NOT a mana ability (it gains life, not mana) —
+                              // Disruptor Flute's activation lock does NOT except it
+        label: '{2}, {T}, Sacrifice Food: Gain 3 life',
+        fn(state, perm) {
+          if (perm.tapped) return [];
+          const ap = state.payMana('2'); if (!ap) return [];
+          let s = ap.tapPermanent(perm.id); if (!s) return [];
+          s = s.removeFromBattlefield(perm.id, 'graveyard');  // token — vanishes
+          if (!s) return [];
+          s = s.clone();
+          s.life += 3;
+          return [s.log('Food: {2}, {T}, sacrifice → gain 3 life')];
+        },
+      },
+    },
+  },
+
   treasure_token: {
     name: 'Treasure', types: ['artifact'], subtypes: [], cost: null,
     abilities: {
@@ -5459,6 +5814,103 @@ var CARDS = {
 
   formidable_speaker: {
     name: 'Formidable Speaker', types:['creature'], subtypes:['Elf','Druid'], cost:'2G', power: 2, toughness: 4,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
+    // [2026-07-11 — see ToDo.md IMP-25] Bypasses the generic castFn wrapper's
+    // OWN, independent combo-relevance filter and its lower maxBranches=2
+    // cap (actions.js) — her castFn below already does its own, more
+    // complete, combo-aware filtering via _creatureTutorCandidates
+    // (including ALWAYS_RELEVANT_TUTOR_TARGETS, which the outer filter has
+    // no knowledge of at all). Without this, the outer filter was silently
+    // re-truncating her already-correctly-bounded 3-candidate result set
+    // down to 2, and could drop an always-relevant target (e.g. Wirewood
+    // Symbiote) entirely if it wasn't ALSO independently recognized by the
+    // outer filter's own, separate missingComboCards() implementation.
+    selfBoundedTutor: true,
+    // [2026-07-11 — see ToDo.md IMP-21] castFn gives this ETB TRUE multi-
+    // candidate branching — genuinely different from IMP-20's Formidable
+    // Speaker attempt, which tried switching the *single* choice inside
+    // GameState.enterBattlefield's ETB hook to a smarter heuristic and
+    // found that couldn't add any real search capability (enterBattlefield
+    // returns one state, never several). A cast spell's castFn, by
+    // contrast, is ALREADY the established multi-result mechanism this
+    // codebase uses for genuine choices (see Mox Diamond's discard-or-not
+    // castFn) — one action gets generated per returned state. This calls
+    // enterBattlefield with skipETB:true specifically to avoid double-
+    // firing against the OLD, single-choice ETB hook still present in
+    // GameState.js (kept there deliberately, unchanged, as the fallback
+    // for any path that puts her on the battlefield WITHOUT being cast —
+    // e.g. a future tutor-to-battlefield effect naming her specifically;
+    // castFn only fires for the normal "cast from hand" path).
+    castFn(state) {
+      const cards = CARDS;
+      // Mana already paid, card already removed from hand by the cast-spell
+      // wrapper (see actions.js) before castFn is invoked — matches every
+      // other castFn in this file (e.g. Mox Diamond, right above).
+      let entered = state.enterBattlefield('formidable_speaker', {}, { skipETB: true });
+      const plainEntry = () => [entered.log('Cast Formidable Speaker')];
+
+      if (!entered.hand || entered.hand.length === 0) return plainEntry();
+      const libCards = entered.players[0].library;
+      const creaturesInLib = libCards.filter(k => cards[k]?.types.includes('creature'));
+      if (creaturesInLib.length === 0) return plainEntry();
+
+      const candidates = _creatureTutorCandidates(entered, 3);
+      if (candidates.length === 0) return plainEntry();
+
+      const PROTECT_THRESHOLD = 70;
+      const present = new Set(entered.battlefield.map(p => NAME_TO_KEY[p.name]).filter(Boolean));
+
+      const results = [];
+      const seenPair = new Set();
+      for (const bestTutor of candidates) {
+        // Find the least-valuable card to discard (avoid discarding the target
+        // itself or high-value pieces not yet on battlefield). Same protection
+        // logic as the original enterBattlefield version: no fallback when
+        // nothing safe to discard exists — decline the "may" entirely rather
+        // than force-discard a protected combo piece (see O-53 in ToDo.md).
+        const handCopy = [...new Set(entered.hand)].filter(k => k !== bestTutor);
+        const discardable = handCopy.filter(k =>
+          (TUTOR_PRIORITY_SCORE[k] ?? 0) < PROTECT_THRESHOLD || present.has(k)
+        );
+        const discardKey = discardable[0];
+        if (!discardKey) continue;
+        const pairKey = discardKey + '|' + bestTutor;
+        if (seenPair.has(pairKey)) continue;
+        seenPair.add(pairKey);
+
+        // [2026-07-11 — see ToDo.md IMP-26] MUST clone `entered` fresh here,
+        // NOT alias it directly (`let s = entered`). Every prior version of
+        // this line aliased the same `entered` object across ALL loop
+        // iterations — the players[0] reassignment-to-clone below then
+        // permanently reassigned entered.players[0] to the mutated clone
+        // each time, so the SECOND candidate's library removal compounded
+        // on top of the FIRST candidate's already-applied removal, and so
+        // on. Net effect: every one of the N results ended up sharing the
+        // same, cumulatively-corrupted library — with 2 or 3 candidates
+        // combined, missing far more than the single card each result
+        // legitimately fetched. Found by direct end-to-end tracing (a
+        // library card that should still have been present had vanished
+        // several steps later), not caught by IMP-21's own validation at
+        // the time, which only ever checked each result's hand/log message,
+        // never each result's own, independent library contents.
+        let s = entered.clone();
+        s._ensurePlayers();
+        s.players[0] = s.players[0].clone();
+        const libIdx = s.players[0].library.indexOf(bestTutor);
+        if (libIdx >= 0) {
+          s.players[0].library = [
+            ...s.players[0].library.slice(0, libIdx),
+            ...s.players[0].library.slice(libIdx + 1),
+          ];
+        }
+        s = s.removeFromHand(discardKey) ?? s;
+        s = s.addToGraveyard(0, cards[discardKey]?.name ?? discardKey);
+        s = s.addToHand(bestTutor);
+        results.push(s.log(
+          `Formidable Speaker ETB: discard ${cards[discardKey]?.name ?? discardKey} → tutor ${cards[bestTutor]?.name ?? bestTutor}`
+        ));
+      }
+      return results.length > 0 ? results : plainEntry();
+    },
     abilities: {
       untap_permanent: {
         label: '{1}, {T}: Untap another target permanent',
@@ -5490,6 +5942,19 @@ var CARDS = {
         fn(state, perm) {
           const cards = CARDS;
           const results = [];
+          // [2026-07-11 — see ToDo.md IMP-28] Deduplicate by fingerprint —
+          // this ability previously generated the FULL cross product of
+          // (untapped creature) × (tapped basic land) with no dedup at
+          // all, unlike Temur Sabertooth's own bounce_creature ability
+          // right below this one in the same file, which already dedupes
+          // this exact way. With N interchangeable basic lands (e.g. N
+          // Forests, all producing the same {G}), tapping any ONE
+          // creature to untap ANY of them produces N functionally
+          // identical results — confirmed directly: 3 untapped mana dorks
+          // × 4 tapped Forests generated 12 actions, all equivalent.
+          // Reported as part of a severe state-explosion investigation on
+          // a hand containing both Earthcraft and many basic Forests.
+          const seen = new Set();
           const untapped = state.creatures().filter(c=>!c.tapped&&!c.summoningSick);
           // Oracle: "Untap target BASIC land." — must check the card definition's isBasic flag,
           // NOT just the Forest subtype. Under Ashaya, creatures gain the Forest subtype but
@@ -5497,7 +5962,11 @@ var CARDS = {
           const tbasic  = state.lands().filter(l => l.tapped && cards[l.cardKey]?.isBasic);
           for (const c of untapped) for (const l of tbasic) {
             let s = state.tapPermanent(c.id); if (!s) continue;
-            results.push(s.untapPermanent(l.id).log(`Earthcraft: tap ${c.name} → untap ${l.name}`));
+            s = s.untapPermanent(l.id).log(`Earthcraft: tap ${c.name} → untap ${l.name}`);
+            const fp = s.fingerprint();
+            if (seen.has(fp)) continue;
+            seen.add(fp);
+            results.push(s);
           }
           return results;
         },
@@ -5787,9 +6256,19 @@ var CARDS = {
             const cardName = cards[cardKey]?.name ?? cardKey;
             s = s.addToExile(0, cardName);
 
-            // ETB trigger: shuffle target player's graveyard
+            // [2026-07-11 — see ToDo.md IMP-28] Skip opponents with an empty
+            // graveyard — targeting one is a functional no-op (shuffling
+            // nothing into their library), identical to targeting any other
+            // empty-graveyard opponent. The sibling normal-cast ETB right
+            // above this already has this exact guard (`if (player.graveyard
+            // .length === 0 && pi !== 0) continue;`); this evoke path had
+            // none at all, generating the full, uncollapsed (green card) ×
+            // (player) cross product — reported as part of a severe state-
+            // explosion investigation on a hand containing Endurance
+            // alongside several green mana dorks.
             for (let pi = 0; pi < s.players.length; pi++) {
               const player = s.players[pi];
+              if (player.graveyard.length === 0 && pi !== 0) continue;
               let ns = s.shuffleGraveyardIntoLibrary(pi);
               // Then sacrifice Endurance
               ns = ns.removeFromBattlefield(perm.id, 'graveyard', 0);
@@ -5799,6 +6278,10 @@ var CARDS = {
               );
               results.push(ns);
             }
+            // Also allow targeting no one (optional "up to one"), matching
+            // the normal-cast ETB's own fallback option.
+            let ns = s.removeFromBattlefield(perm.id, 'graveyard', 0);
+            if (ns) results.push(ns.log(`Endurance evoke (exile ${cardName}): no target chosen; Endurance sacrificed`));
           }
           return results;
         },
@@ -5978,35 +6461,125 @@ var CARDS = {
       animate_land: {
         label: '{3}{G}: Give target land creature haste until EOT (X/X where X = enchantments)',
         fn(state, perm) {
-          // Activated ability with no tap cost — legal on a sick Spinner.
-          // This particularly matters for the Hitzel Reclaimer-haste path:
-          // Spinner cast same turn as Reclaimer can still animate Reclaimer
-          // immediately after ETB.  See ToDo C-33 audit.
+          // [2026-07-11 fix — see ToDo.md IMP-10] Found via a user report of
+          // catastrophic state explosion on a hand containing this card.
+          //
+          // Cost is {3}{G} (verified via Scryfall/Gatherer — confirmed correct
+          // as originally modeled; an earlier revision of this fix wrongly
+          // "corrected" it to {3} based on a misread search result, then was
+          // corrected back per direct user confirmation). No once-per-turn
+          // restriction exists on the real card either — it can legally be
+          // activated any number of times in a turn, each with its own X value.
+          //
+          // The actual bug was BRANCHING, not the cost or activation count:
+          // this ability has no tap cost, so the old implementation branched
+          // over EVERY untapped land on the battlefield on EVERY activation,
+          // with no bound on how many times it could be activated per turn.
+          // Combined with Ashaya (which makes every creature ALSO a land — see
+          // GameState.js's per-entry Ashaya conversion — so "every untapped
+          // land" includes every creature too, in this deck's core combo
+          // shape), this was a genuine exponential blowup: N branches per
+          // activation × unlimited activations × 3 simulated turns.
+          //
+          // Fix: pick ONE deterministic "most useful" target per activation
+          // (same C-23 pattern as Sylvan Scrying above) instead of branching
+          // over every land. This is safe for combo detection — every combo
+          // detector that cares about Destiny Spinner (hasLandAnimator(),
+          // ashayaOut()+hasLandAnimator() combos in combos.js) checks only for
+          // the animator's PRESENCE, never for the ability having actually
+          // fired — so which land gets animated doesn't change what the
+          // search can detect. Multi-activation-per-turn legality is
+          // deliberately PRESERVED (no abilitiesUsed gate here, unlike a true
+          // once-per-turn ability) — but because target selection is now
+          // deterministic given the same board state, a second activation
+          // targeting the same land produces a state with the same
+          // fingerprint as one already explored, so the Solver's existing
+          // visited-state dedup naturally collapses redundant re-activations
+          // without needing an artificial hard cap.
           const ap = state.payMana('3G'); if (!ap) return [];
-          // Count enchantments you control for the X/X size
           const x = ap.battlefield.filter(p => p.types.includes('enchantment')).length;
           if (x === 0) return []; // 0/0 lands die immediately — no value
-          const results = [];
-          // Target any land (or any creature that is also a land under Ashaya).
-          // We snapshot target IDs before cloning so each result gets its own isolated clone.
-          const targetIds = ap.battlefield
-            .filter(p => p.is('land') && !p.summoningSick)
-            .map(p => p.id);
-          for (const tid of targetIds) {
-            // Clone per-target so mutations are isolated across sibling DFS branches.
-            const s = ap.clone();
-            s._ensureBF();
-            const tgt = s.getPermanentById(tid);
-            if (!tgt) continue;
-            // Animate: add creature type, grant haste (clear summoning sickness), set P/T.
-            tgt._ensureOwnTypes?.();
-            if (!tgt.types.includes('creature')) tgt.types = [...(tgt.types || []), 'creature'];
-            tgt.summoningSick = false;
-            tgt.power     = x;
-            tgt.toughness = x;
-            results.push(s.log(`Destiny Spinner: animate ${tgt.name} → ${x}/${x} Elemental with haste`));
+
+          // Deterministic single-target selection:
+          //   1. A creature that is ALSO currently a land (via Ashaya) and is
+          //      summoning sick — the "give it haste to use it now" case this
+          //      ability is most valuable for (e.g. the Elvish Reclaimer path).
+          //      Ashaya HERSELF is excluded from this pool: her own ETB makes
+          //      her a creature-land too (self-conversion), but she has no
+          //      ability that benefits from haste, so animating her is never
+          //      useful — and being first in battlefield insertion order, an
+          //      unfiltered pool would always pick her over the actually-
+          //      relevant target (e.g. Elvish Reclaimer, cast right after her).
+          //      Destiny Spinner ITSELF is also excluded: if Ashaya enters
+          //      AFTER Destiny Spinner, Ashaya's retroactive land-conversion
+          //      makes Destiny Spinner a creature-land too — animating your
+          //      own activating permanent provides no value (her own ability
+          //      has no tap cost / haste requirement) and would otherwise
+          //      win this priority tier by virtue of being present.
+          //   2. Any creature-land at all (covers a test setup that clears
+          //      sickness before calling this directly; still a meaningful
+          //      target category distinct from a plain land).
+          //   3. One of the specific "big" lands every relevant combo detector
+          //      checks for (Gaea's Cradle > Nykthos > Geier Reach Sanitarium),
+          //      if untapped.
+          //   4. No useful target — do nothing rather than animate an
+          //      arbitrary plain land with no purpose in a solver with no
+          //      combat. [2026-07-11] A "pick any untapped land as a last
+          //      resort" tier was tried here and reverted: because "first
+          //      untapped land" varies with board state (which lands happen
+          //      to be tapped at that specific point in that specific DFS
+          //      path), it caused this action to be offered — each time
+          //      picking a marginally different target — from a very large
+          //      number of otherwise-uninteresting intermediate states,
+          //      reintroducing most of the original explosion even though
+          //      each individual branch was O(1). No combo detector needs a
+          //      plain land animated, so offering nothing here costs no
+          //      winning line — only C-33's generic "sick permanent can use a
+          //      no-tap-cost ability" regression test exercised this path,
+          //      and that test's setup was updated to include a genuine
+          //      target (Gaea's Cradle) instead.
+          const creatureLands = ap.battlefield.filter(p =>
+            p.is('creature') && p.is('land') &&
+            p.name !== 'Ashaya, Soul of the Wild' && p.id !== perm.id);
+          const sickCreatureLand = creatureLands.find(p => p.summoningSick);
+          const targetPerm =
+            sickCreatureLand ??
+            creatureLands[0] ??
+            ['gaeas_cradle', 'nykthos', 'geier_reach'].map(ck =>
+              ap.battlefield.find(p => p.cardKey === ck && p.is('land') && !p.tapped)
+            ).find(Boolean);
+          if (!targetPerm) return [];
+
+          // [2026-07-11] Idempotence guard. The ability is legitimately
+          // repeatable (no once-per-turn cap — see above), but re-targeting
+          // the SAME land to the SAME resulting X/X-with-haste state is a true
+          // no-op: it changes nothing observable to any future action in a
+          // solver with no combat model (haste is already granted, power/
+          // toughness are already X). Skipping a provably-no-op action loses
+          // no winning line — nothing about the set of LEGAL FUTURE ACTIONS
+          // changes as a result of redundantly re-animating an already-
+          // animated land at the same size. This does NOT cap the ability to
+          // once per turn: a DIFFERENT target, or the SAME target after X has
+          // changed (e.g. another enchantment was cast since), is still fully
+          // explorable. Without this guard, this ability alone accounted for
+          // the majority of a multi-million-state search budget being
+          // exhausted on redundant re-animations of the same land across the
+          // many mana-tapping orders that reach {3}{G} (see ToDo.md IMP-10).
+          if (targetPerm.types?.includes('creature') && !targetPerm.summoningSick &&
+              targetPerm.power === x && targetPerm.toughness === x) {
+            return [];
           }
-          return results;
+
+          const s = ap.clone();
+          s._ensureBF();
+          const tgt = s.getPermanentById(targetPerm.id);
+          if (!tgt) return [];
+          tgt._ensureOwnTypes?.();
+          if (!tgt.types.includes('creature')) tgt.types = [...(tgt.types || []), 'creature'];
+          tgt.summoningSick = false;
+          tgt.power     = x;
+          tgt.toughness = x;
+          return [s.log(`Destiny Spinner: animate ${tgt.name} → ${x}/${x} Elemental with haste`)];
         },
       },
     },
@@ -6302,9 +6875,19 @@ var CARDS = {
           );
           if (creaturesInHand.length === 0) return [];
 
-          // Find the best combo-completing creature in the library
-          const bestKey = _bestCreatureTutorTarget(ap);
-          if (!bestKey) return [];
+          // [2026-07-11 — see ToDo.md IMP-20/IMP-23] Up to a bounded, small
+          // number of distinct tutor candidates, not just the single
+          // "best" one — see _creatureTutorCandidates' own comment for the
+          // full reasoning (a different, equally legal combo path can
+          // require a lower-scored piece that a single-choice heuristic
+          // would never offer). Fauna Shaman specifically widened from 3
+          // to 5 (IMP-23, user request) — she's the earliest, most
+          // central tutor in this deck's combo lines, so the extra
+          // candidate slots are most likely to pay off here. Left at the
+          // shared default (3) for Survival of the Fittest, which sees
+          // less search-tree traffic in practice.
+          const candidateKeys = _creatureTutorCandidates(ap, 5);
+          if (candidateKeys.length === 0) return [];
 
           // Protect high-value un-cast combo pieces in hand from being discarded.
           // Same fix as Survival of the Fittest (C-9, 2026-04-30): keep protection
@@ -6328,22 +6911,28 @@ var CARDS = {
           const freshlyTutored = _freshlyTutoredKeys(ap);
 
           const results = [];
-          const seenDiscard = new Set();
-          for (const discard of creaturesInHand) {
-            if (seenDiscard.has(discard)) continue;
-            if (discard === bestKey) continue;              // don't discard what we're fetching
-            if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
-            if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
-            seenDiscard.add(discard);
-            let s = ap.tapPermanent(perm.id); if (!s) continue;
-            s = s.discardFromHand(discard, 'Fauna Shaman discard cost'); if (!s) continue;
-            const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
-            if (!cardKey) continue;
-            // Put the fetched creature directly into hand (oracle: "put it into your hand")
-            const ns2 = ns.addToHand(cardKey);
-            results.push(ns2.log(
-              `Fauna Shaman: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
-            ));
+          const seenCombo = new Set();  // dedupe across (discard, fetch) pairs
+          for (const bestKey of candidateKeys) {
+            const seenDiscard = new Set();
+            for (const discard of creaturesInHand) {
+              if (seenDiscard.has(discard)) continue;
+              if (discard === bestKey) continue;              // don't discard what we're fetching
+              if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
+              if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
+              seenDiscard.add(discard);
+              const comboKey = discard + '|' + bestKey;
+              if (seenCombo.has(comboKey)) continue;
+              seenCombo.add(comboKey);
+              let s = ap.tapPermanent(perm.id); if (!s) continue;
+              s = s.discardFromHand(discard, 'Fauna Shaman discard cost'); if (!s) continue;
+              const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
+              if (!cardKey) continue;
+              // Put the fetched creature directly into hand (oracle: "put it into your hand")
+              const ns2 = ns.addToHand(cardKey);
+              results.push(ns2.log(
+                `Fauna Shaman: discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
+              ));
+            }
           }
           return results;
         },
@@ -6866,9 +7455,12 @@ var CARDS = {
           );
           if (creaturesInHand.length === 0) return [];
 
-          // Find the best combo-completing creature in the library
-          const bestKey = _bestCreatureTutorTarget(afterPay);
-          if (!bestKey) return [];
+          // [2026-07-11 — see ToDo.md IMP-20] Up to a bounded, small number
+          // of distinct tutor candidates — see Fauna Shaman's matching
+          // comment and _creatureTutorCandidates itself for the full
+          // reasoning.
+          const candidateKeys = _creatureTutorCandidates(afterPay);
+          if (candidateKeys.length === 0) return [];
 
           // Identify creatures in hand that are key combo pieces not yet on the battlefield.
           // Discarding e.g. Ashaya to fetch a dork loses the very piece we need to cast — and
@@ -6903,22 +7495,27 @@ var CARDS = {
           const freshlyTutored = _freshlyTutoredKeys(afterPay);
 
           const results = [];
-          // Offer one action per creature we could discard (deduplicated by key)
-          const seenDiscard = new Set();
-          for (const discard of creaturesInHand) {
-            if (seenDiscard.has(discard)) continue;
-            if (discard === bestKey) continue;              // don't discard what we're fetching
-            if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
-            if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
-            seenDiscard.add(discard);
-            let s = afterPay.discardFromHand(discard, 'Survival of the Fittest discard cost'); if (!s) continue;
-            const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
-            if (!cardKey) continue;
-            // Put the fetched creature directly into hand (oracle: "put it into your hand")
-            const ns2 = ns.addToHand(cardKey);
-            results.push(ns2.log(
-              `Survival of the Fittest: pay {G}, discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
-            ));
+          const seenCombo = new Set();  // dedupe across (discard, fetch) pairs
+          for (const bestKey of candidateKeys) {
+            const seenDiscard = new Set();
+            for (const discard of creaturesInHand) {
+              if (seenDiscard.has(discard)) continue;
+              if (discard === bestKey) continue;              // don't discard what we're fetching
+              if (effectiveProtected.has(discard)) continue; // protect key un-cast pieces
+              if (freshlyTutored.has(discard)) continue;     // protect freshly-tutored cards from chain abuse
+              seenDiscard.add(discard);
+              const comboKey = discard + '|' + bestKey;
+              if (seenCombo.has(comboKey)) continue;
+              seenCombo.add(comboKey);
+              let s = afterPay.discardFromHand(discard, 'Survival of the Fittest discard cost'); if (!s) continue;
+              const { state: ns, cardKey } = s.searchLibraryFor(k => k === bestKey);
+              if (!cardKey) continue;
+              // Put the fetched creature directly into hand (oracle: "put it into your hand")
+              const ns2 = ns.addToHand(cardKey);
+              results.push(ns2.log(
+                `Survival of the Fittest: pay {G}, discard ${cards[discard].name} → ${cards[bestKey].name} to hand`
+              ));
+            }
           }
           return results;
         },
@@ -8509,22 +9106,35 @@ var CARDS = {
     //     summoningSick guard is bypassed for creature tap-for-mana AND for
     //     creature activated abilities.
     //
-    // [O-27] Static 2: "{T}: Add two mana of any one color, spend this mana
-    // only to activate abilities of creature sources." This mana is
-    // RESTRICTED — it can pay for activated abilities of creature
-    // permanents, but NOT for casting spells (creature spells included —
-    // casting a spell is not "activating an ability of a creature source").
-    // The engine's mana pool has no concept of restricted mana, so a general
-    // `tapForMana` here would let the solver illegally spend Shang-Chi's
-    // {G}{G} on spell casts (e.g. "Tap Shang-Chi → {G}{G}" immediately
-    // followed by "Cast Boreal Druid" using that mana).
+    // [2026-07-11 — see ToDo.md IMP-11] Static 2: "{T}: Add two mana of any
+    // one color, spend this mana only to activate abilities of creature
+    // sources." Modeled via a genuine restricted mana pool
+    // (GameState.restrictedG — this deck is mono-green, so "any one color"
+    // is always chosen as G in practice). This REVERSES the O-27 decision
+    // (2026-06) to remove the mana ability entirely, made at a time when
+    // "the mana pool has no concept of restricted mana, and adding one would
+    // touch every spell-cast and activated-ability payment site" was judged
+    // too large/risky for that session. The chosen design keeps that
+    // footprint minimal: restrictedG is a single new counter (not touching
+    // payMana or any spell-casting path at all), and the ONLY new call site
+    // is callCreatureAbilityFn() in actions.js, which wraps the single
+    // existing creature-ability dispatcher loop — no individual card's
+    // ability fn() needed to change.
     //
-    // Per COMBO 63 (DISABLED, see below) and COMBO 64, this restricted mana
-    // cannot reach a winning state on its own — COMBO 64's loop nets exactly
-    // 0 restricted mana per cycle (it's only a means to pay for OTHER
-    // restricted-mana activated abilities like Hope Tender's exert).
-    // Intentionally NOT implementing tapForMana: Shang-Chi's value in this
-    // deck is its haste-bypass static, not its mana ability.
+    // Uses tapForMana (not a custom `abilities` entry) so this is correctly
+    // recognized as a MANA ability throughout the engine for free: excepted
+    // from Disruptor Flute's activation lock (manaAbility semantics — see
+    // the fluteNamedCards comment in actions.js), included in the standard
+    // "tap for mana" action-generation pass (with its existing Shang-Chi-
+    // haste-bypass sickness handling), etc.
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      let s = state.tapPermanent(perm.id);
+      if (!s) return [];
+      s = s.addRestrictedMana(2);
+      s = s.log(`Tap ${perm.name} → {G}x2 (activated abilities of creature sources only)`);
+      return [s];
+    },
   },
 
   nylea_keen_eyed: {
@@ -8586,6 +9196,10 @@ var CARDS = {
     }
   }
 }
+
+// Non-enumerable: many callers do Object.entries(CARDS)/Object.values(CARDS)
+// expecting every value to be a card definition (def.name, def.types, ...).
+// A plain assignment here would show up in those iterations and break them.
 
 // combos.js
 /**
@@ -9914,6 +10528,49 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  FORMIDABLE SPEAKER + WIREWOOD LODGE + MAGUS OF THE CANDELABRA + BIG LAND
+  //  (no Ashaya — a 4-card chain of untappers, not a bounce-recast loop)
+  //
+  //  [2026-07-11 — see ToDo.md IMP-22] User-provided combo list gap: no
+  //  existing detector covered this pattern at all (confirmed: Wirewood
+  //  Lodge appears in exactly one OTHER detector, the Argothian Elder one,
+  //  which is a structurally different 3-card loop).
+  //
+  //  Magus of the Candelabra: {X}, {T}: untap X target lands.
+  //  Wirewood Lodge: {G}, {T}: untap target Elf — Formidable Speaker IS an
+  //    Elf (subtypes: Elf, Druid), so Lodge can target her directly.
+  //  Formidable Speaker: {1}, {T}: untap another target permanent.
+  //
+  //  Loop: tap Cradle/Nykthos for mana. Magus ({2}, X=2) untaps the big
+  //  land AND Wirewood Lodge. Lodge ({G}) untaps Formidable Speaker.
+  //  Formidable Speaker ({1}) untaps Magus. Repeat.
+  //
+  //  Loop cost per cycle: {2}(Magus, X=2) + {G}(Lodge) + {1}(Speaker) = 4
+  //  mana total (Nykthos additionally costs {2} to activate itself).
+  //  Cradle: need creatureCount > 4, i.e. ≥5 — matches the uploaded combo
+  //  list's own stated prerequisite ("at least five creatures") exactly.
+  //  Nykthos: total cost {2}(activation)+4(loop) = 6; need devotion > 6,
+  //  i.e. ≥7 — matches the uploaded list's own stated prerequisite
+  //  ("devotion to green is at least 7") exactly.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Formidable Speaker + Wirewood Lodge + Magus of the Candelabra + Big Land)',
+    description:
+      'Magus of the Candelabra ({2}, X=2) untaps the big land and Wirewood Lodge. ' +
+      'Lodge ({G}) untaps Formidable Speaker (an Elf). Speaker ({1}) untaps Magus. Repeat. ' +
+      'Loop cost 4 mana/cycle (Nykthos additionally costs {2} to activate). ' +
+      "Cradle: creature count > 4. Nykthos: devotion > 6.",
+    check(state) {
+      if (!permReady(state, 'Formidable Speaker')) return false;
+      if (!permUntapped(state, 'Wirewood Lodge')) return false;
+      if (!permReady(state, 'Magus of the Candelabra')) return false;
+      const cradleOk  = cradleUntapped(state) && creatureCount(state) > 4;
+      const nykthosOk = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) > 6;
+      return cradleOk || nykthosOk;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  NYKTHOS + LAND UNTAPPER (no Ashaya)  (COMBO 31)
   //
   //  Nykthos: {2},{T}: Add G×devotion.
@@ -10055,6 +10712,79 @@ var DETECTORS = [
         (!p.summoningSick || shangChiActive(state)) &&
         dorkGrossOutput(state, p) >= 5
       );
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TEMUR SABERTOOTH / KOGLA + HOPE TENDER + GAEA'S CRADLE (+ HASTE ENABLER)
+  //  (no Ashaya needed — Sabertooth/Kogla bounces Hope Tender directly)
+  //
+  //  [2026-07-11 — see ToDo.md IMP-19] User-reported gap: a fully legal,
+  //  hand-verified 26-step turn-2 win used exactly this engine, entirely
+  //  within the main phase (no opponent-turn window needed), but the
+  //  solver never found it, because no detector covered it — every
+  //  existing "Hope Tender + Cradle" detector (COMBO 48/50/56/61)
+  //  specifically requires Ashaya (so Hope Tender can target/bounce
+  //  HERSELF as a land). This engine doesn't need that: Temur Sabertooth
+  //  ({1}{G}: return another creature — no restriction, no tap cost) or
+  //  Kogla ({1}{G}: return target Human — Hope Tender IS a Human)
+  //  directly bounces Hope Tender to hand; recasting her ({1}{G}) resets
+  //  her once-per-tap untap_one_land ability (it's gated by TAP state,
+  //  not a "once per turn" restriction — confirmed against the real
+  //  oracle text, which has no such clause); she then untaps Cradle for
+  //  its full, current creature-count output.
+  //
+  //  A haste enabler (Shang-Chi in the reported line, or an equivalent —
+  //  see hasGlobalHaste) is REQUIRED, not optional: recasting Hope Tender
+  //  puts her back on the battlefield summoning sick, and her untap
+  //  ability has a {T} cost — without something bypassing summoning
+  //  sickness, she can't act again the same cycle and the loop stalls
+  //  after one bounce-recast rather than actually being infinite. This
+  //  was caught and fixed during implementation, not assumed correct
+  //  from the start.
+  //
+  //  Loop cost per cycle: bounce {1G} + recast {1G} + Hope Tender's own
+  //  untap ability {1} = 5 total. Net positive once creatureCount > 5.
+  //  Verified directly (not just by this arithmetic): replayed the exact
+  //  user-reported line programmatically against the real engine through
+  //  one full extra cycle beyond where it stops, confirming genuine
+  //  mana growth (3G -> 6G) with no other resource consumed net of the
+  //  loop itself.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: "Infinite Mana (Temur Sabertooth/Kogla + Hope Tender + Gaea's Cradle)",
+    description:
+      "Temur Sabertooth or Kogla ({1}{G}, no restriction) bounces Hope Tender; " +
+      "recasting her ({1}{G}) resets her tap-gated (not once-per-turn) untap " +
+      "ability, which untaps Gaea's Cradle for its full creature-count output. " +
+      "Requires a haste enabler (e.g. Shang-Chi) so the freshly-recast, " +
+      "summoning-sick Hope Tender can still activate her {T} ability. " +
+      "Net positive once there are more than 5 creatures (cycle costs {1G}+{1G}+{1} = 5).",
+    check(state) {
+      const bouncerAvailable =
+        hasPerm(state, 'Temur Sabertooth') ||
+        hasPerm(state, 'Kogla, the Titan Ape');
+      if (!bouncerAvailable) return false;
+      // Hope Tender only needs to be ON the battlefield, not currently
+      // ready — the loop's first step is always to bounce her via
+      // Sabertooth/Kogla (no restriction on the bounce target's tap
+      // state), THEN recast her fresh and untapped. Requiring her to
+      // already be untapped/unsick here would wrongly miss the exact
+      // moment right after she's used her own ability (tapping herself
+      // as part of that cost) — precisely the state this combo is
+      // usually FIRST detectable from, since that's what a solver
+      // reaches right after assembling the loop.
+      if (!hasPerm(state, 'Hope Tender')) return false;
+      // Recasting Hope Tender puts her back on the battlefield summoning
+      // sick. Her untap ability has a {T} cost, so without something
+      // granting haste (Shang-Chi in the reported line, or an equivalent
+      // — Concordant Crossroads, Thousand-Year Elixir, Surrak and
+      // Goreclaw), she couldn't act again the same cycle and the loop
+      // would stall after a single bounce-recast, not actually be
+      // infinite. This is a genuine requirement, not an optimization.
+      if (!hasGlobalHaste(state)) return false;
+      if (!cradleUntapped(state)) return false;
+      return creatureCount(state) > 5;
     },
   },
 
@@ -10203,7 +10933,18 @@ var DETECTORS = [
       "Fanatic's Ferocious mode) reaches the ≥5 threshold.",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
-      if (!hasPerm(state, 'Hyrax Tower Scout')) return false;
+      // [2026-07-11 — see ToDo.md IMP-22] Hyrax can be in hand (the
+      // canonical starting point — Temur bounces the dork, then Hyrax is
+      // CAST from hand, its ETB untapping the dork) or already on the
+      // battlefield (about to be bounced first). The Kogla sibling
+      // detector right below already checked both; this one only checked
+      // the battlefield, silently missing the more common "in hand" case
+      // — confirmed directly against several of the uploaded decklist's
+      // own combos (all of which start with "Hyrax Tower Scout in hand").
+      const hyraxAvailable =
+        (state.hand && state.hand.includes('hyrax_tower_scout')) ||
+        hasPerm(state, 'Hyrax Tower Scout');
+      if (!hyraxAvailable) return false;
       // [O-29] Any untapped, non-summoning-sick dork that grosses ≥5 mana per
       // tap completes the loop. Use the shared dorkGrossOutput helper so the dork
       // list (Priest, Archdruid, Channeler, Circle, Karametra's Acolyte, Marwyn,
@@ -11563,6 +12304,54 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  WOODCALLER AUTOMATON + TEMUR SABERTOOTH + ASHAYA + MANA DORK (no big land)
+  //
+  //  [2026-07-11 — see ToDo.md IMP-22] User-provided combo list gap: the
+  //  existing Woodcaller detector above only covers "untap Cradle/Nykthos
+  //  directly" — it doesn't cover the Ashaya variant, where a creature-dork
+  //  (Priest of Titania, Circle of Dreams Druid, Karametra's Acolyte,
+  //  Elvish Archdruid, ...) is ALSO a land under Ashaya, so Woodcaller's
+  //  ETB ("untap target land you control") can untap the DORK directly,
+  //  with no Cradle/Nykthos needed at all. Verified this mechanism works
+  //  against the real engine before writing this detector (Priest of
+  //  Titania correctly re-untaps after Woodcaller's ETB resolves, exactly
+  //  like tapping a real land).
+  //
+  //  Loop: tap dork for mana. Cast Woodcaller (Prototype {2GG} = 4 mana);
+  //  ETB untaps the dork (now a land under Ashaya). Temur bounces
+  //  Woodcaller ({1G} = 2 mana). Recast next cycle. Loop cost: 4+2 = 6
+  //  mana total. Need dork's CURRENT output > 6 for net-positive.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Ashaya + Mana Dork)',
+    description:
+      "Ashaya makes a creature-dork also a land, so Woodcaller Automaton's ETB " +
+      "('untap target land') can untap the dork directly — no Cradle/Nykthos needed. " +
+      "Temur Sabertooth bounces Woodcaller ({1G}), recast ({2GG}). Loop cost 6 mana. " +
+      "Priest/Archdruid/Channeler: elves > 6. Circle: creatures > 6. Acolyte: devotion > 6.",
+    check(state) {
+      if (!ashayaOut(state)) return false;
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      const woodcallerAvailable =
+        hasPerm(state, 'Woodcaller Automaton') ||
+        (state.hand && state.hand.includes('woodcaller_automaton'));
+      if (!woodcallerAvailable) return false;
+      return state.creatures().some(p => {
+        if (p.tapped) return false;
+        if (p.name === 'Woodcaller Automaton') return false;
+        switch (p.name) {
+          case 'Priest of Titania':      return elfCount(state) > 6;
+          case 'Elvish Archdruid':       return elfCount(state) > 6;
+          case 'Wirewood Channeler':     return elfCount(state) > 6;
+          case 'Circle of Dreams Druid': return creatureCount(state) > 6;
+          case "Karametra's Acolyte":    return devotionG(state) > 6;
+          default: return false;
+        }
+      });
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  ASHAYA + QUIRION/SCRYB RANGER + ALREADY-ANIMATED GAEA'S CRADLE
   //
   //  When Gaea's Cradle has already been animated into a creature (e.g. by
@@ -12848,6 +13637,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Green Mana (Ashaya + Scryb Ranger + Mana Dork ≥3G)  [COMBO 3, 7, 14, 21, 26, 27, 49]':                 ['ashaya','scryb_ranger'],
   'Infinite Green Mana (Ashaya + Ranger + Shang-Chi, self-funded)':          ['ashaya','quirion_ranger','shang_chi'],
   "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":            ['ashaya','hope_tender','gaeas_cradle'],
+  "Infinite Mana (Temur Sabertooth/Kogla + Hope Tender + Gaea's Cradle)":       ['temur_sabertooth','hope_tender','gaeas_cradle'],
   'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':   ['ashaya','hope_tender','circle_of_dreams_druid'],
   'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':                   ['ashaya','hope_tender','marwyn'],
   'Infinite Mana (Ashaya + Hope Tender + Selvala)  [COMBO 56]':                  ['ashaya','hope_tender','selvala'],
@@ -12855,6 +13645,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Ashaya + Argothian Elder / Ley Weaver)  [COMBO 6, 24]':        ['ashaya','argothian_elder'],
   'Infinite Mana (Ashaya + Magus of the Candelabra + Source ≥3G)  [COMBO 32, 34, 36, 43, 47, 52, 60, 62]': ['ashaya','magus_of_the_candelabra'],
   'Infinite Mana (Argothian Elder + Wirewood Lodge + Big Land)  [COMBO 40, 31, 42, 46]': ['argothian_elder','wirewood_lodge'],
+  'Infinite Mana (Formidable Speaker + Wirewood Lodge + Magus of the Candelabra + Big Land)': ['formidable_speaker','wirewood_lodge','magus_of_the_candelabra'],
   // 'Infinite Green Mana (Nykthos + Land Untapper + High Devotion)' removed —
   // one-shot untappers (Deserted Temple, Hope Tender, Magus) do not loop with Nykthos alone.
   'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':      ['selvala','quirion_ranger'],
@@ -12880,6 +13671,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':                    ['argothian_elder','maze_of_ith'],
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]': ['tireless_provisioner','ashaya','quirion_ranger'],
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
+  'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Ashaya + Mana Dork)': ['woodcaller_automaton','temur_sabertooth','ashaya'],
   'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':  ['great_oak_guardian','temur_sabertooth'],
   'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)': ['ashaya','quirion_ranger'],
   'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]': ['ashaya','quirion_ranger'],
@@ -13035,6 +13827,9 @@ var _DETECTOR_PREFILTER = {
   // Ashaya + Hope Tender family
   "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":
     { all: ['ashaya', 'hope_tender', 'gaeas_cradle'] },
+  "Infinite Mana (Temur Sabertooth/Kogla + Hope Tender + Gaea's Cradle)":
+    { all: ['hope_tender', 'gaeas_cradle'],
+      any: [['temur_sabertooth', 'kogla'], ['shang_chi', 'concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
   'Infinite Mana (Ashaya + Hope Tender + Circle of Dreams Druid)  [COMBO 50]':
     { all: ['ashaya', 'hope_tender', 'circle_of_dreams_druid'] },
   'Infinite Mana (Ashaya + Hope Tender + Marwyn)  [COMBO 61]':
@@ -13053,6 +13848,8 @@ var _DETECTOR_PREFILTER = {
   // Argothian Elder + Wirewood Lodge / Maze of Ith (no Ashaya)
   'Infinite Mana (Argothian Elder + Wirewood Lodge + Big Land)  [COMBO 40, 31, 42, 46]':
     { all: ['argothian_elder', 'wirewood_lodge'] },  // equiv-grouped with ley_weaver
+  'Infinite Mana (Formidable Speaker + Wirewood Lodge + Magus of the Candelabra + Big Land)':
+    { all: ['formidable_speaker', 'wirewood_lodge', 'magus_of_the_candelabra'] },
   'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':
     { all: ['argothian_elder', 'maze_of_ith'] },
 
@@ -13086,6 +13883,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['kogla', 'hyrax_tower_scout'] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
     { all: ['temur_sabertooth', 'woodcaller_automaton'] },
+  'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Ashaya + Mana Dork)':
+    { all: ['temur_sabertooth', 'woodcaller_automaton', 'ashaya'] },
   'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':
     { all: ['temur_sabertooth', 'great_oak_guardian'] },
 
@@ -13628,6 +14427,72 @@ function fluteNamedCardSet(state) {
   return names;
 }
 
+/** [2026-07-11 — see ToDo.md IMP-11] Call a creature-sourced activated
+ *  ability's fn(), making Shang-Chi's restricted mana (state.restrictedG —
+ *  "spend this mana only to activate abilities of creature sources")
+ *  available for the duration of THIS ONE CALL, then re-partition each
+ *  result state so restrictedG correctly reflects what's left — without
+ *  ever letting restricted mana leak into contexts that shouldn't have
+ *  access to it (this wrapper is used ONLY at the single `def.abilities`
+ *  creature-ability dispatch site; spell casts and non-creature-ability
+ *  costs always go through the ordinary payMana/effectiveCost paths, which
+ *  never see restrictedG at all).
+ *
+ *  Approach: temporarily fold restrictedG into a merged green pool before
+ *  calling fn(), then compare each returned result's green total against
+ *  the pre-call total to determine how much green fn() actually spent (or,
+ *  rarely, generated), splitting that delta between restricted (drained
+ *  first — it's the more constrained resource, and draining it first can
+ *  never be wrong since it would otherwise go unspent) and general
+ *  (covers whatever restricted couldn't). This requires ZERO changes to
+ *  any individual card's ability fn() — every existing `state.payMana(...)`
+ *  call inside a creature ability's fn() automatically becomes
+ *  restricted-mana-aware, because the merge happens on the state fn()
+ *  receives, and the reconciliation happens on whatever it returns.
+ *
+ *  Costs that don't involve green at all (pure generic paid entirely from
+ *  colorless, or non-G colored requirements) are correctly unaffected:
+ *  the merge only touches `.G`, so restrictedG simply carries through
+ *  unchanged when fn() never draws on the green channel.
+ *
+ *  Soundness note: this makes the search's precise mana-source choice
+ *  order-dependent (whether restricted or general green gets used first
+ *  for a given payment can depend on what ELSE was tapped and in what
+ *  order — see the honest analysis on this exact tradeoff in Solver.js's
+ *  general mana-tapping-order discussion, IMP-10). This is fine: DFS
+ *  explores multiple tap orderings regardless, so a line where restricted
+ *  mana is used for a specific ability is still reachable by tapping
+ *  Shang-Chi (and nothing else green) before activating that ability. */
+function callCreatureAbilityFn(state, perm, isCreature, fn) {
+  if (!isCreature || (state.restrictedG ?? 0) === 0) {
+    return fn(state, perm);   // fast path: nothing to merge, call directly
+  }
+  const R0 = state.restrictedG;
+  const G0 = state.mana.G;
+  const merged = state.clone();
+  merged.mana = state.mana.clone();
+  merged.mana.G = G0 + R0;
+  merged.restrictedG = 0;   // hidden for the duration of this call
+  const raw = fn(merged, perm);
+  if (raw === null || raw === undefined) return raw;
+  const reconcile = (r) => {
+    if (!r) return r;
+    const totalDelta = (G0 + R0) - r.mana.G;   // positive = spent, negative = generated
+    const s2 = r.clone();
+    s2.mana = r.mana.clone();
+    if (totalDelta >= 0) {
+      const spentFromRestricted = Math.min(totalDelta, R0);
+      s2.restrictedG = R0 - spentFromRestricted;
+      s2.mana.G = G0 - (totalDelta - spentFromRestricted);
+    } else {
+      s2.restrictedG = R0;               // untouched
+      s2.mana.G = G0 - totalDelta;       // totalDelta negative → this adds the generated amount
+    }
+    return s2;
+  };
+  return Array.isArray(raw) ? raw.map(reconcile) : reconcile(raw);
+}
+
 function effectiveCost(state, def) {
   // ── Ultra-fast path ─────────────────────────────────────────────────────
   // In the vast majority of states (no STAX, no Defiler, no cost reducers)
@@ -13741,10 +14606,14 @@ var FOREST_TAP_DOMINATED_KEYS = new Set([
   'arbor_elf', 'magus_of_the_candelabra', 'hope_tender',
   'argothian_elder', 'ley_weaver', 'formidable_speaker', 'saryth',
 ]);
+// [2026-07-11 — IMP-14] Lazily-built superset used by the opponent-turn-window
+// gate below (Quirion/Scryb Ranger's untap lever, plus everything in the set
+// above) — memoized at module scope since it's identical on every call.
+var _untapLeverKeysCache = null;
 
 // ── Main action generator ─────────────────────────────────────────────────
 
-function generateActions(state, _presentHint = null, exhaustive = false) {
+function generateActions(state, _presentHint = null, exhaustive = false, simulateOpponentTurns = true) {
   const actions = [];
 
   // ── 0. Loss pruning ──────────────────────────────────────────────────────
@@ -13927,18 +14796,62 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           // abilities, not triggered ones — so it is irrelevant here.
           for (const perm of ns.battlefield) {
             if (perm.name === 'Lotus Cobra') ns = ns.addMana('G');
-            // [2026-07-11 fix — see ToDo.md IMP-7] Tireless Provisioner's real
+            // [2026-07-11 fix — see ToDo.md IMP-7/IMP-9] Tireless Provisioner's real
             // oracle creates a Food OR Treasure token — it does NOT add mana
             // directly. The direct-mana shortcut this replaces skipped an
             // entire actionable step (the token requires a LATER, separate
             // {T}+Sacrifice activation to become mana) and bypassed Null Rod
             // /Collector Ouphe's artifact-ability suppression entirely, since
-            // no artifact permanent was ever actually created. Always create
-            // Treasure (never Food) — Food's life gain has no combo value in
-            // this solver's win-finding search, matching the same
-            // "always take the dominant choice" simplification used
-            // elsewhere for optional/either-or triggers this session.
-            if (perm.name === 'Tireless Provisioner') ns = ns.enterBattlefield('treasure_token', { isToken: true });
+            // no artifact permanent was ever actually created.
+            //
+            // [IMP-9] Which token to create: a DETERMINISTIC choice, not a
+            // search-branched one. Full bidirectional branching (let DFS/IDDFS
+            // explore both options at every landfall) was considered and
+            // rejected — it would double the branching factor at every single
+            // land-play while Provisioner is out, and landfall-loop states are
+            // exactly the states most likely to already be deep/wide searches,
+            // making this a real state-explosion risk in non-exhaustive modes.
+            // Instead: before Provisioner is out, always Treasure (ramp is the
+            // only thing that matters). Once a genuine MANA_POSITIVE loop is
+            // already assembled (checked live, via checkCombos — same
+            // detection machinery used everywhere else), further mana has no
+            // marginal value, so switch to Food and immediately cash it in for
+            // free life.
+            //
+            // Critical distinction: this checks specifically for
+            // LOOP_TYPE.MANA_POSITIVE (a true mana SURPLUS), not merely "some
+            // combo detector fires". The Tireless Provisioner + Ashaya + Ranger
+            // combo itself (Combo Summary #9) is classified MANA_NEUTRAL_ETB —
+            // its own detector description says "Treasure pays Ranger's recast
+            // cost": that Treasure's mana is NEEDED to keep THAT SPECIFIC loop
+            // self-sustaining. Checking for MANA_POSITIVE specifically (rather
+            // than "any detector fires") avoids diverting a neutral loop's own
+            // required mana to Food, which would starve the loop and prevent
+            // it from repeating at all.
+            if (perm.name === 'Tireless Provisioner') {
+              const combo = checkCombos(ns);
+              if (combo && combo.loopType === LOOP_TYPE.MANA_POSITIVE) {
+                ns = ns.enterBattlefield('food_token', { isToken: true });
+                const foodPerm = ns.battlefield[ns.battlefield.length - 1];
+                const paid = ns.payMana('2');
+                if (paid) {
+                  let s2 = paid.tapPermanent(foodPerm.id);
+                  if (s2) {
+                    s2 = s2.removeFromBattlefield(foodPerm.id, 'graveyard');
+                    if (s2) {
+                      s2 = s2.clone();
+                      s2.life += 3;
+                      ns = s2.log('Tireless Provisioner (mana surplus): Food → gain 3 life');
+                    }
+                  }
+                }
+                // If {2} isn't affordable at this exact instant, the Food
+                // token is simply left uncracked — harmless; it can still be
+                // sacrificed later via its own ability like any other permanent.
+              } else {
+                ns = ns.enterBattlefield('treasure_token', { isToken: true });
+              }
+            }
             if (perm.name === 'Nissa, Resurgent Animist') {
               ns = ns.addMana('G');
               // Second landfall this turn: find an Elf or Elemental from library
@@ -14006,6 +14919,39 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
             // Removal spells (isRemoval: true) bypass the combo-target filter —
             // they offer all valid targets regardless of combo relevance.
             if (def.isRemoval) {
+              for (const r of allResults) {
+                actions.push({
+                  type: 'cast_spell', label: `Cast ${def.name}: ${r.lastHistMsg() ?? ''}`,
+                  apply: (_s) => r,
+                });
+              }
+              continue;
+            }
+
+            // [2026-07-11 — see ToDo.md IMP-25] Cards whose OWN castFn already
+            // does its own combo-aware, bounded filtering (currently just
+            // Formidable Speaker — see her castFn in cards.js, which calls
+            // _creatureTutorCandidates directly) bypass this outer filter/cap
+            // too, for the same reason isRemoval does: re-applying a SECOND,
+            // independent "missing combo piece" computation on top of an
+            // already-filtered result set is redundant at best. Found to be a
+            // real bug, not just redundant: this outer filter's own
+            // missingComboCards() (actions.js) has no knowledge of
+            // ALWAYS_RELEVANT_TUTOR_TARGETS (a cards.js/combo_data.js
+            // concept introduced specifically for _creatureTutorCandidates),
+            // so a target that castFn correctly included (e.g. Wirewood
+            // Symbiote, added to ALWAYS_RELEVANT_TUTOR_TARGETS alongside
+            // Formidable Speaker herself) could be silently dropped here —
+            // and separately, this filter's own maxBranches cap (2 for
+            // hand/topdeck tutors) is LOWER than the bound Formidable
+            // Speaker's own castFn already enforces (3), so even combo-
+            // relevant results were being truncated further than intended.
+            // Caught by direct testing against the user-reported hand, not
+            // assumed correct from castFn's own return value alone — castFn
+            // returning the right 3 results was not sufficient by itself;
+            // this second, independent filter downstream was silently
+            // cutting them back down to 2 in every case, not just this one.
+            if (def.selfBoundedTutor) {
               for (const r of allResults) {
                 actions.push({
                   type: 'cast_spell', label: `Cast ${def.name}: ${r.lastHistMsg() ?? ''}`,
@@ -14475,7 +15421,47 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
   // multi-option branch (Fanatic ferocious, Nykthos devotion) is left alone
   // since per-instance differences there are exactly the point.
   const _seenTapSignatures = new Set();
-  function _tapSignature(p) {
+  // [2026-07-11 — see ToDo.md IMP-13] Non-exhaustive-only extension: merge
+  // DIFFERENT cardKeys when they're provably interchangeable for THIS tap
+  // decision — identical types+subtypes (the properties detectors/effects
+  // actually key off: Elf count, Human-bounce eligibility, Forest-subtype
+  // checks, etc.) AND identical raw produced mana. This is exactly the
+  // same-cardKey symmetry-breaking already established above, generalized
+  // from "same card" to "runtime-verified functionally equivalent card" —
+  // gated to !exhaustive because a fully complete/proof-mode search should
+  // never rely on an equivalence argument, however carefully derived
+  // (matches the existing FOREST_TAP_DOMINATED_KEYS precedent's exact
+  // pattern: skip in normal search, restore full precision in exhaustive).
+  //
+  // Soundness argument (does NOT remove any reachable final state, only
+  // redundant ORDERINGS of reaching it — mirrors the same-cardKey case
+  // exactly): _seenTapSignatures is rebuilt fresh on every generateActions()
+  // call. Collapsing 2+ equivalent permanents to ONE representative action
+  // here only skips offering the OTHERS *in this same decision point*; once
+  // the representative is tapped and generateActions() runs again on the
+  // resulting state, the next still-untapped equivalent permanent is freshly
+  // offered as its own new representative. Every permanent in an
+  // interchangeable set remains individually tappable across a sequence of
+  // decisions — what's eliminated is exploring both "tap A then B" and "tap
+  // B then A" as separate paths to the same net outcome, not the ability to
+  // tap both. Other actions involving the SAME permanent (its own unique
+  // `def.abilities` entry, Eladamri's "2 untapped creatures" cost, etc.) are
+  // generated by entirely separate code paths and are completely unaffected
+  // by this merge — the permanent itself is never removed from the
+  // battlefield or from any other action's eligibility, only deprioritized
+  // as a REDUNDANT alternative specifically for "which functionally-
+  // identical source do I tap first for one unit of mana."
+  //
+  // manaProfile is the raw (pre-applyTapBonuses) mana delta this specific
+  // tapForMana() call produced, passed in by the caller (which already has
+  // `preResults[0]` and `state` on hand — no extra tapForMana() call here).
+  // Bonuses applied afterward (Leyline of Abundance, Badgermole Cub) are
+  // GLOBAL board-state checks that apply uniformly regardless of which
+  // permanent taps, so comparing pre-bonus totals is exactly as precise as
+  // comparing post-bonus totals for these; per-permanent bonuses (Wild
+  // Growth / Utopia Sprawl, keyed by enchantedLandId) are already excluded
+  // from merging entirely by the distinguishing-fields bail-out below.
+  function _tapSignature(p, manaProfile, exhaustive, isFixedOutput) {
     // Mirrors the "fast path" fields in GameState.fingerprint() — the set of
     // fields that can make two same-cardKey permanents behave differently.
     if (p.enchantedLandId !== undefined || p.elvishGuidance || p.imprintedColor !== undefined ||
@@ -14499,7 +15485,30 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
       ? JSON.stringify(p.counters) : '';
     const usedKey = (p.abilitiesUsed && Object.keys(p.abilitiesUsed).some(k => p.abilitiesUsed[k]))
       ? JSON.stringify(p.abilitiesUsed) : '';
-    return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
+    if (exhaustive || !isFixedOutput) {
+      // Exact, unchanged behavior: only merge permanents sharing the same
+      // cardKey. Also the fallback for non-exhaustive mode when this card's
+      // tapForMana isn't marked isFixedOutput (a custom, potentially
+      // board-state-scaling function — see the isFixedOutput comment on
+      // simpleTap in cards.js for why this must stay conservative:
+      // comparing only the CURRENT produced mana can't distinguish "always
+      // exactly this amount" from "happens to be this amount right now" —
+      // e.g. Priest of Titania with exactly one Elf on the battlefield
+      // currently produces {G}x1, identical to a plain Llanowar Elves, but
+      // her output GROWS as more Elves enter later this same turn; merging
+      // her with a truly-fixed source risked the search choosing to tap her
+      // AS the representative and locking in today's low value instead of
+      // preserving the option to wait).
+      return `${p.cardKey}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
+    }
+    // [2026-07-11] Non-exhaustive AND both cards' tapForMana is marked
+    // isFixedOutput: merge across cardKeys too, keyed on runtime-verified
+    // equivalence (types + subtypes + actual produced mana) instead of card
+    // identity. See the design comment above and on simpleTap's
+    // isFixedOutput marker in cards.js.
+    const typeKey = [...p.types].sort().join(',');
+    const subKey  = [...(p.subtypes || [])].sort().join(',');
+    return `EQ:${typeKey}:${subKey}:${manaProfile}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
   }
 
   // Quest for Renewal: real oracle triggers on ANY tap ("becomes tapped"), not just
@@ -14592,9 +15601,16 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
 
     // [perf] Symmetry-breaking check (single-result case only — see comment above).
     if (preResults.length === 1) {
-      const sig = _tapSignature(perm);
+      // [2026-07-11] Raw produced-mana delta, used only by the non-exhaustive
+      // cross-cardKey extension inside _tapSignature — computed here since
+      // `state` (pre-tap) and `preResults[0]` (post-tap) are already on hand,
+      // no extra tapForMana() call needed. Ignored entirely in exhaustive mode.
+      const _pm = preResults[0].mana, _sm = state.mana;
+      const manaProfile = exhaustive ? '' :
+        `${_pm.W-_sm.W}:${_pm.U-_sm.U}:${_pm.B-_sm.B}:${_pm.R-_sm.R}:${_pm.G-_sm.G}:${_pm.C-_sm.C}`;
+      const sig = _tapSignature(perm, manaProfile, exhaustive, def.tapForMana.isFixedOutput === true);
       if (sig !== null) {
-        if (_seenTapSignatures.has(sig)) continue; // identical to an already-emitted permanent — skip
+        if (_seenTapSignatures.has(sig)) continue; // identical/equivalent to an already-emitted permanent — skip
         _seenTapSignatures.add(sig);
       }
     }
@@ -14794,7 +15810,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         permForAbility.summoningSick = false;
       }
 
-      const raw = ability.fn(state, permForAbility);
+      const raw = callCreatureAbilityFn(state, permForAbility, def.types.includes('creature'), ability.fn);
       const results = raw === null || raw === undefined
         ? []
         : Array.isArray(raw) ? raw : [raw];
@@ -14850,7 +15866,7 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
             const livePermForAbil = (scLive && livePerm.summoningSick && def.types.includes('creature'))
               ? Object.assign(Object.create(Object.getPrototypeOf(livePerm)), livePerm, { summoningSick: false })
               : livePerm;
-            const liveRaw = ability.fn(liveState, livePermForAbil);
+            const liveRaw = callCreatureAbilityFn(liveState, livePermForAbil, def.types.includes('creature'), ability.fn);
             const liveResults = liveRaw === null || liveRaw === undefined
               ? [] : Array.isArray(liveRaw) ? liveRaw : [liveRaw];
             const liveResult = liveResults[capturedIdx] ?? null;
@@ -14970,8 +15986,43 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
   // Yeva-CZ flash path: she has innate flash, so she can be cast at instant speed.
   // With Seedborn Muse, the untap step generates fresh mana, so we don't need
   // pre-existing mana in pool — Seedborn will untap lands/dorks to fund her cast.
+  //
+  // [2026-07-11 — see ToDo.md IMP-14] Extended: `state.mana.canPay('2GG')` alone
+  // is a SNAPSHOT check — it only asks "can I afford her with mana floating
+  // RIGHT NOW", missing every line where an untap-value creature (Hope Tender,
+  // Argothian Elder, etc. — FOREST_TAP_DOMINATED_KEYS — or Quirion/Scryb
+  // Ranger's free, non-competing bounce-untap) is still unused and could unlock
+  // MORE mana by re-tapping an already-tapped land (most valuably Gaea's Cradle
+  // or Nykthos, which scale with board state) DURING the window itself. Without
+  // this, the search would correctly find such a line if it happened to already
+  // have exactly 4 floating mana, but silently miss it whenever the mana still
+  // needs to be ASSEMBLED via an untap lever mid-window — a real completeness
+  // gap, not just a performance one (confirmed: a fully legal 21-step turn-2
+  // win using exactly this mechanism — Hope Tender's SECOND independent untap
+  // ability, freed by Quirion Ranger bouncing a land to untap her mid-turn —
+  // was reachable in the actual engine but never found by the search, because
+  // this exact gate silently excluded the window before that line could be
+  // explored).
+  //
+  // This does NOT attempt to compute exactly how much more mana is reachable
+  // (that would need its own mini-search) — it conservatively treats "an unused
+  // lever exists AND something tapped exists to point it at" as sufficient
+  // justification to open the window, the same class of documented, audited
+  // judgment call FOREST_TAP_DOMINATED_KEYS itself already makes rather than a
+  // full simulation. Gated on BOTH conditions (not just lever presence alone)
+  // specifically to avoid opening windows with no plausible payoff — an unused
+  // lever with nothing tapped to untap has no reachable value.
+  const UNTAP_LEVER_KEYS = _untapLeverKeysCache ??
+    (_untapLeverKeysCache = new Set([...FOREST_TAP_DOMINATED_KEYS, 'quirion_ranger', 'scryb_ranger']));
+  const hasUnusedUntapLever = state.battlefield.some(p => {
+    if (!UNTAP_LEVER_KEYS.has(p.cardKey)) return false;
+    const leverDef = CARDS[p.cardKey];
+    if (!leverDef?.abilities) return false;
+    return Object.keys(leverDef.abilities).some(k => !p.abilitiesUsed?.[k]);
+  });
+  const hasTappedLand = hasUnusedUntapLever && state.lands().some(l => l.tapped);
   const yevaInCZCastable  = yevaInCommandZone && (
-    state.mana.canPay('2GG') || seedbornActive
+    state.mana.canPay('2GG') || seedbornActive || hasTappedLand
   );
   // Glademuse draws when YOU cast a spell on an opponent's turn (requires flash).
   // It only has window value when flash is genuinely available -- meaning Yeva is
@@ -14988,13 +16039,45 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
     state.hasPermanent('Emergence Zone') ||  // all spells have flash this turn
     (seedbornActive && (yevaOnBattlefield || yevaInCZCastable || state.hasPermanent('Emergence Zone'))) ||
     questActive ||                      // untaps creatures; only useful if we have a flash enabler too
-    glademuseHasValue;                  // draws on YOUR casts — only if flash is accessible
+    glademuseHasValue ||                // draws on YOUR casts — only if flash is accessible
+    // [2026-07-11 — IMP-14] yevaInCZCastable's own untap-lever extension
+    // (hasTappedLand, above) needs to justify opening the window ON ITS OWN —
+    // it was previously only checked as a SUB-condition of seedbornActive/
+    // glademuseHasValue, so a hand with Yeva in the CZ and an available untap
+    // lever (Hope Tender, Quirion Ranger, etc.) but NEITHER Seedborn NOR
+    // Glademuse would never reach this far, regardless of the fix above. This
+    // is precisely the "assemble the rest of Yeva's cost mid-window via an
+    // untap lever" case the fix targets — canPay('2GG') alone (mana already
+    // floating) is deliberately NOT enough reason on its own: if you can
+    // already afford her on your own turn, there's no benefit to specifically
+    // waiting for an opponent's window to cast her (you'd just cast her
+    // sorcery-speed and get her static active for all future opponent turns).
+    hasTappedLand;
 
   // In Commander there are 3 opponents. With Seedborn Muse / Yeva flash /
   // Glademuse, each opponent's end step is a separate opportunity. Offer up
   // to 3 windows per round, tracked by opponentTurnsThisRound (0-2 used so far).
   const oppTurnsDone = state.opponentTurnsThisRound ?? 0;
-  if (!isOpponentTurn && hasOpponentTurnValue && !overHandSize && oppTurnsDone < 3) {
+  // [2026-07-11 — see ToDo.md IMP-17] simulateOpponentTurns gates whether
+  // opponent-turn windows are explored at all. This function's OWN default
+  // (true) matches the LONGSTANDING behavior every direct caller — every
+  // test in this suite, the REPL, etc. — already expects, so none of them
+  // needed updating for this change. The actual user-facing default-OFF
+  // behavior lives one level up, in Solver's DEFAULT_OPTIONS: the Solver
+  // ALWAYS explicitly passes its own opts.simulateOpponentTurns value
+  // here (which defaults to false there), so it's the Solver's default —
+  // not this parameter's — that determines what a plain `node index.js`
+  // run does. This is a genuine completeness/speed trade-off, not a bug:
+  // some hands have a real, legal win that specifically requires opening
+  // an opponent-turn window (see IMP-14/15's user-reported turn-2 win,
+  // which depended on exactly this), and those wins will not be found by
+  // the CLI's default unless --simulate-opponent-turns is passed. Off by
+  // default there because, even after IMP-16's dominance-pruning fix,
+  // exploring up to 3 windows per round remains the single largest driver
+  // of search-space size for hands with Yeva (or another flash/untap
+  // enabler) in play — most users most of the time want a fast response
+  // over that specific class of win.
+  if (!isOpponentTurn && simulateOpponentTurns && hasOpponentTurnValue && !overHandSize && oppTurnsDone < 3) {
     const oppNum = oppTurnsDone + 1;
     actions.push({
       type: 'opponent_turn',
@@ -15009,6 +16092,41 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
         // ManaPool ever gains required constructor arguments.
         var { ManaPool: _MP } = _GSM;
         ns.mana = new _MP();
+        // [2026-07-11 — see ToDo.md IMP-14] CR 602.5b: "once each turn"
+        // restrictions are tied to the ACTUAL GAME TURN, a discrete per-
+        // player event — the restriction resets with EACH NEW turn, whether
+        // it's mine or an opponent's (verified: it's the ABILITY's own
+        // activation history within a specific turn, not "my personal turn
+        // cycle"). An opponent's end step genuinely IS a new, different
+        // turn, so any "once per turn" ability I used during MY turn (e.g.
+        // Quirion Ranger's "return a Forest: untap target creature" bounce,
+        // which has no tap cost of its own and so doesn't need re-untapping
+        // to be reused) becomes available again here. This is a real
+        // correctness gap, not just a performance one — confirmed via a
+        // fully legal, hand-verified win line that specifically depends on
+        // reusing an already-once-per-turn-gated ability during a
+        // subsequent opponent window.
+        //
+        // Deliberately NOT untapping permanents here (unlike the Seedborn/
+        // Quest branches below) — my creatures do NOT untap during an
+        // opponent's untap step per real rules; only the ACTIVATION
+        // RESTRICTION resets, independent of tapped status. A creature
+        // that's still tapped from my own turn remains unable to use a
+        // {T}-cost ability regardless of this reset — only abilities with
+        // no tap cost (like Quirion Ranger's bounce) or abilities on a
+        // permanent untapped by some OTHER effect become newly available.
+        //
+        // exert_two_lands is deliberately EXCLUDED from this reset: it
+        // tracks a different, longer-lived promise ("won't untap during
+        // YOUR next untap step" — CR-accurate exert semantics), not a
+        // same-turn activation count, and must only clear at my own next
+        // untap step (already handled correctly in startNewTurn()).
+        ns._ensureBF();
+        for (const p of ns.battlefield) {
+          if (!p.abilitiesUsed) continue;
+          const preserved = p.abilitiesUsed.exert_two_lands ? { exert_two_lands: true } : {};
+          p.abilitiesUsed = preserved;
+        }
         // Quest for Renewal: untap all creatures (not lands) on opponent turns.
         // Triggered when Quest has 4+ quest counters.
         if (ns.hasPermanent('Quest for Renewal')) {
@@ -15083,7 +16201,13 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
   // sorcery-speed actions — you have no main phase between opponents' turns.
   if (isOpponentTurn) {
     const oppTurnsDoneNow = state.opponentTurnsThisRound ?? 0;
-    const moreWindowsAvailable = oppTurnsDoneNow < 3 && hasOpponentTurnValue;
+    // [2026-07-11 — IMP-17] Same simulateOpponentTurns gate as the first
+    // window above. Defensive here too: this branch is normally
+    // unreachable when the flag is off (isOpponentTurn can only become
+    // true via the first, now-gated site), but a hand-built fixture or
+    // direct call could otherwise reach it with isOpponentTurn already
+    // true.
+    const moreWindowsAvailable = simulateOpponentTurns && oppTurnsDoneNow < 3 && hasOpponentTurnValue;
 
     if (moreWindowsAvailable) {
       // Chain directly to the next opponent window — no free main phase in between.
@@ -15097,6 +16221,15 @@ function generateActions(state, _presentHint = null, exhaustive = false) {
           ns.opponentTurnsThisRound = (s.opponentTurnsThisRound ?? 0) + 1;
           var { ManaPool: _MP } = _GSM;
           ns.mana = new _MP();
+          // [2026-07-11 — IMP-14] Same CR 602.5b reset as the first opponent
+          // window above — each subsequent opponent's turn is ALSO a new,
+          // separate turn. See the detailed comment on the first window.
+          ns._ensureBF();
+          for (const p of ns.battlefield) {
+            if (!p.abilitiesUsed) continue;
+            const preserved = p.abilitiesUsed.exert_two_lands ? { exert_two_lands: true } : {};
+            p.abilitiesUsed = preserved;
+          }
           // Seedborn Muse untaps on each opponent's untap step
           if (ns.hasPermanent('Seedborn Muse')) {
             ns._ensureBF();
@@ -15728,6 +16861,18 @@ var DEFAULT_OPTIONS = {
   // search-spell heuristic penalty. The solver explores every reachable
   // state within the turn/depth budget. Much slower but never misses a win.
   exhaustive: false,
+  // [2026-07-11 — see ToDo.md IMP-17] simulateOpponentTurns: whether to
+  // explore opponent-turn windows at all (up to 3 per round — Yeva flash,
+  // Seedborn Muse, Glademuse, Runic Armasaur triggers). OFF by default: a
+  // real completeness/speed trade-off, not a bug. Some hands have a fully
+  // legal win that specifically requires an opponent-turn window (see
+  // IMP-14/15's user-reported case), and those will not be found with this
+  // off — but exploring up to 3 windows per round is consistently the
+  // single largest driver of search-space size for hands with a flash/
+  // untap enabler in play, and most users most of the time want a fast
+  // response over that specific class of win. Opt in with --opponent-turns
+  // on the CLI, or `simulateOpponentTurns: true` here directly.
+  simulateOpponentTurns: false,
   // [O-8] heuristicBias(state) => number: optional additive term folded into
   // child-ordering heuristic(). Defaults to a no-op (always 0), which makes
   // every existing call site, state count, and bench.js result byte-identical
@@ -15736,6 +16881,26 @@ var DEFAULT_OPTIONS = {
   // that minimise combo-piece exposure to opponent interaction, without
   // forking or duplicating the search loops themselves.
   heuristicBias: null,
+  // [2026-07-11 — see ToDo.md IMP-31] maxBranches: cap the number of
+  // children explored per node to the top-N by heuristic() score (already
+  // sorted best-first — see the `children.sort` call in _dfs/_bfs). This
+  // is an approximate, INCOMPLETE technique — a genuine win reachable only
+  // through a low-priority, high-h-score branch beyond the cap can be
+  // missed — so, matching every other approximate pruning technique in
+  // this file, it must never apply in exhaustive mode regardless of this
+  // option's value (see the explicit `!this.opts.exhaustive` guard at each
+  // call site).
+  //
+  // Defaults to Infinity (uncapped) here specifically so every existing
+  // caller that constructs `new Solver({...})` directly without
+  // mentioning this option — every test in this suite, bench.js, the
+  // REPL — is completely unaffected and byte-identical to before this
+  // option existed. The CLI (index.js) is the one caller that explicitly
+  // passes a finite default (unless --exhaustive), since a bounded,
+  // responsive-by-default search is what a human running ad hoc queries
+  // usually wants; bench.js explicitly passes Infinity, since it exists
+  // specifically to catch regressions in the full, untruncated search.
+  maxBranches: Infinity,
 };
 
 // ── Scoring ───────────────────────────────────────────────────────────────
@@ -16222,18 +17387,51 @@ class Solver {
     // including the majority that are dominated (return true) or merely
     // scanned. The vec array is now built only when the candidate is
     // actually inserted into the frontier.
+    //
+    // [2026-07-11] Extended to a 7th dimension: RG (Shang-Chi's restricted
+    // "creature abilities only" mana — see GameState.restrictedG). This is
+    // NOT interchangeable with general G: a state with less general G but
+    // more RG is not dominated by one with more general G but less RG (each
+    // enables strictly different future actions — RG can't pay for spells,
+    // general G can pay for anything). Omitting RG from this comparison
+    // would be UNSOUND: a state that's ahead only on restricted mana could
+    // be wrongly pruned as "dominated" by one that has none, silently
+    // discarding a genuinely different, possibly-winning board position —
+    // section 80's dominance tests were extended accordingly (see the new
+    // "restrictedG" cases there). `next.restrictedG ?? 0` defends the
+    // small hand-built `{ mana: {...} }` fixtures the comment above
+    // describes, which predate this field and don't set it.
+    // [2026-07-11 — see ToDo.md IMP-16] Extended to an 8th dimension: OW
+    // ("opponent windows remaining", 3 - opponentTurnsThisRound). This is a
+    // genuine resource in exactly the same sense as mana: opening an
+    // opponent-turn window is always OPTIONAL, so a state with MORE windows
+    // still available can only ever have equal-or-more future options than
+    // an otherwise-identical state with fewer remaining — never fewer.
+    // Previously this counter lived in structKey (GameState.fingerprint()),
+    // which meant two states differing ONLY in which window number an
+    // action happened in (e.g. "used ability X, still in window 1, 2
+    // windows left" vs "used ability X, now in window 2, 1 window left")
+    // were forced into different structKey buckets and could never be
+    // compared here at all — multiplying exploration across up to 3
+    // windows per round with no corresponding gain. Moved to the mana
+    // segment (dominance-comparable) instead; see the fingerprint()
+    // comment on opponentTurnsThisRound for the full reasoning.
+    // `next.opponentTurnsThisRound ?? 0` defends the same small hand-built
+    // fixtures the RG comment above describes.
     const m = next.mana;
     const W = m.W, U = m.U, B = m.B, R = m.R, G = m.G, C = m.C;
+    const RG = next.restrictedG ?? 0;
+    const OW = 3 - (next.opponentTurnsThisRound ?? 0);
     const existingList = frontier.get(structKey);
     if (!existingList) {
-      frontier.set(structKey, [[W, U, B, R, G, C]]);
+      frontier.set(structKey, [[W, U, B, R, G, C, RG, OW]]);
       return false;
     }
     for (const existing of existingList) {
       if (existing[0] >= W && existing[1] >= U && existing[2] >= B &&
-          existing[3] >= R && existing[4] >= G && existing[5] >= C &&
+          existing[3] >= R && existing[4] >= G && existing[5] >= C && existing[6] >= RG && existing[7] >= OW &&
           (existing[0] > W || existing[1] > U || existing[2] > B ||
-           existing[3] > R || existing[4] > G || existing[5] > C)) {
+           existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG || existing[7] > OW)) {
         return true; // STRICTLY dominated: ≥ in every color, > in at least one
       }
     }
@@ -16248,16 +17446,41 @@ class Solver {
     // occurs. In-place mutation of the frontier list is safe: `frontier` is
     // solver-private (this.manaFrontier), never shared with game states,
     // and no caller retains a reference to the list across calls.
+    //
+    // [2026-07-11 — see ToDo.md IMP-29] Also detect an EXACT tie (all 8
+    // dimensions equal) during this same scan, and skip pushing a
+    // duplicate entry when one is found. An exact tie is, by definition,
+    // not strict dominance in either direction — this function correctly
+    // returns `false` for it either way, so the STATE itself still gets
+    // explored (soundness is unaffected) — but pushing another identical
+    // vector into the list adds zero new dominance information while
+    // making every future scan of this structKey bucket slower. Confirmed
+    // this is a real, severe issue on a reported hand: a single
+    // structKey's list grew to 500+ entries, essentially all the exact
+    // same all-zero vector, because many different DFS paths (discovered
+    // at varying, non-monotonic depths as the search backtracks) all
+    // converge on the same logical board state — each one is a genuinely
+    // new fingerprint the first time exact-dedup (`this.visited`) sees it
+    // at that specific depth, so exact-dedup alone doesn't collapse them;
+    // only the dominance frontier, which groups purely by board state +
+    // mana (ignoring depth/path), is positioned to notice the vectors are
+    // identical.
+    let exactTieFound = false;
     for (let i = existingList.length - 1; i >= 0; i--) {
       const existing = existingList[i];
+      if (W === existing[0] && U === existing[1] && B === existing[2] &&
+          R === existing[3] && G === existing[4] && C === existing[5] && RG === existing[6] && OW === existing[7]) {
+        exactTieFound = true;
+        continue;
+      }
       if (W >= existing[0] && U >= existing[1] && B >= existing[2] &&
-          R >= existing[3] && G >= existing[4] && C >= existing[5] &&
+          R >= existing[3] && G >= existing[4] && C >= existing[5] && RG >= existing[6] && OW >= existing[7] &&
           (W > existing[0] || U > existing[1] || B > existing[2] ||
-           R > existing[3] || G > existing[4] || C > existing[5])) {
+           R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6] || OW > existing[7])) {
         existingList.splice(i, 1);   // reverse iteration keeps indices valid
       }
     }
-    existingList.push([W, U, B, R, G, C]);
+    if (!exactTieFound) existingList.push([W, U, B, R, G, C, RG, OW]);
     return false;
   }
 
@@ -16365,7 +17588,7 @@ class Solver {
     // statesExplored accounting is preserved exactly: a child rejected here would
     // have entered _dfs, incremented the counter, and returned at the same filter.
     // We replicate that +1 so state counts stay identical to the un-reordered code.
-    const actions = generateActions(state, analysis.present, this.opts.exhaustive);
+    const actions = generateActions(state, analysis.present, this.opts.exhaustive, this.opts.simulateOpponentTurns);
     const children = [];
     const childDepth = depth + 1;
     const childExceedsTurn = false; // turn check handled in child _dfs (cheap)
@@ -16484,6 +17707,19 @@ class Solver {
 
     // #8: Skip sort when trivially ordered
     if (children.length > 1) children.sort((a, b) => a.h - b.h);
+
+    // [2026-07-11 — see ToDo.md IMP-31] Cap to the top maxBranches children
+    // by heuristic score (already sorted best-first above). Never active
+    // in exhaustive mode, regardless of the option's value — matching
+    // every other approximate pruning technique in this file. The
+    // discarded children were never recursed into, so this.pruned is
+    // incremented for each to keep the pruned-count accounting meaningful
+    // (it already reflects "children generated but not explored" for
+    // every other cut in this function).
+    if (!this.opts.exhaustive && children.length > this.opts.maxBranches) {
+      this.pruned += children.length - this.opts.maxBranches;
+      children.length = this.opts.maxBranches;
+    }
 
     // #1: Build current node for parent-pointer chain
     const node = { state, parent: parentNode };
@@ -16615,7 +17851,7 @@ class Solver {
         // [E11] present already built above; pass into analyzeState to skip rebuild.
         // [E14] Reuse the parent-computed analysis when available.
         const nodeAnalysis = pre ? pre.analysis : analyzeState(state, infiniteMana, present);
-        const actions = generateActions(state, nodeAnalysis.present, this.opts.exhaustive);
+        const actions = generateActions(state, nodeAnalysis.present, this.opts.exhaustive, this.opts.simulateOpponentTurns);
         const children = [];
         for (const action of actions) {
           let next;
@@ -16685,6 +17921,14 @@ class Solver {
           });
         }
         if (children.length > 1) children.sort((a, b) => a.h - b.h);
+
+        // [2026-07-11 — see ToDo.md IMP-31] Same cap as the DFS site above —
+        // see that site's comment for the full reasoning. Never active in
+        // exhaustive mode regardless of the option's value.
+        if (!this.opts.exhaustive && children.length > this.opts.maxBranches) {
+          this.pruned += children.length - this.opts.maxBranches;
+          children.length = this.opts.maxBranches;
+        }
 
         for (const { next, pre } of children) {
           enqueue({ state: next, parent: node, depth: depth + 1, pre });
@@ -17230,6 +18474,77 @@ function assembleWin(state) {
             !hasCreatureToDiscard(s)) continue;
 
         const prereqSteps = [];
+
+        // [2026-07-11 — see ToDo.md IMP-27] Formidable Speaker's tutor is
+        // an ETB trigger, not a reusable activated ability like the other
+        // three entries in this list — `onField(name)` being true means
+        // her ETB has ALREADY fired once; it does not mean it can fire
+        // again. Reusing it requires bouncing her to hand and recasting
+        // her (re-triggering the ETB), which in turn needs (a) a bounce
+        // engine that can target her, and (b) some OTHER card already in
+        // hand — or bounced there — to serve as her discard cost (her
+        // castFn requires ANY card, not specifically a creature, unlike
+        // Fauna Shaman/Survival). Without both, this step was previously
+        // emitted unconditionally, describing an illegal tutor activation
+        // whenever hand happened to be empty at this point — caught by
+        // direct user report against exactly this scenario (an empty-hand
+        // win-assembly state).
+        if (name === 'Formidable Speaker') {
+          // Prefer Temur Sabertooth/Kogla — genuinely unrestricted (part
+          // of the infinite mana loop itself, reusable without limit) —
+          // over Wirewood Symbiote/Ranger, which have a real once-per-turn
+          // restriction on their own bounce ability, when both bouncing
+          // her AND generating fodder are needed from the same source.
+          // This is a preference, not an enforced constraint: like the
+          // rest of this loose, "with infinite mana" narrative (which
+          // also doesn't re-verify Fauna Shaman's own bounce source
+          // against reuse further down), it doesn't hard-block the
+          // restricted case — it just picks the safer option first when
+          // one exists. Same priority order already established for the
+          // sibling TAP_COST_TUTORS bounce-recast block just below.
+          const bouncerPerm =
+            s.battlefield.find(p => p.name === 'Temur Sabertooth') ||
+            s.battlefield.find(p => p.name === 'Kogla, the Titan Ape') ||
+            s.battlefield.find(p =>
+              (p.name === 'Wirewood Symbiote' ||
+               (ashayaOut(s) && (p.name === 'Quirion Ranger' || p.name === 'Scryb Ranger')))
+              && !p.abilitiesUsed?.bounce_forest && !p.abilitiesUsed?.bounce_elf);
+          if (!bouncerPerm) continue; // no way to re-trigger her ETB at all
+          const bouncerName = bouncerPerm.name;
+
+          const perm = s.battlefield.find(p => p.name === name);
+          let bs = s.removeFromBattlefield(perm.id, null);
+          if (!bs) continue;
+          bs = bs.addToHand('formidable_speaker');
+          const prereqSteps2 = [`${bouncerName} bounces ${name} to hand.`];
+
+          // Ensure a card OTHER than Formidable Speaker herself is available
+          // in hand to serve as her discard cost — she's momentarily in
+          // hand right now (just bounced there) but can't discard herself;
+          // bounce a creature from the battlefield if nothing else
+          // qualifies (any card works for her, a creature is just the
+          // most reliably-available option here).
+          if (!bs.hand || bs.hand.filter(k => k !== 'formidable_speaker').length === 0) {
+            const fodder = bs.creatures().find(c =>
+              c.cardKey !== 'formidable_speaker' &&
+              c.name !== bouncerName &&
+              c.cardKey !== 'shang_chi');
+            if (!fodder) continue; // nothing to discard and nothing to generate one from
+            const bs2 = bs.removeFromBattlefield(fodder.id, null);
+            if (!bs2) continue;
+            bs = bs2.addToHand(fodder.cardKey ?? NAME_TO_KEY[fodder.name]);
+            prereqSteps2.push(`${bouncerName === fodder.name ? 'It' : bouncerName} also bounces ${fodder.name} to hand (discard fodder for Formidable Speaker).`);
+          }
+
+          bs = bs.removeFromHand('formidable_speaker');
+          if (!bs) continue;
+          bs = bs.enterBattlefield('formidable_speaker', {}, { skipETB: true });
+          const fresh = bs.battlefield.find(p => p.name === name);
+          if (fresh) fresh.summoningSick = false;
+          s = bs;
+          prereqSteps.push(...prereqSteps2, `Recast ${name} (ETB re-triggers).`);
+        }
+
         const perm = s.battlefield.find(p => p.name === name);
 
         // [O-19] If `name` is currently tapped, optionally show the
@@ -17271,6 +18586,31 @@ function assembleWin(state) {
             if (ns) {
               s = ns;
               prereqSteps.push(`{1}{G}: ${bouncerName} bounces ${fodder.name} to hand (discard fodder for Fauna Shaman).`);
+            }
+          } else if (ashayaOut(s) && rangerAvailable(s)) {
+            // [2026-07-11 — see ToDo.md IMP-15] Matches hasCreatureToDiscard's
+            // own "Ranger is a Forest under Ashaya — can bounce itself to
+            // hand as discard fodder" branch (combos.js), which this
+            // function's earlier `!hasCreatureToDiscard(s)) continue;` guard
+            // (above) already relies on to conclude a creature IS reachable
+            // — but until this fix, nothing here actually PERFORMED that
+            // bounce. The guard passing without a matching execution step
+            // let Fauna Shaman be named as a tutor step with no creature
+            // ever placed in hand to discard — a genuinely illegal step in
+            // what's meant to be a fully legal assembly. Verified directly
+            // against the real game engine (generateActions) that a Ranger
+            // can legally target itself with its own bounce ability under
+            // Ashaya (it's also a Forest) before relying on that here.
+            const ranger = s.battlefield.find(p =>
+              (p.name === 'Quirion Ranger' || p.name === 'Scryb Ranger') &&
+              !p.abilitiesUsed?.bounce_forest);
+            if (ranger) {
+              const ck = NAME_TO_KEY[ranger.name];
+              const ns = s.removeFromBattlefield(ranger.id, null);
+              if (ns && ck) {
+                s = ns.addToHand(ck);
+                prereqSteps.push(`${ranger.name}: return itself (a Forest under Ashaya) to hand — discard fodder for Fauna Shaman.`);
+              }
             }
           }
         }
@@ -19667,7 +21007,7 @@ self.onmessage = function(e) {
       const handKeys = (d.hand || []).map(n => _nameMap[n]).filter(Boolean);
       const result = analyze(handKeys, {
         maxTurns:  d.maxTurns  || 4,
-        maxDepth:  d.maxDepth  || 50,
+        maxDepth:  d.maxDepth  || 40,
         maxStates: d.maxStates || 200000,
         whatIf:    false,
       });
@@ -19700,7 +21040,7 @@ self.onmessage = function(e) {
       const result = analyze(reduced, {
         maxTurns:  d.maxTurns  || 4,
         maxDepth:  d.maxDepth  || 40,
-        maxStates: d.maxStates || 60000,
+        maxStates: d.maxStates || 80000,
         whatIf:    false,
       });
       const turnsWithout = (result?.canCombo && result.comboTurn != null) ? result.comboTurn : Infinity;
@@ -19815,12 +21155,16 @@ self.onmessage = function(e) {
     }
     // Read solver config from payload (with safe defaults)
     const solverOpts = {
-      maxTurns:   Math.min(Math.max(d.maxTurns  ?? 4,  1), 10),
-      maxDepth:   Math.min(Math.max(d.maxDepth  ?? 50, 10), 200),
-      maxStates:  Math.min(Math.max(d.maxStates ?? 200000, 10000), 2000000),
+      maxTurns:   Math.min(Math.max(d.maxTurns  ?? 4,  1), 5),
+      maxDepth:   Math.min(Math.max(d.maxDepth  ?? 50, 10), 60),
+      maxStates:  Math.min(Math.max(d.maxStates ?? 200000, 10000), 3000000),
       strategy:   ['bfs','dfs','iddfs'].includes(d.strategy) ? d.strategy : 'dfs',
       allLines:   !!d.allLines,
       exhaustive: !!d.exhaustive,
+      // [IMP-17] Whether to explore opponent end-step windows (Yeva flash /
+      // Seedborn Muse / Glademuse / Runic Armasaur). Matches the Solver's own
+      // DEFAULT_OPTIONS default of false when the payload doesn't specify it.
+      simulateOpponentTurns: !!d.simulateOpponentTurns,
     };
     const result = new Solver(solverOpts).solve(state);
     if (!result) { self.postMessage({found:false}); return; }
@@ -19828,22 +21172,42 @@ self.onmessage = function(e) {
     // ── terse turns (mirrors printResults in Solver.js) ──
     // Each step captures the primary action (last new history entry) plus
     // any sub-lines (trigger/side-effect entries that preceded it).
-    const turns=[]; let currentTurn=0;
+    // manaStrFor: st.mana is the GENERAL pool only — Shang-Chi's restricted
+    // "activated abilities of creature sources only" mana (st.restrictedG) is
+    // tracked separately and was previously invisible here entirely.
+    function manaStrFor(st) {
+      const parts=[];
+      const general=st.mana&&st.mana.toString?st.mana.toString():'';
+      if (general&&general!=='{0}') parts.push(general);
+      if (st.restrictedG>0) parts.push('{G}x'+st.restrictedG+' (ability)');
+      return parts.length?parts.join(' + '):null;
+    }
+    const turns=[]; let currentTurn=0; let inOpponentTurn=0;
     for (let i=1;i<result.line.length;i++) {
       const st=result.line[i],prev=result.line[i-1];
-      if (st.turn!==currentTurn) { currentTurn=st.turn; turns.push({turn:currentTurn,steps:[]}); }
+      if (st.turn!==currentTurn) { currentTurn=st.turn; inOpponentTurn=0; turns.push({turn:currentTurn,steps:[]}); }
+      // Opponent-turn window: new distinctly-headed section on entry (mirrors
+      // Solver.js's own console-transcript section-header logic). An empty
+      // window is naturally hidden by the UI's empty-turn-group skip.
+      const currentOppNum = st.isOpponentTurn?(st.opponentTurnsThisRound??1):0;
+      if (st.isOpponentTurn && currentOppNum!==inOpponentTurn) {
+        inOpponentTurn=currentOppNum;
+        turns.push({turn:currentTurn,oppNum:currentOppNum,steps:[]});
+      }
+      if (!st.isOpponentTurn && inOpponentTurn) inOpponentTurn=0;
       const newEntries=st.history.slice(prev.history.length);
       if (!newEntries.length) continue;
       const primaryEntry=newEntries[newEntries.length-1];
       const primaryMsg=typeof primaryEntry==='string'?primaryEntry:(primaryEntry?.msg||'');
       if (!primaryMsg||primaryMsg.startsWith('--')) continue;
+      // Bare transition marker — represented by the section header above.
+      if (/^Opponent \d of 3 end step$/.test(primaryMsg)) continue;
       const subLines=[];
       for (let e=0;e<newEntries.length-1;e++) {
         const sub=newEntries[e]; const sm=typeof sub==='string'?sub:(sub?.msg||'');
         if (sm&&!sm.startsWith('--')) subLines.push(sm);
       }
-      const ms=st.mana&&st.mana.toString?st.mana.toString():'';
-      turns[turns.length-1].steps.push({msg:primaryMsg,subLines:subLines.length?subLines:null,mana:(ms&&ms!=='{0}')?ms:null});
+      turns[turns.length-1].steps.push({msg:primaryMsg,subLines:subLines.length?subLines:null,mana:manaStrFor(st)});
     }
     // ── verbose turns ──
     function _wEnrichStep(msg) {
@@ -19855,11 +21219,11 @@ self.onmessage = function(e) {
       if (msg.startsWith('Pass'))                           return '⏭  ' + msg;
       return '   ' + msg;
     }
-    const verboseTurns=[]; let vTurn=0;
+    const verboseTurns=[]; let vTurn=0; let vInOpponentTurn=0;
     for (let i=1;i<result.line.length;i++) {
       const st=result.line[i],prev=result.line[i-1];
       if (st.turn!==vTurn) {
-        vTurn=st.turn;
+        vTurn=st.turn; vInOpponentTurn=0;
         const prevBf=new Set((prev?.battlefield||[]).map(p=>p.id));
         const bfNames=(st.battlefield||[]).map(p=>prevBf.has(p.id)?p.name:('['+p.name+']*'));
         verboseTurns.push({turn:vTurn,handCount:st.hand?.length||0,libSize:st.players?.[0]?.librarySize??'?',battlefield:bfNames,steps:[]});
@@ -19867,19 +21231,26 @@ self.onmessage = function(e) {
         const firstMsg=typeof firstEntry==='string'?firstEntry:(firstEntry?.msg||'');
         if (firstMsg.startsWith('--')) continue;
       }
+      const vCurrentOppNum = st.isOpponentTurn?(st.opponentTurnsThisRound??1):0;
+      if (st.isOpponentTurn && vCurrentOppNum!==vInOpponentTurn) {
+        vInOpponentTurn=vCurrentOppNum;
+        const bfNames=(st.battlefield||[]).map(p=>p.name);
+        verboseTurns.push({turn:vTurn,oppNum:vCurrentOppNum,handCount:st.hand?.length||0,libSize:st.players?.[0]?.librarySize??'?',battlefield:bfNames,steps:[]});
+      }
+      if (!st.isOpponentTurn && vInOpponentTurn) vInOpponentTurn=0;
       const newEntries=st.history.slice(prev.history.length);
       if (!newEntries.length) continue;
       const primaryEntry=newEntries[newEntries.length-1];
       const rawMsg=typeof primaryEntry==='string'?primaryEntry:(primaryEntry?.msg||'');
       if (!rawMsg||rawMsg.startsWith('--')) continue;
+      if (/^Opponent \d of 3 end step$/.test(rawMsg)) continue;
       const subLines=[];
       for (let e=0;e<newEntries.length-1;e++) {
         const sub=newEntries[e]; const sm=typeof sub==='string'?sub:(sub?.msg||'');
         if (sm&&!sm.startsWith('--')) subLines.push(_wEnrichStep(sm)||sm);
       }
       const enriched=_wEnrichStep(rawMsg); if(!enriched) continue;
-      const ms=st.mana&&st.mana.toString?st.mana.toString():'';
-      verboseTurns[verboseTurns.length-1].steps.push({msg:enriched,subLines:subLines.length?subLines:null,mana:(ms&&ms!=='{0}')?ms:null});
+      verboseTurns[verboseTurns.length-1].steps.push({msg:enriched,subLines:subLines.length?subLines:null,mana:manaStrFor(st)});
     }
     // ── loop explanation lines ──
     const loopLines=[];
@@ -19914,6 +21285,7 @@ self.onmessage = function(e) {
       finalGy:(lastState.players[0].graveyard||[]).map(p=>p.name||String(p)),
       finalEx:(lastState.players[0].exile||[]).map(p=>p.name||String(p)),
       finalMana:lastState.mana?.toString?.()??'',
+      finalRestrictedG:lastState.restrictedG??0,
       allWinLines,tutorRecs,
     });
   } catch(err) { self.postMessage({found:false,error:err.message}); }
