@@ -4754,13 +4754,47 @@ var CARDS = {
 
   lotus_petal: {
     name: 'Lotus Petal', types: ['artifact'], subtypes: [], cost: '0',
+    // [2026-07-11 — see ToDo.md IMP-33] Collapsed from SIX per-color sac
+    // abilities (sac_G/sac_C/sac_W/sac_U/sac_B/sac_R) to just sac_G.
+    // Found via a branching survey: Lotus Petal was the single largest
+    // action generator on a profiled hand (26,862 actions — ahead of even
+    // Quirion Ranger), 5/6 of them useless-or-illegal:
+    //   • sac_W/U/B/R: legal per oracle, but provably dead — no card in
+    //     the entire 206-card database has a W/U/B/R cost (verified by
+    //     scanning every def.cost), and for paying GENERIC costs, {G}
+    //     strictly dominates any off-color mana in a mono-green deck
+    //     ({G} pays everything they can pay, plus {G} costs).
+    //   • sac_C: was RULES-ILLEGAL, not just wasteful — the oracle is
+    //     "Add one mana of any COLOR", and colorless is not a color
+    //     (CR 107.4c). Warping Wail's {C} genuinely cannot be paid by
+    //     Lotus Petal in real Magic; that's what Sol Ring/Ancient Tomb
+    //     (which produce actual {C}) are for.
+    // This also matches the pattern every OTHER "any color" source in
+    // this file already uses — Birds of Paradise, Mox Diamond, etc. are
+    // all `simpleTap('{any}', [['G',1]])`, one branch — Lotus Petal was
+    // the lone outlier enumerating all colors as separate abilities.
     abilities: {
-      sac_G: { label:'Sac → {G}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('G').log(`Sacrifice ${perm.name} → {G}`); } },
-      sac_C: { label:'Sac → {C}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('C').log(`Sacrifice ${perm.name} → {C}`); } },
-      sac_W: { label:'Sac → {W}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('W').log(`Sacrifice ${perm.name} → {W}`); } },
-      sac_U: { label:'Sac → {U}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('U').log(`Sacrifice ${perm.name} → {U}`); } },
-      sac_B: { label:'Sac → {B}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('B').log(`Sacrifice ${perm.name} → {B}`); } },
-      sac_R: { label:'Sac → {R}', fn(state,perm){ let s=state.removeFromBattlefield(perm.id,'graveyard'); if(!s) return null; return s.addMana('R').log(`Sacrifice ${perm.name} → {R}`); } },
+      sac_G: {
+        manaAbility: true,   // [IMP-33] mana ability — exempt from Disruptor
+                             // Flute's hard lock (matching Treasure token's
+                             // sac_for_mana directly above it in spirit; the
+                             // old 6-ability version lacked this flag, so a
+                             // Flute naming "Lotus Petal" would have wrongly
+                             // blocked a mana ability the real card exempts).
+        label: '{T}, Sac → {G}',
+        fn(state, perm) {
+          // Oracle: "{T}, Sacrifice this artifact:" — tapping is part of the
+          // cost (matching Treasure token's identical cost structure). The
+          // old version skipped the tap entirely; harmless in practice
+          // (nothing unilaterally taps your own Petal, and the sac removes
+          // it anyway) but cheap to model correctly.
+          if (perm.tapped) return [];
+          let s = state.tapPermanent(perm.id); if (!s) return [];
+          s = s.removeFromBattlefield(perm.id, 'graveyard');
+          if (!s) return [];
+          return [s.addMana('G').log(`Sacrifice ${perm.name} → {G}`)];
+        },
+      },
     },
   },
 
