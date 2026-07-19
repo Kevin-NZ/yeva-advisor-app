@@ -3511,6 +3511,51 @@ function makeFetchLand(name) {
 }
 
 
+// [2026-07-11 — see ToDo.md IMP-34] Cheap functional-identity key for a
+// permanent considered as a TARGET (untap / equip / etc.). Two permanents
+// with equal keys produce identical resulting states when targeted the same
+// way, so enumeration sites can skip building a full COW result state for a
+// repeat — the same "dedup BEFORE the expensive build" pattern IMP-30
+// established for bounceToUntap, extracted here because seven more sites
+// (Arbor Elf, Deserted Temple, Wirewood Lodge, Maze of Ith, Lightning
+// Greaves, Thousand-Year Elixir, Hope Tender ×2) shared the same
+// build-then-maybe-discard shape, several with NO dedup at all.
+//
+// The fields mirror fingerprint()'s own slow-path per-permanent encoding
+// (GameState.js) — that function is the ground truth for "what makes two
+// permanents state-distinguishable" — plus attached-aura names, which the
+// fingerprint tracks from the aura side (enchantedLandId) rather than the
+// land side. Name alone is NOT sufficient: a Wild-Growth-enchanted Forest
+// is functionally different from a bare one (this exact subtlety was
+// identified — as a pre-existing, name-only-dedup limitation in
+// bounceToUntap — during IMP-30 and deliberately not worsened here).
+function targetIdentityKey(state, perm) {
+  let k = perm.name + (perm.tapped ? ':T' : ':U');
+  if (perm.isForest) k += ':F';
+  if (perm.summoningSick) k += ':S';
+  if (perm.elvishGuidance) k += ':EG';
+  if (perm.copyKey !== undefined) k += ':CP' + perm.copyKey;
+  if (perm.levelCounters) k += ':L' + perm.levelCounters;
+  if (perm.imprintedColor !== undefined) k += ':I' + perm.imprintedColor;
+  if (perm.power !== undefined) k += ':P' + perm.power;
+  if (perm.counters) {
+    for (const [c, n] of Object.entries(perm.counters)) if (n) k += ':c' + c + n;
+  }
+  if (perm.abilitiesUsed) {
+    for (const a of Object.keys(perm.abilitiesUsed).sort()) {
+      if (perm.abilitiesUsed[a]) k += ':u' + a;
+    }
+  }
+  // Attached auras (Wild Growth / Utopia Sprawl / Growing Rites point at the
+  // enchanted land via their own enchantedLandId).
+  let auras = null;
+  for (const q of state.battlefield) {
+    if (q.enchantedLandId === perm.id) (auras ??= []).push(q.name);
+  }
+  if (auras) k += ':A' + auras.sort().join('+');
+  return k;
+}
+
 function bounceToUntap(label, filterFn, selfKey, abilityKey) {
   // abilityKey: the abilitiesUsed flag written after each use — must match the key
   // the combo detectors in combos.js check (quirionAvailable → 'bounce_forest',
@@ -4043,7 +4088,11 @@ var CARDS = {
           if (perm.tapped) return [];
           const ap = state.payMana('1'); if (!ap) return [];
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable lands BEFORE the build
           for (const land of state.lands().filter(l => l.tapped)) {
+            const key = targetIdentityKey(state, land);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = ap.tapPermanent(perm.id); if (!s) continue;
             s = s.untapPermanent(land.id);
             results.push(s.log(`Deserted Temple → untap ${land.name}`));
@@ -4069,7 +4118,11 @@ var CARDS = {
           if (perm.tapped) return [];
           const ap = state.payMana('G'); if (!ap) return [];
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable Elves BEFORE the build
           for (const elf of state.battlefield.filter(p => p.subtypes && p.subtypes.includes('Elf') && p.tapped)) {
+            const key = targetIdentityKey(state, elf);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = ap.tapPermanent(perm.id); if (!s) continue;
             s = s.untapPermanent(elf.id);
             results.push(s.log(`Wirewood Lodge → untap ${elf.name}`));
@@ -4613,8 +4666,12 @@ var CARDS = {
         fn(state, perm) {
           if (perm.tapped) return [];
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable creatures BEFORE the build
           // Untap any tapped creature — models the Argothian Elder / Ley Weaver loop
           for (const c of state.creatures().filter(c => c.tapped)) {
+            const key = targetIdentityKey(state, c);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = state.tapPermanent(perm.id); if (!s) continue;
             s = s.untapPermanent(c.id);
             results.push(s.log(`Maze of Ith → untap ${c.name}`));
@@ -4739,7 +4796,11 @@ var CARDS = {
         label: 'Equip {0}: Give a creature haste (remove summoning sickness)',
         fn(state, perm) {
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable equip targets BEFORE the build
           for (const c of state.creatures().filter(c => c.summoningSick)) {
+            const key = targetIdentityKey(state, c);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = state.clone();
             s._ensureBF();
             const target = s.battlefield.find(p => p.id === c.id);
@@ -4857,7 +4918,11 @@ var CARDS = {
           if (perm.tapped) return [];
           const ap = state.payMana('1'); if (!ap) return [];
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable creatures BEFORE the build
           for (const c of state.creatures().filter(c => c.tapped)) {
+            const key = targetIdentityKey(state, c);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = ap.tapPermanent(perm.id); if (!s) continue;
             results.push(s.untapPermanent(c.id).log(`Thousand-Year Elixir → untap ${c.name}`));
           }
@@ -5233,7 +5298,11 @@ var CARDS = {
         fn(state, perm) {
           if (perm.tapped || perm.summoningSick) return [];
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable Forests BEFORE the build
           for (const f of state.lands().filter(l => (l.subtypes&&l.subtypes.includes('Forest')||l.isForest)&&l.tapped)) {
+            const key = targetIdentityKey(state, f);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = state.tapPermanent(perm.id); if (!s) continue;
             results.push(s.untapPermanent(f.id).log(`Arbor Elf → untap ${f.name}`));
           }
@@ -5694,7 +5763,11 @@ var CARDS = {
           const ap = state.payMana('1'); if (!ap) return [];
           const at = ap.tapPermanent(perm.id); if (!at) return [];
           const results = [];
+          const seen = new Set();  // [IMP-34] dedup interchangeable lands BEFORE the build
           for (const land of at.lands().filter(l => l.tapped)) {
+            const key = targetIdentityKey(at, land);
+            if (seen.has(key)) continue;
+            seen.add(key);
             let s = at.untapPermanent(land.id);
             s = s.markAbilityUsed(perm.id, 'untap_one_land');
             results.push(s.log(`Hope Tender: {1}, tap → untap ${land.name}`));
@@ -5721,14 +5794,21 @@ var CARDS = {
           const pairs = tl.length === 1
             ? [[tl[0]]]
             : tl.flatMap((a, i) => tl.slice(i + 1).map(b => [a, b]));
+          // [IMP-34] Dedup by unordered pair of functional-identity keys
+          // BEFORE building the result state. The old version built every
+          // C(N,2) full state and computed each one's full fingerprint,
+          // discarding duplicates only afterward — the exact expensive
+          // build-then-maybe-discard pattern IMP-30 removed from
+          // bounceToUntap. With e.g. 6 tapped lands of 2 distinct kinds
+          // that was 15 builds + 15 fingerprints to keep 3.
           const seen = new Set();
           return pairs.flatMap(pair => {
+            const pairKey = pair.map(p => targetIdentityKey(at, p)).sort().join('||');
+            if (seen.has(pairKey)) return [];
+            seen.add(pairKey);
             let s = at;
             for (const land of pair) s = s.untapPermanent(land.id);
             s = s.log(`Hope Tender (exert): {1}, tap → untap ${pair.map(p => p.name).join(' + ')}`);
-            const fp = s.fingerprint();
-            if (seen.has(fp)) return [];
-            seen.add(fp);
             return [s];
           });
         },
@@ -17513,6 +17593,61 @@ class Solver {
     // comment on opponentTurnsThisRound for the full reasoning.
     // `next.opponentTurnsThisRound ?? 0` defends the same small hand-built
     // fixtures the RG comment above describes.
+    //
+    // [2026-07-11 — see ToDo.md IMP-35 — SOUNDNESS FIX] OW is excluded ONLY
+    // from the "strictly greater in at least one dimension" trigger below —
+    // it REMAINS a required "existing >= candidate" condition, on both this
+    // check and its reverse (the drop-existing-entries logic further down).
+    // The reasoning above ("more windows remaining is never worse") is
+    // correct in isolation, but silently assumed the two candidates being
+    // compared always arrive via independent paths — true for every other
+    // dimension here (W/U/B/R/G/C/RG), because spending or gaining any of
+    // THOSE always taps or casts something, which always changes structKey
+    // (the battlefield/hand) too — so a state and its own DFS ancestor
+    // essentially never share a structKey with unequal mana. OW breaks that
+    // invariant: chaining "pass to opponent N+1 of 3" resets mana to zero
+    // (GameState.js) and leaves the battlefield/hand completely untouched —
+    // so a state and its OWN DIRECT DFS DESCENDANT, one step further into
+    // the SAME window chain, can and does share an identical structKey with
+    // identical (zero) mana, differing ONLY in OW. Under the ORIGINAL
+    // formula (OW fully included in both the >= requirement AND the >
+    // trigger), the shallower state (higher OW) — inserted into the
+    // frontier automatically, before its own children are ever explored —
+    // would trigger the > condition on OW ALONE (mana being identical) and
+    // incorrectly self-prune every deeper continuation of that exact chain,
+    // even though continuing is the only way to reach further windows (or
+    // exit back to your own turn) and find whatever the search was chasing.
+    //
+    // The first fix attempted here EXCLUDED OW from both conditions
+    // entirely — this over-corrected: it fixed the self-domination case but
+    // introduced a NEW unsoundness in the other direction, letting a state
+    // with WORSE OW but better mana wrongly dominate a state with BETTER OW
+    // but worse mana (an existing test, "more windows remaining does NOT
+    // rescue strictly worse mana", specifically caught this — the two are
+    // genuinely incomparable: a state with fewer windows remaining can
+    // never legitimately dominate one with more, no matter how much better
+    // its mana is, since it may be unable to reach whatever value those
+    // extra windows provide). Keeping the `existing[OW] >= OW` requirement
+    // preserves that protection (a worse-OW state can never pass this
+    // check at all), while dropping OW from the `>` disjunction means OW
+    // being merely EQUAL-OR-BETTER is never, by itself, enough to trigger
+    // dominance — some other dimension must actually be strictly ahead.
+    // That's exactly what breaks the self-domination case (mana is
+    // identical along a window chain, so with OW excluded from the
+    // trigger, nothing is left to fire) while correctly preserving
+    // legitimate dominance between independent paths that also differ in
+    // real mana. Confirmed directly, not assumed: a user-reported hand
+    // requiring the search to chain through all 3 windows before any
+    // productive action becomes available found ZERO wins with the
+    // original formula (states plateaued at 6,133, well under budget — a
+    // real win silently missed, not a slow search) and 7 winning lines with
+    // this fix. Two more independently reported hands showed the same
+    // pattern. OW still fully participates in the EXACT-TIE check just
+    // below this comparison — that mechanism (IMP-29) stays sound: a
+    // window chain's OW value strictly decreases at every step, so a state
+    // can never exactly tie its own ancestor on OW; an exact tie there can
+    // only mean two genuinely independent paths converged on the identical
+    // state, which is exactly the case that mechanism is meant to collapse.
     const m = next.mana;
     const W = m.W, U = m.U, B = m.B, R = m.R, G = m.G, C = m.C;
     const RG = next.restrictedG ?? 0;
@@ -17526,8 +17661,8 @@ class Solver {
       if (existing[0] >= W && existing[1] >= U && existing[2] >= B &&
           existing[3] >= R && existing[4] >= G && existing[5] >= C && existing[6] >= RG && existing[7] >= OW &&
           (existing[0] > W || existing[1] > U || existing[2] > B ||
-           existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG || existing[7] > OW)) {
-        return true; // STRICTLY dominated: ≥ in every color, > in at least one
+           existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG)) {
+        return true; // STRICTLY dominated: ≥ in every dimension (OW included), > in at least one EXCLUDING OW (see soundness fix above)
       }
     }
     // Not dominated — a genuinely new point (or an exact tie, which also
@@ -17560,6 +17695,22 @@ class Solver {
     // only the dominance frontier, which groups purely by board state +
     // mana (ignoring depth/path), is positioned to notice the vectors are
     // identical.
+    //
+    // [2026-07-11 — see ToDo.md IMP-35] The "drop" comparison below is the
+    // same strict-dominance relationship as the check above, just in the
+    // reverse direction (candidate dominates an existing entry, so the now-
+    // redundant existing entry is removed) — corrected the identical way:
+    // OW remains a required `candidate >= existing` condition (so a
+    // candidate with WORSE OW can never drop an existing entry that has
+    // MORE remaining — that pairing is genuinely incomparable, see the
+    // check above's full reasoning), but OW is excluded from the "strictly
+    // greater in at least one" trigger, so OW being merely equal-or-better
+    // is never, by itself, enough to drop an existing entry — some other
+    // dimension must actually be strictly ahead. The EXACT-TIE comparison
+    // just above, however, correctly KEEPS OW: see that check's own
+    // reasoning (a window chain's OW value strictly decreases at every
+    // step, so this mechanism can never conflate an ancestor/descendant
+    // pair as an exact tie in the first place).
     let exactTieFound = false;
     for (let i = existingList.length - 1; i >= 0; i--) {
       const existing = existingList[i];
@@ -17571,7 +17722,7 @@ class Solver {
       if (W >= existing[0] && U >= existing[1] && B >= existing[2] &&
           R >= existing[3] && G >= existing[4] && C >= existing[5] && RG >= existing[6] && OW >= existing[7] &&
           (W > existing[0] || U > existing[1] || B > existing[2] ||
-           R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6] || OW > existing[7])) {
+           R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6])) {
         existingList.splice(i, 1);   // reverse iteration keeps indices valid
       }
     }
