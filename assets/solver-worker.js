@@ -7575,7 +7575,10 @@ var CARDS = {
       const forests = state.battlefield.filter(p => p.isForest);
       const best = FOREST_PRIORITY.reduce((found, ck) => found ?? forests.find(p => p.cardKey === ck), null)
         ?? forests[0];
-      if (perm && best) perm.enchantedLandId = best.id;
+      if (perm && best) {
+        perm.enchantedLandId = best.id;
+        return state.log(`Utopia Sprawl attached to ${best.name}`);
+      }
       return state;
     },
   },
@@ -7590,7 +7593,10 @@ var CARDS = {
       // Attach to best available land (prefer Forest for maximum synergy)
       const lands = state.battlefield.filter(p => p.types.includes('land'));
       const best = lands.find(p => p.isForest) ?? lands[0];
-      if (perm && best) perm.enchantedLandId = best.id;
+      if (perm && best) {
+        perm.enchantedLandId = best.id;
+        return state.log(`Wild Growth attached to ${best.name}`);
+      }
       return state;
     },
   },
@@ -9731,6 +9737,52 @@ function ashayaOut(state) {
   return hasPerm(state, 'Ashaya, Soul of the Wild');
 }
 
+// True if a green creature spell can be cast at instant speed RIGHT NOW —
+// required whenever a detector's loop recasts Quirion Ranger / Scryb Ranger
+// (both non-flash creatures) and the state being checked is on an
+// OPPONENT's turn. On the controller's own turn, no flash is needed at
+// all — creature spells are sorcery-speed there regardless. Deliberately
+// checks Yeva ON THE BATTLEFIELD only, not merely present in the command
+// zone: her flash-granting text ("you may cast green creature spells as
+// though they had flash") is a static ability of the permanent, per her
+// own oracle text, and static abilities of a permanent function only
+// while it actually IS a permanent on the battlefield (CR 604) — sitting
+// uncast in the command zone grants nothing. (A different, pre-existing
+// check elsewhere in this file treats "Yeva in command zone" as
+// sufficient — see the Glademuse mana-neutral-ETB detector; that's a
+// separate, narrower judgment call for a draw-engine bonus where casting
+// Yeva THIS SAME window is itself part of what's being valued, not a
+// precondition being verified. Not touched here.)
+function canCastGreenCreatureNow(state) {
+  return !state.isOpponentTurn || hasPerm(state, "Yeva, Nature's Herald") || !!state.flashThisTurn;
+}
+
+// Basic green 1-mana dorks with a fixed {G} tap output (not one of the
+// elf-count/devotion/power SCALING dorks already special-cased in the
+// Quirion/Scryb Ranger detectors' switch statements below). With Ashaya out
+// these become Forest lands too — if a Wild Growth / Utopia Sprawl / Elvish
+// Guidance happens to be attached to THEM specifically (not some other
+// land), the aura's land-tap trigger (see actions.js applyTapBonuses) adds
+// to their normal 1G, which can push an otherwise too-small dork over the
+// ≥2G / ≥3G threshold these loops need. Confirmed directly: Llanowar Elves +
+// Wild Growth (attached to itself, via Ashaya) taps for 1G (its own
+// ability) + 1G (Wild Growth's land-tap trigger) = 2G, satisfying the
+// Quirion Ranger loop — previously undetected because Llanowar Elves isn't
+// one of the named scaling dorks.
+var BASIC_GREEN_DORKS = new Set([
+  'Llanowar Elves', 'Elvish Mystic', 'Fyndhorn Elves',
+  'Birds of Paradise', 'Paradise Druid', 'Druid of the Cowl',
+]);
+function enchantedDorkBonusG(state, perm) {
+  if (!perm.isForest) return 0; // must be a land (Ashaya) for a land-tap aura to trigger on it
+  let bonus = 0;
+  if (state.battlefield.some(p =>
+    (p.cardKey === 'wild_growth' || p.cardKey === 'utopia_sprawl') && p.enchantedLandId === perm.id
+  )) bonus += 1;
+  if (perm.elvishGuidance) bonus += elfCount(state);
+  return bonus;
+}
+
 // [O-33] True if the battlefield has a mechanism to recast a green creature
 // spell an UNBOUNDED number of times this turn — the requirement for any
 // "infinite green-permanent-cast" win (Defiler counters, Beast Whisperer /
@@ -10227,6 +10279,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state)) return false; // Quirion-specific: Scryb alone does not qualify
+      // The loop recasts Quirion Ranger every cycle — a non-flash creature
+      // spell. On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Hope Tender pairs with Cradle: Ranger untaps Tender, Tender untaps Cradle.
       // Cradle needs ≥2 creatures to net positive after the {1} Tender activation cost.
       if (permReady(state, 'Hope Tender') && cradleUntapped(state) && creatureCount(state) >= 2) return true;
@@ -10244,7 +10299,8 @@ var DETECTORS = [
           case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 2;
           case 'Topiary Lecturer':            return (p.power || 0) >= 2;
-          default: return false;
+          default:
+            return BASIC_GREEN_DORKS.has(p.name) && enchantedDorkBonusG(state, p) >= 1;
         }
       });
     },
@@ -10262,6 +10318,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!scrybAvailable(state)) return false; // Scryb-specific: Quirion alone does not qualify
+      // The loop recasts Scryb Ranger every cycle — a non-flash creature
+      // spell. On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       const scActive = shangChiActive(state);
       return state.battlefield.some(p => {
         if (p.summoningSick && !scActive) return false;
@@ -10275,7 +10334,8 @@ var DETECTORS = [
           case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
           case 'Topiary Lecturer':            return (p.power || 0) >= 3;
-          default: return false;
+          default:
+            return BASIC_GREEN_DORKS.has(p.name) && enchantedDorkBonusG(state, p) >= 2;
         }
       });
     },
@@ -10312,6 +10372,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!hasGlobalHaste(state)) return false;
+      // The loop recasts the Ranger every cycle — a non-flash creature
+      // spell. On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       const isQuirion = quirionAvailable(state);
       const isScryb   = !isQuirion && scrybAvailable(state);
       if (!isQuirion && !isScryb) return false;
@@ -10436,6 +10499,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state)) return false;
+      // The loop recasts Quirion Ranger every cycle — a non-flash creature
+      // spell. On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       if (!hasPerm(state, 'Badgermole Cub')) return false;
       const scActive = shangChiActive(state);
       // Need any non-sick creature (other than Badgermole itself) with a tapForMana.
@@ -11478,6 +11544,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
+      // The loop recasts the Ranger every cycle — a non-flash creature
+      // spell. On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Arbor Elf need not be untapped: QR bounce untaps it as the first loop action.
       if (!hasPerm(state, 'Arbor Elf')) return false;
       // Need an enchanted Forest producing ≥2G (Wild Growth or Utopia Sprawl attached)
@@ -11518,6 +11587,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
+      // The loop recasts the Ranger every cycle — a non-flash creature
+      // spell. On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Arbor Elf need not be untapped: QR's bounce ability (the first action
       // of the loop) untaps Arbor Elf as its effect, even if Arbor is tapped.
       // Loop sequence: QR bounces itself (a Forest under Ashaya) → untaps Arbor
@@ -18161,11 +18233,25 @@ class Solver {
         // [E18] Also carry the fingerprint and score already computed above so the
         // child's _dfs skips recomputing them (fingerprint is the 2nd-hottest fn).
         pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: childAnalysis, fp: childFp, score: childScore },
+        // [perf/clarity] action.priority (actions.js's own static type-tier —
+        // hand_ability=12, play_land=10, cast_spell=8-9, tap_for_mana=7,
+        // ability=6, pass_turn=2-3) was ALREADY functioning as a tie-breaker
+        // here, implicitly: generateActions() returns `actions` pre-sorted
+        // by priority descending, children are pushed in that same relative
+        // order, and Array.prototype.sort is stability-guaranteed (ES2019+),
+        // so any group of children tied on `h` below kept their
+        // priority-sorted relative order by accident of stability rather
+        // than by declared intent. Carrying it explicitly and sorting on it
+        // second makes that existing behavior a documented invariant instead
+        // of one resting on an unstated assumption about sort stability —
+        // confirmed via direct bench/test re-run to be a pure no-op (see
+        // ToDo.md).
+        priority: action.priority ?? 0,
       });
     }
 
     // #8: Skip sort when trivially ordered
-    if (children.length > 1) children.sort((a, b) => a.h - b.h);
+    if (children.length > 1) children.sort((a, b) => a.h - b.h || b.priority - a.priority);
 
     // [2026-07-11 — see ToDo.md IMP-31] Cap to the top maxBranches children
     // by heuristic score (already sorted best-first above). Never active
@@ -18393,9 +18479,12 @@ class Solver {
             h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana, undefined, childCombo) +
                (this.opts.heuristicBias ? this.opts.heuristicBias(next) : 0),
             pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: ca },
+            // [perf/clarity] see the matching DFS site's comment — makes an
+            // already-existing, stable-sort-dependent tie-break explicit.
+            priority: action.priority ?? 0,
           });
         }
-        if (children.length > 1) children.sort((a, b) => a.h - b.h);
+        if (children.length > 1) children.sort((a, b) => a.h - b.h || b.priority - a.priority);
 
         // [2026-07-11 — see ToDo.md IMP-31] Same cap as the DFS site above —
         // see that site's comment for the full reasoning. Never active in
