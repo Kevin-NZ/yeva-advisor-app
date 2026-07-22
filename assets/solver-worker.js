@@ -10080,7 +10080,11 @@ function formidableSpeakerCanRetutor(state) {
 
   // Still need SOME way to bounce her back to hand and recast her — her
   // tutoring is an ETB trigger, not a repeatable activated ability.
-  return !!(
+  return !!_formidableSpeakerBouncer(state);
+}
+
+function _formidableSpeakerBouncer(state) {
+  return (
     state.battlefield.find(p => p.name === 'Temur Sabertooth') ||
     state.battlefield.find(p => p.name === 'Kogla, the Titan Ape') ||
     state.battlefield.find(p =>
@@ -10088,6 +10092,25 @@ function formidableSpeakerCanRetutor(state) {
        (ashayaOut(state) && (p.name === 'Quirion Ranger' || p.name === 'Scryb Ranger')))
       && !p.abilitiesUsed?.bounce_forest && !p.abilitiesUsed?.bounce_elf)
   );
+}
+
+// Loose/optimistic variant of formidableSpeakerCanRetutor — deliberately
+// NOT used by checkVictory's own WIN_CONDITIONS determination (that stays
+// strict; see formidableSpeakerCanRetutor above), so the search itself —
+// especially --exhaustive, whose whole contract is "never misses a real
+// win" — is never short-circuited into stopping before a win is actually
+// verified. This loose variant exists only for the CLI's non-exhaustive
+// display/narration path: when the search accepts an "infinite mana
+// achieved, no confirmed win" fallback (default mode only — see Solver.js
+// solve()'s fallback handling), it's more useful to relabel that with a
+// concrete "Win: Tutor for Finisher" description and a narration of what's
+// still needed (bounce her, possibly get fodder, possibly pass to an
+// opponent's turn first) than to show nothing actionable at all. Requires
+// only a bounce source — NOT a card already in hand — since the whole
+// point is describing the remaining steps, not certifying they're already
+// satisfied.
+function formidableSpeakerLooseRetutor(state) {
+  return !!_formidableSpeakerBouncer(state);
 }
 
 // "You may activate abilities of creatures you control as though those
@@ -17287,6 +17310,16 @@ var DEFAULT_OPTIONS = {
   maxTurns:  4,
   maxDepth:  40,
   maxStates: 500_000,
+  // maxTimeMs: an alternative, wall-clock budget cap alongside maxStates —
+  // whichever limit is hit first stops the search. `Infinity` (default)
+  // means no time cap; only maxStates applies, unchanged from before this
+  // option existed. Checked periodically (every 1024 states, via the same
+  // `_stopSearch` flag `firstWin` already uses everywhere in _dfs/_bfs/
+  // _iddfs), not on every single node — Date.now() is cheap, but calling it
+  // per-node across a 500k-state search adds up, and a page or two of
+  // states' worth of overshoot past the deadline is an acceptable trade for
+  // that.
+  maxTimeMs: Infinity,
   strategy:  'dfs',
   allLines:  false,
   verbose:   false,
@@ -17583,6 +17616,30 @@ function reconstructPath(node) {
   return path;
 }
 
+// [non-exhaustive display aid] `combo.winCondition` is null whenever the
+// search accepted an "infinite mana achieved, no confirmed win" state —
+// only possible in non-exhaustive mode (see the exhaustive-gated condition
+// in _dfs/_bfs). checkVictory's own WIN_CONDITIONS determination stays
+// strict about Formidable Speaker's retutor (requires a card genuinely in
+// hand — see formidableSpeakerCanRetutor's doc comment in combos.js) so
+// the search itself is never short-circuited into stopping before a win
+// is actually verified. But if she's the only thing missing at the point
+// the search stopped, it's more useful to relabel the result with a
+// concrete description than to leave the user with a bare
+// "(win condition needed)". assembleWin independently re-derives and
+// applies the same relabeling for its own step narration, using
+// formidableSpeakerLooseRetutor (a bounce source is enough, not a card
+// already in hand — that's the whole point of this being descriptive
+// rather than a re-verification).
+function relabelFormidableFallback(combo, finalState) {
+  if (!combo || combo.winCondition ||
+      !finalState.hasPermanent('Formidable Speaker') ||
+      !formidableSpeakerLooseRetutor(finalState)) {
+    return combo;
+  }
+  return { ...combo, winCondition: 'Win: Tutor for Finisher (infinite mana + creature tutor)' };
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 //  Solver class
 // ══════════════════════════════════════════════════════════════════════════
@@ -17624,6 +17681,10 @@ class Solver {
     // [O-37] Classify the fast-mana regime once from the initial state.
     __fastManaRegime = countFastManaSources(initialState) >= 2;
 
+    const maxTimeNote = Number.isFinite(this.opts.maxTimeMs)
+      ? `, max ${(this.opts.maxTimeMs / 1000).toLocaleString()}s`
+      : '';
+
     const t0 = Date.now();
 
     if (this.opts.strategy === 'bfs') {
@@ -17640,10 +17701,11 @@ class Solver {
       if (this.fallbackWin) {
         const fb = this.fallbackWin;
         const fbFinalState = fb.line[fb.line.length - 1];
-        const fbAssembly   = fb.combo?.winCondition ? assembleWin(fbFinalState) : null;
+        const fbCombo = relabelFormidableFallback(fb.combo, fbFinalState);
+        const fbAssembly = fbCombo?.winCondition ? assembleWin(fbFinalState) : null;
         return {
           line:     fb.line,
-          combo:    fb.combo,
+          combo:    fbCombo,
           score:    fb.score,
           assembly: fbAssembly ? { steps: fbAssembly.steps } : null,
           ...(this.opts.allLines ? { allLines: this.allWinLines } : {}),
@@ -17653,10 +17715,11 @@ class Solver {
     }
 
     const finalState = this.bestLine[this.bestLine.length - 1];
-    const assembly   = this.bestCombo?.winCondition ? assembleWin(finalState) : null;
+    const combo      = relabelFormidableFallback(this.bestCombo, finalState);
+    const assembly   = combo?.winCondition ? assembleWin(finalState) : null;
     const result = {
       line:     this.bestLine,
-      combo:    this.bestCombo,
+      combo,
       score:    this.bestScore,
       assembly: assembly ? { steps: assembly.steps } : null,
     };
@@ -17847,6 +17910,7 @@ class Solver {
 
   _dfs(state, parentNode, depth, pre) {
     this.statesExplored++;
+    this._checkDeadline();
     if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
     if (depth > this.opts.maxDepth)  return;
     if (state.turn > this.opts.maxTurns) return;
@@ -18177,6 +18241,12 @@ class Solver {
       this._dfs(initialState, null, 0);
       if (this.bestLine) break;                // win found — done
       if (this.statesExplored >= this.opts.maxStates) break; // budget exhausted
+      // _timedOut persists across the `_stopSearch = false` reset above
+      // (unlike _stopSearch itself, which each pass deliberately clears) —
+      // check it explicitly so a maxTimeMs deadline hit mid-pass actually
+      // stops IDDFS from starting another pass, instead of being silently
+      // forgotten the moment the next pass resets _stopSearch.
+      if (this._timedOut) break;
     }
 
     this.opts.maxTurns = savedMaxTurns;
@@ -18200,12 +18270,14 @@ class Solver {
       if (!q) continue;
 
       for (let qi = 0; qi < q.length; qi++) {
-        if (this.statesExplored > this.opts.maxStates) return;
+        if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
 
         const node = q[qi];
         q[qi] = null; // [E9] Release reference for GC — queues can grow large
         const { state, depth, pre } = node;
         this.statesExplored++;
+        this._checkDeadline();
+        if (this._stopSearch) return;
 
         if (state.youLost())            continue;
         if (depth > this.opts.maxDepth) continue;
@@ -18360,6 +18432,21 @@ class Solver {
     // is found within the search budget.
     this.fallbackWin   = null;
     this._stopSearch   = false;   // firstWin stop flag (see _dfs win handler)
+    this._deadlineAt   = Number.isFinite(this.opts.maxTimeMs)
+      ? Date.now() + this.opts.maxTimeMs
+      : Infinity;
+    this._timedOut     = false;   // set true if maxTimeMs (not maxStates) is what stopped the search
+  }
+
+  // Checked every 1024 states from _dfs/_bfs's own per-node budget check —
+  // see maxTimeMs's doc comment in DEFAULT_OPTIONS for why this isn't
+  // called on every single node.
+  _checkDeadline() {
+    if (this._deadlineAt !== Infinity && (this.statesExplored & 0x3FF) === 0 &&
+        Date.now() >= this._deadlineAt) {
+      this._stopSearch = true;
+      this._timedOut   = true;
+    }
   }
 
   _recordWin(path, combo, s) {
@@ -19638,6 +19725,20 @@ function assembleWin(state) {
 
   // ── Check if terminal win is now assembled ─────────────────────────────
   const victory = checkVictory(s);
+  // [non-exhaustive display aid] checkVictory's own WIN_CONDITIONS
+  // determination stays strict about Formidable Speaker's retutor (a card
+  // must genuinely be in hand — see formidableSpeakerCanRetutor's doc
+  // comment in combos.js), so the search itself is never short-circuited.
+  // But assembleWin only ever runs to EXPLAIN an already-decided result —
+  // when the solver accepted a non-exhaustive "infinite mana, no confirmed
+  // win" fallback, and Formidable Speaker's retutor is the only thing
+  // missing, it's more useful to describe that path (bounce her, get
+  // fodder, possibly pass to an opponent's turn) than to show nothing.
+  // formidableSpeakerLooseRetutor only needs a bounce source, not a card
+  // already in hand, precisely for this narrower, purely descriptive use.
+  if (victory && !victory.winCondition && onField('Formidable Speaker') && formidableSpeakerLooseRetutor(s)) {
+    victory.winCondition = 'Win: Tutor for Finisher (infinite mana + creature tutor)';
+  }
   const terminalWin = victory && victory.deployed && victory.winCondition;
 
   if (terminalWin) {
@@ -20033,12 +20134,12 @@ function assembleWin(state) {
       // tutor" here, "activate or cast the tutor" (below) is misleading —
       // she's already on the battlefield, meaning her ETB has already
       // fired once, and re-triggering it needs concrete bounce+recast
-      // prerequisites (see formidableSpeakerCanRetutor in combos.js, the
-      // same accounting checkVictory uses to decide this win is reachable
-      // at all). Narrate them explicitly instead of the generic step 1.
-      if (onField('Formidable Speaker') && formidableSpeakerCanRetutor(s)) {
-        // formidableSpeakerCanRetutor already confirmed both a bouncer and a
-        // card in hand (other than her) exist, so both are guaranteed here.
+      // prerequisites. Uses the LOOSE check (a bounce source is enough,
+      // not a card already in hand — see formidableSpeakerLooseRetutor's
+      // doc comment in combos.js) since this branch is purely descriptive:
+      // it also covers the non-exhaustive-mode fallback case where a card
+      // isn't in hand yet, and narrates the extra step needed to get one.
+      if (onField('Formidable Speaker') && formidableSpeakerLooseRetutor(s)) {
         const bouncer =
           s.battlefield.find(p => p.name === 'Temur Sabertooth') ||
           s.battlefield.find(p => p.name === 'Kogla, the Titan Ape') ||
@@ -20046,13 +20147,31 @@ function assembleWin(state) {
             (p.name === 'Wirewood Symbiote' ||
              (ashayaOut(s) && (p.name === 'Quirion Ranger' || p.name === 'Scryb Ranger')))
             && !p.abilitiesUsed?.bounce_forest && !p.abilitiesUsed?.bounce_elf);
+        const bouncerIsUnrestricted =
+          bouncer.name === 'Temur Sabertooth' || bouncer.name === 'Kogla, the Titan Ape';
+        const hasFodderInHand = s.hand?.some(k => k !== 'formidable_speaker');
 
         steps.push("  Formidable Speaker's tutor is an ETB trigger, not a repeatable ability — she's");
         steps.push('  already on the battlefield, so her ETB has already fired once. To tutor again:');
         steps.push(`  1. ${bouncer.name} bounces Formidable Speaker to hand.`);
-        steps.push('  2. Recast her, discarding the card already in hand, and search your library — find');
-        steps.push('     Duskwatch Recruiter specifically if possible.');
-        steps.push("  3. Cast all found creatures, then assemble Hitzel's Sequence (Geier Reach Sanitarium +");
+        if (hasFodderInHand) {
+          steps.push('  2. Recast her, discarding the card already in hand, and search your library — find');
+          steps.push('     Duskwatch Recruiter specifically if possible.');
+        } else if (bouncerIsUnrestricted) {
+          steps.push(`  2. ${bouncer.name} bounces another card to hand too — unrestricted, so it can be`);
+          steps.push('     used again this turn for the discard fodder her ETB needs.');
+          steps.push('  3. Recast her, discard that card, and search your library — find Duskwatch');
+          steps.push('     Recruiter specifically if possible.');
+        } else {
+          steps.push('  2. She cannot discard herself — a second card in hand is needed. If the only');
+          steps.push('     bounce source is the same once-per-turn one just used in step 1: pass to an');
+          steps.push("     opponent's end step first. Once-per-turn restrictions reset at each new turn,");
+          steps.push('     including opponents\' (CR 602.5b) — from there, the same recast loop that');
+          steps.push('     supplies your infinite mana can also spare a cycle to bounce a card to hand.');
+          steps.push('  3. Recast her, discard that card, and search your library — find Duskwatch');
+          steps.push('     Recruiter specifically if possible.');
+        }
+        steps.push("  4. Cast all found creatures, then assemble Hitzel's Sequence (Geier Reach Sanitarium +");
         steps.push('     Endurance + Temur Sabertooth/Kogla), Finale of Devastation X≥10, or Infectious Bite');
         steps.push('     as the pieces allow.');
       } else {
@@ -21701,6 +21820,7 @@ self.onmessage = function(e) {
       maxTurns:   Math.min(Math.max(d.maxTurns  ?? 4,  1), 5),
       maxDepth:   Math.min(Math.max(d.maxDepth  ?? 50, 10), 60),
       maxStates:  Math.min(Math.max(d.maxStates ?? 200000, 10000), 3000000),
+      maxTimeMs:  30000,
       strategy:   ['bfs','dfs','iddfs'].includes(d.strategy) ? d.strategy : 'dfs',
       allLines:   !!d.allLines,
       exhaustive: !!d.exhaustive,
