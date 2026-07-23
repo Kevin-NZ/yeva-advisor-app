@@ -2267,19 +2267,28 @@ class GameState {
 
     // Elvish Visionary ETB: draw a card when it enters.
     if (!skipETB && cardKey === 'elvish_visionary') {
+      const drawnKey = s.players[0].library[0];
       s = s.playerDraws(0, 1);
+      const drawnName = drawnKey && drawnKey !== 'unknown' ? (_cards()[drawnKey]?.name ?? drawnKey) : '(empty library)';
+      s = s.log(`Elvish Visionary ETB: draw ${drawnName}`);
     }
 
     // Llanowar Visionary ETB: draw a card when it enters.
     if (!skipETB && cardKey === 'llanowar_visionary') {
+      const drawnKey = s.players[0].library[0];
       s = s.playerDraws(0, 1);
+      const drawnName = drawnKey && drawnKey !== 'unknown' ? (_cards()[drawnKey]?.name ?? drawnKey) : '(empty library)';
+      s = s.log(`Llanowar Visionary ETB: draw ${drawnName}`);
     }
 
     // Voice of Many ETB: draw a card for each opponent who controls fewer creatures than you.
     // In 1v1 commander: draw 1 if you control more creatures than the opponent (always true
     // in a typical combo position with a board). Simplified: draw 1.
     if (!skipETB && cardKey === 'voice_of_many') {
+      const drawnKey = s.players[0].library[0];
       s = s.playerDraws(0, 1);
+      const drawnName = drawnKey && drawnKey !== 'unknown' ? (_cards()[drawnKey]?.name ?? drawnKey) : '(empty library)';
+      s = s.log(`Voice of Many ETB: draw ${drawnName}`);
     }
 
     // Soul of the Harvest ETB: whenever another nontoken creature enters, draw a card.
@@ -2737,9 +2746,12 @@ class GameState {
         const sacPower = Math.max(1, sac.power ?? 1);
         s = s.removeFromBattlefield(sac.id, 'graveyard');
         if (s) {
+          const cardsModule = _cards();
+          const peeked = s.players[0].library.slice(0, sacPower);
+          const drawnNames = peeked.map(k => (k && k !== 'unknown') ? (cardsModule[k]?.name ?? k) : '(unknown/empty)');
           s = s.playerDraws(0, sacPower);
           s.life += sacPower; // gain X life
-          s = s.log(`Disciple of Freyalise: sacrifice ${sac.name} (power ${sacPower}) → draw ${sacPower}, gain ${sacPower} life`);
+          s = s.log(`Disciple of Freyalise: sacrifice ${sac.name} (power ${sacPower}) → draw ${sacPower} (${drawnNames.join(', ')}), gain ${sacPower} life`);
         }
       }
     }
@@ -4385,8 +4397,10 @@ var CARDS = {
           let s = ap.tapPermanent(perm.id); if (!s) return [];
           if (s.life <= 1) return []; // would die from the life payment
           s = s.clone(); s.life -= 1;
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
-          return [s.log('War Room: {3}, tap, pay 1 life → draw a card')];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`War Room: {3}, tap, pay 1 life → draw ${drawnName}`)];
         },
       },
     },
@@ -4488,8 +4502,10 @@ var CARDS = {
           if (!hasPower4) return [];
           const ap = state.payMana('3'); if (!ap) return [];
           let s = ap.tapPermanent(perm.id); if (!s) return [];
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
-          return [s.log("Bonders' Enclave: {3}, tap → draw a card")];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`Bonders' Enclave: {3}, tap → draw ${drawnName}`)];
         },
       },
     },
@@ -4507,8 +4523,10 @@ var CARDS = {
           if (perm.tapped) return [];
           const ap = state.payMana('2'); if (!ap) return [];
           const at = ap.tapPermanent(perm.id); if (!at) return [];
+          const drawnKey = at.players[0].library[0];
           const s = at.playerDraws(0, 1);
-          return [s.log('Mikokoro: {2}, tap → draw a card (each player draws)')];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`Mikokoro: {2}, tap → draw ${drawnName} (each player draws)`)];
         },
       },
     },
@@ -4853,8 +4871,10 @@ var CARDS = {
         fn(state, cardKey) {
           const ap = state.payMana('G'); if (!ap) return [];
           let s = ap.discardFromHand(cardKey, 'cycling cost'); if (!s) return [];
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
-          return [s.log('Cycling Tranquil Thicket → draw a card')];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`Cycling Tranquil Thicket → draw ${drawnName}`)];
         },
       },
     },
@@ -5150,8 +5170,10 @@ var CARDS = {
           const ap = state.payMana('1'); if (!ap) return [];
           let s = ap.removeFromBattlefield(perm.id, 'graveyard');
           if (!s) return [];
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
-          return [s.log('Sacrifice Vexing Bauble: draw a card')];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`Sacrifice Vexing Bauble: draw ${drawnName}`)];
         },
       },
     },
@@ -5287,9 +5309,11 @@ var CARDS = {
           const cards = CARDS;
           const ap = state.payMana('2'); if (!ap) return [];
           let s = ap.removeFromBattlefield(perm.id, 'graveyard'); if (!s) return [];
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (cards[drawnKey]?.name ?? drawnKey) : '(empty library)';
           // Option A: just draw (don't put a land)
-          const results = [s.log('Insidious Fungus: sacrifice, draw a card')];
+          const results = [s.log(`Insidious Fungus: sacrifice, draw ${drawnName}`)];
           // Option B: put a land from hand onto the battlefield tapped
           const landKeys = [...new Set(s.hand)].filter(k => {
             const d = cards[k];
@@ -5300,7 +5324,7 @@ var CARDS = {
             if (!ns) continue;
             ns = ns.enterBattlefield(lk, { tapped: true });
             const landName = cards[lk]?.name ?? lk;
-            results.push(ns.log(`Insidious Fungus: sacrifice, draw a card, put ${landName} onto battlefield tapped`));
+            results.push(ns.log(`Insidious Fungus: sacrifice, draw ${drawnName}, put ${landName} onto battlefield tapped`));
           }
           return results;
         },
@@ -5751,8 +5775,10 @@ var CARDS = {
           const ap = state.payMana('2'); if (!ap) return [];
           let s = ap.removeFromBattlefield(perm.id, 'graveyard');
           if (!s) return [];
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
-          return [s.log('Heart Warden: {2}, sacrifice → draw a card')];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`Heart Warden: {2}, sacrifice → draw ${drawnName}`)];
         },
       },
     },
@@ -7541,9 +7567,11 @@ var CARDS = {
           s._ensurePlayers();
           s.players[0] = s.players[0].clone();
           s.players[0].life -= 4;
+          const drawnKey = s.players[0].library[0];
           s = s.playerDraws(0, 1);
           s = s.markAbilityUsed(perm.id, 'draw_pay_life');
-          return [s.log('Sylvan Library: pay 4 life, draw a card')];
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          return [s.log(`Sylvan Library: pay 4 life, draw ${drawnName}`)];
         },
       },
     },
@@ -7768,7 +7796,9 @@ var CARDS = {
     name: "Kenrith's Transformation", types: ['enchantment'], subtypes: ['Aura'], cost: '1G',
     // ETB: draw a card. Enchanted creature loses abilities, becomes 3/3 Elk.
     onEnter(state) {
-      return state.playerDraws(0, 1); // draw on ETB
+      const drawnKey = state.players[0].library[0];
+      const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+      return state.playerDraws(0, 1).log(`Kenrith's Transformation: draw ${drawnName}`);
     },
   },
   growing_rites: {
@@ -8700,7 +8730,9 @@ var CARDS = {
     // Spells can't be countered + hexproof from blue/black until EOT.
     // Solver: always draw 1 card (simplification — the draw is the main value).
     castFn(state) {
-      return [state.playerDraws(0, 1).log('Veil of Summer: draw a card')];
+      const drawnKey = state.players[0].library[0];
+      const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+      return [state.playerDraws(0, 1).log(`Veil of Summer: draw ${drawnName}`)];
     },
   },
   // warping_wail stub removed — implementation is above at warping_wail
@@ -15552,8 +15584,10 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         // would incorrectly draw a card when BW itself is cast. This mirrors
         // the pre-cast snapshot pattern used by Topiary Lecturer above.
         if (isCreature && s.hasPermanent('Beast Whisperer')) {
+          const drawnKey = ns.players[0].library[0];
           ns = ns.playerDraws(0, 1);
-          ns = ns.log('Beast Whisperer: draw a card');
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          ns = ns.log(`Beast Whisperer: draw ${drawnName}`);
         }
 
         // Topiary Lecturer — Increment trigger:
@@ -15623,8 +15657,10 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
           const dupInGraveyard = entered &&
             ns.players[0].graveyard.includes(entered.name);
           if (entered && !dupOnBattlefield && !dupInGraveyard) {
+            const drawnKey = ns.players[0].library[0];
             ns = ns.playerDraws(0, 1);
-            ns = ns.log('Guardian Project: draw a card');
+            const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+            ns = ns.log(`Guardian Project: draw ${drawnName}`);
           }
         }
 
@@ -15632,8 +15668,10 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         // Cast trigger -- check s (pre-cast state) so Primordial Sage's own cast
         // does NOT draw a card (it wasn't on the battlefield when you cast it).
         if (isCreature && s.hasPermanent('Primordial Sage')) {
+          const drawnKey = ns.players[0].library[0];
           ns = ns.playerDraws(0, 1);
-          ns = ns.log('Primordial Sage: draw a card');
+          const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+          ns = ns.log(`Primordial Sage: draw ${drawnName}`);
         }
 
         // Soul of the Harvest: whenever another nontoken creature you control enters, draw a card.
@@ -15642,8 +15680,10 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         if (isCreature && ns.hasPermanent('Soul of the Harvest')) {
           const entered = ns.battlefield[ns.battlefield.length - 1];
           if (entered && entered.name !== 'Soul of the Harvest' && !entered.isToken) {
+            const drawnKey = ns.players[0].library[0];
             ns = ns.playerDraws(0, 1);
-            ns = ns.log('Soul of the Harvest: draw a card');
+            const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+            ns = ns.log(`Soul of the Harvest: draw ${drawnName}`);
           }
         }
 
@@ -15654,8 +15694,10 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         if (isCreature && s.hasPermanent("Lifecrafter's Bestiary")) {
           const paid = ns.payMana('G');
           if (paid) {
+            const drawnKey = paid.players[0].library[0];
             ns = paid.playerDraws(0, 1);
-            ns = ns.log("Lifecrafter's Bestiary: pay {G} → draw a card");
+            const drawnName = drawnKey && drawnKey !== 'unknown' ? (CARDS[drawnKey]?.name ?? drawnKey) : '(empty library)';
+            ns = ns.log(`Lifecrafter's Bestiary: pay {G} → draw ${drawnName}`);
           }
         }
 
@@ -17046,6 +17088,16 @@ var TUTOR_REACH = {
   finale_of_devastation:  'creature',
   natural_order:          'creature',
   eldritch_evolution:     'creature',
+  // [2026-07-23] Growing Rites of Itlimoc's ETB (cards.js) is a real,
+  // deterministic one-shot creature tutor — look at the top 4 cards of the
+  // (already-shuffled, fully known-to-the-search) library, take a creature
+  // if one's there. Missing from this map entirely, so a hand relying on it
+  // to find a combo piece scored as having zero tutor access before it was
+  // even cast, inflating minMissing past turnsLeft and pruning the branch.
+  // Confirmed on a user-reported hand: default mode pruned to 3,993 states
+  // and found nothing, while --exhaustive found a real win whose critical
+  // piece (Formidable Speaker) came from exactly this ETB.
+  growing_rites:          'creature',
   // Creature tutors — battlefield activated abilities (Fix #5)
   fauna_shaman:           'creature',
   survival_fittest:       'creature',
@@ -17102,12 +17154,12 @@ var TUTOR_REACH = {
   // grepped every card key containing a searchLibraryFor call (22 total),
   // cross-referenced against this map's existing keys. 8 were missing; one
   // (Growing Rites of Itlimoc, "look at top 4, take a creature") was
-  // deliberately excluded as inconsistent with this map's existing
-  // semantics — every current entry is a guaranteed, unrestricted (or
-  // near-unrestricted) library search, not a probabilistic look-at-N
-  // effect, and Growing Rites' own implementation correctly respects that
-  // limitation (top4 slice) rather than approximating full library
-  // knowledge. The other 7 are all guaranteed, "search your library for
+  // originally excluded here as inconsistent with this map's existing
+  // guaranteed-search semantics — reversed 2026-07-23 (see its own entry
+  // below): limited-visibility credit only makes minMissing more
+  // optimistic, which is the safe direction for a pruning heuristic, and
+  // the exclusion cost a real user-reported win. The other 7 are all
+  // guaranteed, "search your library for
   // [type]" effects functionally identical in shape to tutors already
   // covered here (several explicitly noted in their own cards.js comments
   // as "functionally identical to Natural Order" or similar):
@@ -17166,6 +17218,14 @@ function _cardType(k) {
 //   Fierce Empath in hand + Bellower in library → chain gives two creature fetches.
 // This prevents canReachCombo from over-pruning states where a tutor chain
 // can bridge two missing pieces in a single turn.
+// Cards whose whole purpose is untapping another permanent (Quirion/Scryb
+// Ranger, Wirewood Symbiote, Hope Tender, Magus of the Candelabra,
+// Argothian Elder, Ley Weaver) — see UNTAP_ENABLER_KEYS below for why.
+var UNTAP_ENABLER_KEYS = new Set([
+  'quirion_ranger', 'scryb_ranger', 'wirewood_symbiote', 'hope_tender',
+  'magus_of_the_candelabra', 'argothian_elder', 'ley_weaver',
+]);
+
 function _tutorCounts(state) {
   const counts = { creature: 0, land: 0, any: 0 };
   const handSet = new Set(state.hand);
@@ -17174,8 +17234,25 @@ function _tutorCounts(state) {
     const t = TUTOR_REACH[k];
     if (t) counts[t]++;
   }
+  // [2026-07-23] A TAPPED battlefield tutor still gets credited if a known
+  // untap enabler is present — same reasoning as O-49/O-50/IMP-39: using a
+  // {T}-cost tutor's ability taps it, but that's not the end of its reach
+  // this turn if something can untap it again. Without this, activating the
+  // tutor (the correct, necessary action) made minMissing SPIKE right after
+  // — exactly the "backwards for a pruning heuristic" pattern IMP-39
+  // documented for Nature's Rhythm, just triggered by tapping instead of
+  // hand-to-graveyard movement. Confirmed on a user-reported hand: Fauna
+  // Shaman activating (discard Endurance -> Wirewood Symbiote) tapped her,
+  // and minMissing jumped from 1 to 3 even though Wirewood Symbiote's own
+  // untap ability (fetched by that very activation, later returns a Forest
+  // to untap Hope Tender) was the actual mechanism the real winning line
+  // used to keep going. Deliberately generous (any enabler present, not
+  // proof the specific tutor gets untapped) — the unsafe direction for a
+  // pruning heuristic is under-crediting, not over-crediting.
+  const hasUntapEnabler = state.battlefield.some(p => UNTAP_ENABLER_KEYS.has(p.cardKey)) ||
+    [...UNTAP_ENABLER_KEYS].some(k => handSet.has(k));
   for (const p of state.battlefield) {
-    if (p.tapped) continue;
+    if (p.tapped && !hasUntapEnabler) continue;
     const k = NAME_TO_KEY[p.name];
     if (k) {
       const t = TUTOR_REACH[k];
@@ -17207,6 +17284,20 @@ function _tutorCounts(state) {
   // payable without one, so this must not be gated on having an untapped
   // creature available the way ordinary battlefield tutors are.
   if ((state.graveyard ?? []).includes("Nature's Rhythm")) counts.creature++;
+  // [2026-07-23] Same gap, one state earlier: while Nature's Rhythm is still
+  // in HAND, casting it once is a certainty on the way to any combo that
+  // needs it, and doing so ALWAYS leaves it in the graveyard where Harmonize
+  // can fetch it again — the follow-up use above is credited only once it's
+  // already there, but from the hand it's just as guaranteed. Without this,
+  // a combo needing Nature's Rhythm to fetch TWO missing pieces (cast #1
+  // from hand, cast #2 via Harmonize) scores its second fetch as untutored
+  // (cost 3) instead of tutored (cost 1), inflating minMissing and pruning
+  // away a genuine win before Nature's Rhythm is ever cast even once.
+  // Confirmed on a user-reported hand: default mode explored only 75 states
+  // and found nothing, while --exhaustive found a real turn-3 win using
+  // exactly this double-fetch. No overlap with the graveyard credit above —
+  // this only fires while it's still in hand, that one only once it isn't.
+  if (handSet.has('natures_rhythm')) counts.creature++;
 
   // ── Two-level chain bonus ─────────────────────────────────────────────
   // Woodland Bellower in hand: ETB fetches a second ≤3-MV creature.
@@ -17252,6 +17343,24 @@ function _tutorCounts(state) {
   // an insufficient one costs a missed win, exactly the bug being fixed.
   if (state.battlefield.some(p => p.name === 'Heartwood Storyteller' || p.name === 'Runic Armasaur') ||
       handSet.has('heartwood_storyteller') || handSet.has('runic_armasaur')) {
+    counts.any += 10;
+  }
+
+  // ── Beast Whisperer: draws on every creature you cast ──────────────────
+  // Same class of gap as Heartwood Storyteller/Runic Armasaur just above —
+  // a real, automatic draw engine with no TUTOR_REACH entry, but even more
+  // reliable than those two (it fires on every creature cast on YOUR OWN
+  // turn too, not just once per opponent-window). This deck's winning
+  // lines routinely cast several creatures a turn once she's down, so a
+  // hand with Beast Whisperer but no other visible tutor was scoring as if
+  // it had zero library access at all. Confirmed on a user-reported hand:
+  // default mode pruned to 1,009 states and found nothing, while
+  // --exhaustive found a real win whose missing pieces (Elvish Archdruid,
+  // Fauna Shaman) were drawn by exactly this trigger off of casting
+  // Duskwatch Recruiter and Seedborn Muse — analyzeState never sees an
+  // explicit "tutor" action for those draws, so without this bonus
+  // canReachCombo pruned the branch before Beast Whisperer was ever cast.
+  if (state.hasPermanent('Beast Whisperer') || handSet.has('beast_whisperer')) {
     counts.any += 10;
   }
 
@@ -17501,6 +17610,17 @@ var DEFAULT_OPTIONS = {
   // usually wants; bench.js explicitly passes Infinity, since it exists
   // specifically to catch regressions in the full, untruncated search.
   maxBranches: Infinity,
+  // bestPlay: when no combo/win is ever found within the budget, fall back
+  // to reporting the single lowest-score (furthest-progressed) state
+  // visited during the whole search, instead of returning null. Meant for
+  // small, exploratory queries (e.g. --turns 2 with a modest --budget)
+  // where a human wants "what's the best line you found" rather than a
+  // flat "no win". Off by default: tracking costs a per-node score compare
+  // plus an occasional O(depth) path reconstruction on improvement (same
+  // technique bestScore/fallbackWin already use), which is cheap but not
+  // free, and every existing caller that doesn't ask for this should see
+  // byte-identical behavior (including bench.js's state counts).
+  bestPlay: false,
 };
 
 // ── Scoring ───────────────────────────────────────────────────────────────
@@ -17542,6 +17662,22 @@ function score(state, depth) {
          depth            *      10  +
          state.mana.total() *      1  +
          tappedCount         *      1;
+}
+
+// ── bestPlay ranking ────────────────────────────────────────────────────
+// Ranks states for the --best-play fallback (see DEFAULT_OPTIONS' doc
+// comment): lower is "better" here too, but "better" means the OPPOSITE of
+// score()'s meaning. score() is built to compare completed WINS, where
+// fewer turns/actions is preferred — minimizing it directly (as `s <
+// bestPlayScore`) with no win in play just selects the starting state,
+// since depth 0 always scores lowest. bestPlayKey instead maximizes depth
+// (most actions successfully taken down this path) first, breaking ties by
+// score() (least wasted mana/taps at that depth). depth is multiplied by a
+// constant far larger than score()'s own range (bounded by maxTurns *
+// 100,000, and maxTurns/maxDepth are both small integers in practice) so it
+// always dominates the tiebreak.
+function _bestPlayKey(depth, s) {
+  return -depth * 10_000_000 + s;
 }
 
 // ── #2 / #11: Heuristic child ordering ───────────────────────────────────
@@ -17844,6 +17980,16 @@ class Solver {
           ...(this.opts.allLines ? { allLines: this.allWinLines } : {}),
         };
       }
+      // No win at all, not even an undeployed one. Fall back to the best
+      // (furthest-progressed) line seen anywhere in the search, if asked.
+      if (this.opts.bestPlay && this.bestPlayLine) {
+        return {
+          line:     this.bestPlayLine,
+          combo:    null,
+          score:    this.bestPlayScore,
+          bestPlay: true,
+        };
+      }
       return null;
     }
 
@@ -18068,6 +18214,25 @@ class Solver {
     // depth) but RE-COMPARE against the current bestScore — bestScore may have
     // tightened since the parent checked, so the comparison itself can't be cached.
     const s = pre && pre.score !== undefined ? pre.score : score(state, depth);
+    // bestPlay tracking: unconditional on combo/win status, so it captures
+    // ANY state visited — including this node even if it's about to be
+    // score-pruned below (the state itself is still real progress worth
+    // reporting, just not worth searching further from). Placed before the
+    // score-cut for exactly that reason. See DEFAULT_OPTIONS' doc comment.
+    //
+    // Deliberately NOT ranked by `s` directly: score() is a WIN-optimizing
+    // metric (fewer turns/actions is "better", since it compares completed
+    // wins), so minimizing it with no win in play just selects the starting
+    // state — depth 0 always scores lowest. bestPlayKey() instead ranks by
+    // depth (most actions successfully taken) first, breaking ties by score
+    // (least wasted mana/taps at that depth) — see its own doc comment.
+    if (this.opts.bestPlay) {
+      const k = _bestPlayKey(depth, s);
+      if (k < this.bestPlayScore) {
+        this.bestPlayScore = k;
+        this.bestPlayLine  = reconstructPath({ state, parent: parentNode });
+      }
+    }
     if (!this.opts.exhaustive) {
       const cut = this.opts.allLines ? (s > this.bestScore) : (s >= this.bestScore);
       if (cut) { this.pruned++; return; }
@@ -18272,7 +18437,11 @@ class Solver {
 
       const childAnalysis = analyzeState(next, childInfiniteMana, childPresent);
       // Fix #4: prune unreachable children before they enter the sort list
-      if (!this.opts.exhaustive) {
+      // bestPlay bypasses this: canReachCombo's whole premise ("don't
+      // explore children that can't reach a combo in time") is exactly
+      // backwards for a mode whose entire purpose is showing the best
+      // available progress WHEN no combo is reachable — see DEFAULT_OPTIONS.
+      if (!this.opts.exhaustive && !this.opts.bestPlay) {
         const childTurns = this.opts.maxTurns - next.turn;
         if (childTurns >= 0 && !canReachCombo(next, childTurns + 1, childAnalysis, childInfiniteMana)) {
           this.pruned++;
@@ -18429,6 +18598,17 @@ class Solver {
         if (state.youLost())            continue;
         if (depth > this.opts.maxDepth) continue;
 
+        // bestPlay tracking — see the matching _dfs comment for why this is
+        // unconditional on combo/win status, placed this early, and ranked
+        // by _bestPlayKey rather than score() directly.
+        if (this.opts.bestPlay) {
+          const k = _bestPlayKey(depth, score(state, depth));
+          if (k < this.bestPlayScore) {
+            this.bestPlayScore = k;
+            this.bestPlayLine  = reconstructPath(node);
+          }
+        }
+
         // [E10] Note: the visited check used to live HERE (before child
         // generation). It is now done at enqueue time below — that's the
         // only correct place to dedupe in BFS, because dequeue-time dedup
@@ -18486,7 +18666,9 @@ class Solver {
           const childInfiniteMana = checkCombos(next, childPresent);
           const ca = analyzeState(next, childInfiniteMana, childPresent);
           const childTurnsLeft = this.opts.maxTurns - next.turn;
-          if (!this.opts.exhaustive && childTurnsLeft >= 0 && !canReachCombo(next, childTurnsLeft + 1, ca, childInfiniteMana)) {
+          // bestPlay bypass — see the matching _dfs comment.
+          if (!this.opts.exhaustive && !this.opts.bestPlay && childTurnsLeft >= 0 &&
+              !canReachCombo(next, childTurnsLeft + 1, ca, childInfiniteMana)) {
             this.pruned++;
             continue;
           }
@@ -18581,6 +18763,11 @@ class Solver {
     // in hand but not yet on battlefield). Used only if no fully-deployed win
     // is found within the search budget.
     this.fallbackWin   = null;
+    // bestPlayLine/bestPlayScore: only tracked when opts.bestPlay is set —
+    // see that option's own doc comment. Lowest-score (furthest-progressed)
+    // state seen anywhere in the search, regardless of combo status.
+    this.bestPlayLine  = null;
+    this.bestPlayScore = Infinity;
     this._stopSearch   = false;   // firstWin stop flag (see _dfs win handler)
     this._deadlineAt   = Number.isFinite(this.opts.maxTimeMs)
       ? Date.now() + this.opts.maxTimeMs
@@ -18616,6 +18803,77 @@ class Solver {
 }
 
 // ── Result printer ────────────────────────────────────────────────────────
+
+/**
+ * Print the best-play fallback (result.bestPlay === true): no combo/win was
+ * ever found within the budget, so show the furthest-progressed line the
+ * search actually visited instead. Deliberately a leaner sibling of
+ * printResult rather than a shared code path — printResult's step-printing
+ * is tightly threaded with combo-dependent decisions (opponent-window
+ * suppression tied to `lineHasRealWin`, the win-assembly phase, etc.) that
+ * don't apply here; a best-play line has no combo/win to describe.
+ */
+function printBestPlay(result) {
+  const { line } = result;
+  const finalState = line[line.length - 1];
+  const setupEntries = line[0].history.filter(entry => !(entry.msg ?? '').startsWith('--'));
+  if (setupEntries.length > 0) {
+    for (const entry of setupEntries) {
+    }
+  }
+
+  let currentTurn = 0;
+  let inOpponentTurn = 0;
+  let printedStep = 0;
+
+  for (let i = 1; i < line.length; i++) {
+    const state     = line[i];
+    const prevState = line[i - 1];
+    const lastEntry = state.history[state.history.length - 1];
+    if (!lastEntry) continue;
+
+    if (state.turn !== currentTurn) {
+      currentTurn = state.turn;
+      inOpponentTurn = 0;
+      const lifeStr = state.life < 40 ? `  life: ${state.life}` : '';
+      const libStr  = `  lib: ${state.players[0].librarySize}`;
+      if (lastEntry.msg.startsWith('--')) continue;
+    }
+
+    const currentOppNum = state.isOpponentTurn ? (state.opponentTurnsThisRound ?? 1) : 0;
+    if (state.isOpponentTurn && currentOppNum !== inOpponentTurn) {
+      inOpponentTurn = currentOppNum;
+      const libStr = `  lib: ${state.players[0].librarySize}`;
+    }
+    if (!state.isOpponentTurn && inOpponentTurn) inOpponentTurn = 0;
+
+    const prevHistLen = prevState.history.length;
+    const newEntries  = state.history.slice(prevHistLen);
+    if (newEntries.length === 0) continue;
+
+    const primaryMsg = newEntries[newEntries.length - 1].msg ?? '';
+    if (primaryMsg.startsWith('--')) continue;
+    if (/^Opponent \d of 3 end step$/.test(primaryMsg)) {
+      for (let e = 0; e < newEntries.length - 1; e++) {
+        const subMsg = newEntries[e].msg ?? '';
+        if (subMsg && !subMsg.startsWith('--')) console.log(`  ↳ ${subMsg}`);
+      }
+      continue;
+    }
+
+    printedStep += 1;
+    const stepNum = String(printedStep).padStart(2, ' ');
+    for (let e = 0; e < newEntries.length - 1; e++) {
+      const subMsg = newEntries[e].msg ?? '';
+      if (subMsg && !subMsg.startsWith('--')) console.log(`           ↳ ${subMsg}`);
+    }
+    const manaStr = state.mana.toString();
+    if (manaStr !== '{0}') console.log(`       └─ Mana: ${manaStr}`);
+    if (state.restrictedG > 0) console.log(`       └─ Ability Mana: {G}x${state.restrictedG}`);
+    const losses = state.getLosses();
+    if (losses.length) for (const l of losses) console.log(`       ⚠  ${l.reason}`);
+  }
+}
 
 /**
  * Print a summary of all winning lines (when allLines: true).
@@ -21970,7 +22228,7 @@ self.onmessage = function(e) {
       maxTurns:   Math.min(Math.max(d.maxTurns  ?? 4,  1), 5),
       maxDepth:   Math.min(Math.max(d.maxDepth  ?? 50, 10), 60),
       maxStates:  Math.min(Math.max(d.maxStates ?? 200000, 10000), 3000000),
-      maxTimeMs:  30000,
+      maxTimeMs:  Math.min(Math.max(d.maxTimeMs ?? 30000, 100), 30000),
       strategy:   ['bfs','dfs','iddfs'].includes(d.strategy) ? d.strategy : 'dfs',
       allLines:   !!d.allLines,
       exhaustive: !!d.exhaustive,
@@ -21978,6 +22236,10 @@ self.onmessage = function(e) {
       // Seedborn Muse / Glademuse / Runic Armasaur). Matches the Solver's own
       // DEFAULT_OPTIONS default of false when the payload doesn't specify it.
       simulateOpponentTurns: !!d.simulateOpponentTurns,
+      // Quick "Suggestion - Solver" preview task (Goldfish tab): when set, the
+      // Solver falls back to the furthest-progressed line it explored if no
+      // combo/win is ever found within the (deliberately tiny) budget.
+      bestPlay:   !!d.bestPlay,
     };
     const result = new Solver(solverOpts).solve(state);
     if (!result) { self.postMessage({found:false}); return; }
@@ -22087,9 +22349,11 @@ self.onmessage = function(e) {
       } catch(_) { return []; }
     })() : [];
     self.postMessage({found:true,
-      comboName:result.combo?.name??'Infinite Mana',comboDesc:result.combo?.description??'',
-      winCondition:result.combo?.winCondition??null,
-      manaCombo:result.combo?.manaCombo??result.combo?.name??'Infinite Mana',
+      bestPlay:!!result.bestPlay,
+      comboName:result.bestPlay?'Best Play':(result.combo?.name??'Infinite Mana'),
+      comboDesc:result.bestPlay?'':(result.combo?.description??''),
+      winCondition:result.bestPlay?null:(result.combo?.winCondition??null),
+      manaCombo:result.bestPlay?'Best Play':(result.combo?.manaCombo??result.combo?.name??'Infinite Mana'),
       winAssemblySteps:result.assembly?.steps??[],
       steps:(()=>{const hist=(lastState.history||[]).map(h=>typeof h==='string'?h:(h.msg||String(h)));return hist.length>0?hist:(result.assembly?.steps??[]);})(),
       winTurn:lastState.turn||1,turns,verboseTurns,loopLines,
