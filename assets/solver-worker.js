@@ -9757,6 +9757,18 @@ function canCastGreenCreatureNow(state) {
   return !state.isOpponentTurn || hasPerm(state, "Yeva, Nature's Herald") || !!state.flashThisTurn;
 }
 
+// True if a creature spell of ANY color can be cast at instant speed RIGHT
+// NOW — the correct gate for loops that recast a creature whose color isn't
+// guaranteed to be green (Temur Sabertooth / Kogla, the Titan Ape bouncing
+// "another creature you control", or Cloudstone Curio ping-ponging any two
+// permanents sharing a type). Yeva's flash grant is explicitly "green
+// creature spells" only, so — unlike canCastGreenCreatureNow — her presence
+// does NOT satisfy this on its own; only a general flash source
+// (Emergence Zone) or it simply being our own turn does.
+function canCastAnyCreatureNow(state) {
+  return !state.isOpponentTurn || !!state.flashThisTurn;
+}
+
 // Basic green 1-mana dorks with a fixed {G} tap output (not one of the
 // elf-count/devotion/power SCALING dorks already special-cased in the
 // Quirion/Scryb Ranger detectors' switch statements below). With Ashaya out
@@ -9802,19 +9814,27 @@ function enchantedDorkBonusG(state, perm) {
 // NOT sufficient on its own: Wirewood Symbiote (once per turn), a lone Ranger
 // without Ashaya (once per turn, and it bounces a land not itself).
 function hasRepeatableCreatureRecast(state) {
+  // Temur/Kogla's bounce is an activated ability (legal any time), but the
+  // bounced creature must then be RECAST each cycle — a creature spell of
+  // whatever color it happens to be, not guaranteed green, so Yeva alone
+  // doesn't cover it. Illegal mid an opponent's turn without general flash.
+  //
   // Temur/Kogla may be in hand OR on the battlefield — with infinite mana
   // (the context in which the win conditions using this helper run) a hand
   // copy is castable, after which it loops.
-  if (inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
-      inHandOrField(state, 'Kogla, the Titan Ape', 'kogla')) {
+  if (canCastAnyCreatureNow(state) &&
+      (inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
+       inHandOrField(state, 'Kogla, the Titan Ape', 'kogla'))) {
     return true;
   }
   // Cloudstone Curio ping-pong: casting creature A bounces creature B, casting B
   // bounces A, repeat. This is an unbounded creature-recast loop given infinite
   // mana. Cloudstone bounces "ANOTHER permanent sharing a type", so it needs at
   // least two creatures to ping-pong between (one alone has no partner). A second
-  // creature in hand also works as the partner to start the loop.
-  if (hasPerm(state, 'Cloudstone Curio')) {
+  // creature in hand also works as the partner to start the loop. Each cast is a
+  // creature spell of whatever color it happens to be — same general-flash
+  // requirement as the Temur/Kogla branch above.
+  if (canCastAnyCreatureNow(state) && hasPerm(state, 'Cloudstone Curio')) {
     const creatureCountTotal =
       state.creatures().length +
       (state.hand ? state.hand.filter(k => {
@@ -9825,8 +9845,10 @@ function hasRepeatableCreatureRecast(state) {
   }
   // The Ashaya+Ranger loop: Ranger bounces itself (a Forest under Ashaya),
   // is recast, and repeats. The first iteration requires the Ranger's
-  // once-per-turn bounce to still be available this turn.
-  if (ashayaOut(state) && rangerAvailable(state)) {
+  // once-per-turn bounce to still be available this turn. The recast is a
+  // non-flash green creature spell — illegal mid an opponent's turn without
+  // Yeva/Emergence Zone.
+  if (ashayaOut(state) && rangerAvailable(state) && canCastGreenCreatureNow(state)) {
     return true;
   }
   // Beast Within infinite creature loops (generates 3/3 beast tokens each cycle).
@@ -9843,6 +9865,11 @@ function hasRepeatableCreatureRecast(state) {
 // Cloudstone Curio ping-pongs a creature with a partner — both re-enter the
 // targeted creature each cycle. Used by the Regal Force Draw Library branch.
 function hasSelfRecastBounce(state, selfName) {
+  // Each cycle recasts `selfName` — a creature spell, illegal mid an
+  // opponent's turn without flash. Conservative: does not assume selfName is
+  // green (the only current caller, Regal Force, is, but Yeva's grant is
+  // green-specific — canCastAnyCreatureNow is the safe general gate here).
+  if (!canCastAnyCreatureNow(state)) return false;
   if (inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth') ||
       inHandOrField(state, 'Kogla, the Titan Ape', 'kogla')) {
     return true;
@@ -10423,6 +10450,9 @@ var DETECTORS = [
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state) && !scrybAvailable(state)) return false;
       if (!hasGreenTapper(state)) return false;
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // [O-67] User request: "I don't think we should consider Infinite ETB
       // as a valid combo without some ability to use those ETB/landfalls to
       // obtain a Win." A mana-neutral loop that just sits there producing
@@ -10459,7 +10489,8 @@ var DETECTORS = [
       //     separate mana source.
       if (hasPerm(state, 'Beast Whisperer')) return true;
       if (hasPerm(state, 'Glademuse') &&
-          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva'))) {
+          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva') ||
+           !!state.flashThisTurn)) {
         return true;
       }
       if (hasLQRAvailable(state)) return true;
@@ -10941,6 +10972,9 @@ var DETECTORS = [
       if (!selvala) return false;
       if (greatestPower(state) < 2) return false;
       if (!rangerAvailable(state)) return false; // ability must not be exhausted this turn
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // [O-23] Repeating the Ranger's untap within this turn requires it to
       // bounce ITSELF (a Forest under Ashaya) for a fresh once-per-turn.
       return ashayaOut(state);
@@ -11223,10 +11257,14 @@ var DETECTORS = [
         p.name === 'Selvala, Heart of the Wilds' && !p.summoningSick)) return false;
       // Steady-state X: greatest power among NON-Selvala creatures (see note).
       if (steadyStateSelvalaPower(state) < 6) return false;   // loop cost is 6 — below that it decays
+      // The loop recasts Selvala (a green creature) every cycle — a
+      // non-flash spell, illegal mid an opponent's turn without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // [O-67] converter gate — mirrors combo 1 exactly.
       if (hasPerm(state, 'Beast Whisperer')) return true;
       if (hasPerm(state, 'Glademuse') &&
-          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva'))) {
+          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva') ||
+           !!state.flashThisTurn)) {
         return true;
       }
       if (hasLQRAvailable(state)) return true;
@@ -11502,6 +11540,9 @@ var DETECTORS = [
       if (!hasPerm(state, 'Earthcraft')) return false;
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false; // ability must not be exhausted this turn
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Earthcraft requires a BASIC land target — Ashaya creatures are Forests but not basic.
       // l.basic is not a Permanent field; use the card definition's isBasic flag instead.
       // l.name === 'Forest' is a reliable fallback since 'Forest' is the only named basic
@@ -11909,6 +11950,9 @@ var DETECTORS = [
       const hasQR    = quirionAvailable(state);
       const hasScryb = scrybAvailable(state);
       if (!hasQR && !hasScryb) return false;
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
 
       // Need Survival of the Fittest OR Fauna Shaman on the battlefield and usable.
       // Survival: no tap cost, can activate multiple times.
@@ -12121,7 +12165,9 @@ var DETECTORS = [
       // to sustain; they are therefore checked in WIN_CONDITIONS (where infiniteMana
       // is pre-confirmed) rather than here in DETECTORS.
       if (hasPerm(state, 'Beast Whisperer')) {
-        if (ashayaOut(state) && rangerAvailable(state)) return true;
+        // The loop recasts Ranger every cycle — a non-flash creature spell.
+        // On an opponent's turn that's illegal without flash.
+        if (ashayaOut(state) && rangerAvailable(state) && canCastGreenCreatureNow(state)) return true;
       }
       // Glademuse: draws when OPPONENTS cast spells — does NOT benefit from a
       // creature-bounce loop on your turn. Glademuse is a win condition via
@@ -12509,6 +12555,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!hasPerm(state, 'Tireless Provisioner')) return false;
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Quirion Ranger: free recast (Treasure = {G} = recast cost). Always loops.
       if (quirionAvailable(state)) return true;
       // Scryb Ranger ({1G} recast): need a creature producing ≥2G to cover {1} extra.
@@ -12716,6 +12765,9 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!rangerAvailable(state)) return false;
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Cradle must already be animated (have creature type) — regardless of tapped state,
       // since the Ranger untaps it as the first step of the loop.
       const cradle = state.battlefield.find(p =>
@@ -12783,6 +12835,9 @@ var DETECTORS = [
       if (!ashayaOut(state)) return false;
       if (!hasLandAnimator(state)) return false;
       if (!rangerAvailable(state)) return false;
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
       // Need a big land untapped to animate and loop with
       // Gaea's Cradle: produces ≥2G with ≥2 creatures (covers Quirion {G} recast, nets ≥1G)
       if (cradleUntapped(state) && creatureCount(state) >= 2) return true;
@@ -13184,8 +13239,11 @@ var WIN_CONDITIONS = [
             inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes")) return true;
         // Crop Rotation: in hand OR graveyard (Ashaya required)
         if (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) return true;
-        // Reclaimer sacs Scrapshooter as a land (Ashaya required); Ranger untaps Reclaimer each cycle
-        if (hasAshaya && hasRanger &&
+        // Reclaimer sacs Scrapshooter as a land (Ashaya required); Ranger untaps
+        // Reclaimer each cycle by returning ITSELF (a Forest under Ashaya) and
+        // being recast — a non-flash green creature spell, illegal mid an
+        // opponent's turn without flash.
+        if (hasAshaya && hasRanger && canCastGreenCreatureNow(state) &&
             inHandOrField(state, 'Elvish Reclaimer', 'elvish_reclaimer')) return true;
       }
 
@@ -13205,7 +13263,7 @@ var WIN_CONDITIONS = [
         if (inHand('beast_within') || gy.includes('Beast Within') ||
             inHand('legolas_quick_reflexes') || gy.includes("Legolas's Quick Reflexes")) return true;
         if (hasAshaya && (inHand('crop_rotation') || gy.includes('Crop Rotation'))) return true;
-        if (hasAshaya && hasRanger && hasPerm(state, 'Elvish Reclaimer')) return true;
+        if (hasAshaya && hasRanger && canCastGreenCreatureNow(state) && hasPerm(state, 'Elvish Reclaimer')) return true;
       }
       return false;
     },
@@ -13262,8 +13320,10 @@ var WIN_CONDITIONS = [
         // as well as from the battlefield. With infinite mana the {2GG}
         // commander cost is trivially payable, so treat commandZone as
         // equivalent to 'on field' for the purposes of this check.
+        // Emergence Zone (flashThisTurn) is an independent, general flash
+        // source that doesn't need Yeva at all.
         const hasFlash = hasPerm(state, "Yeva, Nature's Herald") ||
-          (state.commandZone ?? []).includes('yeva');
+          (state.commandZone ?? []).includes('yeva') || !!state.flashThisTurn;
         if (hasFlash && hasLoop) return true;
       }
       return false;
@@ -13525,7 +13585,8 @@ var WIN_CONDITIONS = [
       // opponent's turn — needs Yeva (flash for green creatures) AND a
       // repeatable recast loop.
       if (inHandOrField(state, 'Glademuse', 'glademuse') &&
-          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva')) &&
+          (hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes('yeva') ||
+           !!state.flashThisTurn) &&
           hasRepeatableCreatureRecast(state)) {
         return true;
       }
