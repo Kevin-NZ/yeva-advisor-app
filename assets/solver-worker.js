@@ -1766,6 +1766,35 @@ class GameState {
     return s;
   }
 
+  /**
+   * Append `suffix` to the CURRENT top history entry's message, in place —
+   * does not add a new entry (history.length is unchanged). Used to augment
+   * an already-logged message with a follow-up detail computed afterward by
+   * generic code that doesn't own that original log() call — e.g. Badgermole
+   * Cub / Leyline of Abundance's mana bonus, applied by the shared
+   * applyTapBonuses() helper in actions.js well after the card's own
+   * tapForMana() has already logged its own line. A plain log() call would
+   * instead add a NEW history entry, which the printer treats as a distinct
+   * "↳" sub-line printed ABOVE the primary action — backwards here, since
+   * the bonus is a detail of the SAME tap, not a separate step; and
+   * Solver.js's printedStepCount / [N] numbering counts history entries,
+   * not sub-lines, so a real new entry would also silently inflate the
+   * displayed step total for something that isn't a new action.
+   *
+   * Implemented by reusing log()'s own (fully field-complete) clone, then
+   * rewiring the new node's `prev` pointer to skip the old top entry —
+   * cheaper and far less error-prone than hand-duplicating log()'s long
+   * field list a second time.
+   */
+  appendToLastLog(suffix) {
+    const oldTop = this._histNode;
+    if (!oldTop) return this.log(suffix); // nothing to append to — degrade to a normal log
+    const s = this.log(oldTop.e.msg + suffix);
+    s._histNode = { e: s._histNode.e, prev: oldTop.prev };
+    s._histArr  = null;
+    return s;
+  }
+
   // ── Mana ─────────────────────────────────────────────────────────────────
 
   addMana(color, amount = 1) {
@@ -2229,7 +2258,7 @@ class GameState {
         ...s.players[0].graveyard.slice(targetIdx + 1),
       ];
       const ck = NAME_TO_KEY[cardName] ?? Object.keys(cards).find(k => cards[k].name === cardName);
-      if (ck) s = s.addToHand(ck);
+      if (ck) s = s.addToHand(ck).log(`Eternal Witness ETB: return ${cardName} from graveyard to hand`);
     }
 
     // Generous Patron ETB: support 2 — put a +1/+1 counter on each of up to 2 other creatures.
@@ -2328,7 +2357,7 @@ class GameState {
           ...s.players[0].graveyard.slice(targetIdx + 1),
         ];
         const ck = NAME_TO_KEY[cardName] ?? Object.keys(cards).find(k => cards[k].name === cardName);
-        if (ck) s = s.addToHand(ck);
+        if (ck) s = s.addToHand(ck).log(`Timeless Witness ETB: return ${cardName} from graveyard to hand`);
       }
     }
 
@@ -2418,7 +2447,7 @@ class GameState {
       }
       if (bestKey) {
         const { state: ns, cardKey: ck } = s.searchLibraryFor(k => k === bestKey);
-        if (ck) s = ns.addToHand(ck);
+        if (ck) s = ns.addToHand(ck).log(`Fierce Empath ETB: search library → ${cardsModule[ck]?.name ?? ck} to hand`);
       }
     }
 
@@ -2630,7 +2659,7 @@ class GameState {
       s.players[0] = s.players[0].clone();
       s.players[0].graveyard = [...gy.slice(0, idx), ...gy.slice(idx + 1)];
       const ck = N2K[name] ?? Object.keys(cards).find(k => cards[k].name === name);
-      if (ck) s = s.addToHand(ck);
+      if (ck) s = s.addToHand(ck).log(`Skullwinder ETB: return ${name} from graveyard to hand`);
     }
 
     // Formidable Speaker ETB: you may discard a card → search library for a
@@ -12815,6 +12844,84 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  WIREWOOD SYMBIOTE + TEMUR SABERTOOTH + ALREADY-ANIMATED GAEA'S CRADLE
+  //
+  //  Sibling of the Ashaya+Ranger variant directly above and of COMBO 67
+  //  (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur + Cradle/
+  //  Nykthos): same Symbiote+Temur bounce-recast engine, but here the big
+  //  land has ALREADY been animated into a creature (e.g. by Badgermole
+  //  Cub's earthbend) so Symbiote can untap it DIRECTLY — no Elder/Ley
+  //  Weaver land-untapper piece is needed at all.
+  //
+  //  Loop:
+  //   1. Tap Cradle for G×creatures (Cradle counts itself, now a creature).
+  //   2. Cast a cheap Elf ({G}) — feeds Symbiote's next activation.
+  //   3. Temur Sabertooth bounces Symbiote to hand ({1G}) — resets its
+  //      once-per-turn.
+  //   4. Recast Symbiote ({G}).
+  //   5. Symbiote: return the Elf cast in step 2 → untap Cradle. Repeat.
+  //  Cost per cycle: {G} (Elf) + {1G} (Temur bounce) + {G} (Symbiote) = 4.
+  //
+  //  Badgermole Cub's static ("whenever you tap a creature for mana, add
+  //  {G}") applies to Cradle's own tap once it's a creature — and Badgermole
+  //  is also the card that animated Cradle in the first place, so its
+  //  presence is the common case, not an edge case. That extra {G} lowers
+  //  break-even by 1: creatureCount ≥ 4 with Badgermole on the battlefield,
+  //  ≥ 5 without it (e.g. if Destiny Spinner/Vengeant Earth did the
+  //  animating instead). Directly confirmed against a real reported hand:
+  //  3 consecutive cycles at creatureCount 4 (Badgermole out) each netted
+  //  exactly +1G (user report 2026-07-24: `arbor_elf,badgermole_cub,
+  //  gaeas_cradle,green_suns_zenith,survival_fittest,wirewood_symbiote,
+  //  yavimaya`, steps 13-17 and repeats).
+  //
+  //  Cradle may be currently tapped — Symbiote untaps it as the loop's own
+  //  first action (same non-obvious point already documented on the
+  //  Ashaya+Ranger sibling above).
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Wirewood Symbiote + Temur Sabertooth + Animated Gaea\'s Cradle)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Gaea's Cradle is already animated as a creature (e.g. by Badgermole Cub's " +
+      "earthbend). Wirewood Symbiote (return an Elf) untaps it directly — no " +
+      "Argothian Elder/Ley Weaver needed. Temur bounce-recasts Symbiote to reset " +
+      "its once-per-turn ({1G}+{G}), plus recast the returned Elf ({G}) = 4 " +
+      "mana/cycle. Badgermole Cub's static (+{G} per creature tapped for mana) " +
+      "applies to Cradle's own tap, lowering break-even to creatureCount ≥ 5 " +
+      "with Badgermole present (≥ 6 without it). Needs an Elf to feed Symbiote " +
+      "and Temur (Kogla can't bounce the Insect Symbiote).",
+    check(state) {
+      if (!symbioteAvailable(state)) return false;
+      // Reset engine: Temur ONLY (Kogla returns Humans; Symbiote is an Insect).
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      // Cradle must already be animated (have creature type) — regardless of
+      // tapped state, since Symbiote untaps it as the first step of the loop.
+      const cradle = state.battlefield.find(p =>
+        (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') &&
+        p.types?.includes('creature')
+      );
+      if (!cradle) return false;
+      // Symbiote's cost returns an Elf each cycle — needs one on the
+      // battlefield for the first activation (recast every cycle after).
+      if (elfCount(state) < 1) return false;
+      // creatureCount(state) here is measured WITH the feeder-Elf present
+      // (elfCount check above guarantees it) — call that N. Mid-loop, the
+      // Elf sits in hand at the exact instant Cradle is tapped (it was just
+      // bounced by Symbiote and hasn't been recast yet), so the tap's actual
+      // production is (N-1) + [1 if Badgermole present, its static "+{G}
+      // whenever a creature is tapped for mana" applying to Cradle's own
+      // tap]. Cost per cycle is a flat 4 (Elf recast {G} + Temur bounce
+      // {1G} + Symbiote recast {G}). Net = (N-1)+bonus-4, strictly positive
+      // at N ≥ 5 (Badgermole) / N ≥ 6 (no Badgermole) — NOT N ≥ 4/5, which
+      // is only break-even (net=0), not infinite. Verified against the real
+      // reported hand: N=5 (Elf+Symbiote+Badgermole+Cradle+Temur) observed
+      // net=+1/cycle across 3 consecutive cycles.
+      const threshold = hasPerm(state, 'Badgermole Cub') ? 5 : 6;
+      return creatureCount(state) >= threshold;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  DESTINY SPINNER + ASHAYA + QUIRION/SCRYB RANGER + BIG MANA LAND
   //
   //  Destiny Spinner oracle: {3G}: Target land you control becomes an X/X
@@ -14023,6 +14130,12 @@ function checkVictory(state, _infiniteMana, present) {
         description:   wc.description,
         winCondition:  wc.name,
         manaCombo:     infiniteMana.name,
+        // The mana DETECTOR's own description (how the infinite-mana loop
+        // itself works — which permanents to tap/bounce/recast) is distinct
+        // from `description` above (the WIN CONDITION's strategic text, e.g.
+        // "Win: Tutor for Finisher"'s tutor-chain advice). Both get shown —
+        // see printResult's "INFINITE-MANA ASSEMBLY" section.
+        manaDescription: infiniteMana.description,
         deployed:      true,
       };
     }
@@ -14035,6 +14148,7 @@ function checkVictory(state, _infiniteMana, present) {
         description:   wc.description,
         winCondition:  wc.name,
         manaCombo:     infiniteMana.name,
+        manaDescription: infiniteMana.description,
         deployed:      false,
       };
     }
@@ -14107,6 +14221,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)': ['ashaya','quirion_ranger'],
   'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]': ['ashaya','quirion_ranger'],
   "Infinite Mana (Ashaya + Ranger + Animated Gaea's Cradle)":                    ['ashaya','quirion_ranger','gaeas_cradle'],
+  "Infinite Mana (Wirewood Symbiote + Temur Sabertooth + Animated Gaea's Cradle)": ['wirewood_symbiote','temur_sabertooth','gaeas_cradle'],
   // Shang-Chi bounce-recast loops
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':       ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':            ['kogla','shang_chi'],
@@ -14254,6 +14369,15 @@ var _DETECTOR_PREFILTER = {
     { all: ['ashaya'], any: [['destiny_spinner', 'vengeant_earth'], ['quirion_ranger', 'scryb_ranger']] },
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]':
     { all: ['ashaya', 'tireless_provisioner', 'quirion_ranger'] },
+  'Infinite Green Mana (Ashaya + Ranger + Shang-Chi, self-funded)':
+    { all: ['ashaya', 'quirion_ranger'],
+      any: [['shang_chi', 'concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
+  "Infinite Mana (Ashaya + Ranger + Animated Gaea's Cradle)":
+    { all: ['ashaya', 'quirion_ranger'],
+      any: [['gaeas_cradle', 'itlimoc']] },
+  "Infinite Mana (Wirewood Symbiote + Temur Sabertooth + Animated Gaea's Cradle)":
+    { all: ['wirewood_symbiote', 'temur_sabertooth'],  // equiv-expanded: covers Kogla presence too (check() itself still rejects Kogla-only boards)
+      any: [['gaeas_cradle', 'itlimoc']] },
 
   // Ashaya + Hope Tender family
   "Infinite Mana (Ashaya + Hope Tender + Gaea's Cradle)  [COMBO 48]":
@@ -14269,6 +14393,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['ashaya', 'hope_tender', 'selvala'] },
   'Infinite Mana (Ashaya + Hope Tender + Nykthos, devotion ≥4)  [COMBO 45]':
     { all: ['ashaya', 'hope_tender', 'nykthos'] },
+  'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]':
+    { all: ['ashaya', 'shang_chi', 'hope_tender', 'formidable_speaker'] },
 
   // Ashaya + Argothian Elder / Magus
   'Infinite Mana (Ashaya + Argothian Elder / Ley Weaver)  [COMBO 6, 24]':
@@ -14318,6 +14444,26 @@ var _DETECTOR_PREFILTER = {
     { all: ['temur_sabertooth', 'woodcaller_automaton', 'ashaya'] },
   'Infinite Mana (Great Oak Guardian + Temur Sabertooth + Team Production ≥9)':
     { all: ['temur_sabertooth', 'great_oak_guardian'] },
+  'Infinite Mana (Temur Sabertooth / Kogla + Shang-Chi + High-Output Dork, generic)':
+    { all: ['temur_sabertooth', 'shang_chi'] },
+
+  // Argothian Elder / Ley Weaver + Hyrax / Symbiote loops with Cradle/Nykthos (66, 67, 68)
+  'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)  [COMBO 66]':
+    { all: ['argothian_elder', 'hyrax_tower_scout', 'temur_sabertooth'] },
+  'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Cloudstone Curio + Cradle/Nykthos)':
+    { all: ['argothian_elder', 'hyrax_tower_scout', 'cloudstone_curio'] },
+  'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)  [COMBO 67]':
+    { all: ['argothian_elder', 'wirewood_symbiote', 'temur_sabertooth'] },
+  // Combo 68: untapper is Magus/Formidable Speaker/Hope Tender (no equiv group,
+  // needs an `any`); untap-source is Hyrax OR Symbiote (also not equiv-grouped);
+  // a bounce engine (temur_sabertooth, equiv-expanded to cover Kogla) is required
+  // on EVERY path — Kogla only drops out on the Symbiote sub-variant, but that's
+  // still covered because Kogla presence expands `present` to include
+  // temur_sabertooth too (see FUNCTIONAL_EQUIVALENTS).
+  'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)  [COMBO 68]':
+    { all: ['temur_sabertooth'],
+      any: [['magus_of_the_candelabra', 'formidable_speaker', 'hope_tender'],
+            ['hyrax_tower_scout', 'wirewood_symbiote']] },
 
   // Shang-Chi bounce-recast loops (new)
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':
@@ -15262,7 +15408,8 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
             if (perm.name === 'Tireless Provisioner') {
               const combo = checkCombos(ns);
               if (combo && combo.loopType === LOOP_TYPE.MANA_POSITIVE) {
-                ns = ns.enterBattlefield('food_token', { isToken: true });
+                ns = ns.enterBattlefield('food_token', { isToken: true })
+                  .log('Tireless Provisioner landfall: create a Food token');
                 const foodPerm = ns.battlefield[ns.battlefield.length - 1];
                 const paid = ns.payMana('2');
                 if (paid) {
@@ -15280,7 +15427,8 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
                 // token is simply left uncracked — harmless; it can still be
                 // sacrificed later via its own ability like any other permanent.
               } else {
-                ns = ns.enterBattlefield('treasure_token', { isToken: true });
+                ns = ns.enterBattlefield('treasure_token', { isToken: true })
+                  .log('Tireless Provisioner landfall: create a Treasure token');
               }
             }
             if (perm.name === 'Nissa, Resurgent Animist') {
@@ -15299,7 +15447,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
                 }
                 if (bestKey) {
                   const { state: ns2, cardKey: ck } = ns.searchLibraryFor(k => k === bestKey);
-                  if (ck) ns = ns2.addToHand(ck);
+                  if (ck) ns = ns2.addToHand(ck).log(`Nissa, Resurgent Animist (2nd landfall): search library → ${cards[ck]?.name ?? ck} to hand`);
                 }
               }
             }
@@ -15978,6 +16126,13 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
   }
 
   // Shared bonus-application helper (Leyline, Badgermole, Auras) — see note above.
+  // Each bonus also appends a "+{G} (Source)" note to the tap action's own
+  // log message (via appendToLastLog — NOT log(), which would add a new
+  // history entry and get misread as a separate step; see that method's own
+  // doc comment) so the printed step doesn't silently show a mana total
+  // higher than what the labeled "{G}xN (...)" portion accounts for — user
+  // report (2026-07-24): "Tap Gaea's Cradle → {G}x4 (4 creatures)" produced
+  // {G}x5 with no indication why.
   function applyTapBonuses(ns, live) {
     // Use live.is('creature') rather than def.types.includes('creature') so
     // that dynamically-animated creature-lands (e.g. Gaea's Cradle after
@@ -15985,17 +16140,17 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
     // def.types is the static card definition captured at action-generation
     // time — it won't reflect runtime type changes like earthbend animation.
     if (live.is('creature')) {
-      if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G');
-      if (ns.hasPermanent('Badgermole Cub') && live.name !== 'Badgermole Cub') ns = ns.addMana('G');
+      if (ns.hasPermanent('Leyline of Abundance')) ns = ns.addMana('G').appendToLastLog(' +{G} (Leyline of Abundance)');
+      if (ns.hasPermanent('Badgermole Cub') && live.name !== 'Badgermole Cub') ns = ns.addMana('G').appendToLastLog(' +{G} (Badgermole Cub)');
     }
     if (live.types.includes('land')) {
       const sprawl = ns.battlefield.find(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === live.id);
-      if (sprawl) ns = ns.addMana('G');
+      if (sprawl) ns = ns.addMana('G').appendToLastLog(' +{G} (Utopia Sprawl)');
       const wildG = ns.battlefield.find(p => p.cardKey === 'wild_growth' && p.enchantedLandId === live.id);
-      if (wildG) ns = ns.addMana('G');
+      if (wildG) ns = ns.addMana('G').appendToLastLog(' +{G} (Wild Growth)');
       if (live.elvishGuidance) {
         const elfCount = ns.battlefield.filter(p => p.subtypes?.includes('Elf')).length;
-        for (let i = 0; i < elfCount; i++) ns = ns.addMana('G');
+        if (elfCount > 0) ns = ns.addMana('G', elfCount).appendToLastLog(` +{G}x${elfCount} (Elvish Guidance, ${elfCount} Elves)`);
       }
     }
     return ns;
@@ -17364,6 +17519,31 @@ function _tutorCounts(state) {
     counts.any += 10;
   }
 
+  // ── Geier Reach Sanitarium: {2},{T} — each player draws then discards ──
+  // Same class of gap again. It's a LAND (no summoning sickness, and it's
+  // usually already played by the time it matters), so once it's down and
+  // untapped this is a cheap, repeatable, always-available draw source —
+  // yet it had no TUTOR_REACH entry and, unlike Heartwood/Runic/Beast
+  // Whisperer, isn't even a triggered ability that fires automatically, so
+  // it needed its own check here rather than sharing theirs. Confirmed on a
+  // user-reported hand: minMissing stayed stuck at 3 through several turns
+  // (default mode explored only 221 states and found nothing) until a
+  // Geier Reach activation happened to draw Summoner's Pact — the search
+  // had no way to know that draw was coming, since Geier Reach itself
+  // wasn't credited as a source of library access at all. Untapped-only
+  // (matching the untapped-only rule for other {T}-cost battlefield
+  // tutors — O-50), reusing the SAME hasUntapEnabler exception computed
+  // above: Geier Reach routinely gets tapped for its own colorless mana
+  // ability in the very same line that then untaps it with Argothian Elder
+  // (already one of the UNTAP_ENABLER_KEYS) to activate its draw ability —
+  // without the exception, that ordinary mana tap alone caused the exact
+  // same "tapping a tutor mid-line spikes minMissing" regression already
+  // fixed once for Fauna Shaman.
+  if (state.battlefield.some(p => p.name === 'Geier Reach Sanitarium' && (!p.tapped || hasUntapEnabler)) ||
+      handSet.has('geier_reach')) {
+    counts.any += 10;
+  }
+
   // ── Normal draw step ────────────────────────────────────────────────
   // When drawForTurn is set (--draw-each-turn), the player draws a card
   // at the start of every turn — an ongoing, repeated source of library
@@ -17390,6 +17570,23 @@ function _tutorCounts(state) {
   if (state.drawForTurn && state.players?.[0]?.library?.length > 0) {
     counts.any += 10;
   }
+
+  // sameTurnCreatureEngine: Formidable Speaker's repeated fetches (see her
+  // own comment above) don't just add MORE tutor uses — they typically all
+  // happen inside a SINGLE turn (bounce, recast, ETB, repeat), unlike an
+  // ordinary tutor where each use is conventionally costed at ~1 turn. The
+  // normal per-missing-piece cost loop below charges every tutored creature
+  // piece its own +1 regardless of tutor-count size, so a combo needing TWO
+  // creature pieces still costs 2 (needing turnsLeft>=2) even with her huge
+  // counts.creature credit above — which is wrong when both are reachable
+  // within the SAME final turn via her loop. This flag lets that loop
+  // charge creature-type pieces only ONCE per combo instead of once each,
+  // when she's present. Deliberately not gated on a bounce enabler already
+  // being visible: her own first fetch is often exactly what unlocks one
+  // (Wirewood Symbiote, a Ranger), so requiring it up front would miss the
+  // exact bootstrapping case this exists for.
+  counts.sameTurnCreatureEngine =
+    state.hasPermanent('Formidable Speaker') || handSet.has('formidable_speaker');
 
   return counts;
 }
@@ -17474,6 +17671,12 @@ function analyzeState(state, _infiniteMana, _present) {
     // Clone tutor counts for this combo's cost calculation
     let cCr = base.creature, cLd = base.land, cAny = base.any;
     let cost = 0;
+    // See _tutorCounts' own comment on sameTurnCreatureEngine: with
+    // Formidable Speaker's bounce-and-recast loop, EVERY creature-type
+    // missing piece in a single combo is reachable within the SAME turn,
+    // not one per turn like an ordinary tutor — so only the first one pays
+    // the normal +1, the rest are free.
+    let creatureEngineCharged = false;
 
     for (const k of required) {
       if (present.has(k)) continue;
@@ -17482,7 +17685,10 @@ function analyzeState(state, _infiniteMana, _present) {
       cost--; // undo the increment, compute real cost below
       const ct = _cardType(k);
       // Greedily consume the best matching tutor use.
-      if      (ct === 'creature' && cCr  > 0) { cost += 1; cCr--;  }
+      if (ct === 'creature' && base.sameTurnCreatureEngine) {
+        if (!creatureEngineCharged) { cost += 1; creatureEngineCharged = true; }
+      }
+      else if (ct === 'creature' && cCr  > 0) { cost += 1; cCr--;  }
       else if (ct === 'creature' && cAny > 0) { cost += 1; cAny--; }
       else if (ct === 'land'     && cLd  > 0) { cost += 1; cLd--;  }
       else if (ct === 'land'     && cAny > 0) { cost += 1; cAny--; }
@@ -22354,6 +22560,10 @@ self.onmessage = function(e) {
       comboDesc:result.bestPlay?'':(result.combo?.description??''),
       winCondition:result.bestPlay?null:(result.combo?.winCondition??null),
       manaCombo:result.bestPlay?'Best Play':(result.combo?.manaCombo??result.combo?.name??'Infinite Mana'),
+      // How the infinite-mana loop itself works (which permanents to tap/bounce/
+      // recast, and why) — distinct from winAssemblySteps below, which explains
+      // going from "infinite mana achieved" to the actual win condition.
+      manaAssemblyDesc:result.bestPlay?null:(result.combo?.manaDescription??null),
       winAssemblySteps:result.assembly?.steps??[],
       steps:(()=>{const hist=(lastState.history||[]).map(h=>typeof h==='string'?h:(h.msg||String(h)));return hist.length>0?hist:(result.assembly?.steps??[]);})(),
       winTurn:lastState.turn||1,turns,verboseTurns,loopLines,
