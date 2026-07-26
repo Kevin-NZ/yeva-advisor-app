@@ -11457,7 +11457,23 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state)) return false;
-      if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
+      // [2026-07-26 — 3rd bootstrap-affordability follow-up] Ranger's OWN
+      // bounce is free and untaps Magus REGARDLESS of her current tap
+      // state — same "may currently be tapped" reasoning already applied
+      // to the Cradle/Nykthos targets below. Requiring her pre-untapped
+      // (permReadyOrSCActive) was an unnecessary — and actively harmful —
+      // precondition: a user caught a real repro where Magus only ever
+      // became untapped as part of an EARLIER Ranger bounce whose target
+      // was something else that cycle, so no snapshot ever had her
+      // pre-untapped AND Ranger simultaneously fresh, even though the
+      // loop is fully sound (Ranger's own self-bounce resets her
+      // regardless, same as it does for Cradle/Nykthos). Summoning
+      // sickness still matters — untapping doesn't clear it — so that
+      // half of the check stays.
+      const magusReady = state.battlefield.some(p =>
+        p.name === 'Magus of the Candelabra' && (!p.summoningSick || shangChiActive(state))
+      );
+      if (!magusReady) return false;
       if (!canCastGreenCreatureNow(state)) return false;
       // [2026-07-26 — bootstrap-affordability follow-up] Magus's {1}
       // activation must be paid BEFORE she untaps the big land — unlike
@@ -11467,16 +11483,16 @@ var DETECTORS = [
       //
       // [2026-07-26 — 2nd bootstrap-affordability follow-up] The gate
       // originally required the FULL steady-state cycle cost ({1}+{G}=2),
-      // but that double-counts: permReadyOrSCActive above already confirms
-      // Magus is untapped RIGHT NOW, meaning the Ranger's {G} recast that
-      // got her into that state is a SUNK cost, not something still owed.
-      // The only payment actually needed to fire from THIS exact state is
-      // her own {1} activation — the Cradle/Nykthos output that unlocks
-      // funds the NEXT cycle's Ranger bounce+recast on its own, same
-      // self-funding logic used everywhere else in this file. A user
-      // caught this directly: a real repro's board sat at exactly this
-      // state (Magus untapped, 1 mana floating) and the named detector
-      // failed to fire, falling through to the generic auto-detector.
+      // but that double-counts: Ranger's bounce (free) resets Magus
+      // regardless of her prior tap state, meaning the Ranger's {G}
+      // recast is a SUNK cost, not something still owed. The only payment
+      // actually needed to fire from THIS exact state is Magus's own {1}
+      // activation — the Cradle/Nykthos output that unlocks funds the
+      // NEXT cycle's Ranger bounce+recast on its own, same self-funding
+      // logic used everywhere else in this file. A user caught this
+      // directly: a real repro's board sat at exactly this state (Magus
+      // untapped, 1 mana floating) and the named detector failed to fire,
+      // falling through to the generic auto-detector.
       const fundMagus = new Set(['Magus of the Candelabra']);
       const hasCradle = state.battlefield.some(
         p => p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun'
@@ -11511,7 +11527,13 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!scrybAvailable(state)) return false;
-      if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
+      // [2026-07-26 — 3rd bootstrap-affordability follow-up] See the
+      // matching note on the Quirion sibling above — Ranger's free bounce
+      // resets Magus regardless of her current tap state.
+      const magusReady = state.battlefield.some(p =>
+        p.name === 'Magus of the Candelabra' && (!p.summoningSick || shangChiActive(state))
+      );
+      if (!magusReady) return false;
       if (!canCastGreenCreatureNow(state)) return false;
       // [2026-07-26 — 2nd bootstrap-affordability follow-up] See the
       // matching note on the Quirion sibling above — the Ranger's recast
@@ -11550,7 +11572,19 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!quirionAvailable(state)) return false;
-      if (!permReadyOrSCActive(state, 'Formidable Speaker')) return false;
+      // [2026-07-26 — 3rd bootstrap-affordability follow-up] Ranger's own
+      // bounce is free and untaps Speaker REGARDLESS of her current tap
+      // state — same "may currently be tapped" reasoning already applied
+      // to the Cradle/Nykthos targets below. Requiring her pre-untapped
+      // was actively harmful: a user caught a real repro where Speaker
+      // only ever became untapped as part of an EARLIER Ranger bounce
+      // whose target was something else that cycle, so no snapshot ever
+      // had her pre-untapped AND Ranger simultaneously fresh, even though
+      // the loop is fully sound. Summoning sickness still matters.
+      const speakerReady = state.battlefield.some(p =>
+        p.name === 'Formidable Speaker' && (!p.summoningSick || shangChiActive(state))
+      );
+      if (!speakerReady) return false;
       if (!canCastGreenCreatureNow(state)) return false;
       // [2026-07-26 — 2nd bootstrap-affordability follow-up] See the
       // matching note on the Magus siblings above — the Ranger's recast
@@ -11584,7 +11618,13 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!scrybAvailable(state)) return false;
-      if (!permReadyOrSCActive(state, 'Formidable Speaker')) return false;
+      // [2026-07-26 — 3rd bootstrap-affordability follow-up] See the
+      // matching note on the Quirion sibling above — Ranger's free bounce
+      // resets Speaker regardless of her current tap state.
+      const speakerReady = state.battlefield.some(p =>
+        p.name === 'Formidable Speaker' && (!p.summoningSick || shangChiActive(state))
+      );
+      if (!speakerReady) return false;
       if (!canCastGreenCreatureNow(state)) return false;
       // [2026-07-26 — 2nd bootstrap-affordability follow-up] See the
       // matching note on the Magus siblings above.
@@ -11655,14 +11695,23 @@ var DETECTORS = [
       // Cradle only ever became untapped as part of THIS SAME activation
       // that also tapped Elder — no snapshot ever had both simultaneously
       // pre-untapped, so the detector never fired despite the loop being
-      // genuinely sound. Relaxing this reopens the funding question fixed
-      // elsewhere in this file: Lodge's own {G} activation must now be
-      // verified payable, since it's no longer guaranteed by Cradle's
-      // pre-existing untapped output.
+      // genuinely sound.
+      //
+      // [2026-07-26 — correction] A first attempt at this fix also added a
+      // maxCurrentlyPayableMana funding gate for Lodge's {G} — but that's
+      // wrong here, not just extra caution: Elder's untap is genuinely
+      // FREE, so it ALWAYS makes the big land tappable as the very first
+      // action, regardless of prior floating mana. That fresh tap
+      // (creatureCount ≥ 2 guarantees ≥2G) unconditionally covers Lodge's
+      // {G}, with room to spare — no external funding is ever needed. The
+      // funding check (which skips currently-tapped permanents) was
+      // actively wrong: it rejected exactly the "Cradle currently tapped,
+      // Elder about to free it" case this fix exists to support. Nykthos
+      // is different — its OWN {2} activation cost is real and NOT
+      // covered by Elder's free untap alone, so its funding check stays.
+      const cradleOk = (hasPerm(state, "Gaea's Cradle") || hasPerm(state, 'Itlimoc, Cradle of the Sun')) &&
+        creatureCount(state) >= 2;
       const fundLodge = new Set(['Wirewood Lodge']);
-      const cradleOk      = hasPerm(state, "Gaea's Cradle") || hasPerm(state, 'Itlimoc, Cradle of the Sun')
-        ? creatureCount(state) >= 2 && maxCurrentlyPayableMana(state, fundLodge) >= 1
-        : false;
       const nykthosOk     = hasPerm(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 4 &&
         maxCurrentlyPayableMana(state, fundLodge) >= 3;
       // Wild Growth (COMBO 42): enchanted land taps for {1} + Wild Growth trigger {G} = 2 mana.
@@ -11707,11 +11756,10 @@ var DETECTORS = [
           wildGrowthOk = nonLifeLands.length >= 1;
         }
       }
-      // [2026-07-26] Same funding gate as the Cradle/Nykthos branches above —
-      // Lodge's own {G} activation must be payable right now, regardless
-      // of the enchanted land's own tap state (Elder's free untap handles
-      // that part unconditionally).
-      wildGrowthOk = wildGrowthOk && maxCurrentlyPayableMana(state, fundLodge) >= 1;
+      // [2026-07-26 — correction] No funding gate needed here, same
+      // reasoning as the Cradle branch above: Elder's free untap always
+      // makes the enchanted land tappable first, and its guaranteed ≥2G
+      // output (base + aura) unconditionally covers Lodge's {G}.
 
       // Elvish Guidance (COMBO 46): enchanted land taps for {1} + {G}×elf-count.
       // Argothian Elder itself is an Elf (elfCount ≥ 1 always). Need ≥1 additional elf
@@ -11729,8 +11777,8 @@ var DETECTORS = [
           elvishGuidanceOk = nonLifeLands.length >= 1;
         }
       }
-      // [2026-07-26] Same funding gate — see the matching note on wildGrowthOk above.
-      elvishGuidanceOk = elvishGuidanceOk && maxCurrentlyPayableMana(state, fundLodge) >= 1;
+      // [2026-07-26 — correction] No funding gate needed — see the
+      // matching note on wildGrowthOk above.
       return cradleOk || nykthosOk || wildGrowthOk || elvishGuidanceOk;
     },
   },
