@@ -2136,7 +2136,10 @@ class GameState {
     // Hyrax Tower Scout ETB: untap target creature (deterministic: untap first tapped creature)
     if (cardKey === 'hyrax_tower_scout') {
       const tapped = s.creatures().find(c => c.id !== perm.id && c.tapped);
-      if (tapped) s = s.untapPermanent(tapped.id);
+      if (tapped) {
+        s = s.untapPermanent(tapped.id);
+        s = s.log(`Hyrax Tower Scout ETB: untap ${tapped.name}`);
+      }
     }
 
     // Woodcaller Automaton ETB (cast trigger): untap target land you control.
@@ -9918,7 +9921,17 @@ var BASIC_GREEN_DORKS = new Set([
   'Boreal Druid',
 ]);
 function enchantedDorkBonusG(state, perm) {
-  if (!perm.isForest) return 0; // must be a land (Ashaya) for a land-tap aura to trigger on it
+  // [2026-07-27] Was gated on perm.isForest, but the REAL tap-bonus engine
+  // (actions.js applyTapBonuses) gates Wild Growth/Utopia Sprawl's bonus on
+  // `live.types.includes('land')`, not isForest — isForest only tracks
+  // whether Ashaya/earthbend made something ELSE (originally a creature)
+  // into a Forest-land; a permanent that was ALREADY a land natively (e.g.
+  // Deserted Temple) never needs that stamp for its own aura to trigger.
+  // Every isForest=true permanent already has land in its types too (both
+  // the Ashaya-creature and Yavimaya-all-lands ETB paths push 'land'
+  // alongside setting isForest), so this is a strict widening — it can
+  // only recognize MORE genuinely-boosted lands, never fewer.
+  if (!perm.types?.includes('land')) return 0;
   let bonus = 0;
   if (state.battlefield.some(p =>
     (p.cardKey === 'wild_growth' || p.cardKey === 'utopia_sprawl') && p.enchantedLandId === perm.id
@@ -9963,14 +9976,55 @@ function flatDorkOutput(state, p) {
   // the priority race on any board where both apply.
   if (p.name === 'Ashaya, Soul of the Wild') return 0;
   const hasBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
-  const bump = () => (p.name !== 'Badgermole Cub' && hasBonus) ? 1 : 0;
+  const isCreature = p.types?.includes('creature');
+  // Badgermole's/Leyline's "tap a creature for mana" bonus only applies if
+  // this permanent is ALSO a creature — isForest alone doesn't guarantee
+  // that (a plain Forest under Yavimaya is isForest without ever being a
+  // creature).
+  const bump = () => (isCreature && p.name !== 'Badgermole Cub' && hasBonus) ? 1 : 0;
   const aura = () => enchantedDorkBonusG(state, p);
   if (BASIC_GREEN_DORKS.has(p.name)) return 1 + bump() + aura();
-  if (!p.isForest) return 0;
+
   const def = CARDS[p.cardKey];
-  if (typeof def?.tapForMana === 'function') return 0; // has its own dedicated math elsewhere
+  // [2026-07-27] Gaea's Cradle/Itlimoc/Nykthos have real, precise
+  // creatureCount/devotion-scaled formulas elsewhere in this file — bail
+  // here so this flat approximation never undercounts (or double-books)
+  // them. Ancient Tomb is excluded too: its {C}{C} tap costs 2 life per
+  // activation, so crediting it as a safe, repeatable "dork" output would
+  // be actively dangerous in a loop meant to run indefinitely.
+  const SPECIAL_LANDS = new Set(["Gaea's Cradle", 'Itlimoc, Cradle of the Sun', 'Nykthos, Shrine to Nyx', 'Ancient Tomb']);
+  if (SPECIAL_LANDS.has(p.name)) return 0;
+
+  if (typeof def?.tapForMana === 'function') {
+    // [2026-07-27] Restricted to lands that have ALSO been made a creature
+    // (Badgermole earthbend, Destiny Spinner, etc.) — a PLAIN, still-just-
+    // a-land native-mana land boosted only by an attached aura is already
+    // the dedicated territory of the "Ashaya + Quirion Ranger + Arbor Elf +
+    // Enchanted Land" family (Ranger untaps Arbor Elf, Arbor Elf untaps the
+    // land — a genuinely different, already-covered loop shape); crediting
+    // it here too would let this more generic detector preempt that more
+    // specific sibling in the priority race whenever both apply. Any land
+    // with a native, fixed mana ability (e.g. Deserted Temple's {C}) that
+    // IS also a creature doesn't need isForest at all, since it already
+    // taps for mana natively regardless of Forest status; only the
+    // Badgermole/Leyline creature-tap bonus and any attached aura are
+    // conditional. Found via a user repro: Badgermole Cub earthbent
+    // Deserted Temple into a creature, then Wild Growth was attached to
+    // it — {C}(base) + {G}(Wild Growth) = 2G, clearing the Quirion Ranger
+    // detector's own >=2G threshold, but flatDorkOutput previously bailed
+    // at 0 for ANY native-tapForMana land, assuming (wrongly, for this
+    // case) dedicated math existed elsewhere for all of them.
+    if (!def.types.includes('land')) return 0; // native-tapForMana non-lands have dedicated math elsewhere
+    if (!isCreature) return 0; // plain land + aura: "Arbor Elf + Enchanted Land" family's territory
+    return 1 + bump() + aura();
+  }
+  // Remaining case: a creature with NO native mana ability, tapping only
+  // via the generic Ashaya/earthbend Forest-fallback — this DOES require
+  // isForest, since that's the only thing granting it a tap-for-mana
+  // ability at all (actions.js's "4a-bis" fallback).
+  if (!p.isForest) return 0;
   if (!def || def.types.includes('land')) return 0;
-  if (!p.types?.includes('creature')) return 0;
+  if (!isCreature) return 0;
   return 1 + bump() + aura();
 }
 
@@ -11413,14 +11467,22 @@ var DETECTORS = [
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
-      // The loop costs {G}{G} to prime (Magus X=2 activation).
-      // The mana source must be untapped to start the cycle, OR ≥2G must be
-      // floating (so we can pay Magus first, then untap source via Magus).
-      // Simplest correct check: require the source to be untapped.
-      // (If all mana was spent, there is nothing to start the loop with.)
-      return state.battlefield.some(p => {
-        if (p.tapped) return false;
+      // [2026-07-27 — bootstrap-affordability follow-up] Two ways to prime
+      // the loop's first {G}{G} activation:
+      //   (a) the source itself is UNTAPPED — tap IT first for its own
+      //       ≥3G output, spend 2 of that to pay Magus (who untaps
+      //       herself + the source right back), net +1G. This is the
+      //       original, sufficient self-funding path and needs no
+      //       separate mana check.
+      //   (b) the source is already TAPPED — Magus's own untap is what
+      //       resets it (same "target may currently be tapped" principle
+      //       used for Cradle/Nykthos/Elder+Lodge elsewhere in this
+      //       file), but then the {G}{G} must come from somewhere ELSE
+      //       first, checked via maxCurrentlyPayableMana.
+      const fundMagus = new Set(['Magus of the Candelabra']);
+      const hasSource = state.battlefield.some(p => {
         if (p.summoningSick && !shangChiActive(state)) return false;  // source must be ready
+        if (p.tapped && maxCurrentlyPayableMana(state, fundMagus) < 2) return false;
         switch (p.name) {
           case "Gaea's Cradle":
           case 'Itlimoc, Cradle of the Sun':
@@ -11434,9 +11496,33 @@ var DETECTORS = [
           case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
           case 'Topiary Lecturer':            return (p.power || 0) >= 3;
-          default: return false;
+          default: {
+            // [2026-07-27] Bare/basic land — or a Badgermole Cub-earthbent
+            // land, now ALSO a creature live on the battlefield — boosted
+            // by an attached Wild Growth/Utopia Sprawl/Elvish Guidance aura
+            // and/or Badgermole Cub's/Leyline's "tap a creature for mana →
+            // +{G}" static. flatDorkOutput() doesn't cover this case: its
+            // generic-Forest-fallback branch keys off the STATIC card
+            // definition's types (always just ['land'] for a basic
+            // Forest), so it can never recognize a land Badgermole's own
+            // earthbend ETB turned into a creature live on the
+            // battlefield (a battlefield-only mutation, not reflected in
+            // the card's static def). Found via a user repro: Forest +
+            // Wild Growth + Badgermole Cub's own earthbend (animating that
+            // same Forest into a 1/1 creature with haste) taps for
+            // 1(base)+1(Badgermole creature-tap bonus)+1(Wild Growth) = 3G,
+            // clearing this detector's own documented ≥3G threshold, but
+            // only the generic auto-detector caught the win.
+            if (!p.types?.includes('land')) return false;
+            let out = 1;
+            const hasBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
+            if (p.types.includes('creature') && p.name !== 'Badgermole Cub' && hasBonus) out += 1;
+            out += enchantedDorkBonusG(state, p);
+            return out >= 3;
+          }
         }
       });
+      return hasSource;
     },
   },
 
@@ -11872,7 +11958,25 @@ var DETECTORS = [
       }
       // [2026-07-26 — correction] No funding gate needed — see the
       // matching note on wildGrowthOk above.
-      return cradleOk || nykthosOk || wildGrowthOk || elvishGuidanceOk;
+      //
+      // [2026-07-27] Badgermole Cub / Leyline of Abundance: a land Badgermole
+      // Cub's own earthbend ETB turned into a creature (or any other
+      // creature-land) taps for base {1} + a SECOND {G} from Badgermole's/
+      // Leyline's "whenever you tap a creature for mana, add {G}" static —
+      // no aura needed at all, unlike the Wild Growth/Elvish Guidance
+      // branches above. Net = 2G output - {G} Lodge cost = 1G, same
+      // break-even shape. Found via a user repro: Badgermole Cub earthbent
+      // the only land in the opening hand (a plain Forest) into a 1/1
+      // creature; that land alone, with no aura and no Cradle/Nykthos,
+      // already clears this detector's own documented threshold, but the
+      // missing case meant only the generic auto-detector caught the win.
+      const hasCreatureBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
+      const badgermoleOk = hasCreatureBonus && state.battlefield.some(p =>
+        p.types?.includes('land') && p.types?.includes('creature') &&
+        p.name !== 'Badgermole Cub' && p.name !== 'Argothian Elder' &&
+        !INVALID_BIG_LANDS.has(p.name)
+      );
+      return cradleOk || nykthosOk || wildGrowthOk || elvishGuidanceOk || badgermoleOk;
     },
   },
 
@@ -12095,6 +12199,97 @@ var DETECTORS = [
         const loopCost = 2 /* Temur {1G} */ + 1 /* Symbiote recast {G} */ + feedElfCost;
         return dorkGrossOutput(state, p) > loopCost;
       });
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  WIREWOOD SYMBIOTE + BADGERMOLE/LEYLINE EARTHBENT LAND, NO SABERTOOTH
+  //  (once-per-turn ramp, not a same-turn instant loop)
+  //
+  //  Unlike the Temur Sabertooth sibling above (which resets Symbiote's own
+  //  once-per-turn flag by bouncing Symbiote itself, making the loop
+  //  same-turn-repeatable), this variant has no such reset — Symbiote's
+  //  bounce_elf ability fires once, full stop, until the next turn (yours
+  //  OR any opponent's — "once each turn" resets per-turn for every player,
+  //  not just you). With --simulate-opponent-turns, each opponent's turn
+  //  gives one more free activation, so the mana pool still grows without
+  //  bound as the game continues (just at a cadence of once per turn
+  //  boundary, not once per priority pass) — the same "ramps across
+  //  opponent-turn windows" shape this codebase already treats as a
+  //  legitimate infinite-mana engine elsewhere (Hitzel's Sequence mill,
+  //  the Beast Whisperer/Glademuse mana-neutral draw loops).
+  //
+  //  Loop each turn boundary: Symbiote bounces a feed-Elf (free) → untaps
+  //  the Badgermole/Leyline-boosted earthbent land (may currently be
+  //  tapped — Symbiote's untap resets it regardless, same "may currently
+  //  be tapped" principle used throughout this file) → tap the land for
+  //  1(base)+1(Badgermole/Leyline bonus) = 2G → recast the feed-Elf at ITS
+  //  OWN mana cost. Net positive once that cost is 1 or less (a genuine
+  //  1-drop Elf) — anything pricier is break-even or a net loss with no
+  //  Sabertooth reset to also fund from.
+  //
+  //  Found via a user repro: `karametra_acolyte,allosaurus_shepherd,
+  //  priest_of_titania,forest,war_room,wild_growth,shang_chi,
+  //  badgermole_cub`, turn 3, simulate-opponent-turns — Badgermole
+  //  earthbent the Forest into a creature, and Wirewood Symbiote (fetched
+  //  via Survival of the Fittest) cycled Priest of Titania/Allosaurus
+  //  Shepherd through hand each turn boundary, only recognized by the
+  //  generic auto-detector since no named detector modeled a Symbiote loop
+  //  without a Sabertooth-style reset.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Wirewood Symbiote + Badgermole/Leyline Earthbent Land, per-turn ramp)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Symbiote (free, once each turn — including opponents' turns with "
+      + "--simulate-opponent-turns) bounces a 1-mana Elf to untap a Badgermole "
+      + "Cub/Leyline of Abundance-boosted earthbent land (1 base + 1 bonus = 2G). "
+      + "Recast the Elf for {G}. Net +1G per turn boundary — unbounded over enough turns, "
+      + "even though not repeatable within a single priority window.",
+    check(state) {
+      if (!symbioteAvailable(state)) return false;
+      if (!canCastGreenCreatureNow(state)) return false;
+      const hasCreatureBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
+      if (!hasCreatureBonus) return false;
+
+      function mv(cardKey) {
+        const def = CARDS[cardKey];
+        if (!def?.cost) return null;
+        const p = parseCost(def.cost);
+        return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
+      }
+
+      // The earthbent land: a creature+land (Badgermole's own earthbend, or
+      // any other creature-land) that isn't Badgermole/Symbiote themselves.
+      // Gaea's Cradle/Itlimoc/Nykthos are explicitly excluded — they have
+      // their own dedicated, creatureCount/devotion-scaled detectors
+      // elsewhere in this file (e.g. "Wirewood Symbiote + Temur Sabertooth
+      // + Animated Gaea's Cradle"), and this detector's flat "1 base + 1
+      // Badgermole bonus" math would badly underestimate their real output
+      // — worse, it would let this generic, easier-to-satisfy detector win
+      // the priority race and report the wrong name/description on boards
+      // that actually have a dedicated, more accurate sibling.
+      const SPECIAL_BIG_LANDS = new Set(["Gaea's Cradle", 'Itlimoc, Cradle of the Sun', 'Nykthos, Shrine to Nyx']);
+      const land = state.battlefield.find(p =>
+        p.types?.includes('land') && p.types?.includes('creature') &&
+        p.name !== 'Badgermole Cub' && p.name !== 'Wirewood Symbiote' &&
+        !SPECIAL_BIG_LANDS.has(p.name)
+      );
+      if (!land) return false;
+      const landOutput = 1 + 1; // base tap + Badgermole/Leyline creature-tap bonus
+
+      // Cheapest OTHER Elf usable as Symbiote's feed this cycle (can't be
+      // the land itself, or Symbiote — she has no subtype Elf anyway).
+      let feedCost = null;
+      for (const p of state.battlefield) {
+        if (p === land) continue;
+        if (!p.subtypes?.includes('Elf') || !p.types?.includes('creature')) continue;
+        const c = mv(p.cardKey);
+        if (c === null) continue;
+        if (feedCost === null || c < feedCost) feedCost = c;
+      }
+      if (feedCost === null) return false;
+      return landOutput > feedCost;
     },
   },
 
@@ -14385,6 +14580,148 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  HOPE TENDER + HYRAX TOWER SCOUT + KOGLA/TEMUR + GAEA'S CRADLE
+  //  (no Ashaya, Cradle need NOT be animated)
+  //
+  //  Sibling of the two Hyrax+Kogla/Temur+Animated-Cradle detectors above,
+  //  but those require Cradle to ALREADY be a creature (Hyrax's ETB "untap
+  //  target creature" can't otherwise touch it). Here Hyrax's ETB instead
+  //  resets HOPE TENDER (a creature) — never bounced/recast herself, so no
+  //  haste enabler is needed, unlike the Temur/Kogla+Hope Tender+Cradle
+  //  sibling that bounces her directly. Her own exert ("untap two target
+  //  lands") then untaps Cradle AND a second land in one activation — Cradle
+  //  doesn't need to be animated at all, since her ability isn't restricted
+  //  to creatures.
+  //
+  //  Loop: Kogla/Temur bounces Hyrax (Human Scout for Kogla; Temur has no
+  //  restriction) — {1G}. Recast Hyrax — {2G}; ETB untaps Hope Tender.
+  //  Hope Tender exert — {1}: untap Cradle + a second land. Tap both.
+  //  Loop cost: {1G}+{2G}+{1} = 6. Net = creatureCount(Cradle) +
+  //  secondLandOutput + Badgermole/Leyline bonus (applies to Cradle's own
+  //  tap once it's a creature — irrelevant here since it stays a plain
+  //  land) − 6.
+  //
+  //  Found via a user repro: `boreal_druid,forest,fierce_empath,
+  //  gaeas_cradle,sylvan_scrying,utopia_sprawl,hyrax_tower_scout,
+  //  hope_tender`, turn 3, simulate-opponent-turns — Hope Tender's exert
+  //  untapped a plain (non-animated) Cradle plus a Forest enchanted with
+  //  Utopia Sprawl, reset every cycle by Kogla bouncing and recasting
+  //  Hyrax Tower Scout, but no named detector modeled this Hope-Tender-as-
+  //  middleman shape, so only the generic auto-detector caught the win.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: "Infinite Mana (Hope Tender + Hyrax Tower Scout + Kogla/Temur + Gaea's Cradle)",
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Kogla or Temur Sabertooth bounces Hyrax Tower Scout ({1G}); recast ({2G}) " +
+      "retriggers its ETB, untapping Hope Tender (never bounced herself — no haste " +
+      "enabler needed). Her exert ({1}) untaps Gaea's Cradle (need not be animated " +
+      "— her ability isn't restricted to creatures) plus a second land. Loop cost " +
+      "{1G}+{2G}+{1} = 6. Net positive once creatureCount + the second land's " +
+      "output exceeds 6.",
+    check(state) {
+      // Kogla only bounces Humans — Hyrax Tower Scout qualifies (Human Scout).
+      // Temur has no restriction at all.
+      const bouncerAvailable =
+        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      if (!bouncerAvailable) return false;
+      const hyraxOnField = hasPerm(state, 'Hyrax Tower Scout');
+      const hyraxAvailable = (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField;
+      if (!hyraxAvailable) return false;
+      const hopeTender = state.battlefield.find(p => p.name === 'Hope Tender');
+      if (!hopeTender) return false;
+      // Her exert ability costs {1},{T} — a real tap requiring haste if sick,
+      // but she's never bounced/recast in THIS loop (Hyrax's ETB untaps her
+      // directly), so shangChiActive-style bypass still applies for the
+      // very first cycle if she happens to be freshly cast.
+      if (hopeTender.summoningSick && !shangChiActive(state)) return false;
+      const cradle = state.battlefield.find(p =>
+        p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun'
+      );
+      if (!cradle) return false;
+      // A second land for Hope Tender's exert to pair with Cradle — any
+      // OTHER land, base {1} plus Wild Growth/Utopia Sprawl/Elvish Guidance
+      // aura bonus if attached. Not Cradle itself, not a life-cost land
+      // (looping Ancient Tomb would be lethal).
+      const LIFE_COST_LANDS = new Set(['Ancient Tomb']);
+      const secondLand = state.battlefield.find(p =>
+        p !== cradle && p.types?.includes('land') && !LIFE_COST_LANDS.has(p.name)
+      );
+      if (!secondLand) return false;
+      const secondLandOutput = 1 + enchantedDorkBonusG(state, secondLand);
+      const badgermoleBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance'))
+        && cradle.types?.includes('creature') ? 1 : 0;
+      const loopCost = 2 /* Kogla/Temur {1G} */ + 3 /* Hyrax recast {2G} */ + 1 /* Hope Tender exert {1} */;
+      // [bootstrap-affordability] Same pattern as the Animated-Cradle
+      // siblings above: the bounce+recast+exert steps must be payable
+      // RIGHT NOW, before any of this cycle's own payoff exists.
+      const bootstrapCost = (hyraxOnField ? 5 : 3) + 1;
+      if (maxCurrentlyPayableMana(state) < bootstrapCost) return false;
+      return creatureCount(state) + secondLandOutput + badgermoleBonus > loopCost;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  KOGLA/TEMUR + HYRAX TOWER SCOUT + ARBOR ELF + YAVIMAYA + BIG LAND
+  //  (no Ashaya needed — Yavimaya alone makes the big land a Forest)
+  //
+  //  Sibling of the Hope Tender variant directly above, and of the Ashaya +
+  //  Quirion Ranger + Arbor Elf + Yavimaya + Big Land detector: here Hyrax's
+  //  ETB ("untap target creature") resets Arbor Elf directly — no Ranger
+  //  self-bounce is needed, so Ashaya isn't required at all. Arbor Elf's own
+  //  ability ("{T}: untap target Forest") then untaps the big land, which
+  //  Yavimaya has already made a Forest (a sticky per-permanent stamp — see
+  //  the Ashaya+Ranger sibling's own comment; Yavimaya need not still be on
+  //  the battlefield).
+  //
+  //  Loop: Kogla/Temur bounces Hyrax ({1G}=2). Recast Hyrax ({2G}=3); ETB
+  //  untaps Arbor Elf. Arbor Elf (free, {T}) untaps the big land. Tap it.
+  //  Loop cost: {1G}+{2G} = 5. Net = creatureCount(Cradle) − 5, or
+  //  devotion(Nykthos) − 2(activation) − 5(loop) for Nykthos.
+  //
+  //  Found via a user repro: `beast_whisperer,urza_cave,delighted_halfling,
+  //  yavimaya,wirewood_symbiote,eladamri,arbor_elf,forest`, turn 3,
+  //  simulate-opponent-turns — Hyrax's ETB reset Arbor Elf every cycle
+  //  (recast via Kogla bouncing Hyrax, a Human Scout), Arbor Elf untapped
+  //  Itlimoc, Cradle of the Sun (a Forest via Yavimaya, no Ashaya on this
+  //  board at all), but no named detector modeled this no-Ashaya,
+  //  Hyrax-resets-Arbor-Elf shape, so only the generic auto-detector caught
+  //  the win.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Kogla/Temur + Hyrax Tower Scout + Arbor Elf + Yavimaya + Big Land)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Kogla or Temur Sabertooth bounces Hyrax Tower Scout ({1G}); recast ({2G}) " +
+      "retriggers its ETB, untapping Arbor Elf (no Ashaya needed). Arbor Elf " +
+      "(free, {T}: untap target Forest) untaps Gaea's Cradle or Nykthos — already " +
+      "a Forest via Yavimaya (need not still be on the battlefield). Loop cost " +
+      "{1G}+{2G} = 5. Cradle: net positive once creatureCount > 5. Nykthos: " +
+      "devotion > 7 (loop cost 5 + its own {2} activation).",
+    check(state) {
+      const bouncerAvailable =
+        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      if (!bouncerAvailable) return false;
+      const hyraxOnField = hasPerm(state, 'Hyrax Tower Scout');
+      const hyraxAvailable = (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField;
+      if (!hyraxAvailable) return false;
+      if (!hasPerm(state, 'Arbor Elf')) return false;
+      const loopCost = 2 /* Kogla/Temur {1G} */ + 3 /* Hyrax recast {2G} */;
+      const bootstrapCost = hyraxOnField ? loopCost : 3;
+      if (maxCurrentlyPayableMana(state) < bootstrapCost) return false;
+      const cradle = state.battlefield.find(p =>
+        (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') && p.isForest
+      );
+      if (cradle && creatureCount(state) > loopCost) return true;
+      const nykthos = state.battlefield.find(p =>
+        p.name === 'Nykthos, Shrine to Nyx' && p.isForest
+      );
+      if (nykthos && devotionG(state) > loopCost + 2) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  DESTINY SPINNER + ASHAYA + QUIRION/SCRYB RANGER + BIG MANA LAND
   //
   //  Destiny Spinner oracle: {3G}: Target land you control becomes an X/X
@@ -15689,6 +16026,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':      ['selvala','quirion_ranger'],
   "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":        ['kogla','karametra_acolyte'],
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote'],
+  'Infinite Mana (Wirewood Symbiote + Badgermole/Leyline Earthbent Land, per-turn ramp)': ['wirewood_symbiote','badgermole_cub'],
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]': ['temur_sabertooth','concordant_crossroads'],
   // Break-even Selvala loop (COMBO 22): the 'concordant_crossroads' key here is the
   // representative of the haste-enabler equivalence slot, same convention as the
@@ -15717,6 +16055,8 @@ var DETECTOR_REQUIRED_KEYS = {
   "Infinite Mana (Wirewood Symbiote + Temur Sabertooth + Animated Gaea's Cradle)": ['wirewood_symbiote','temur_sabertooth','gaeas_cradle'],
   "Infinite Mana (Hyrax Tower Scout + Kogla + Animated Gaea's Cradle)":         ['hyrax_tower_scout','kogla','gaeas_cradle'],
   "Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Animated Gaea's Cradle)": ['hyrax_tower_scout','temur_sabertooth','gaeas_cradle'],
+  "Infinite Mana (Hope Tender + Hyrax Tower Scout + Kogla/Temur + Gaea's Cradle)": ['hope_tender','hyrax_tower_scout','gaeas_cradle'],
+  'Infinite Mana (Kogla/Temur + Hyrax Tower Scout + Arbor Elf + Yavimaya + Big Land)': ['hyrax_tower_scout','arbor_elf','yavimaya'],
   // Shang-Chi bounce-recast loops
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':       ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':            ['kogla','shang_chi'],
@@ -15955,6 +16295,8 @@ var _DETECTOR_PREFILTER = {
   // Temur Sabertooth + various engines
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]':
     { all: ['temur_sabertooth', 'wirewood_symbiote'] },
+  'Infinite Mana (Wirewood Symbiote + Badgermole/Leyline Earthbent Land, per-turn ramp)':
+    { all: ['wirewood_symbiote', 'badgermole_cub'] },
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
     { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]':
@@ -15971,6 +16313,10 @@ var _DETECTOR_PREFILTER = {
     { all: ['kogla', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
   "Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Animated Gaea's Cradle)":
     { all: ['temur_sabertooth', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
+  "Infinite Mana (Hope Tender + Hyrax Tower Scout + Kogla/Temur + Gaea's Cradle)":
+    { all: ['hope_tender', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
+  'Infinite Mana (Kogla/Temur + Hyrax Tower Scout + Arbor Elf + Yavimaya + Big Land)':
+    { all: ['hyrax_tower_scout', 'arbor_elf'], any: [['gaeas_cradle', 'itlimoc', 'nykthos']] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
     { all: ['temur_sabertooth', 'woodcaller_automaton'] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Ashaya + Mana Dork)':
