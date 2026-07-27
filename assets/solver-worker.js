@@ -9939,6 +9939,20 @@ function enchantedDorkBonusG(state, perm) {
 // Abundance's "+{G} whenever you tap a creature for mana" static adds a
 // second {G} (excluded for Badgermole's own tap). Returns the total output,
 // or 0 if this permanent isn't one of these flat-rate cases at all.
+//
+// [2026-07-27] Also folds in enchantedDorkBonusG (Wild Growth / Utopia
+// Sprawl / Elvish Guidance attached to THIS permanent's enchanted land).
+// That bonus previously only applied via an ad-hoc `BASIC_GREEN_DORKS.has
+// (p.name) && enchantedDorkBonusG(...)` check duplicated in each detector's
+// switch `default:` branch — which meant any creature reaching Forest
+// status only through the GENERIC fallback (not a BASIC_GREEN_DORKS member)
+// never got credit for its aura, even though the aura's own trigger
+// ("whenever the enchanted land is tapped for mana") doesn't care whether
+// the dork has a native mana ability. Found via a user repro: Allosaurus
+// Shepherd (a vanilla {G} 1/1 with no tapForMana, made a Forest by Ashaya)
+// enchanted with Wild Growth taps for 2G — Forest(1) + Wild Growth(1) — but
+// wasn't in BASIC_GREEN_DORKS, so the Quirion Ranger ≥2G detector missed it
+// entirely and only the generic auto-detector caught the win.
 function flatDorkOutput(state, p) {
   // Ashaya herself is deliberately excluded from the generic-fallback branch
   // below — her self-tap (isForest, no native tapForMana, boosted by
@@ -9950,13 +9964,14 @@ function flatDorkOutput(state, p) {
   if (p.name === 'Ashaya, Soul of the Wild') return 0;
   const hasBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
   const bump = () => (p.name !== 'Badgermole Cub' && hasBonus) ? 1 : 0;
-  if (BASIC_GREEN_DORKS.has(p.name)) return 1 + bump();
+  const aura = () => enchantedDorkBonusG(state, p);
+  if (BASIC_GREEN_DORKS.has(p.name)) return 1 + bump() + aura();
   if (!p.isForest) return 0;
   const def = CARDS[p.cardKey];
   if (typeof def?.tapForMana === 'function') return 0; // has its own dedicated math elsewhere
   if (!def || def.types.includes('land')) return 0;
   if (!p.types?.includes('creature')) return 0;
-  return 1 + bump();
+  return 1 + bump() + aura();
 }
 
 // [2026-07-26 — O-73 bootstrap-affordability follow-up] Every hand-authored
@@ -10582,7 +10597,10 @@ var DETECTORS = [
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 2;
           case 'Topiary Lecturer':            return (p.power || 0) >= 2;
           default:
-            if (BASIC_GREEN_DORKS.has(p.name) && enchantedDorkBonusG(state, p) >= 1) return true;
+            // flatDorkOutput already folds in enchantedDorkBonusG (Wild
+            // Growth/Utopia Sprawl on this dork's enchanted land), covering
+            // both BASIC_GREEN_DORKS members and generic-Forest-fallback
+            // creatures like Allosaurus Shepherd.
             return flatDorkOutput(state, p) >= 2;
         }
       });
@@ -10619,7 +10637,14 @@ var DETECTORS = [
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
           case 'Topiary Lecturer':            return (p.power || 0) >= 3;
           default:
-            return BASIC_GREEN_DORKS.has(p.name) && enchantedDorkBonusG(state, p) >= 2;
+            // [2026-07-27] Same fix as the Quirion sibling above: use
+            // flatDorkOutput (now folding in enchantedDorkBonusG) instead of
+            // a BASIC_GREEN_DORKS-only aura check, so this also covers
+            // generic-Forest-fallback dorks (Allosaurus Shepherd, Ashaya-
+            // stamped creatures with no native tapForMana) and the
+            // Badgermole-boosted single-aura case (1 base + 1 Badgermole +
+            // 1 aura = 3, which the old "aura bonus alone >= 2" check missed).
+            return flatDorkOutput(state, p) >= 3;
         }
       });
     },
@@ -11052,22 +11077,25 @@ var DETECTORS = [
 
   {
     // COMBO 63: Ashaya + Hope Tender + Shang-Chi, Master of Kung Fu
-    // DISABLED: Although the loop generates net +{G} per cycle, Shang-Chi's mana
-    // is restricted — "spend this mana only to activate abilities of creature sources."
-    // It cannot cast creatures or spells, so the accumulated mana cannot reach a
-    // game-winning state on its own. The detector was causing false-positive win
-    // condition triggers that required unrestricted mana.
-    // Left here for documentation; check() always returns false.
+    // WAS DISABLED, now SUPERSEDED: the original reasoning only considered
+    // Tender's exert always re-targeting herself + Shang-Chi, which indeed
+    // stays restricted-only forever. But a user pointed out Ashaya herself
+    // is a valid alternate target: GameState's own Ashaya ETB logic marks
+    // HERSELF isForest too (she taps for {G} via cardKey==='ashaya'
+    // tapForMana, see src/cards.js), and she's guaranteed present in this
+    // detector family (ashayaOut(state) precondition) — no extra card is
+    // needed at all. See the active detector below, which fires on just
+    // these three pieces with Ashaya as her own alternate exert target.
+    // Left here for documentation; check() always returns false so this
+    // entry never competes with its replacement.
     name: 'Infinite Mana (Ashaya + Hope Tender + Shang-Chi) — DISABLED',
     loopType: LOOP_TYPE.MANA_POSITIVE,
     description:
-      'DISABLED — Shang-Chi\'s {T}:{G}{G} is restricted to activating creature abilities ' +
-      'only, so the loop cannot generate unrestricted mana needed to win. ' +
-      'With Ashaya, Hope Tender and Shang-Chi are Forest lands. ' +
-      'Loop: Tap Shang-Chi for {G}{G}. Pay {1}, exert Tender → untap Tender + Shang-Chi. ' +
-      'Net +{G}/cycle, but restricted mana only.',
+      'DISABLED/superseded — see "Infinite Mana (Ashaya + Shang-Chi + Hope Tender, ' +
+      'self-funded)" below, which fires on just these three pieces by alternating ' +
+      "Tender's exert target between Shang-Chi and Ashaya herself.",
     check(_state) {
-      return false; // disabled — restricted mana cannot reach a win condition
+      return false; // superseded by the self-funded 3-piece detector below
     },
   },
 
@@ -11150,6 +11178,71 @@ var DETECTORS = [
       // BEFORE Nykthos produces its devotion-based output.
       if (maxCurrentlyPayableMana(state, new Set(['Hope Tender'])) < 3) return false;
       return devotionG(state) >= 4;
+    },
+  },
+
+  {
+    // [2026-07-26] Ashaya + Shang-Chi + Hope Tender, self-funded — no 4th
+    // piece needed at all. A user's repro showed the DISABLED combo above
+    // was too pessimistic: it assumed Hope Tender's exert always targets
+    // herself + Shang-Chi (replenishing restricted mana but never touching
+    // an unrestricted source), which is why it's restricted-only and can't
+    // reach a win on its own. But her exert targets TWO lands per
+    // activation, and there's no requirement that the second target always
+    // be Shang-Chi — she can ALTERNATE. A follow-up from the user pointed
+    // out the even simpler version: the alternate target doesn't need to be
+    // some OTHER card at all — Ashaya herself is a valid target. GameState's
+    // own Ashaya ETB logic stamps Ashaya isForest=true on HERSELF too (see
+    // cardKey === 'ashaya' tapForMana in src/cards.js: "because she's a
+    // Forest land, she taps for {G}"), and Ashaya is already a guaranteed
+    // precondition of this whole detector family (ashayaOut(state)) — so no
+    // extra mana-source card is ever required.
+    //
+    // Loop (steady state, alternating which land Tender pairs with herself):
+    //   Cycle A: pay {1} (restricted), exert Tender → untap Tender + SC.
+    //            Tap SC → +{G}{G} (restricted). Net restricted: +1G.
+    //   Cycle B: pay {1} (restricted), exert Tender → untap Tender + Ashaya.
+    //            Tap Ashaya → +{G} (unrestricted — she's a Forest land).
+    //            Net restricted: -1G. Net unrestricted: +1G.
+    //   Over one A+B super-cycle: restricted nets to 0 (self-sustaining
+    //   "battery"), unrestricted nets +1G — genuinely infinite, no card
+    //   beyond these three pieces needed, funded entirely by Shang-Chi's
+    //   own first tap.
+    //
+    // Confirmed directly: a real repro executed the same alternating-target
+    // pattern (against a 4th card, Destiny Spinner, rather than Ashaya
+    // herself — both work identically) but was only recognized by the
+    // generic auto-detector, since no named detector modeled this
+    // Speaker-free shape. Placed AFTER COMBO 64 and COMBO 45 in the array
+    // (same convention as the generic Mana Dork detector below) since its
+    // preconditions are a strict subset of both — it must not preempt
+    // either detector's own established name when their specific pieces
+    // (Formidable Speaker, Nykthos) are actually present.
+    name: 'Infinite Mana (Ashaya + Shang-Chi + Hope Tender, self-funded)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Hope Tender's exert ({1}, tap, exert: untap two target lands) can target herself " +
+      "AND Ashaya in the same activation, alternating with an activation that targets " +
+      "herself AND Shang-Chi to replenish his restricted mana. Ashaya is a Forest land " +
+      "herself, so tapping her produces unrestricted mana. Since her exert is a " +
+      "creature's own ability, its {1} cost can always be paid from Shang-Chi's " +
+      "restricted mana — no Formidable Speaker or other 4th card is needed. " +
+      "Net +1 unrestricted mana per two-exert cycle.",
+    check(state) {
+      if (!ashayaOut(state)) return false;
+      const scPerm = state.battlefield.find(p => p.cardKey === 'shang_chi');
+      if (!scPerm) return false;
+      if (!permReadyOrSCActive(state, 'Hope Tender')) return false;
+      // Bootstrap: need restricted mana already floating, OR Shang-Chi
+      // himself untapped and ready to tap for it right now — his own
+      // first tap self-funds the rest of the loop, same pattern used
+      // throughout this file.
+      const scCanTapNow = !scPerm.tapped && (!scPerm.summoningSick || hasGlobalHaste(state));
+      if ((state.restrictedG ?? 0) < 1 && !scCanTapNow) return false;
+      // No further requirement: Ashaya herself is always the alternate
+      // exert target (she's a Forest land per her own ETB stamp), so once
+      // the bootstrap check above passes, the loop is fully self-contained.
+      return true;
     },
   },
 
@@ -15629,6 +15722,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':            ['kogla','shang_chi'],
   'Infinite Mana (Temur Sabertooth / Kogla + Shang-Chi + High-Output Dork, generic)': ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]': ['ashaya','shang_chi','hope_tender','formidable_speaker'],
+  'Infinite Mana (Ashaya + Shang-Chi + Hope Tender, self-funded)': ['ashaya','shang_chi','hope_tender'],
   // Argothian Elder / Ley Weaver + Hyrax / Symbiote loops with Cradle/Nykthos (66, 67, 68)
   'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)  [COMBO 66]': ['argothian_elder','hyrax_tower_scout'],
   'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Cloudstone Curio + Cradle/Nykthos)': ['argothian_elder','hyrax_tower_scout','cloudstone_curio'],
@@ -15811,6 +15905,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['ashaya', 'hope_tender'] },
   'Infinite Mana (Ashaya + Shang-Chi + Hope Tender + Formidable Speaker)  [COMBO 64]':
     { all: ['ashaya', 'shang_chi', 'hope_tender', 'formidable_speaker'] },
+  'Infinite Mana (Ashaya + Shang-Chi + Hope Tender, self-funded)':
+    { all: ['ashaya', 'shang_chi', 'hope_tender'] },
 
   // Ashaya + Argothian Elder / Magus
   'Infinite Mana (Ashaya + Argothian Elder / Ley Weaver)  [COMBO 6, 24]':
