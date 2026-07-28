@@ -9,7 +9,7 @@
  */
 
 // ── Per-combo required card keys ──────────────────────────────────────────
-// Source of truth: ref/decklist_combos.txt (combos 1–62)
+// Source of truth: ref/decklist_combos.md (combos 1–62)
 var COMBO_REQUIRED_KEYS = [
   // Ashaya-based infinite mana loops (combos 1, 6, 7, 11, 14, 21, 24, 26, 27,
   //   32, 34, 36, 43, 45, 47, 48, 49, 50, 52, 56, 60, 61, 62)
@@ -79,6 +79,11 @@ var COMBO_REQUIRED_KEYS = [
   ['hyrax_tower_scout','temur_sabertooth','elvish_archdruid'],    // 28
   ['hyrax_tower_scout','temur_sabertooth','marwyn'],              // 30
   ['hyrax_tower_scout','temur_sabertooth','wirewood_channeler'],  // 57
+  // Little Bear (custom-library) substitutes for Hyrax Tower Scout in the
+  // Temur-only variant of the above (combos.js widened that detector's
+  // hyraxAvailable check 2026-07-28). NOT a substitute for the Kogla
+  // sibling detector — Kogla only bounces Humans, and Little Bear is a Bear.
+  ['little_bear','temur_sabertooth'],
 
   // Temur Sabertooth + Wirewood Symbiote combos (combos 4,5,12,13,16,17)
   ['wirewood_symbiote','temur_sabertooth','circle_of_dreams_druid'],  // 4,5,17
@@ -209,12 +214,12 @@ var COMBO_REQUIRED_KEYS = [
   // Yavimaya + Arbor Elf combo
   ['yavimaya', 'arbor_elf', 'ashaya', 'quirion_ranger'], // Yavimaya makes Cradle a Forest → Arbor can untap it
   // Combos 66-68: added when the manifest was brought up to date with the
-  // full 70-entry decklist_combos.txt (previously stopped at 62 here).
+  // full 70-entry decklist_combos.md (previously stopped at 62 here).
   // Each tuple matches its manifest entry's cardKeys exactly.
   //
   // Combos 65, 69, 70 deliberately have NO routing tuple here: they require
   // "infinite mana already established" as a separate prerequisite (per
-  // decklist_combos.txt's own Prerequisites section for each), not captured
+  // decklist_combos.md's own Prerequisites section for each), not captured
   // by any card key at all, then win via repeated combat this solver
   // doesn't model (see combos_manifest.js's notes on those entries for the
   // full reasoning). A naive tuple for e.g. just Ulvenwald Tracker would
@@ -229,6 +234,13 @@ var COMBO_REQUIRED_KEYS = [
   ['argothian_elder', 'hyrax_tower_scout'],                // 66
   ['argothian_elder', 'wirewood_symbiote', 'temur_sabertooth'], // 67
   ['hyrax_tower_scout', 'temur_sabertooth'],               // 68 (canonical variant; Magus/Speaker/Hope Tender + Kogla also work)
+  // Little Bear (custom-library) substitutes for Hyrax Tower Scout in the
+  // Temur-only variants of combos 66/68 above and the Hope-Tender/Arbor-Elf
+  // no-Ashaya detectors (combos.js widened 2026-07-28) — Temur required in
+  // every tuple since Kogla can't bounce a Bear.
+  ['argothian_elder', 'little_bear', 'temur_sabertooth'],
+  ['hope_tender', 'little_bear', 'temur_sabertooth'],
+  ['arbor_elf', 'yavimaya', 'little_bear', 'temur_sabertooth'],
 ];
 
 // [2026-07-11 — see ToDo.md IMP-24] User-requested principle: some cards
@@ -280,7 +292,7 @@ var TUTOR_PRIORITY_SCORE = {
   'argothian_elder': 75, 'ley_weaver': 74, 'magus_of_the_candelabra': 73,
   'selvala': 70, 'karametra_acolyte': 68, 'circle_of_dreams_druid': 65,
   'priest_of_titania': 63, 'fanatic_of_rhonas': 62, 'elvish_archdruid': 61, 'wirewood_channeler': 59,
-  'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'earthcraft': 53,
+  'wirewood_symbiote': 57, 'hyrax_tower_scout': 55, 'little_bear': 54, 'earthcraft': 53,
   'deserted_temple': 51, 'concordant_crossroads': 49, 'wirewood_lodge': 48,
   'cloudstone_curio': 47,
   // Cards present in combos but previously missing from priority table
@@ -2142,6 +2154,27 @@ class GameState {
       }
     }
 
+    // Little Bear ETB: untap ANOTHER target creature you control (deterministic:
+    // untap first tapped creature, same choice as Hyrax Tower Scout). If the
+    // untapped creature is a Bear, put a +1/+1 counter on it.
+    if (cardKey === 'little_bear') {
+      const tapped = s.creatures().find(c => c.id !== perm.id && c.tapped);
+      if (tapped) {
+        s = s.untapPermanent(tapped.id);
+        s = s.log(`Little Bear ETB: untap ${tapped.name}`);
+        if (tapped.subtypes?.includes('Bear')) {
+          s._ensureBF();
+          const live = s.getPermanentById(tapped.id);
+          if (live) {
+            live.counters = { ...live.counters, '+1/+1': (live.counters?.['+1/+1'] ?? 0) + 1 };
+            live.power = (live.power ?? 0) + 1;
+            live.toughness = (live.toughness ?? 0) + 1;
+            s = s.log(`Little Bear ETB: ${live.name} is a Bear → +1/+1 counter`);
+          }
+        }
+      }
+    }
+
     // Woodcaller Automaton ETB (cast trigger): untap target land you control.
     // Deterministic choice: prefer Gaea's Cradle or Nykthos (highest combo value),
     // then any other tapped land.
@@ -2926,6 +2959,41 @@ class GameState {
       }
     }
 
+    // Ashaya, Soul of the Wild grants "Nontoken creatures you control are
+    // Forest lands" as a CONTINUOUS static effect, but enterBattlefield()
+    // applies it as a one-time stamp onto each creature's own isForest/
+    // types/subtypes fields (see the "Ashaya: new creatures become Forest
+    // lands" block there) rather than recomputing it live. Without cleanup
+    // here, once Ashaya leaves the battlefield every creature she'd
+    // Forest-ified stays a Forest forever — e.g. Quirion Ranger could keep
+    // returning itself as its own "return a Forest you control" cost with
+    // no Ashaya in play and no threshold active, an illegal, unbounded loop
+    // that the generic repeating-state detector then mistook for genuine
+    // infinite mana. Found via a user repro (Ashaya + Magus of the
+    // Candelabra + Quirion Ranger): bouncing Ashaya via Quirion, then
+    // continuing to treat Magus/Quirion as Forests. Strip the grant from
+    // every remaining creature that isn't NATIVELY a Forest (e.g. Dryad
+    // Arbor keeps its own Forest subtype regardless of Ashaya).
+    if (removed.name === 'Ashaya, Soul of the Wild' &&
+        result.battlefield.some(p => p.isForest && p.is('creature')) &&
+        !result.battlefield.some(p => p.name === 'Ashaya, Soul of the Wild')) {
+      // Permanent objects are still shared with the parent state at this
+      // point (_ensureBFArray only owns the array) — must deep-clone before
+      // mutating any permanent's own fields, or this would corrupt sibling
+      // search branches that still reference the same Permanent objects.
+      result._ensureBF();
+      const cardDefs = _cards();
+      for (const p of result.battlefield) {
+        if (!p.isForest || !p.is('creature')) continue;
+        const def = cardDefs[p.cardKey];
+        if (def?.subtypes?.includes('Forest')) continue; // natively a Forest — unaffected
+        p._ensureOwnTypes();
+        p.isForest = false;
+        p.types = p.types.filter(t => t !== 'land');
+        p.subtypes = p.subtypes.filter(t => t !== 'Forest');
+      }
+    }
+
     // Recompute _hasSTAX from BOTH our battlefield AND opponent stax.
     // Bug fix (2026-05-05): previously this only checked our battlefield, so
     // sacrificing/destroying any of our permanents would silently turn off
@@ -3262,6 +3330,31 @@ class GameState {
     const segs = new Array(bfArr.length);
     let _encMap = null;  // built lazily on first enchantedLandId hit
 
+    // [BUGFIX 2026-07-27] Pre-pass: collect which permanent IDs are the
+    // TARGET of some other permanent's enchantedLandId, and by which aura
+    // cardKey(s). Without this, a land being enchanted was only visible on
+    // the AURA's own segment (":E[Forest]" — just the target's NAME, since
+    // multiple same-named lands can't be told apart by name alone), while
+    // the enchanted land's OWN segment looked identical to any other
+    // same-named, non-enchanted land (both just "Forest:U:F" / "Forest:T:F").
+    // Because segments are sorted before joining (order-independent), two
+    // boards that are NOT equivalent — "the enchanted Forest is tapped, a
+    // second plain Forest is untapped" vs. "the plain Forest is tapped, the
+    // enchanted one is untapped" — collapsed to the exact same fingerprint,
+    // even though one has strictly more untapped value available. Confirmed
+    // directly: this caused the generic "auto-detected repeating state"
+    // infinite-mana check to treat two genuinely different boards as the
+    // same one reached twice with more mana, when the real difference was
+    // just which specific land the aura's bonus was still locked behind.
+    let _targetAuraKeys = null;
+    for (let i = 0; i < bfArr.length; i++) {
+      const encId = bfArr[i].enchantedLandId;
+      if (encId === undefined) continue;
+      if (_targetAuraKeys === null) _targetAuraKeys = new Map();
+      const list = _targetAuraKeys.get(encId);
+      if (list) list.push(bfArr[i].cardKey); else _targetAuraKeys.set(encId, [bfArr[i].cardKey]);
+    }
+
     for (let i = 0; i < bfArr.length; i++) {
       const p = bfArr[i];
       // Fast path: detect "no extras" by short-circuit-checking each rare
@@ -3280,6 +3373,7 @@ class GameState {
       const lvl = p.levelCounters;      // Joraga Treespeaker level 0/1/2
       const named = p.namedCard;        // Disruptor Flute — named card can't activate abilities
       const luck = p.luckCounter;       // Gemstone Caverns — luck counter enables colored mana
+      const targetedBy = _targetAuraKeys !== null ? _targetAuraKeys.get(p.id) : undefined;
 
       // Detect the dominant "name + tap only" case in a single conjunction.
       // Microbench shows this single combined check is faster than 6 sequential
@@ -3287,6 +3381,7 @@ class GameState {
       if (
         !isF &&
         enc === undefined &&
+        targetedBy === undefined &&
         !sick &&
         (power === undefined || _fpCards[p.cardKey]?.power === power) &&
         (!counters || _isEmptyBag(counters)) &&
@@ -3331,6 +3426,11 @@ class GameState {
         }
         s += ':E[' + (_encMap.get(enc) ?? enc) + ']';
       }
+      // [BUGFIX 2026-07-27] See the pre-pass comment above this loop — mark
+      // THIS permanent's own segment when it's the target of another
+      // permanent's enchantedLandId, so it's distinguishable from an
+      // otherwise-identical, non-enchanted permanent of the same name.
+      if (targetedBy !== undefined) s += ':ENCHBY[' + [...targetedBy].sort().join(',') + ']';
       if (sick) s += ':S';
       if (power !== undefined && _fpCards[p.cardKey]?.power !== power) s += ':P' + power;
       if (counters && typeof counters === 'object') {
@@ -7344,6 +7444,24 @@ var CARDS = {
     cost: '2G', power: 3, toughness: 3,  // [P/T verified 2026-07-10 vs card DB; was 2/2]
     // ETB: untap target creature — handled in GameState.enterBattlefield (untaps first tapped creature).
   },
+  // Little Bear — custom-library (not in DEFAULT_DECKLIST). Added 2026-07-28
+  // per ref/card_data.md. Functionally a near-twin of Hyrax Tower Scout
+  // (same cost, same "untap a creature you control" ETB), so it slots into
+  // the same bounce-engine infinite-mana family — see the
+  // "Hyrax Tower Scout / Little Bear + bounce engine" detectors in combos.js.
+  little_bear: {
+    name: 'Little Bear', types: ['creature'], subtypes: ['Bear'],
+    externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
+    cost: '2G', power: 3, toughness: 2,
+    hasFlash: true,
+    // ETB: untap ANOTHER target creature you control (not itself — unlike
+    // Hyrax, whose "target creature" can legally be itself, though the
+    // engine never chooses that). If the untapped creature is a Bear, put
+    // a +1/+1 counter on it (counter bonus is currently dead with only one
+    // copy in the pool — Little Bear can't target itself — but modeled
+    // for correctness / future Bear-tribal additions).
+    // Untap target selection handled in GameState.enterBattlefield.
+  },
   woodcaller_automaton: {
     name: 'Woodcaller Automaton', types: ['creature','artifact'], subtypes: ['Construct'],
     externallyImplemented: true,  // [drift-detector] impl in GameState/actions/combos
@@ -8272,7 +8390,7 @@ var CARDS = {
         argothian_elder: 75, ley_weaver: 74, magus_of_the_candelabra: 73,
         selvala: 70, karametra_acolyte: 68, circle_of_dreams_druid: 65,
         priest_of_titania: 63, elvish_archdruid: 61, wirewood_channeler: 59,
-        wirewood_symbiote: 57, hyrax_tower_scout: 55,
+        wirewood_symbiote: 57, hyrax_tower_scout: 55, little_bear: 54,
         duskwatch_recruiter: 47, beast_whisperer: 45,
         endurance: 43, woodland_bellower: 40, fierce_empath: 35,
       };
@@ -9477,7 +9595,7 @@ var CARDS = {
  * then looser "assembled" checks. The first match wins.
  *
  * Oracle sources: ref/card_data.md
- * Combo source of truth: ref/decklist_combos.txt
+ * Combo source of truth: ref/decklist_combos.md
  *
  * Key Ashaya rule: "Nontoken creatures you control are Forest lands in addition
  * to their other types." This means:
@@ -9503,7 +9621,7 @@ var CARDS = {
 // firing.
 //
 // Source of truth for which loops are mana-neutral: card_roles.md and the
-// "Combo Summary" entries at the end of decklist_combos.txt. Examples:
+// "Combo Summary" entries at the end of decklist_combos.md. Examples:
 //   - Earthcraft + Scryb Ranger:  net 0 mana, +1 untap per cycle  → MANA_NEUTRAL_ETB
 //   - Beast Whisperer + creature loop: net 0 mana, +1 card per cycle → MANA_NEUTRAL_DRAW
 //   - Tireless Provisioner + Ashaya + Ranger: net 0 mana, +1 ETB+landfall → MANA_NEUTRAL_ETB
@@ -9933,9 +10051,17 @@ function enchantedDorkBonusG(state, perm) {
   // only recognize MORE genuinely-boosted lands, never fewer.
   if (!perm.types?.includes('land')) return 0;
   let bonus = 0;
-  if (state.battlefield.some(p =>
-    (p.cardKey === 'wild_growth' || p.cardKey === 'utopia_sprawl') && p.enchantedLandId === perm.id
-  )) bonus += 1;
+  // [2026-07-27] Wild Growth and Utopia Sprawl are separate, independently-
+  // triggering auras (see actions.js applyTapBonuses — each is its own `if`,
+  // neither excludes the other) and both can legally enchant the same land
+  // at once. This used to be a single `.some()` check capped at +1 total no
+  // matter how many were attached, silently discounting a genuinely
+  // double-enchanted land's second +{G}. Found via a user repro: Dryad
+  // Arbor carrying BOTH Wild Growth and Utopia Sprawl taps for 1(base)+
+  // 1(Sprawl)+1(Growth)=3G, but the capped-at-1 bonus undercounted it to 2G,
+  // missing the Scryb Ranger detector's own >=3G threshold.
+  if (state.battlefield.some(p => p.cardKey === 'wild_growth' && p.enchantedLandId === perm.id)) bonus += 1;
+  if (state.battlefield.some(p => p.cardKey === 'utopia_sprawl' && p.enchantedLandId === perm.id)) bonus += 1;
   if (perm.elvishGuidance) bonus += elfCount(state);
   return bonus;
 }
@@ -10380,6 +10506,17 @@ function hasGeierReachUntapper(state) {
     hasLandAnimator(state) && hasBouncer;
   if (hasHyraxLoop) return true;
 
+  // Little Bear (custom-library): same "untap target creature" ETB as
+  // Hyrax Tower Scout above, so it works identically once Geier Reach is
+  // animated. Temur Sabertooth ONLY — Little Bear is a Bear, not a Human,
+  // so Kogla's bounce (Humans only) can't return it, same rule as
+  // Woodcaller Automaton above.
+  const hasLittleBearLoop =
+    inHandOrField(state, 'Little Bear', 'little_bear') &&
+    hasLandAnimator(state) &&
+    inHandOrField(state, 'Temur Sabertooth', 'temur_sabertooth');
+  if (hasLittleBearLoop) return true;
+
   // Wirewood Symbiote's ability ("Return an Elf to hand: untap a creature,
   // once per turn") can target Geier Reach once it's animated into a
   // creature-land (Destiny Spinner / Vengeant Earth — no Ashaya needed,
@@ -10756,7 +10893,7 @@ var DETECTORS = [
   //  When the available mana dork only produces 1G (e.g. Llanowar Elves), the
   //  Ranger-bounce loop produces zero net mana but generates infinite ETB,
   //  landfall (each Forest-Ranger entry), LTB, and storm count. This is
-  //  exactly what decklist_combos.txt #1 and #41 describe under "Results:".
+  //  exactly what decklist_combos.md #1 and #41 describe under "Results:".
   //
   //  Why two detectors? The mana-POSITIVE variants above fire when the dork
   //  is large enough to fund the Ranger's recast cost ({G} for Quirion,
@@ -11038,7 +11175,7 @@ var DETECTORS = [
 
   {
     // COMBO 50: Ashaya + Hope Tender + Circle of Dreams Druid
-    // Explicit loop steps from decklist_combos.txt:
+    // Explicit loop steps from decklist_combos.md:
     //   1. Tap Circle for G×creatures (≥3G needed).
     //   2. Pay {1}, tap+exert Tender → untap Tender + Circle.
     //   3. Repeat.
@@ -11334,7 +11471,6 @@ var DETECTORS = [
       // [2026-07-26 — bootstrap-affordability follow-up] The exert's {1}
       // must be payable RIGHT NOW.
       if (maxCurrentlyPayableMana(state, new Set(['Hope Tender'])) < 1) return false;
-      const hasBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
       return state.battlefield.some(p => {
         if (p.name === 'Hope Tender') return false;
         if (!p.isForest) return false;
@@ -11354,28 +11490,17 @@ var DETECTORS = [
           case 'Circle of Dreams Druid': case 'Marwyn, the Nurturer':
           case 'Selvala, Heart of the Wilds': case 'Nykthos, Shrine to Nyx':
             return false;
-          default: {
-            const def = CARDS[p.cardKey];
-            // BASIC_GREEN_DORKS (Llanowar Elves, Elvish Mystic, Fyndhorn
-            // Elves, Birds of Paradise, Paradise Druid, Druid of the Cowl,
-            // Dryad Arbor, Elvish Harbinger) have a native tapForMana but a
-            // known FLAT base-1 output — same shape as the generic Forest
-            // fallback below, just via their own ability instead of
-            // actions.js's 4a-bis. Only these specific known-flat-output
-            // dorks are modeled; any OTHER native tapForMana (Cradle-style
-            // scaling, Selvala, etc.) has its own dedicated math elsewhere
-            // and is intentionally left alone here.
-            if (BASIC_GREEN_DORKS.has(p.name)) {
-              let base = 1;
-              if (p.name !== 'Badgermole Cub' && hasBonus) base += 1;
-              return base >= 2;
-            }
-            if (typeof def?.tapForMana === 'function') return false; // has its own dedicated math elsewhere, not generic
-            if (!def || def.types.includes('land')) return false;
-            let base = 1; // generic Forest-mana fallback
-            if (p.types?.includes('creature') && p.name !== 'Badgermole Cub' && hasBonus) base += 1;
-            return base >= 2;
-          }
+          default:
+            // [2026-07-27] Was a hand-rolled duplicate of flatDorkOutput()
+            // with the same now-fixed bug: it bailed at 0 for ANY permanent
+            // with a native tapForMana ability (assuming dedicated math
+            // existed elsewhere for all of them), which silently missed a
+            // Badgermole Cub-earthbent Forest (native {G} tap, now also a
+            // creature) — a plain land like that has no OTHER dedicated
+            // detector, just the shared, already-fixed flatDorkOutput
+            // helper. Delegating here picks up that fix (and the aura-bonus
+            // fix before it) instead of re-diverging from it.
+            return flatDorkOutput(state, p) >= 2;
         }
       });
     },
@@ -11494,6 +11619,21 @@ var DETECTORS = [
           case "Karametra's Acolyte":         return devotionG(state) >= 3;
           case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 4;
           case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
+          case 'Nykthos, Shrine to Nyx': {
+            // [2026-07-27] Was missing from this switch entirely — every
+            // OTHER named source here taps directly for its listed amount,
+            // but Nykthos's devotion mode itself costs {2} to activate, a
+            // real cost that (like every other Nykthos branch in this
+            // file) can't be self-funded by its own output. The outer
+            // tapped-source gate above only accounts for Magus's own
+            // {G}{G}=2, not Nykthos's additional {2}, so require the full
+            // {G}{G}+{2}=4 upfront here regardless of Nykthos's own tapped
+            // state. Net positive at devotion > 4, i.e. >= 5 — matching
+            // the sibling "Ashaya + Ranger + Magus + Big Land" chain
+            // detector's own Nykthos threshold exactly (same total cost).
+            if (maxCurrentlyPayableMana(state, fundMagus) < 4) return false;
+            return devotionG(state) >= 5;
+          }
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
           case 'Topiary Lecturer':            return (p.power || 0) >= 3;
           default: {
@@ -12294,6 +12434,75 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  WIREWOOD SYMBIOTE + MANA DORK, NO SABERTOOTH
+  //  (once-per-turn ramp, generic dorkGrossOutput sibling of the
+  //  Badgermole/Leyline-earthbent-land detector directly above)
+  //
+  //  Same "no same-turn reset needed" shape as the Badgermole-land sibling,
+  //  generalized to any of the scaling dorks dorkGrossOutput already knows
+  //  about (Priest of Titania, Elvish Archdruid, Circle of Dreams Druid,
+  //  Karametra's Acolyte, Marwyn, Topiary Lecturer, Fanatic of Rhonas,
+  //  Llanowar Tribe) instead of requiring an earthbent land specifically.
+  //  No Ashaya needed either — Symbiote's bounce untaps ANY creature, no
+  //  Forest/land restriction, unlike the Ranger family.
+  //
+  //  Loop each turn boundary: Symbiote bounces a feed-Elf (free) → untaps
+  //  the dork (may currently be tapped — Symbiote's untap resets it
+  //  regardless) → tap it → recast the feed-Elf at ITS OWN mana cost. Net
+  //  positive once the dork's gross output exceeds that cost.
+  //
+  //  Found via a user repro: `wirewood_lodge,formidable_speaker,
+  //  fanatic_of_rhonas,endurance,ancient_tomb,crop_rotation,
+  //  circle_of_dreams_druid,chrome_mox`, turn 3, simulate-opponent-turns —
+  //  Wirewood Symbiote fed Formidable Speaker (a {2}{G}=3 Elf) each turn
+  //  boundary to untap Fanatic of Rhonas (ferocious, 4G), net +1G/turn —
+  //  the sibling Temur Sabertooth detector above required Temur's own
+  //  {1G}+{G}=3 reset cost too, pushing the loop cost past Fanatic's 4G
+  //  output, so only the generic auto-detector caught the win.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Wirewood Symbiote + Mana Dork, per-turn ramp)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Symbiote (free, once each turn — including opponents' turns with " +
+      "--simulate-opponent-turns) bounces an Elf to untap a scaling mana dork " +
+      "(Fanatic of Rhonas, Priest of Titania, Circle of Dreams Druid, etc). " +
+      "Recast the Elf at its own mana cost. Net positive per turn boundary once " +
+      "the dork's gross output exceeds that cost — unbounded over enough turns.",
+    check(state) {
+      if (!symbioteAvailable(state)) return false;
+      if (!canCastGreenCreatureNow(state)) return false;
+
+      function mv(cardKey) {
+        const def = CARDS[cardKey];
+        if (!def?.cost) return null;
+        const p = parseCost(def.cost);
+        return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
+      }
+
+      function cheapestFeedElfExcluding(excludePerm) {
+        let best = null;
+        for (const p of state.battlefield) {
+          if (p === excludePerm) continue;
+          if (!p.subtypes?.includes('Elf') || !p.types?.includes('creature')) continue;
+          const c = mv(p.cardKey);
+          if (c === null) continue;
+          if (best === null || c < best) best = c;
+        }
+        return best;
+      }
+
+      const scActive = shangChiActive(state);
+      return state.creatures().some(p => {
+        if (p.summoningSick && !scActive) return false;
+        const feedElfCost = cheapestFeedElfExcluding(p);
+        if (feedElfCost === null) return false;
+        return dorkGrossOutput(state, p) > feedElfCost;
+      });
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  TEMUR SABERTOOTH / KOGLA + HOPE TENDER + GAEA'S CRADLE (+ HASTE ENABLER)
   //  (no Ashaya needed — Sabertooth/Kogla bounces Hope Tender directly)
   //
@@ -12487,7 +12696,7 @@ var DETECTORS = [
   //  converters through the same win conditions ("Win: Draw Library"
   //  accepts MANA_NEUTRAL_ETB: Beast Whisperer draws per Selvala recast).
   //
-  //  decklist_combos.txt lists combo 22 as {G} (mana-positive), which is
+  //  decklist_combos.md lists combo 22 as {G} (mana-positive), which is
   //  arithmetically wrong (see the manifest note) — but the combo IS real
   //  as a neutral engine, which is what this detector encodes.
   //
@@ -12582,9 +12791,15 @@ var DETECTORS = [
       // the battlefield, silently missing the more common "in hand" case
       // — confirmed directly against several of the uploaded decklist's
       // own combos (all of which start with "Hyrax Tower Scout in hand").
+      // [2026-07-28] Little Bear (custom-library) is a near-twin engine —
+      // same cost, same "untap a creature you control" ETB — and works here
+      // too since Temur has no creature-type restriction on its bounce
+      // target. Unlike the Kogla sibling detector below, Little Bear is NOT
+      // added there: Kogla's bounce only returns a Human, and Little Bear
+      // is a Bear, not a Human.
       const hyraxAvailable =
-        (state.hand && state.hand.includes('hyrax_tower_scout')) ||
-        hasPerm(state, 'Hyrax Tower Scout');
+        (state.hand && (state.hand.includes('hyrax_tower_scout') || state.hand.includes('little_bear'))) ||
+        hasPerm(state, 'Hyrax Tower Scout') || hasPerm(state, 'Little Bear');
       if (!hyraxAvailable) return false;
       // [O-29] Any untapped, non-summoning-sick dork that grosses ≥5 mana per
       // tap completes the loop. Use the shared dorkGrossOutput helper so the dork
@@ -13597,11 +13812,12 @@ var DETECTORS = [
   {
     name: 'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)  [COMBO 66]',
     description:
-      "Hyrax ETB untaps Argothian Elder / Ley Weaver; it (free) untaps the big land, tapped each cycle. " +
-      "Temur/Kogla bounce-recast Hyrax ({1G}+{2G}=5 mana/cycle). " +
-      "Gaea's Cradle: creatureCount ≥ 6 (net ≥1G). " +
-      "Nykthos: devotion ≥ 8 (net ≥1G after {2} activation). " +
-      "The land-untapper requires a 2nd land to target. No Ashaya required.",
+      "Hyrax ETB untaps Argothian Elder / Ley Weaver; it (free) untaps the big land " +
+      "PLUS a second land (Elder must target two — even if either is currently tapped), " +
+      "tapped each cycle. Temur/Kogla bounce-recast Hyrax ({1G}+{2G}=5 mana/cycle). " +
+      "Gaea's Cradle: creatureCount + 2nd land's output ≥ 6. " +
+      "Nykthos: devotion + 2nd land's output ≥ 8 (after {2} activation). " +
+      "No Ashaya required.",
     check(state) {
       // The land-untapper must be able to activate its tap ability this cycle.
       // Argothian Elder (Elf Druid) and Ley Weaver (Human Druid) both have the
@@ -13609,20 +13825,59 @@ var DETECTORS = [
       // here — Hyrax's ETB untaps ANY creature, so creature type is irrelevant.
       if (!permReadyOrSCActive(state, 'Argothian Elder') &&
           !permReadyOrSCActive(state, 'Ley Weaver')) return false;
-      // A repeatable Hyrax bounce engine: Temur Sabertooth or Kogla.
-      const bounceEngine = hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      // A repeatable Hyrax/Little-Bear bounce engine: Temur Sabertooth or Kogla.
+      const temurPresent = hasPerm(state, 'Temur Sabertooth');
+      const bounceEngine = temurPresent || hasPerm(state, 'Kogla, the Titan Ape');
       if (!bounceEngine) return false;
-      // Hyrax must be available — on the battlefield (about to be bounced) or in
-      // hand (canonical PRE state, recast to start the loop).
+      // Hyrax (or Little Bear — custom-library, same cost, same "untap a
+      // creature" ETB) must be available — on the battlefield (about to be
+      // bounced) or in hand (canonical PRE state, recast to start the loop).
+      // Little Bear is a Bear, not a Human, so it only works with Temur —
+      // Kogla's bounce is restricted to Humans.
       const hyraxAvailable =
-        hasPerm(state, 'Hyrax Tower Scout') ||
-        (state.hand && state.hand.includes('hyrax_tower_scout'));
+        hasPerm(state, 'Hyrax Tower Scout') || (state.hand && state.hand.includes('hyrax_tower_scout')) ||
+        (temurPresent && (hasPerm(state, 'Little Bear') || (state.hand && state.hand.includes('little_bear'))));
       if (!hyraxAvailable) return false;
       // The untapper's ability targets TWO different lands — require ≥2 lands.
       if (state.lands().length < 2) return false;
-      // Big land branch: Cradle (creatureCount ≥ 6) or Nykthos (devotion ≥ 8).
-      if (cradleUntapped(state) && creatureCount(state) >= 6) return true;
-      if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 8) return true;
+      // [2026-07-27] Cradle/Nykthos no longer need to be pre-untapped —
+      // Elder's own untap-two-lands ability is free and untaps it
+      // regardless of current tap state (the same "may currently be
+      // tapped" principle already applied to every sibling Elder/Lodge/
+      // Magus detector in this file). No separate bootstrap-affordability
+      // check is needed either: permReadyOrSCActive above already confirms
+      // Elder herself is untapped, and her {T} ability costs nothing — her
+      // very first tap is unconditionally available and self-funds the
+      // Temur/Kogla+Hyrax reset for every cycle after it (same reasoning
+      // already documented on the Elder+Lodge sibling: "Elder's untap is
+      // genuinely FREE, so it ALWAYS makes the big land tappable as the
+      // very first action, regardless of prior floating mana").
+      // [2026-07-27] Elder is FORCED to target a second land alongside the
+      // big one (her ability always untaps two) — the original math
+      // treated that second land as a wasted, zero-output untap. In
+      // reality it gets tapped for its own base {1} plus any attached
+      // Wild Growth/Utopia Sprawl/Elvish Guidance aura, exactly like the
+      // Wirewood-Lodge sibling's own second-land credit. Found via a user
+      // repro: Elder targeted Nykthos + a Wild-Growth-enchanted Forest —
+      // the Forest's own 2G was silently discounted to 0, missing a
+      // otherwise-clearing devotion total.
+      const secondLandOutput = (bigLandName) => {
+        const LIFE_COST_LANDS = new Set(['Ancient Tomb']);
+        const other = state.battlefield.find(p =>
+          p.types?.includes('land') && p.name !== bigLandName && !LIFE_COST_LANDS.has(p.name)
+        );
+        if (!other) return 0;
+        return 1 + enchantedDorkBonusG(state, other);
+      };
+      // Big land branch: Cradle (creatureCount ≥ 6) or Nykthos (devotion ≥ 8),
+      // now crediting the forced second land's own output too.
+      if (hasPerm(state, "Gaea's Cradle") || hasPerm(state, 'Itlimoc, Cradle of the Sun')) {
+        const bigLandName = hasPerm(state, "Gaea's Cradle") ? "Gaea's Cradle" : 'Itlimoc, Cradle of the Sun';
+        if (creatureCount(state) + secondLandOutput(bigLandName) >= 6) return true;
+      }
+      if (hasPerm(state, 'Nykthos, Shrine to Nyx')) {
+        if (devotionG(state) + secondLandOutput('Nykthos, Shrine to Nyx') >= 8) return true;
+      }
       return false;
     },
   },
@@ -13667,12 +13922,19 @@ var DETECTORS = [
       if (!permReadyOrSCActive(state, 'Argothian Elder') &&
           !permReadyOrSCActive(state, 'Ley Weaver')) return false;
       if (!hasPerm(state, 'Cloudstone Curio')) return false;
+      // Little Bear (custom-library) substitutes for Hyrax here freely —
+      // Cloudstone Curio's bounce has no creature-type restriction, unlike
+      // Kogla, so Little Bear being a Bear (not a Human) doesn't matter.
+      const usingLittleBear = !hasPerm(state, 'Hyrax Tower Scout') &&
+        !(state.hand && state.hand.includes('hyrax_tower_scout')) &&
+        (hasPerm(state, 'Little Bear') || (state.hand && state.hand.includes('little_bear')));
       const hyraxAvailable =
         hasPerm(state, 'Hyrax Tower Scout') ||
-        (state.hand && state.hand.includes('hyrax_tower_scout'));
+        (state.hand && state.hand.includes('hyrax_tower_scout')) ||
+        usingLittleBear;
       if (!hyraxAvailable) return false;
-      // Cloudstone needs a cheap partner creature (≠ Hyrax) to ping-pong with.
-      if (!hasCheapCreaturePartner(state, 'Hyrax Tower Scout')) return false;
+      // Cloudstone needs a cheap partner creature (≠ the untap engine) to ping-pong with.
+      if (!hasCheapCreaturePartner(state, usingLittleBear ? 'Little Bear' : 'Hyrax Tower Scout')) return false;
       // The untapper targets TWO different lands — require ≥2 lands.
       if (state.lands().length < 2) return false;
       // Big land branch — thresholds one lower than Temur (bounce is free).
@@ -13930,15 +14192,22 @@ var DETECTORS = [
       if (!untapper) return false;
 
       // Untap-source + reset-engine pairing:
-      //  (a) Hyrax ETB untaps the untapper, reset by Temur OR Kogla; or
+      //  (a) Hyrax ETB untaps the untapper, reset by Temur OR Kogla
+      //      (Little Bear — custom-library, same cost, same ETB — also
+      //      works here, but Temur ONLY: it's a Bear, not a Human, so
+      //      Kogla's bounce can't return it); or
       //  (b) Wirewood Symbiote untaps the untapper, reset by Temur ONLY, and
       //      needs an Elf to feed Symbiote's return cost that isn't the untapper.
+      const temurPresent = hasPerm(state, 'Temur Sabertooth');
       const hyraxAvailable =
         hasPerm(state, 'Hyrax Tower Scout') ||
         (state.hand && state.hand.includes('hyrax_tower_scout'));
+      const bearAvailable =
+        hasPerm(state, 'Little Bear') ||
+        (state.hand && state.hand.includes('little_bear'));
       const hyraxEngine =
-        hyraxAvailable &&
-        (hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape'));
+        (hyraxAvailable && (temurPresent || hasPerm(state, 'Kogla, the Titan Ape'))) ||
+        (bearAvailable && temurPresent);
 
       // Feed-elf must be on BF — Symbiote needs it on the first activation.
       // Magus is a Human Wizard (never an Elf candidate); Formidable Speaker IS
@@ -13974,7 +14243,7 @@ var DETECTORS = [
       // step is moot and only the recast (+ the untapper's {1}) remains.
       const engineOnField = symbioteEngine
         ? hasPerm(state, 'Wirewood Symbiote')
-        : hasPerm(state, 'Hyrax Tower Scout');
+        : (hasPerm(state, 'Hyrax Tower Scout') || hasPerm(state, 'Little Bear'));
       const bootstrapCost = symbioteEngine
         ? (engineOnField ? 5 : 3)   // on field: 1G(bounce)+G+G+1; in hand: G+G+1
         : (engineOnField ? 6 : 4);  // on field: 1G(bounce)+2G+1;  in hand: 2G+1
@@ -14382,6 +14651,66 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  ASHAYA + QUIRION/SCRYB RANGER + ALREADY-ANIMATED NYKTHOS
+  //  (sibling of the Animated Gaea's Cradle detector directly above)
+  //
+  //  Same shape, but for Nykthos: once Badgermole Cub's earthbend (or any
+  //  other animator) has made it a creature, Ranger can bounce itself
+  //  (a Forest under Ashaya) to untap it directly — no separate Destiny
+  //  Spinner/Vengeant Earth "land animator" detector is needed, and it
+  //  doesn't need to already be untapped (Ranger's bounce untaps it as the
+  //  loop's own first action).
+  //
+  //  Unlike Cradle, Nykthos's devotion mode itself costs {2} to activate —
+  //  a real, separate payment that must be made BEFORE any output exists
+  //  (Ranger's free bounce can't retroactively fund it), so this needs its
+  //  own bootstrap-affordability check, matching every other Nykthos-branch
+  //  detector in this file. Badgermole Cub's/Leyline's creature-tap bonus
+  //  applies to Nykthos's own tap once it's a creature (and Badgermole is
+  //  typically the very card that animated it).
+  //
+  //  Loop cost: Quirion recast {G}=1 + Nykthos {2} = 3. Scryb recast
+  //  {1G}=2 + Nykthos {2} = 4.
+  //
+  //  Found via a user repro: Badgermole Cub earthbent Nykthos into a
+  //  creature; Scryb Ranger then bounced itself to untap it directly, but
+  //  flatDorkOutput() deliberately excludes Nykthos (assuming a dedicated
+  //  detector existed elsewhere for it, matching Cradle/Itlimoc) — no such
+  //  detector actually existed for the Ranger family, so only the generic
+  //  auto-detector caught the win.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Ashaya + Ranger + Animated Nykthos)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Nykthos is already animated as a creature (e.g. by Badgermole Cub's earthbend). " +
+      "With Ashaya, Quirion/Scryb Ranger bounces itself (a Forest) to untap the animated " +
+      "Nykthos-creature. Pay {2}, tap for G×devotion (+1 more with Badgermole Cub/Leyline). " +
+      "Recast Ranger. Quirion: devotion+bonus > 3. Scryb: devotion+bonus > 4.",
+    check(state) {
+      if (!ashayaOut(state)) return false;
+      if (!rangerAvailable(state)) return false;
+      // The loop recasts Ranger every cycle — a non-flash creature spell.
+      // On an opponent's turn that's illegal without flash.
+      if (!canCastGreenCreatureNow(state)) return false;
+      const nykthos = state.battlefield.find(p =>
+        p.name === 'Nykthos, Shrine to Nyx' && p.types?.includes('creature')
+      );
+      if (!nykthos) return false;
+      // Nykthos's own {2} activation must be payable RIGHT NOW — Ranger's
+      // bounce is free, but it can't retroactively fund a cost that has to
+      // be paid before the devotion mode ever produces anything.
+      if (maxCurrentlyPayableMana(state) < 2) return false;
+      const badgermoleBonus =
+        (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
+      const output = devotionG(state) + badgermoleBonus;
+      if (quirionAvailable(state) && output > 3) return true;
+      if (scrybAvailable(state) && output > 4) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  WIREWOOD SYMBIOTE + TEMUR SABERTOOTH + ALREADY-ANIMATED GAEA'S CRADLE
   //
   //  Sibling of the Ashaya+Ranger variant directly above and of COMBO 67
@@ -14562,7 +14891,14 @@ var DETECTORS = [
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
       const hyraxOnField = hasPerm(state, 'Hyrax Tower Scout');
-      const hyraxAvailable = (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField;
+      const bearOnField = hasPerm(state, 'Little Bear');
+      // Little Bear (custom-library, same cost, same "untap a creature" ETB)
+      // substitutes for Hyrax freely here — this detector already requires
+      // Temur specifically (no Kogla branch), so the Human-only restriction
+      // that blocks Little Bear elsewhere doesn't apply.
+      const hyraxAvailable =
+        (state.hand && (state.hand.includes('hyrax_tower_scout') || state.hand.includes('little_bear'))) ||
+        hyraxOnField || bearOnField;
       if (!hyraxAvailable) return false;
       const cradle = state.battlefield.find(p =>
         (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') &&
@@ -14572,7 +14908,7 @@ var DETECTORS = [
       // [2026-07-26 — bootstrap-affordability follow-up] Same reasoning as
       // the Kogla variant above: Temur's bounce ({1G}) + Hyrax's recast
       // ({2G}) are paid steps that must be affordable RIGHT NOW.
-      const bootstrapCost = hyraxOnField ? 5 : 3;
+      const bootstrapCost = (hyraxOnField || bearOnField) ? 5 : 3;
       if (maxCurrentlyPayableMana(state) < bootstrapCost) return false;
       const threshold = hasPerm(state, 'Badgermole Cub') ? 5 : 6;
       return creatureCount(state) >= threshold;
@@ -14621,12 +14957,17 @@ var DETECTORS = [
       "output exceeds 6.",
     check(state) {
       // Kogla only bounces Humans — Hyrax Tower Scout qualifies (Human Scout).
-      // Temur has no restriction at all.
-      const bouncerAvailable =
-        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      // Temur has no restriction at all. Little Bear (custom-library, same
+      // cost, same "untap a creature" ETB) also substitutes for Hyrax, but
+      // Temur ONLY — it's a Bear, not a Human, so Kogla can't bounce it.
+      const temurPresent = hasPerm(state, 'Temur Sabertooth');
+      const bouncerAvailable = temurPresent || hasPerm(state, 'Kogla, the Titan Ape');
       if (!bouncerAvailable) return false;
       const hyraxOnField = hasPerm(state, 'Hyrax Tower Scout');
-      const hyraxAvailable = (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField;
+      const bearOnField = hasPerm(state, 'Little Bear');
+      const hyraxAvailable =
+        (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField ||
+        (temurPresent && ((state.hand && state.hand.includes('little_bear')) || bearOnField));
       if (!hyraxAvailable) return false;
       const hopeTender = state.battlefield.find(p => p.name === 'Hope Tender');
       if (!hopeTender) return false;
@@ -14655,7 +14996,7 @@ var DETECTORS = [
       // [bootstrap-affordability] Same pattern as the Animated-Cradle
       // siblings above: the bounce+recast+exert steps must be payable
       // RIGHT NOW, before any of this cycle's own payoff exists.
-      const bootstrapCost = (hyraxOnField ? 5 : 3) + 1;
+      const bootstrapCost = ((hyraxOnField || bearOnField) ? 5 : 3) + 1;
       if (maxCurrentlyPayableMana(state) < bootstrapCost) return false;
       return creatureCount(state) + secondLandOutput + badgermoleBonus > loopCost;
     },
@@ -14699,15 +15040,21 @@ var DETECTORS = [
       "{1G}+{2G} = 5. Cradle: net positive once creatureCount > 5. Nykthos: " +
       "devotion > 7 (loop cost 5 + its own {2} activation).",
     check(state) {
-      const bouncerAvailable =
-        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      // Little Bear (custom-library, same cost, same "untap a creature"
+      // ETB) also substitutes for Hyrax here, but Temur ONLY — it's a Bear,
+      // not a Human, so Kogla can't bounce it.
+      const temurPresent = hasPerm(state, 'Temur Sabertooth');
+      const bouncerAvailable = temurPresent || hasPerm(state, 'Kogla, the Titan Ape');
       if (!bouncerAvailable) return false;
       const hyraxOnField = hasPerm(state, 'Hyrax Tower Scout');
-      const hyraxAvailable = (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField;
+      const bearOnField = hasPerm(state, 'Little Bear');
+      const hyraxAvailable =
+        (state.hand && state.hand.includes('hyrax_tower_scout')) || hyraxOnField ||
+        (temurPresent && ((state.hand && state.hand.includes('little_bear')) || bearOnField));
       if (!hyraxAvailable) return false;
       if (!hasPerm(state, 'Arbor Elf')) return false;
       const loopCost = 2 /* Kogla/Temur {1G} */ + 3 /* Hyrax recast {2G} */;
-      const bootstrapCost = hyraxOnField ? loopCost : 3;
+      const bootstrapCost = (hyraxOnField || bearOnField) ? loopCost : 3;
       if (maxCurrentlyPayableMana(state) < bootstrapCost) return false;
       const cradle = state.battlefield.find(p =>
         (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') && p.isForest
@@ -14820,7 +15167,7 @@ var DETECTORS = [
 // Each entry: { name, description, check(state) → bool }
 //
 // Oracle references: ref/card_data.md
-// Lines: ref/decklist_combos.txt (Hitzel's Sequence, Mikokoro Mill, etc.)
+// Lines: ref/decklist_combos.md (Hitzel's Sequence, Mikokoro Mill, etc.)
 
 var WIN_CONDITIONS = [
 
@@ -14846,7 +15193,7 @@ var WIN_CONDITIONS = [
   //
   //  Endurance does NOT need its ETB held on the stack — it just needs to be
   //  castable when our library runs low (it has Flash).  The hold-priority
-  //  sequences documented in ref/decklist_combos.txt are valid EXECUTIONS
+  //  sequences documented in ref/decklist_combos.md are valid EXECUTIONS
   //  (they deny opponents response windows), not requirements.
   // ══════════════════════════════════════════════════════════════════════════
 
@@ -14862,7 +15209,7 @@ var WIN_CONDITIONS = [
       "Ashaya+Ranger: a Ranger bounces Endurance-as-Forest (once per turn per Ranger — recasts are rare). " +
       "Kogla+Witness: get Endurance to the graveyard (Beast Within/LQR, hand or graveyard; or under Ashaya: Crop Rotation, or Elvish Reclaimer+Ranger), Witness returns it, Kogla bounces Witness. " +
       "Cloudstone Curio: alternate casting Endurance and any other creature. " +
-      "Hold-priority stack executions (see ref/decklist_combos.txt) are valid ways to run the loop, not requirements.",
+      "Hold-priority stack executions (see ref/decklist_combos.md) are valid ways to run the loop, not requirements.",
     check(state) {
       if (!inHandOrField(state, 'Geier Reach Sanitarium', 'geier_reach')) return false;
       const inHand = (key) => state.hand && state.hand.includes(key);
@@ -14902,7 +15249,7 @@ var WIN_CONDITIONS = [
         // Ashaya + Ranger: a Ranger returns Endurance-as-Forest to hand.
         // "Once each turn" per Ranger object is plenty — recasts are rare
         // (one per ~library-size Geier Reach activations).  No LQR needed:
-        // the kill-spell dance in ref/decklist_combos.txt variant 3 is one
+        // the kill-spell dance in ref/decklist_combos.md variant 3 is one
         // valid execution, not a requirement.
         (hasAshaya && hasRanger) ||
         // Kogla + Witness family: get Endurance into the graveyard, Witness
@@ -16027,6 +16374,7 @@ var DETECTOR_REQUIRED_KEYS = {
   "Infinite Mana (Kogla + Karametra's Acolyte, devotion ≥7)  [COMBO 2]":        ['kogla','karametra_acolyte'],
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork ≥5)  [COMBO 4, 5, 17]': ['temur_sabertooth','wirewood_symbiote'],
   'Infinite Mana (Wirewood Symbiote + Badgermole/Leyline Earthbent Land, per-turn ramp)': ['wirewood_symbiote','badgermole_cub'],
+  'Infinite Mana (Wirewood Symbiote + Mana Dork, per-turn ramp)': ['wirewood_symbiote'],
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]': ['temur_sabertooth','concordant_crossroads'],
   // Break-even Selvala loop (COMBO 22): the 'concordant_crossroads' key here is the
   // representative of the haste-enabler equivalence slot, same convention as the
@@ -16052,6 +16400,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)': ['ashaya','quirion_ranger'],
   'Infinite ETB / Landfall (Ashaya + Ranger + Any Green Tapper)  [COMBO 1, 41]': ['ashaya','quirion_ranger'],
   "Infinite Mana (Ashaya + Ranger + Animated Gaea's Cradle)":                    ['ashaya','quirion_ranger','gaeas_cradle'],
+  'Infinite Mana (Ashaya + Ranger + Animated Nykthos)':                          ['ashaya','quirion_ranger','nykthos'],
   "Infinite Mana (Wirewood Symbiote + Temur Sabertooth + Animated Gaea's Cradle)": ['wirewood_symbiote','temur_sabertooth','gaeas_cradle'],
   "Infinite Mana (Hyrax Tower Scout + Kogla + Animated Gaea's Cradle)":         ['hyrax_tower_scout','kogla','gaeas_cradle'],
   "Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Animated Gaea's Cradle)": ['hyrax_tower_scout','temur_sabertooth','gaeas_cradle'],
@@ -16211,6 +16560,8 @@ var _DETECTOR_PREFILTER = {
   "Infinite Mana (Ashaya + Ranger + Animated Gaea's Cradle)":
     { all: ['ashaya', 'quirion_ranger'],
       any: [['gaeas_cradle', 'itlimoc']] },
+  'Infinite Mana (Ashaya + Ranger + Animated Nykthos)':
+    { all: ['ashaya', 'quirion_ranger', 'nykthos'] },
   "Infinite Mana (Wirewood Symbiote + Temur Sabertooth + Animated Gaea's Cradle)":
     { all: ['wirewood_symbiote', 'temur_sabertooth'],  // equiv-expanded: covers Kogla presence too (check() itself still rejects Kogla-only boards)
       any: [['gaeas_cradle', 'itlimoc']] },
@@ -16297,6 +16648,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['temur_sabertooth', 'wirewood_symbiote'] },
   'Infinite Mana (Wirewood Symbiote + Badgermole/Leyline Earthbent Land, per-turn ramp)':
     { all: ['wirewood_symbiote', 'badgermole_cub'] },
+  'Infinite Mana (Wirewood Symbiote + Mana Dork, per-turn ramp)':
+    { all: ['wirewood_symbiote'] },
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
     { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]':
