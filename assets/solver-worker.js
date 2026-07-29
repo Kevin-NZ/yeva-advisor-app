@@ -10778,18 +10778,28 @@ var DETECTORS = [
       if (permReady(state, 'Hope Tender') && cradleUntapped(state) && creatureCount(state) >= 2) return true;
 
       const scActive = shangChiActive(state);
+      // [2026-07-29] Badgermole Cub's / Leyline of Abundance's "whenever you
+      // tap a creature for mana, add {G}" bonus applies to ALL of these
+      // named creature dorks too, not just the generic-fallback default
+      // branch below (which already credited it via flatDorkOutput) — the
+      // named cases were comparing raw elfCount/creatureCount/devotionG/
+      // power against the threshold with no way for the bonus to close a
+      // 1-short gap. Found via a user repro: Priest of Titania with only 2
+      // Elves (elfCount 2, below this detector's own ≥2 threshold... but
+      // see the ≥3G sibling below for the case that actually missed).
+      const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
       return state.battlefield.some(p => {
         if (p.summoningSick && !scActive) return false;
         switch (p.name) {
-          case 'Priest of Titania':           return elfCount(state) >= 2;
-          case 'Circle of Dreams Druid':      return creatureCount(state) >= 2;
-          case 'Elvish Archdruid':            return elfCount(state) >= 2;
-          case 'Wirewood Channeler':          return elfCount(state) >= 2;
-          case "Karametra's Acolyte":         return devotionG(state) >= 2;
-          case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 2;
-          case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
-          case 'Marwyn, the Nurturer':        return (p.power || 0) >= 2;
-          case 'Topiary Lecturer':            return (p.power || 0) >= 2;
+          case 'Priest of Titania':           return elfCount(state) + dorkBonus >= 2;
+          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus >= 2;
+          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus >= 2;
+          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus >= 2;
+          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus >= 2;
+          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus >= 2;
+          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 2;
+          case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus >= 2;
+          case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus >= 2;
           default:
             // flatDorkOutput already folds in enchantedDorkBonusG (Wild
             // Growth/Utopia Sprawl on this dork's enchanted land), covering
@@ -10818,18 +10828,27 @@ var DETECTORS = [
       // spell. On an opponent's turn that's illegal without flash.
       if (!canCastGreenCreatureNow(state)) return false;
       const scActive = shangChiActive(state);
+      // [2026-07-29] See the matching note on the Quirion (≥2G) sibling
+      // above — Badgermole Cub's / Leyline of Abundance's per-tap bonus
+      // wasn't credited to any of these named cases, only to the
+      // generic-fallback default branch. Found via a user repro: Priest of
+      // Titania with only 2 Elves (elfCount 2, below this detector's own
+      // ≥3 threshold) plus Badgermole Cub's static — her real output is
+      // 3G, clearing the combo's own documented ≥3G requirement exactly,
+      // but the undercounted check rejected the board.
+      const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
       return state.battlefield.some(p => {
         if (p.summoningSick && !scActive) return false;
         switch (p.name) {
-          case 'Priest of Titania':           return elfCount(state) >= 3;
-          case 'Circle of Dreams Druid':      return creatureCount(state) >= 3;
-          case 'Elvish Archdruid':            return elfCount(state) >= 3;
-          case 'Wirewood Channeler':          return elfCount(state) >= 3;
-          case "Karametra's Acolyte":         return devotionG(state) >= 3;
-          case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 3;
-          case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
-          case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
-          case 'Topiary Lecturer':            return (p.power || 0) >= 3;
+          case 'Priest of Titania':           return elfCount(state) + dorkBonus >= 3;
+          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus >= 3;
+          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus >= 3;
+          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus >= 3;
+          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus >= 3;
+          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus >= 3;
+          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 3;
+          case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus >= 3;
+          case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus >= 3;
           default:
             // [2026-07-27] Same fix as the Quirion sibling above: use
             // flatDorkOutput (now folding in enchantedDorkBonusG) instead of
@@ -11474,6 +11493,10 @@ var DETECTORS = [
       // [2026-07-26 — bootstrap-affordability follow-up] The exert's {1}
       // must be payable RIGHT NOW.
       if (maxCurrentlyPayableMana(state, new Set(['Hope Tender'])) < 1) return false;
+      // [2026-07-29] Credit Badgermole Cub's/Leyline of Abundance's per-tap
+      // bonus to these named dork cases too — see the matching note on the
+      // Ashaya+Ranger+ManaDork detectors above for the full reasoning.
+      const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
       return state.battlefield.some(p => {
         if (p.name === 'Hope Tender') return false;
         if (!p.isForest) return false;
@@ -11481,10 +11504,10 @@ var DETECTORS = [
         switch (p.name) {
           case 'Priest of Titania':
           case 'Elvish Archdruid':
-          case 'Wirewood Channeler':      return elfCount(state) >= 2;
-          case "Karametra's Acolyte":     return devotionG(state) >= 2;
-          case 'Topiary Lecturer':        return (p.power || 0) >= 2;
-          case 'Fanatic of Rhonas':       return greatestPower(state) >= 4;
+          case 'Wirewood Channeler':      return elfCount(state) + dorkBonus >= 2;
+          case "Karametra's Acolyte":     return devotionG(state) + dorkBonus >= 2;
+          case 'Topiary Lecturer':        return (p.power || 0) + dorkBonus >= 2;
+          case 'Fanatic of Rhonas':       return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 2;
           case 'Llanowar Tribe':          return true;
           // Cradle/Circle/Marwyn/Selvala/Nykthos are handled by their own
           // dedicated detectors above — skip here to avoid conflicting
@@ -11608,6 +11631,11 @@ var DETECTORS = [
       //       file), but then the {G}{G} must come from somewhere ELSE
       //       first, checked via maxCurrentlyPayableMana.
       const fundMagus = new Set(['Magus of the Candelabra']);
+      // [2026-07-29] Credit Badgermole Cub's/Leyline of Abundance's per-tap
+      // bonus to the named CREATURE dorks (not Cradle/Nykthos — those are
+      // lands, so the bonus only applies if independently animated into a
+      // creature, already handled by the default branch below).
+      const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
       const hasSource = state.battlefield.some(p => {
         if (p.summoningSick && !shangChiActive(state)) return false;  // source must be ready
         if (p.tapped && maxCurrentlyPayableMana(state, fundMagus) < 2) return false;
@@ -11615,13 +11643,13 @@ var DETECTORS = [
           case "Gaea's Cradle":
           case 'Itlimoc, Cradle of the Sun':
             return creatureCount(state) >= 3;
-          case 'Priest of Titania':           return elfCount(state) >= 3;
-          case 'Circle of Dreams Druid':      return creatureCount(state) >= 3;
-          case 'Elvish Archdruid':            return elfCount(state) >= 3;
-          case 'Wirewood Channeler':          return elfCount(state) >= 3;
-          case "Karametra's Acolyte":         return devotionG(state) >= 3;
-          case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 4;
-          case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
+          case 'Priest of Titania':           return elfCount(state) + dorkBonus >= 3;
+          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus >= 3;
+          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus >= 3;
+          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus >= 3;
+          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus >= 3;
+          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus >= 4;
+          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 3;
           case 'Nykthos, Shrine to Nyx': {
             // [2026-07-27] Was missing from this switch entirely — every
             // OTHER named source here taps directly for its listed amount,
@@ -12871,11 +12899,6 @@ var DETECTORS = [
         if (p.summoningSick) return false;
         if (p.tapped) return false;
         switch (p.name) {
-          case 'Priest of Titania':           return elfCount(state) >= 5;
-          case 'Circle of Dreams Druid':      return creatureCount(state) >= 5;
-          case 'Elvish Archdruid':            return elfCount(state) >= 5;
-          case 'Wirewood Channeler':          return elfCount(state) >= 5;
-          case "Karametra's Acolyte":         return devotionG(state) >= 5;
           case 'Selvala, Heart of the Wilds':
             // Selvala's own {G},{T} activation must be paid BEFORE she
             // taps for value — her own (not-yet-produced) mana can't fund
@@ -12883,9 +12906,13 @@ var DETECTORS = [
             // activation cost of their own.
             return greatestPower(state) >= 6 &&
               maxCurrentlyPayableMana(state, new Set(['Selvala, Heart of the Wilds'])) >= 1;
-          case 'Marwyn, the Nurturer':        return (p.power || 0) >= 5; // Combo 38: break-even at 5
-          case 'Topiary Lecturer':            return (p.power || 0) >= 5; // same break-even logic
-          default: return false;
+          default:
+            // [2026-07-29] Was a raw elfCount/creatureCount/devotionG/power
+            // switch with no Badgermole Cub / Leyline of Abundance credit —
+            // dorkGrossOutput (already used by the Temur sibling just
+            // above) folds that bonus in for Priest/Circle/Archdruid/
+            // Channeler/Karametra's Acolyte/Marwyn/Topiary Lecturer alike.
+            return dorkGrossOutput(state, p) >= 5;
         }
       });
     },
@@ -12943,13 +12970,17 @@ var DETECTORS = [
             // her own not-yet-produced mana can't fund that {G}.
             return greatestPower(state) >= 5 &&
               maxCurrentlyPayableMana(state, new Set(['Selvala, Heart of the Wilds'])) >= 1;
-          case 'Priest of Titania':            return elfCount(state) >= 5;
-          case 'Elvish Archdruid':             return elfCount(state) >= 5;
-          case 'Wirewood Channeler':           return elfCount(state) >= 5;
-          case 'Circle of Dreams Druid':       return creatureCount(state) >= 6;
-          case "Karametra's Acolyte":          return devotionG(state) >= 6;
-          case 'Marwyn, the Nurturer':         return (p.power || 0) >= 5;
-          case 'Topiary Lecturer':             return (p.power || 0) >= 5;
+          case 'Priest of Titania':
+          case 'Elvish Archdruid':
+          case 'Wirewood Channeler':
+          case 'Marwyn, the Nurturer':
+          case 'Topiary Lecturer':
+            // [2026-07-29] dorkGrossOutput folds in the Badgermole Cub /
+            // Leyline of Abundance per-tap bonus, which the old raw
+            // elfCount/power comparisons here didn't credit.
+            return dorkGrossOutput(state, p) >= 5;
+          case 'Circle of Dreams Druid':       return dorkGrossOutput(state, p) >= 6;
+          case "Karametra's Acolyte":          return dorkGrossOutput(state, p) >= 6;
           default: return false;
         }
       });
@@ -14524,18 +14555,22 @@ var DETECTORS = [
       // Scryb Ranger ({1G} recast): need a creature producing ≥2G to cover {1} extra.
       if (scrybAvailable(state)) {
         const scActive = shangChiActive(state);
+        // [2026-07-29] Credit Badgermole Cub's/Leyline of Abundance's
+        // per-tap bonus — see the matching note on the Ashaya+Ranger+
+        // ManaDork detectors above for the full reasoning.
+        const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
         return state.battlefield.some(p => {
           if (p.tapped) return false;
           if (p.summoningSick && !scActive) return false;
           switch (p.name) {
-            case 'Priest of Titania':           return elfCount(state) >= 2;
-            case 'Circle of Dreams Druid':      return creatureCount(state) >= 2;
-            case 'Elvish Archdruid':            return elfCount(state) >= 2;
-            case 'Wirewood Channeler':          return elfCount(state) >= 2;
-            case "Karametra's Acolyte":         return devotionG(state) >= 2;
-            case 'Selvala, Heart of the Wilds': return greatestPower(state) >= 3; // {G} activation + {1} = net ≥2
-            case 'Fanatic of Rhonas':           return greatestPower(state) >= 4;
-            case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
+            case 'Priest of Titania':           return elfCount(state) + dorkBonus >= 2;
+            case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus >= 2;
+            case 'Elvish Archdruid':            return elfCount(state) + dorkBonus >= 2;
+            case 'Wirewood Channeler':          return elfCount(state) + dorkBonus >= 2;
+            case "Karametra's Acolyte":         return devotionG(state) + dorkBonus >= 2;
+            case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus >= 3; // {G} activation + {1} = net ≥2
+            case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 2;
+            case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus >= 3;
             default: return false;
           }
         });
@@ -14684,15 +14719,19 @@ var DETECTORS = [
         hasPerm(state, 'Woodcaller Automaton') ||
         (state.hand && state.hand.includes('woodcaller_automaton'));
       if (!woodcallerAvailable) return false;
+      // [2026-07-29] Credit Badgermole Cub's/Leyline of Abundance's per-tap
+      // bonus — see the matching note on the Ashaya+Ranger+ManaDork
+      // detectors above for the full reasoning.
+      const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
       return state.creatures().some(p => {
         if (p.tapped) return false;
         if (p.name === 'Woodcaller Automaton') return false;
         switch (p.name) {
-          case 'Priest of Titania':      return elfCount(state) > 6;
-          case 'Elvish Archdruid':       return elfCount(state) > 6;
-          case 'Wirewood Channeler':     return elfCount(state) > 6;
-          case 'Circle of Dreams Druid': return creatureCount(state) > 6;
-          case "Karametra's Acolyte":    return devotionG(state) > 6;
+          case 'Priest of Titania':      return elfCount(state) + dorkBonus > 6;
+          case 'Elvish Archdruid':       return elfCount(state) + dorkBonus > 6;
+          case 'Wirewood Channeler':     return elfCount(state) + dorkBonus > 6;
+          case 'Circle of Dreams Druid': return creatureCount(state) + dorkBonus > 6;
+          case "Karametra's Acolyte":    return devotionG(state) + dorkBonus > 6;
           default: return false;
         }
       });
