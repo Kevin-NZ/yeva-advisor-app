@@ -163,6 +163,9 @@ var COMBO_REQUIRED_KEYS = [
   ['gaeas_cradle','deserted_temple'],
   ['gaeas_cradle','wirewood_lodge'],
   ['nykthos','deserted_temple'],
+  // Temur/Kogla + Eternal Witness + Legolas's Quick Reflexes + Deserted
+  // Temple + Big Land (combos.js, added 2026-07-29)
+  ['eternal_witness','deserted_temple','temur_sabertooth'],
 
   // Earthcraft loops
   ['earthcraft','gaeas_cradle'],
@@ -12544,12 +12547,13 @@ var DETECTORS = [
       "Temur Sabertooth or Kogla ({1}{G}, no restriction) bounces Hope Tender; " +
       "recasting her ({1}{G}) resets her tap-gated (not once-per-turn) untap " +
       "ability. Her EXERT mode (untap TWO target lands) untaps Cradle + a second " +
-      "land at once for one activation, not just Cradle alone — nets an extra " +
-      "{G} per cycle when a second land is available, lowering the break-even " +
-      "creature count. Requires a haste enabler (e.g. Shang-Chi) so the " +
-      "freshly-recast, summoning-sick Hope Tender can still activate her {T} " +
-      "ability. Cycle costs {1G}(bounce)+{1G}(recast)+{1}(exert)=5: net positive " +
-      "at ≥4 creatures with a second land paired in, or >5 creatures Cradle-alone.",
+      "land at once for one activation — that second land's real output (Nykthos " +
+      "devotion, or a Wild Growth/Utopia Sprawl aura) is credited, not just a flat " +
+      "{G}, lowering the break-even creature count further when a bigger land is " +
+      "available. Requires a haste enabler (e.g. Shang-Chi) so the freshly-recast, " +
+      "summoning-sick Hope Tender can still activate her {T} ability. Cycle costs " +
+      "{1G}(bounce)+{1G}(recast)+{1}(exert)=5: net positive at ≥4 creatures with a " +
+      "second land paired in, or >5 creatures Cradle-alone.",
     check(state) {
       const bouncerAvailable =
         hasPerm(state, 'Temur Sabertooth') ||
@@ -12611,12 +12615,33 @@ var DETECTORS = [
       const tenderInHand = state.hand?.includes('hope_tender') && !hasPerm(state, 'Hope Tender');
       const cradleCount = creatureCount(state) + (tenderInHand ? 1 : 0);
       // A second, non-Cradle land to pair with Cradle in the same exert
-      // activation (untap_two_lands) — conservatively assumed to produce
-      // just its own base {G}, even if it's actually a bigger source.
-      const hasSecondLand = state.lands().some(
-        l => l.name !== "Gaea's Cradle" && l.name !== 'Itlimoc, Cradle of the Sun'
+      // activation (untap_two_lands). Pick the BEST available candidate's
+      // real output, not a flat +1 — Nykthos taps for devotion (after its
+      // own {2} activation), and a plain land may carry Wild Growth/Utopia
+      // Sprawl/Elvish Guidance. Always exerting the SAME best pair (Cradle
+      // + this land) every cycle is a valid, simpler loop that nets at
+      // least as much as any rotation between multiple second lands would.
+      // [2026-07-29] Was a flat +1 regardless of which land was picked,
+      // undercounting a Nykthos second land and missing a real win — found
+      // via a user repro whose actual line rotated the exert between
+      // Cradle+Talon Gates and Cradle+Nykthos across two bounce cycles
+      // (Nykthos alone nets +3 there: devotion 5 − {2} activation), which
+      // this detector's flat +1 model couldn't recognize as sufficient
+      // even though just fixating on Cradle+Nykthos every cycle clears the
+      // threshold on its own, with no rotation needed.
+      const LIFE_COST_LANDS = new Set(['Ancient Tomb']);
+      const secondLandCandidates = state.lands().filter(l =>
+        l.name !== "Gaea's Cradle" && l.name !== 'Itlimoc, Cradle of the Sun' &&
+        !LIFE_COST_LANDS.has(l.name)
       );
-      const gain = hasSecondLand ? cradleCount + 1 : cradleCount;
+      let secondLandGain = 0;
+      for (const land of secondLandCandidates) {
+        const landGain = land.name === 'Nykthos, Shrine to Nyx'
+          ? devotionG(state) - 2
+          : 1 + enchantedDorkBonusG(state, land);
+        if (landGain > secondLandGain) secondLandGain = landGain;
+      }
+      const gain = cradleCount + secondLandGain;
       return gain > 5;
     },
   },
@@ -13441,6 +13466,85 @@ var DETECTORS = [
         state.hand.includes('vitalize') ||
         state.hand.includes('emerald_charm')
       ));
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TEMUR SABERTOOTH/KOGLA + ETERNAL WITNESS + LEGOLAS'S QUICK REFLEXES +
+  //  DESERTED TEMPLE + BIG LAND
+  //
+  //  Sibling of the Marwyn/Selvala + Eternal Witness + Temur/Kogla +
+  //  Vitalize/Emerald Charm family above — same recursion shape (bounce EWit,
+  //  recast, ETB returns the untap spell), but here the recurred spell is
+  //  Legolas's Quick Reflexes (an instant, so it always lands back in the
+  //  graveyard after resolving), targeting DESERTED TEMPLE rather than the
+  //  mana dork directly. Deserted Temple then untaps the actual mana source
+  //  (Gaea's Cradle / Itlimoc / Nykthos) — a two-hop untap chain instead of
+  //  Vitalize's direct untap.
+  //
+  //  Loop: Temur/Kogla bounces Eternal Witness (Human, {1G}); recast
+  //  ({1GG}) — ETB returns LQR from graveyard. Cast LQR ({G}) targeting
+  //  Deserted Temple — untaps it. Deserted Temple ({1},{T}) untaps the big
+  //  land. Tap the big land.
+  //  Loop cost: {1G}(bounce) + {1GG}(recast) + {G}(LQR) + {1}(Temple) = 7.
+  //  Cradle/Itlimoc: net positive at creatureCount > 7 (EWit briefly off
+  //  the battlefield mid-cycle nets out the same as her being counted once
+  //  she's back — matches the Hope Tender sibling's own +1-if-in-hand
+  //  convention). Nykthos: devotion − 2 (its own activation) > 7, i.e.
+  //  devotion > 9.
+  //
+  //  Found via a user repro: `legolas_quick_reflexes,priest_of_titania,
+  //  regal_force,worldly_tutor,seedborn_muse,dryad_arbor,ashaya,
+  //  deserted_temple`, turn 4, simulate-opponent-turns — the actual winning
+  //  line rotated Hope Tender's exert between two land pairs across two
+  //  Temur-bounce cycles of a DIFFERENT engine (see the Hope Tender +
+  //  Cradle detector's own 2026-07-29 fix above) after having already
+  //  established this exact Deserted-Temple-via-LQR chain earlier in the
+  //  same turn, but no named detector covered the shape on its own, so
+  //  only the generic auto-detector caught the earlier win.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: "Infinite Mana (Temur Sabertooth/Kogla + Eternal Witness + Legolas's Quick Reflexes + Deserted Temple + Big Land)",
+    description:
+      "Temur/Kogla bounces Eternal Witness (Human, {1G}); recast ({1GG}) ETB " +
+      "returns Legolas's Quick Reflexes from the graveyard. Cast LQR ({G}) " +
+      "targeting Deserted Temple to untap it. Deserted Temple ({1},{T}) untaps " +
+      "Gaea's Cradle/Itlimoc/Nykthos. Tap the big land. Loop cost " +
+      "{1G}+{1GG}+{G}+{1} = 7. Cradle/Itlimoc: creatureCount > 7. " +
+      "Nykthos: devotion > 9 (after its own {2} activation).",
+    check(state) {
+      const bouncerAvailable =
+        hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
+      if (!bouncerAvailable) return false;
+      if (!inHandOrField(state, 'Eternal Witness', 'eternal_witness')) return false;
+      if (!hasPerm(state, 'Deserted Temple')) return false;
+      // LQR must be recoverable each cycle — in hand already, or in the
+      // graveyard where Eternal Witness's own ETB recurs it every cycle.
+      if (!hasLQRAvailable(state)) return false;
+
+      const bigLand = state.battlefield.find(p =>
+        p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun' ||
+        p.name === 'Nykthos, Shrine to Nyx'
+      );
+      if (!bigLand) return false;
+
+      // Bootstrap-affordability: the first cycle's paid steps must be
+      // payable RIGHT NOW. If Eternal Witness is already in hand (mid-loop,
+      // just bounced), the {1G} bounce step is moot.
+      const ewitOnField = hasPerm(state, 'Eternal Witness');
+      const bootstrapCost = ewitOnField ? 7 : 5;
+      if (maxCurrentlyPayableMana(state, new Set(['Eternal Witness'])) < bootstrapCost) return false;
+
+      if (bigLand.name === 'Nykthos, Shrine to Nyx') {
+        return devotionG(state) - 2 > 7;
+      }
+      // Eternal Witness counts toward Cradle's own creatureCount whether
+      // she's on the battlefield now or about to be recast from hand —
+      // creatureCount(state) already includes her if she's present; if
+      // she's currently in hand (mid-loop), credit her back in.
+      const ewitInHand = state.hand?.includes('eternal_witness') && !ewitOnField;
+      return creatureCount(state) + (ewitInHand ? 1 : 0) > 7;
     },
   },
 
@@ -16392,6 +16496,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]':  ['marwyn','eternal_witness','kogla'],
   'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]': ['selvala','eternal_witness','temur_sabertooth'],
   'Infinite Mana (Selvala + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 44]': ['selvala','eternal_witness','kogla'],
+  "Infinite Mana (Temur Sabertooth/Kogla + Eternal Witness + Legolas's Quick Reflexes + Deserted Temple + Big Land)": ['eternal_witness','deserted_temple','temur_sabertooth'],
   'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':                    ['argothian_elder','maze_of_ith'],
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]': ['tireless_provisioner','ashaya','quirion_ranger'],
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
