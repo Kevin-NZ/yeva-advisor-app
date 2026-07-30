@@ -11698,21 +11698,23 @@ var DETECTORS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  ASHAYA + MAGUS OF THE CANDELABRA + BADGERMOLE CUB / LEYLINE
-  //  (MEGA SELF-UNTAP CHAIN)
+  //  ASHAYA + MAGUS OF THE CANDELABRA (MEGA SELF-UNTAP CHAIN)
   //
   //  Magus's own ability ({X},{T}: untap X target lands) can target HERSELF
   //  plus every other Forest-ified creature-land at once, not just one named
   //  "big" source — sibling of "Ashaya + Magus + Source ≥3G" above, but for
   //  boards with several small Forest-creatures instead of one big mana land.
   //  Each of those taps for a base {G} (native tapForMana or the generic
-  //  Forest-mana fallback). Badgermole Cub's / Leyline of Abundance's
-  //  "whenever you tap a creature for mana, add {G}" static adds a SECOND
-  //  {G} to every creature tap except Badgermole's own (confirmed directly
-  //  against actions.js's applyTapBonuses — Badgermole explicitly excludes
-  //  itself; Leyline has no such exclusion). Paying {X} to untap X targets
-  //  (herself + X-1 sources) nets positive once the bonus-boosted sum of
-  //  those sources exceeds X.
+  //  Forest-mana fallback), boosted by:
+  //   - Badgermole Cub's / Leyline of Abundance's "whenever you tap a
+  //     creature for mana, add {G}" static — a SECOND {G} on every creature
+  //     tap except Badgermole's own (confirmed against actions.js's
+  //     applyTapBonuses — Badgermole explicitly excludes itself; Leyline
+  //     has no such exclusion).
+  //   - Wild Growth / Utopia Sprawl / Elvish Guidance auras on any
+  //     individual source (enchantedDorkBonusG — bonuses stack).
+  //  Paying {X} to untap X targets (herself + X-1 sources) nets positive
+  //  once the bonus-boosted sum of those sources exceeds X.
   //
   //  Found via a user repro that only won through the O-73 generic
   //  auto-detector: Magus + Badgermole Cub + Wirewood Symbiote + a basic
@@ -11720,6 +11722,18 @@ var DETECTORS = [
   //  ETB) all made Forests by Ashaya — debug instrumentation showed the
   //  real repeating segment was exactly "Magus X=4: untap Forest, Magus,
   //  Badgermole Cub, Wirewood Symbiote" netting 5G for 4 paid.
+  //
+  //  [2026-07-30] Was hard-gated on Badgermole Cub/Leyline being present at
+  //  all, and never credited aura bonuses per source — missing a real,
+  //  simpler variant with neither: a Wild-Growth-enchanted Forest, Arbor
+  //  Elf, and Elvish Mystic (Magus untaps all three + herself each cycle;
+  //  the Wild Growth land alone supplies enough surplus). ALSO missed that
+  //  Arbor Elf, when among the sources, contributes a second FREE untap of
+  //  her own (her own "{T}: untap target Forest" ability costs no mana) —
+  //  she can retap the single best-output source once more per cycle
+  //  before Magus resets everyone, on top of the normal per-source sum.
+  //  Repro: `magus_of_the_candelabra,arbor_elf,worldly_tutor,
+  //  fanatic_of_rhonas,wild_growth,forest,seedborn_muse,destiny_spinner`.
   // ══════════════════════════════════════════════════════════════════════════
   {
     name: 'Infinite Mana (Ashaya + Magus of the Candelabra + Badgermole Cub / Leyline Mega-Untap)',
@@ -11728,12 +11742,12 @@ var DETECTORS = [
       "Each source taps for {G}, plus another {G} from Badgermole Cub's or Leyline of " +
       "Abundance's \"whenever you tap a creature for mana, add {G}\" static (applies to any " +
       "creature tap, including a Badgermole-animated basic land — excludes Badgermole's own " +
-      "tap). Paying {X} nets positive once the boosted sources outproduce the untap count.",
+      "tap), plus any Wild Growth/Utopia Sprawl/Elvish Guidance aura on an individual source. " +
+      "Arbor Elf among the sources adds one free extra untap of the best single source. " +
+      "Paying {X} nets positive once the boosted sources outproduce the untap count.",
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
-      const hasBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
-      if (!hasBonus) return false;
 
       // Every OTHER land Magus can untap and re-tap for mana this cycle:
       // native mana lands and any creature she's made a Forest (isForest).
@@ -11748,12 +11762,47 @@ var DETECTORS = [
       });
       if (sources.length === 0) return false;
 
+      const hasCreatureBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
       let gain = 0;
+      let bestSourceGain = 0;
+      let extraActivationCost = 0; // Nykthos's own {2} devotion-mode cost, on top of Magus's {X}
       for (const p of sources) {
-        gain += 1; // base {G} from the Forest/native tap
-        if (p.types?.includes('creature') && p.name !== 'Badgermole Cub') gain += 1;
+        let g;
+        // [2026-07-30] Gaea's Cradle/Itlimoc/Nykthos can be targeted by
+        // Magus's own X same as any small Forest-creature — she doesn't
+        // care what kind of land it is. They were previously treated as
+        // flat {G} sources like everything else, badly undercounting a
+        // board where Magus is self-sustaining (targeting HERSELF as one
+        // of her own X lands each cycle) and combining Cradle's real
+        // creature-count output with a second, smaller source in the same
+        // activation — a real repro (`wooded_foothills,shared_summons,
+        // magus_of_the_candelabra,arbor_elf,shifting_woodland,
+        // scryb_ranger,chord_of_calling,lotus_petal`) needed exactly this:
+        // Scryb Ranger's self-bounce was only a ONE-TIME kickstart (to get
+        // Magus untapped the first time), not part of the repeating cycle
+        // at all, once Magus could target herself + Cradle + an enchanted
+        // land every cycle. Nykthos's devotion mode still costs its own
+        // {2} on top of Magus's {X}, tracked separately below.
+        if (p.name === "Gaea's Cradle") {
+          g = creatureCount(state);
+        } else if (p.name === 'Itlimoc, Cradle of the Sun') {
+          g = creatureCount(state) + 1;
+        } else if (p.name === 'Nykthos, Shrine to Nyx') {
+          g = devotionG(state);
+          extraActivationCost += 2;
+        } else {
+          g = 1 + enchantedDorkBonusG(state, p); // base {G} + any aura on this source
+          if (p.types?.includes('creature') && p.name !== 'Badgermole Cub' && hasCreatureBonus) g += 1;
+        }
+        gain += g;
+        if (g > bestSourceGain) bestSourceGain = g;
       }
-      const cost = sources.length + 1; // X = herself + all sources
+      // Arbor Elf's own untap ability ({T}: untap target Forest) costs no
+      // mana — if she's among the sources, she can retap the single
+      // best-output source once more per cycle before Magus resets
+      // everyone, on top of the per-source sum above.
+      if (sources.some(p => p.name === 'Arbor Elf')) gain += bestSourceGain;
+      const cost = sources.length + 1 + extraActivationCost; // steady-state X = herself + all sources
       if (gain <= cost) return false;
       // [2026-07-26 — 2nd bootstrap-affordability follow-up] Unlike the
       // "Ashaya + Magus + Source ≥3G" sibling (which requires its ONE
@@ -11761,8 +11810,28 @@ var DETECTORS = [
       // detector's `sources` list has no tapped-state requirement at all —
       // every one of them could be currently tapped, in which case the
       // {X} activation cost must be paid from elsewhere BEFORE Magus ever
-      // untaps them. Require that {X} be payable right now.
-      if (maxCurrentlyPayableMana(state, new Set(['Magus of the Candelabra'])) < cost) return false;
+      // untaps them.
+      //
+      // [2026-07-30] That check charged the FULL steady-state cost
+      // (sources.length+1, as if EVERY source plus Magus herself needed
+      // resetting) even for the very first activation — but
+      // permReadyOrSCActive already guarantees Magus herself is untapped
+      // right now (she's not a valid target for her own ability this
+      // cycle, no benefit to it), and any source that's ALREADY untapped
+      // doesn't need her help either — it can just be tapped directly for
+      // its own mana. Only the CURRENTLY TAPPED sources actually need
+      // Magus's {X} to come back online this cycle. Charging the full
+      // steady cost as a bootstrap rejected boards that were genuinely
+      // launchable (e.g. two sources already untapped, two tapped —
+      // bootstrap only needs to pay for the two tapped ones, not all
+      // four), falling through to the generic auto-detector instead.
+      // Repro: `dryad_arbor,badgermole_cub,sol_ring,chrome_mox,forest,
+      // elvish_spirit_guide,nykthos,magus_of_the_candelabra`.
+      const bootstrapCost = sources.filter(p => p.tapped).length;
+      if (bootstrapCost > 0 &&
+          maxCurrentlyPayableMana(state, new Set(['Magus of the Candelabra'])) < bootstrapCost) {
+        return false;
+      }
       return true;
     },
   },
@@ -12176,6 +12245,27 @@ var DETECTORS = [
   //  Nykthos: total cost {2}(activation)+4(loop) = 6; need devotion > 6,
   //  i.e. ≥7 — matches the uploaded list's own stated prerequisite
   //  ("devotion to green is at least 7") exactly.
+  //
+  //  [2026-07-30 — fixed the loop's actual fixed point] The loop's steady
+  //  state is NOT "everything untapped" — Magus's own activation is what
+  //  untaps the big land and Lodge each cycle, so those two are tapped
+  //  (just having been used) at the point the cycle repeats, and Speaker
+  //  is likewise tapped (having just untapped Magus to close the loop).
+  //  The ONLY piece that must actually be untapped+ready to KICK the cycle
+  //  is Magus itself; Lodge/Cradle/Nykthos only need to be present (Magus
+  //  untaps them regardless of their current tapped state — targeting an
+  //  already-untapped land is legal, it just does nothing), and Speaker
+  //  only needs to not be summoning sick (Lodge untaps her mid-cycle
+  //  before she activates). The old check required
+  //  permReady(Speaker) && permUntapped(Lodge) && cradleUntapped(state)
+  //  simultaneously with permReady(Magus) — a state that only exists
+  //  before the loop has ever run, so real DFS lines that build the loop
+  //  turn it deployed and then IMMEDIATELY end their turn (Magus untapped,
+  //  everything else tapped from having just been used) always fell
+  //  through to the generic "auto-detected repeating state" fallback
+  //  instead of this named detector. Repro:
+  //  `urza_cave,sol_ring,regal_force,elvish_spirit_guide,fyndhorn_elves,
+  //  chrome_mox,gaeas_cradle,war_room` (T3, 5 creatures on Cradle).
   // ══════════════════════════════════════════════════════════════════════════
   {
     name: 'Infinite Mana (Formidable Speaker + Wirewood Lodge + Magus of the Candelabra + Big Land)',
@@ -12185,11 +12275,16 @@ var DETECTORS = [
       'Loop cost 4 mana/cycle (Nykthos additionally costs {2} to activate). ' +
       "Cradle: creature count > 4. Nykthos: devotion > 6.",
     check(state) {
-      if (!permReady(state, 'Formidable Speaker')) return false;
-      if (!permUntapped(state, 'Wirewood Lodge')) return false;
       if (!permReady(state, 'Magus of the Candelabra')) return false;
-      const cradleOk  = cradleUntapped(state) && creatureCount(state) > 4;
-      const nykthosOk = permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) > 6;
+      if (!hasPerm(state, 'Wirewood Lodge')) return false;
+      const speakerReady = state.battlefield.some(
+        p => p.name === 'Formidable Speaker' && !p.summoningSick
+      );
+      if (!speakerReady) return false;
+      const cradleOk  =
+        (hasPerm(state, "Gaea's Cradle") || hasPerm(state, 'Itlimoc, Cradle of the Sun')) &&
+        creatureCount(state) > 4;
+      const nykthosOk = hasPerm(state, 'Nykthos, Shrine to Nyx') && devotionG(state) > 6;
       return cradleOk || nykthosOk;
     },
   },
@@ -14215,18 +14310,35 @@ var DETECTORS = [
       );
       if (!hasCradle) return false;
       // A second, non-Cradle land to pair with Cradle in the same
-      // untap-two-lands activation — conservatively assumed to produce
-      // just its own base {G}, even if it's actually a bigger source.
-      const hasSecondLand = state.lands().some(
-        l => l.name !== "Gaea's Cradle" && l.name !== 'Itlimoc, Cradle of the Sun'
+      // untap-two-lands activation. [2026-07-30] Was a flat +1 regardless
+      // of which land was picked — same undercounting bug already fixed on
+      // the sibling "Temur Sabertooth/Kogla + Hope Tender + Gaea's Cradle"
+      // detector above: a Nykthos second land actually taps for devotion
+      // (after its own {2} activation), not a flat {G}. Found via a user
+      // repro (`gaeas_cradle,boseiju,elvish_mystic,yavimaya,shang_chi,
+      // temur_sabertooth,sowing_mycospawn,forest`) whose real line paired
+      // Cradle with Nykthos (devotion 6, net +4) and only fell through to
+      // the generic auto-detector because `cradleCount + 1 <= 6` rejected
+      // it under the flat-+1 model even though the true gain cleared 6.
+      const LIFE_COST_LANDS = new Set(['Ancient Tomb']);
+      const secondLandCandidates = state.lands().filter(l =>
+        l.name !== "Gaea's Cradle" && l.name !== 'Itlimoc, Cradle of the Sun' &&
+        !LIFE_COST_LANDS.has(l.name)
       );
-      if (!hasSecondLand) return false;
+      if (secondLandCandidates.length === 0) return false;
+      let secondLandGain = 0;
+      for (const land of secondLandCandidates) {
+        const landGain = land.name === 'Nykthos, Shrine to Nyx'
+          ? devotionG(state) - 2
+          : 1 + enchantedDorkBonusG(state, land);
+        if (landGain > secondLandGain) secondLandGain = landGain;
+      }
       // creatureCount seen AFTER she's recast (a creature herself) — but
       // she's not on the battlefield when this state is checked if she's
       // mid-bounce (in hand), so +1 accounts for her return.
       const onBF = hasPerm(state, 'Argothian Elder') || hasPerm(state, 'Ley Weaver');
       const cradleCount = onBF ? creatureCount(state) : creatureCount(state) + 1;
-      if (cradleCount + 1 <= 6) return false;
+      if (cradleCount + secondLandGain <= 6) return false;
       // [2026-07-26 — bootstrap-affordability follow-up] Unlike the
       // Hyrax/Symbiote-engine siblings (COMBO 66/67, which require BOTH
       // the untapper AND the big land pre-untapped, making them
@@ -15207,6 +15319,99 @@ var DETECTORS = [
         p.name === 'Nykthos, Shrine to Nyx' && p.isForest
       );
       if (nykthos && devotionG(state) > loopCost + 2) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  TEMUR SABERTOOTH + ARBOR ELF + YAVIMAYA/ASHAYA + BIG LAND
+  //  (Temur bounces Arbor Elf herself directly — Kogla can't: she's an Elf,
+  //  not a Human)
+  //
+  //  Sibling of the Hyrax-Tower-Scout variant directly above, but simpler:
+  //  no Hyrax needed at all. Temur Sabertooth ({1}{G}, no restriction)
+  //  bounces Arbor Elf directly; recasting her ({G}) resets her tap-gated
+  //  (not once-per-turn) "{T}: untap target Forest" ability, which is
+  //  otherwise FREE. She then untaps the big land (a Forest via Yavimaya or
+  //  Ashaya) for its full output.
+  //
+  //  Recasting puts her back on the battlefield summoning sick, and her
+  //  ability has a {T} cost — a haste enabler (Shang-Chi or equivalent) is
+  //  required, same reasoning as every other bounce-recast tap-ability loop
+  //  in this file.
+  //
+  //  Loop cost: {1G}(Temur bounce) + {G}(Arbor Elf recast) = 3 (her own
+  //  untap activation is free). Net positive once creatureCount > 3
+  //  (Cradle) or devotion > 5 (Nykthos: loop cost 3 + its own {2}
+  //  activation).
+  //
+  //  Found via a user repro: `priest_of_titania,sowing_mycospawn,
+  //  gaeas_cradle,elvish_mystic,shang_chi,green_suns_zenith,arbor_elf,
+  //  boseiju` — the real repeating segment was exactly "Temur bounces Arbor
+  //  Elf -> recast -> untap Cradle -> tap", with Yavimaya (not Ashaya) as
+  //  the Forest source, but no detector modeled this direct-bounce shape,
+  //  so only the generic auto-detector caught the win.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Temur Sabertooth + Arbor Elf + Yavimaya/Ashaya + Big Land)',
+    loopType: LOOP_TYPE.MANA_POSITIVE,
+    description:
+      "Temur Sabertooth ({1}{G}, no restriction — Kogla can't, she's an Elf not a Human) " +
+      "bounces Arbor Elf; recasting her ({G}) resets her tap-gated, otherwise-free " +
+      "\"{T}: untap target Forest\" ability. Untaps Gaea's Cradle or Nykthos (a Forest via " +
+      "Yavimaya or Ashaya). Requires a haste enabler (e.g. Shang-Chi) so the freshly-recast, " +
+      "summoning-sick Arbor Elf can still activate. Loop cost {1G}+{G}=3. Cradle: " +
+      "creatureCount > 3. Nykthos: devotion > 5.",
+    check(state) {
+      if (!hasPerm(state, 'Temur Sabertooth')) return false;
+      if (!inHandOrField(state, 'Arbor Elf', 'arbor_elf')) return false;
+      if (!hasGlobalHaste(state)) return false;
+      const loopCost = 2 /* Temur {1G} */ + 1 /* Arbor Elf recast {G} */;
+      const elfOnField = hasPerm(state, 'Arbor Elf');
+      const bootstrapCost = elfOnField ? loopCost : 1;
+      if (maxCurrentlyPayableMana(state, new Set(['Arbor Elf'])) < bootstrapCost) return false;
+      const cradle = state.battlefield.find(p =>
+        (p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun') && p.isForest
+      );
+      if (cradle && creatureCount(state) > loopCost) return true;
+      const nykthos = state.battlefield.find(p =>
+        p.name === 'Nykthos, Shrine to Nyx' && p.isForest
+      );
+      if (nykthos && devotionG(state) > loopCost + 2) return true;
+      // [2026-07-30] The "big land" target doesn't have to be Cradle or
+      // Nykthos at all — Arbor Elf's "{T}: untap target Forest" is happy to
+      // target any OTHER creature Ashaya has made a Forest, including a
+      // high-output mana dork like Fanatic of Rhonas (Ferocious). That
+      // needs Ashaya specifically (Yavimaya only Forest-ifies LANDS, not
+      // creatures). Same named-dork switch used by the Ashaya+Ranger+Mana
+      // Dork family, credited with Badgermole/Leyline's creature-tap bonus.
+      // Repro: `summoners_pact,shang_chi,forest,fanatic_of_rhonas,
+      // force_of_vigor,crop_rotation,arbor_elf,verdant_catacombs` — Temur
+      // rotated between bouncing Fanatic of Rhonas and Arbor Elf, but the
+      // Fanatic bounce was incidental; the real engine is just Arbor Elf
+      // untapping Fanatic each cycle, reset by Temur bouncing HER.
+      if (ashayaOut(state)) {
+        const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
+        const scActive = shangChiActive(state);
+        const hasDork = state.battlefield.some(p => {
+          if (p.name === 'Arbor Elf') return false; // she's the untapper, not the target
+          if (p.summoningSick && !scActive) return false;
+          switch (p.name) {
+            case 'Priest of Titania':           return elfCount(state) + dorkBonus > loopCost;
+            case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus > loopCost;
+            case 'Elvish Archdruid':            return elfCount(state) + dorkBonus > loopCost;
+            case 'Wirewood Channeler':          return elfCount(state) + dorkBonus > loopCost;
+            case "Karametra's Acolyte":         return devotionG(state) + dorkBonus > loopCost;
+            case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus > loopCost;
+            case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus > loopCost;
+            case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus > loopCost;
+            case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus > loopCost;
+            default:
+              return flatDorkOutput(state, p) > loopCost;
+          }
+        });
+        if (hasDork) return true;
+      }
       return false;
     },
   },
@@ -16550,6 +16755,7 @@ var DETECTOR_REQUIRED_KEYS = {
   "Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Animated Gaea's Cradle)": ['hyrax_tower_scout','temur_sabertooth','gaeas_cradle'],
   "Infinite Mana (Hope Tender + Hyrax Tower Scout + Kogla/Temur + Gaea's Cradle)": ['hope_tender','hyrax_tower_scout','gaeas_cradle'],
   'Infinite Mana (Kogla/Temur + Hyrax Tower Scout + Arbor Elf + Yavimaya + Big Land)': ['hyrax_tower_scout','arbor_elf','yavimaya'],
+  'Infinite Mana (Temur Sabertooth + Arbor Elf + Yavimaya/Ashaya + Big Land)': ['temur_sabertooth','arbor_elf'],
   // Shang-Chi bounce-recast loops
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':       ['temur_sabertooth','shang_chi'],
   'Infinite Mana (Kogla + Shang-Chi + Human Tap-Dork bounce-recast)':            ['kogla','shang_chi'],
@@ -16748,9 +16954,11 @@ var _DETECTOR_PREFILTER = {
     { all: ['ashaya', 'argothian_elder'] },  // equiv-grouped with ley_weaver
   'Infinite Mana (Ashaya + Magus of the Candelabra + Source ≥3G)  [COMBO 32, 34, 36, 43, 47, 52, 60, 62]':
     { all: ['ashaya', 'magus_of_the_candelabra'] },
+  // [2026-07-30] No longer requires Badgermole Cub/Leyline — Wild Growth/
+  // Utopia Sprawl auras or Arbor Elf's free extra untap can also clear the
+  // detector's own threshold; see the check()'s comment for the repro.
   'Infinite Mana (Ashaya + Magus of the Candelabra + Badgermole Cub / Leyline Mega-Untap)':
-    { all: ['ashaya', 'magus_of_the_candelabra'],
-      any: [['badgermole_cub', 'leyline_of_abundance']] },
+    { all: ['ashaya', 'magus_of_the_candelabra'] },
   'Infinite Mana (Temur Sabertooth/Kogla + Magus of the Candelabra + Big Land)':
     { all: ['magus_of_the_candelabra'],
       any: [['kogla', 'temur_sabertooth']] },
@@ -16801,8 +17009,13 @@ var _DETECTOR_PREFILTER = {
       any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
   'Infinite ETB / Storm (Selvala + Temur Sabertooth + Haste Enabler, break-even)  [COMBO 22]':
     { all: ['selvala', 'temur_sabertooth'] },
+  // [2026-07-30] Was `all: [..., 'hyrax_tower_scout']`, which blocked the
+  // check() function's own Little-Bear substitution entirely on any board
+  // that only has Little Bear and no Hyrax Tower Scout — Temur (unlike
+  // Kogla) has no creature-type restriction on its bounce, so Little Bear
+  // works here too (see the check()'s own comment).
   'Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Mana Dork ≥5G)  [COMBO 8, 18, 28, 30, 57]':
-    { all: ['temur_sabertooth', 'hyrax_tower_scout'] },
+    { all: ['temur_sabertooth'], any: [['hyrax_tower_scout', 'little_bear']] },
   'Infinite Mana (Hyrax Tower Scout + Kogla + Mana Dork ≥5G)  [COMBO 15, 19, 23, 25, 35, 38, 59]':
     { all: ['kogla', 'hyrax_tower_scout'] },
   "Infinite Mana (Hyrax Tower Scout + Kogla + Animated Gaea's Cradle)":
@@ -16814,6 +17027,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['hope_tender', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
   'Infinite Mana (Kogla/Temur + Hyrax Tower Scout + Arbor Elf + Yavimaya + Big Land)':
     { all: ['hyrax_tower_scout', 'arbor_elf'], any: [['gaeas_cradle', 'itlimoc', 'nykthos']] },
+  'Infinite Mana (Temur Sabertooth + Arbor Elf + Yavimaya/Ashaya + Big Land)':
+    { all: ['temur_sabertooth', 'arbor_elf'], any: [['gaeas_cradle', 'itlimoc', 'nykthos']] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
     { all: ['temur_sabertooth', 'woodcaller_automaton'] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Ashaya + Mana Dork)':
