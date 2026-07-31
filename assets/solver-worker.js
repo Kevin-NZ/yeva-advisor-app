@@ -10104,6 +10104,18 @@ function flatDorkOutput(state, p) {
   // here would preempt those more specific, better-documented detectors in
   // the priority race on any board where both apply.
   if (p.name === 'Ashaya, Soul of the Wild') return 0;
+  // [2026-07-30] Shang-Chi's own "{T}: Add two mana of any one color,
+  // activate abilities of creature sources only" (restricted — IMP-11) and
+  // the plain "{T}: Add {G}" every Forest gets are two DIFFERENT abilities
+  // — once Ashaya makes him a Forest too, he can choose either one when
+  // tapped (real MTG rules: a permanent with two tap abilities picks one
+  // per tap, they don't conflict). actions.js now generates both actions
+  // (see its own "4a-bis" comment), so crediting his generic 1G here
+  // (unrestricted — usable to fund the recast a bounce-loop needs, unlike
+  // his own restricted mana) matches what a real move can produce. A
+  // previous version of this function excluded him entirely, matching an
+  // actions.js exclusion that turned out to be an overcorrection — see that
+  // file's own comment on the fix.
   const hasBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
   const isCreature = p.types?.includes('creature');
   // Badgermole's/Leyline's "tap a creature for mana" bonus only applies if
@@ -10123,6 +10135,15 @@ function flatDorkOutput(state, p) {
   // be actively dangerous in a loop meant to run indefinitely.
   const SPECIAL_LANDS = new Set(["Gaea's Cradle", 'Itlimoc, Cradle of the Sun', 'Nykthos, Shrine to Nyx', 'Ancient Tomb']);
   if (SPECIAL_LANDS.has(p.name)) return 0;
+
+  // Shang-Chi's native tapForMana below is his OWN restricted ability, not
+  // "dedicated math elsewhere" for a generic dork — the branch right below
+  // this one exists for named creature dorks whose real output lives in the
+  // callers' own switch statements, which doesn't apply to him. His
+  // isForest-granted generic {T}: Add {G} (see actions.js's "4a-bis") is a
+  // genuinely separate action, so route him through the same math the
+  // "remaining case" fallback below uses instead of bailing at 0.
+  if (p.name === 'Shang-Chi, Master of Kung Fu') return 1 + bump() + aura();
 
   if (typeof def?.tapForMana === 'function') {
     // [2026-07-27] Restricted to lands that have ALSO been made a creature
@@ -10705,7 +10726,12 @@ function bestOtherGreenOutput(state, excludeNames) {
   let best = 0;
   for (const p of state.battlefield) {
     if (excludeNames.has(p.name)) continue;
-    if (p.name === 'Shang-Chi, Master of Kung Fu') continue; // his own mana is deliberately unmodeled (O-27)
+    // [2026-07-30] Shang-Chi's own restricted mana ability and the plain
+    // isForest {T}: Add {G} (once Ashaya makes him a Forest too) are two
+    // different abilities he can choose between per tap — see the matching
+    // fix on flatDorkOutput and actions.js's "4a-bis" generator. Falls
+    // through to the `default:` isForest branch below, same as Ashaya
+    // herself or Badgermole Cub.
     if (!p.types || !p.types.includes('creature')) continue;
     if (p.tapped) continue;
     if (p.summoningSick && !scActive) continue;
@@ -10788,24 +10814,46 @@ var DETECTORS = [
       // Elves (elfCount 2, below this detector's own ≥2 threshold... but
       // see the ≥3G sibling below for the case that actually missed).
       const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
+      // [2026-07-30] Quirion Ranger's own "{T}: Add {G}" (inherited from
+      // being a Forest under Ashaya) is a SEPARATE mana source from the
+      // dork's — she can tap herself for {G} before bouncing herself away.
+      // The model only counted the dork's output, silently dropping her own
+      // {G} every cycle. Normally that's the correct, conservative call: a
+      // freshly RECAST Ranger is summoning sick, and a creature-land's tap-
+      // for-mana ability is blocked by sickness like any other {T} ability
+      // — she can't legally tap herself again until her controller's next
+      // untap step, so in the general case she does NOT contribute mana on
+      // repeat cycles. But a haste enabler (Shang-Chi's static — "activate
+      // abilities of creatures as though they had haste" — bypasses exactly
+      // this) makes her own tap legal EVERY cycle too, producing normal,
+      // unrestricted {G} (not Shang-Chi's own restricted mana — that's a
+      // separate, card-specific ability). Found via a user repro where Fauna
+      // Shaman (a bare Forest-creature under Ashaya, flatDorkOutput 1G, no
+      // special ability) was the dork — below this detector's own ≥2G
+      // threshold on its own, but Shang-Chi was present, and Ranger's own
+      // extra {G} closes exactly that 1-short gap.
+      const rangerSelfTapBonus = hasGlobalHaste(state) ? 1 : 0;
       return state.battlefield.some(p => {
+        // She's already credited separately via rangerSelfTapBonus above —
+        // treating her as the "dork" too would double-count her own tap.
+        if (p.name === 'Quirion Ranger') return false;
         if (p.summoningSick && !scActive) return false;
         switch (p.name) {
-          case 'Priest of Titania':           return elfCount(state) + dorkBonus >= 2;
-          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus >= 2;
-          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus >= 2;
-          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus >= 2;
-          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus >= 2;
-          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus >= 2;
-          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 2;
-          case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus >= 2;
-          case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus >= 2;
+          case 'Priest of Titania':           return elfCount(state) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus + rangerSelfTapBonus >= 2;
+          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 2;
           default:
             // flatDorkOutput already folds in enchantedDorkBonusG (Wild
             // Growth/Utopia Sprawl on this dork's enchanted land), covering
             // both BASIC_GREEN_DORKS members and generic-Forest-fallback
             // creatures like Allosaurus Shepherd.
-            return flatDorkOutput(state, p) >= 2;
+            return flatDorkOutput(state, p) + rangerSelfTapBonus >= 2;
         }
       });
     },
@@ -10837,18 +10885,29 @@ var DETECTORS = [
       // 3G, clearing the combo's own documented ≥3G requirement exactly,
       // but the undercounted check rejected the board.
       const dorkBonus = (hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance')) ? 1 : 0;
+      // [2026-07-30] See the matching note on the Quirion (≥2G) sibling
+      // above — Scryb Ranger's own "{T}: Add {G}" (a Forest under Ashaya) is
+      // a separate source from the dork's, normally unusable on repeat
+      // cycles (a freshly recast Ranger is summoning sick and her tap-for-
+      // mana ability is blocked like any {T} ability) but legal every cycle
+      // with a haste enabler (Shang-Chi's static bypasses sickness for
+      // creature ability activations).
+      const rangerSelfTapBonus = hasGlobalHaste(state) ? 1 : 0;
       return state.battlefield.some(p => {
+        // She's already credited separately via rangerSelfTapBonus above —
+        // treating her as the "dork" too would double-count her own tap.
+        if (p.name === 'Scryb Ranger') return false;
         if (p.summoningSick && !scActive) return false;
         switch (p.name) {
-          case 'Priest of Titania':           return elfCount(state) + dorkBonus >= 3;
-          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus >= 3;
-          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus >= 3;
-          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus >= 3;
-          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus >= 3;
-          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus >= 3;
-          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus >= 3;
-          case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus >= 3;
-          case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus >= 3;
+          case 'Priest of Titania':           return elfCount(state) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Circle of Dreams Druid':      return creatureCount(state) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Elvish Archdruid':            return elfCount(state) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Wirewood Channeler':          return elfCount(state) + dorkBonus + rangerSelfTapBonus >= 3;
+          case "Karametra's Acolyte":         return devotionG(state) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Selvala, Heart of the Wilds': return greatestPower(state) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 3;
           default:
             // [2026-07-27] Same fix as the Quirion sibling above: use
             // flatDorkOutput (now folding in enchantedDorkBonusG) instead of
@@ -10857,7 +10916,7 @@ var DETECTORS = [
             // stamped creatures with no native tapForMana) and the
             // Badgermole-boosted single-aura case (1 base + 1 Badgermole +
             // 1 aura = 3, which the old "aura bonus alone >= 2" check missed).
-            return flatDorkOutput(state, p) >= 3;
+            return flatDorkOutput(state, p) + rangerSelfTapBonus >= 3;
         }
       });
     },
@@ -18867,10 +18926,24 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
   for (const perm of state.battlefield) {
     if (perm.tapped) continue;
     if (!perm.isForest) continue;
-    if (perm.cardKey === 'shang_chi') continue; // his own mana is deliberately unmodeled (O-27) — don't reopen it via a Forest backdoor
     const def = CARDS[perm.cardKey];
     if (!def) continue;
-    if (def.tapForMana) continue;             // has its own (at-least-as-good) mana ability
+    // [2026-07-30] Every OTHER creature with a native tapForMana already has
+    // a strictly-at-least-as-good mana ability, so the redundant generic
+    // Forest option isn't worth offering. Shang-Chi is the one genuine
+    // exception: his own "{T}: Add two mana of any one color, activate
+    // abilities of creature sources only" (restricted — see IMP-11) and the
+    // plain "{T}: Add {G}" every Forest gets (unrestricted, once Ashaya
+    // makes him one too) are two GENUINELY DIFFERENT abilities, and a
+    // permanent with two different tap abilities may use either one when
+    // tapped (they're mutually exclusive per-tap, not both-or-nothing) —
+    // real MTG rules, not a special case. A blanket exclusion previously
+    // sat here ("his own mana is deliberately unmodeled (O-27) — don't
+    // reopen it via a Forest backdoor"), but that comment predates IMP-11
+    // actually implementing his restricted mana properly; the two abilities
+    // don't conflict, they're just alternatives, so denying him the choice
+    // was an overcorrection, not a deliberate Ashaya-interaction decision.
+    if (def.tapForMana && perm.cardKey !== 'shang_chi') continue;
     if (def.types.includes('land')) continue; // already an intrinsic land — handled above
     if (!def.types.includes('creature')) continue;
 
