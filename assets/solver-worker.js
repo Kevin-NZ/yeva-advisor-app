@@ -1153,6 +1153,19 @@ class GameState {
     // (see startNewTurn) — matches this solver's "mana doesn't persist past
     // your turn" simplification (real CR: pools empty every step/phase).
     this.restrictedG   = data.restrictedG ?? 0;
+    // [2026-07-31] Shaman of Forgotten Ways: "{T}: Add two mana in any
+    // combination of colors. Spend this mana only to cast creature
+    // spells." Same restricted-pool pattern as restrictedG above (mono-
+    // green simplification: "any combination of colors" always chosen as
+    // GG), but a DIFFERENT restriction dimension — spendable only on
+    // CREATURE SPELL CASTS, not on activating abilities — so it must be
+    // tracked in its own separate counter; conflating it with restrictedG
+    // would incorrectly let Shang-Chi's ability-only mana fund a creature
+    // cast, or this card's cast-only mana fund an ability activation.
+    // Drawn on by the single creature-spell cast site in actions.js (the
+    // `cast_spell` action's `apply`), via the same temporary merge-and-
+    // reconcile trick callCreatureAbilityFn() uses for restrictedG.
+    this.restrictedCreatureG = data.restrictedCreatureG ?? 0;
     this.storm         = data.storm       ?? 0;
     this.comboAchieved = data.comboAchieved ?? false;
     this.comboName     = data.comboName     ?? null;
@@ -1563,6 +1576,7 @@ class GameState {
     s.battlefield   = this.battlefield;     // shared (COW)
     s.mana          = this.mana.clone();
     s.restrictedG   = this.restrictedG;
+    s.restrictedCreatureG = this.restrictedCreatureG;
     s.storm         = this.storm;
     s.comboAchieved = this.comboAchieved;
     s.comboName     = this.comboName;
@@ -1753,6 +1767,7 @@ class GameState {
     s._permNames    = this._permNames;
     s.mana          = this.mana;            // shared
     s.restrictedG   = this.restrictedG;
+    s.restrictedCreatureG = this.restrictedCreatureG;
     s.storm         = this.storm;
     s.comboAchieved = this.comboAchieved;
     s.comboName     = this.comboName;
@@ -1834,6 +1849,18 @@ class GameState {
   addRestrictedMana(amount = 1) {
     const s = this.clone();
     s.restrictedG += amount;
+    return s;
+  }
+
+  /** [2026-07-31] Shaman of Forgotten Ways' "{T}: Add two mana in any
+   *  combination of colors. Spend this mana only to cast creature spells."
+   *  Adds to the SEPARATE restrictedCreatureG counter — see the
+   *  constructor comment for why this can't share restrictedG. Spent via
+   *  the merge-and-reconcile trick at the `cast_spell` action's `apply`
+   *  in actions.js, gated on the spell being a creature. */
+  addRestrictedCreatureMana(amount = 1) {
+    const s = this.clone();
+    s.restrictedCreatureG += amount;
     return s;
   }
 
@@ -2078,6 +2105,31 @@ class GameState {
       if (!perm.subtypes.includes('Forest')) perm.subtypes.push('Forest');
     }
 
+    // Ambush Commander: new Forests become 1/1 green Elf creatures (still
+    // lands) — the mirror image of Ashaya's "creatures become Forests"
+    // above, but only stamps a land that ISN'T already a creature (a
+    // creature-land like Dryad Arbor, or one Ashaya already turned into a
+    // creature, keeps its own characteristics — this effect only matters
+    // for plain, non-creature Forests). Uses the same isForest flag as
+    // every other Forest check in this file (basic Forests, Yavimaya-
+    // stamped lands, Badgermole-earthbent lands, etc.).
+    if (perm.isForest && !perm.is('creature') && s.hasPermanent('Ambush Commander')) {
+      if (perm._cow) perm._ensureOwnTypes();
+      perm.types.push('creature');
+      if (!perm.subtypes.includes('Elf')) perm.subtypes.push('Elf');
+      perm.power = 1;
+      perm.toughness = 1;
+      // This land's own def.types is ['land'] (no 'creature'), so the
+      // summoningSick default computed above (at Permanent construction)
+      // is FALSE — correct for a plain land, but wrong now that it's ALSO
+      // a fresh creature this turn (CR 302.6: sick unless under your
+      // control continuously since your most recent turn began). Ashaya's
+      // mirror-image static above doesn't need this fix — a creature
+      // card's own def.types already includes 'creature', so its default
+      // is already TRUE regardless of the Forest stamp.
+      perm.summoningSick = true;
+    }
+
     // Concordant Crossroads / Thousand-Year Elixir: creatures lose summoning sickness
     if (perm.is('creature') && (
       s.hasPermanent('Concordant Crossroads') ||
@@ -2115,6 +2167,26 @@ class GameState {
         const landCount = s.lands().length;
         ashayaPerm.power     = landCount;
         ashayaPerm.toughness = landCount;
+      }
+    }
+
+    // Ambush Commander ETB: all EXISTING Forests become 1/1 green Elf
+    // creatures (still lands). Mirror of Ashaya's own ETB above, but no
+    // summoningSick=true here — unlike a Forest entering AFTER Ambush
+    // Commander (handled by the static block above), these lands have
+    // already been under your control since before this turn, so they're
+    // not newly summoning sick just because they gained a creature type.
+    // Skips lands already a creature (Dryad Arbor, or something Ashaya
+    // already animated) for the same reason as the static block above.
+    if (cardKey === 'ambush_commander') {
+      for (const bf of s.battlefield) {
+        if (bf.isForest && !bf.is('creature')) {
+          bf._ensureOwnTypes();
+          bf.types.push('creature');
+          if (!bf.subtypes.includes('Elf')) bf.subtypes.push('Elf');
+          bf.power = 1;
+          bf.toughness = 1;
+        }
       }
     }
 
@@ -2609,6 +2681,40 @@ class GameState {
         }
       }
     }
+    // Bane of Progress ETB: destroy all artifacts and enchantments (a real
+    // mass effect, not a targeted one like Reclamation Sage/Manglehorn
+    // above), then +1/+1 counter per permanent destroyed this way. Only
+    // YOUR OWN board is modelled — opponents' full battlefields aren't
+    // tracked by this solver (only the narrow opponentStax abstraction for
+    // specific disruption pieces), and the real card's mass effect hitting
+    // opponents' permanents has no bearing on YOUR mana/combo/win lines,
+    // which is all this solver evaluates. This can destroy your own combo
+    // pieces (Sol Ring, Chrome Mox, Mox Diamond, Lotus Petal, Wild Growth,
+    // Utopia Sprawl, etc.) — faithfully modelled as a real cost, not
+    // special-cased away; the solver simply won't cast this creature when
+    // that's a net loss.
+    if (!skipETB && cardKey === 'bane_of_progress') {
+      const targets = s.battlefield.filter(p =>
+        p.id !== perm.id && (p.is('artifact') || p.is('enchantment'))
+      );
+      let destroyed = 0;
+      for (const t of targets) {
+        const ns = s.removeFromBattlefield(t.id, 'graveyard');
+        if (ns) { s = ns; destroyed++; }
+      }
+      if (destroyed > 0) {
+        s = s.log(`Bane of Progress ETB: destroy ${destroyed} artifact(s)/enchantment(s)`);
+        s._ensureBF();
+        const live = s.getPermanentById(perm.id);
+        if (live) {
+          live.counters = { ...live.counters, '+1/+1': (live.counters?.['+1/+1'] ?? 0) + destroyed };
+          live.power = (live.power ?? 0) + destroyed;
+          live.toughness = (live.toughness ?? 0) + destroyed;
+          s = s.log(`Bane of Progress ETB: +${destroyed}/+${destroyed} counters`);
+        }
+      }
+    }
+
     // Lizard, Connors's Curse ETB: target creature loses all abilities, becomes 4/4 Lizard.
     // Fires if a stax creature (Collector Ouphe) is on the battlefield OR in opponentStax.
     if (!skipETB && cardKey === 'lizard_connors_curse') {
@@ -3087,6 +3193,7 @@ class GameState {
     // Any floating mana left at the end of your turn is lost.
     s.mana = new ManaPool();
     s.restrictedG = 0;   // [2026-07-11] Shang-Chi's restricted mana empties too — same rule
+    s.restrictedCreatureG = 0;   // [2026-07-31] Shaman of Forgotten Ways' restricted mana — same rule
     s._ensureBF();  // untap loop mutates permanents
     for (const p of s.battlefield) {
       // Exerted creatures don't untap on your next untap step.
@@ -3481,8 +3588,12 @@ class GameState {
     // distinction (different legal actions entirely, not a resource
     // amount) and correctly stays in structKey.
     const mn = this.mana;
+    // restrictedCreatureG (Shaman of Forgotten Ways' "creature spells only"
+    // mana) appended as a 9th field, same reasoning as restrictedG's own
+    // 7th-field comment above — a genuinely different, non-fungible pool
+    // that must never alias with equal general mana or equal restrictedG.
     const m = mn.W + ':' + mn.U + ':' + mn.B + ':' + mn.R + ':' + mn.G + ':' + mn.C + ':' +
-              this.restrictedG + ':' + this.opponentTurnsThisRound;
+              this.restrictedG + ':' + this.restrictedCreatureG + ':' + this.opponentTurnsThisRound;
 
     // Players — unrolled 4-player concat (avoids .map() lambda overhead)
     const p0 = this.players[0], p1 = this.players[1],
@@ -9570,6 +9681,116 @@ var CARDS = {
   chancellor_of_the_tangle: {
     name: 'Chancellor of the Tangle', types: ['creature'], subtypes: ['Phyrexian','Beast'],
     cost: '4GGG', power: 6, toughness: 7, externallyImplemented: true,
+  },
+
+  // ─── ref/card_data.md additions (2026-07-31) ──────────────────────────────
+
+  // Oracle: "{T}: Add two mana in any combination of colors. Spend this
+  // mana only to cast creature spells." (mono-green simplification: always
+  // {G}{G}, same convention as Shang-Chi's own restricted mana). Adds to
+  // GameState.restrictedCreatureG — a SEPARATE restricted pool from Shang-
+  // Chi's restrictedG (that one funds ability activations, not spell
+  // casts) — spent via payManaForCreatureCast() in actions.js, which wraps
+  // this file's three creature-spell-cast payment sites. / Formidable —
+  // "{9}{G}{G},{T}: Each player's life total becomes the number of
+  // creatures they control. Activate only if creatures you control have
+  // total power 8 or greater." Modelled as a WIN_CONDITIONS entry (see
+  // combos.js: "Win: Shaman of Forgotten Ways (Formidable)") rather than an
+  // executable ability — WIN_CONDITIONS entries are structural "this board
+  // can win" declarations (matching every other terminal win in this file,
+  // e.g. Hitzel's Sequence/Mikokoro Mill), not step-by-step action
+  // simulations, and only ever get evaluated once infinite mana is already
+  // proven, at which point her 11-mana activation is trivially payable.
+  shaman_of_forgotten_ways: {
+    name: 'Shaman of Forgotten Ways', types: ['creature'], subtypes: ['Human', 'Shaman'],
+    cost: '2G', power: 2, toughness: 3,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      let s = state.tapPermanent(perm.id);
+      if (!s) return [];
+      s = s.addRestrictedCreatureMana(2);
+      s = s.log(`Tap ${perm.name} → {G}x2 (creature spells only)`);
+      return [s];
+    },
+  },
+
+
+  // Oracle: "Reach / {T}, Tap an untapped creature you control: Add one mana
+  // of any color." Reach only matters for blocking, which this solver never
+  // models (no combat) — irrelevant here. The mana ability has an ADDITIONAL
+  // cost beyond her own {T}: tapping a second, different creature you
+  // control (untapped, but its own summoning sickness is irrelevant — it's
+  // being tapped as a COST by Jaspera's ability, not activating its own).
+  // Modelled as tapForMana returning one result per legal partner (mirrors
+  // the existing "multi-option" convention used for Fanatic of Rhonas'
+  // ferocious mode / Nykthos' devotion choices — see actions.js's own
+  // comment on `preResults.length > 1`), deduped by targetIdentityKey so
+  // several interchangeable untapped Elves don't each spawn a separate,
+  // functionally-identical action.
+  jaspera_sentinel: {
+    name: 'Jaspera Sentinel', types: ['creature'], subtypes: ['Elf', 'Rogue'],
+    cost: 'G', power: 1, toughness: 2,
+    tapForMana(state, perm) {
+      if (perm.tapped || perm.summoningSick) return [];
+      const partners = state.creatures().filter(c => c.id !== perm.id && !c.tapped);
+      if (partners.length === 0) return [];
+      const results = [];
+      const seen = new Set();
+      for (const partner of partners) {
+        const key = targetIdentityKey(state, partner);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        let s = state.tapPermanent(perm.id);
+        if (!s) continue;
+        s = s.tapPermanent(partner.id);
+        if (!s) continue;
+        s = s.addMana('G');
+        s = s.log(`Tap ${perm.name}, tap ${partner.name} → {G}`);
+        results.push(s);
+      }
+      return results;
+    },
+  },
+
+  // Oracle: "When this creature enters, destroy all artifacts and
+  // enchantments. Put a +1/+1 counter on this creature for each permanent
+  // destroyed this way." ETB logic lives in GameState.enterBattlefield
+  // (search "Bane of Progress ETB") since it needs to mutate other
+  // permanents on the battlefield and this creature's own power/toughness —
+  // the same pattern used for Ashaya/Badgermole Cub/Little Bear's own ETBs.
+  bane_of_progress: {
+    name: 'Bane of Progress', types: ['creature'], subtypes: ['Elemental'],
+    cost: '4GG', power: 2, toughness: 2, externallyImplemented: true,
+  },
+
+  // Oracle: "Forests you control are 1/1 green Elf creatures that are
+  // still lands. / {1}{G}, Sacrifice an Elf: Target creature gets +3/+3
+  // until end of turn." The static (the mirror image of Ashaya's own
+  // "creatures are Forests") is implemented in GameState.enterBattlefield
+  // — search "Ambush Commander" — since it needs to stamp both newly-
+  // entering Forests AND every existing one when this creature itself
+  // enters. The pump ability is a combat trick with no mana or lasting
+  // board-state effect this solver tracks (no "until end of turn" P/T
+  // buffs are modelled anywhere in this engine, and this solver has no
+  // combat step) — deliberately not implemented, same convention as
+  // Scavenger Grounds' sac ability below.
+  ambush_commander: {
+    name: 'Ambush Commander', types: ['creature'], subtypes: ['Elf'],
+    cost: '3GG', power: 2, toughness: 2, externallyImplemented: true,
+  },
+
+  // Oracle: "{T}: Add {C}. / {2}, {T}, Sacrifice a Desert: Exile all
+  // graveyards." The sac ability is graveyard hate with no mana or board-
+  // state effect this solver tracks (no combo line depends on opponents'
+  // or your own graveyard contents beyond what's already modeled via
+  // recursion cards like Eternal Witness) — deliberately not implemented,
+  // matching the codebase's convention of skipping purely-flavor/combat/
+  // disruption clauses that can't affect a mana or win-condition line (see
+  // e.g. chancellor_of_the_tangle's Reach/Vigilance above). Only the mana
+  // ability is modelled.
+  scavenger_grounds: {
+    name: 'Scavenger Grounds', types: ['land'], subtypes: ['Desert'], cost: null,
+    tapForMana: simpleTap('{C}', [['C', 1]]),
   },
 };
 
@@ -15863,6 +16084,35 @@ var WIN_CONDITIONS = [
   },
 
   // ══════════════════════════════════════════════════════════════════════════
+  //  SHAMAN OF FORGOTTEN WAYS — Formidable life-total reset
+  //
+  //  "{9}{G}{G}, {T}: Each player's life total becomes the number of
+  //  creatures they control. Activate only if creatures you control have
+  //  total power 8 or greater." Requires infinite mana (checkVictory only
+  //  evaluates WIN_CONDITIONS after a MANA_POSITIVE detector has already
+  //  fired), so the 11-mana activation cost is trivially payable — this
+  //  entry only needs to verify the piece is ready and the power threshold
+  //  is met. Opponents' battlefields are never modelled by this solver
+  //  (only your own — see the same convention documented on Bane of
+  //  Progress's ETB in GameState.js), so every opponent's creature count is
+  //  implicitly 0: their life total becomes 0 and they lose immediately.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  {
+    name: 'Win: Shaman of Forgotten Ways (Formidable)',
+    description:
+      "Formidable — {9}{G}{G},{T}: each player's life total becomes the number of " +
+      "creatures they control. Requires total power among your creatures ≥ 8. " +
+      "With infinite mana this is trivially payable; every opponent's board is " +
+      "modelled as empty, so all three opponents' life totals become 0 and they lose.",
+    check(state) {
+      if (!permReadyOrSCActive(state, 'Shaman of Forgotten Ways')) return false;
+      const totalPower = state.creatures().reduce((sum, c) => sum + (c.power || 0), 0);
+      return totalPower >= 8;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
   //  SCRAPSHOOTER MILL — loop Scrapshooter's Gift ETB to mill opponents
   //
   //  With infinite mana, cast Scrapshooter with gift promised each loop so the
@@ -16836,6 +17086,7 @@ var DETECTOR_REQUIRED_KEYS = {
   'Win: Finale of Devastation X≥10':                                             ['finale_of_devastation'],
   'Win: Infectious Bite (poison counters)':                                      ['infectious_bite','eternal_witness','temur_sabertooth'],
   'Win: Mikokoro Mill Line':                                                     ['mikokoro'],
+  'Win: Shaman of Forgotten Ways (Formidable)':                                  ['shaman_of_forgotten_ways'],
   'Win: Scrapshooter Mill (infinite gift draw)':                                 ['scrapshooter'],
   'Win: Draw Library (Beast Whisperer / Glademuse + Creature Loop)':             ['beast_whisperer'],
   'Win: Tutor for Finisher (infinite mana + creature tutor)':                    ['finale_of_devastation'],
@@ -17080,12 +17331,17 @@ var _DETECTOR_PREFILTER = {
   "Infinite Mana (Hyrax Tower Scout + Kogla + Animated Gaea's Cradle)":
     // See COMBO 48 comment above — same Itlimoc-vs-literal-'gaeas_cradle' gap.
     { all: ['kogla', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
+  // [2026-07-31 — full-audit pass] The next three entries all had the same
+  // hyrax_tower_scout-hard-required bug already fixed above on the Mana
+  // Dork sibling — each check() below also accepts Little Bear (custom-
+  // library, same "untap a creature" ETB) as a Hyrax substitute, but the
+  // prefilter never let those boards reach the check() call at all.
   "Infinite Mana (Hyrax Tower Scout + Temur Sabertooth + Animated Gaea's Cradle)":
-    { all: ['temur_sabertooth', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
+    { all: ['temur_sabertooth'], any: [['hyrax_tower_scout', 'little_bear'], ['gaeas_cradle', 'itlimoc']] },
   "Infinite Mana (Hope Tender + Hyrax Tower Scout + Kogla/Temur + Gaea's Cradle)":
-    { all: ['hope_tender', 'hyrax_tower_scout'], any: [['gaeas_cradle', 'itlimoc']] },
+    { all: ['hope_tender'], any: [['hyrax_tower_scout', 'little_bear'], ['gaeas_cradle', 'itlimoc']] },
   'Infinite Mana (Kogla/Temur + Hyrax Tower Scout + Arbor Elf + Yavimaya + Big Land)':
-    { all: ['hyrax_tower_scout', 'arbor_elf'], any: [['gaeas_cradle', 'itlimoc', 'nykthos']] },
+    { all: ['arbor_elf'], any: [['hyrax_tower_scout', 'little_bear'], ['gaeas_cradle', 'itlimoc', 'nykthos']] },
   'Infinite Mana (Temur Sabertooth + Arbor Elf + Yavimaya/Ashaya + Big Land)':
     { all: ['temur_sabertooth', 'arbor_elf'], any: [['gaeas_cradle', 'itlimoc', 'nykthos']] },
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':
@@ -17098,10 +17354,18 @@ var _DETECTOR_PREFILTER = {
     { all: ['temur_sabertooth', 'shang_chi'] },
 
   // Argothian Elder / Ley Weaver + Hyrax / Symbiote loops with Cradle/Nykthos (66, 67, 68)
+  // [2026-07-31 — full-audit pass] Two bugs fixed together here: (1) the
+  // Little-Bear-hard-requires-hyrax_tower_scout gap, same as the entries
+  // above; (2) this detector's check() accepts EITHER Temur OR Kogla as the
+  // bounce-engine (`temurPresent || hasPerm(..., 'Kogla, the Titan Ape')`),
+  // but the prefilter hard-required temur_sabertooth specifically, silently
+  // blocking a real Kogla-only board from ever reaching check() at all.
   'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Bounce Engine + Cradle/Nykthos)  [COMBO 66]':
-    { all: ['argothian_elder', 'hyrax_tower_scout', 'temur_sabertooth'] },
+    { all: ['argothian_elder'], any: [['kogla', 'temur_sabertooth'], ['hyrax_tower_scout', 'little_bear']] },
+  // Cloudstone Curio does its own bouncing here — no Temur/Kogla needed at
+  // all (confirmed: check() never touches either card for this variant).
   'Infinite Mana (Argothian Elder / Ley Weaver + Hyrax Tower Scout + Cloudstone Curio + Cradle/Nykthos)':
-    { all: ['argothian_elder', 'hyrax_tower_scout', 'cloudstone_curio'] },
+    { all: ['argothian_elder', 'cloudstone_curio'], any: [['hyrax_tower_scout', 'little_bear']] },
   'Infinite Mana (Argothian Elder / Ley Weaver + Wirewood Symbiote + Temur Sabertooth + Cradle/Nykthos)  [COMBO 67]':
     { all: ['argothian_elder', 'wirewood_symbiote', 'temur_sabertooth'] },
   // Combo 68: untapper is Magus/Formidable Speaker/Hope Tender (no equiv group,
@@ -17110,10 +17374,13 @@ var _DETECTOR_PREFILTER = {
   // on EVERY path — Kogla only drops out on the Symbiote sub-variant, but that's
   // still covered because Kogla presence expands `present` to include
   // temur_sabertooth too (see FUNCTIONAL_EQUIVALENTS).
+  // [2026-07-31 — full-audit pass] Little Bear substitutes for Hyrax on the
+  // hyraxEngine path too (Temur only — see check()'s own comment); missing
+  // from this any-group meant a Little-Bear-only board never reached check().
   'Infinite Mana (Magus of the Candelabra / Formidable Speaker / Hope Tender + Hyrax Tower Scout / Wirewood Symbiote + Bounce Engine + Cradle/Nykthos)  [COMBO 68]':
     { all: ['temur_sabertooth'],
       any: [['magus_of_the_candelabra', 'formidable_speaker', 'hope_tender'],
-            ['hyrax_tower_scout', 'wirewood_symbiote']] },
+            ['hyrax_tower_scout', 'wirewood_symbiote', 'little_bear']] },
 
   // Shang-Chi bounce-recast loops (new)
   'Infinite Mana (Temur Sabertooth + Shang-Chi + Tap-Dork bounce-recast)':
@@ -17155,6 +17422,8 @@ var _DETECTOR_PREFILTER = {
     { all: ['mikokoro', 'eternal_witness'],
       any: [['temur_sabertooth', 'kogla'],
             ['noxious_revival', 'elvish_reclaimer', 'crop_rotation']] },
+  'Win: Shaman of Forgotten Ways (Formidable)':
+    { all: ['shaman_of_forgotten_ways'] },
   'Win: Scrapshooter Mill (infinite gift draw)':
     { all: ['scrapshooter'],
       any: [['temur_sabertooth', 'cloudstone_curio', 'kogla']] },
@@ -17720,6 +17989,38 @@ function callCreatureAbilityFn(state, perm, isCreature, fn) {
   return Array.isArray(raw) ? raw.map(reconcile) : reconcile(raw);
 }
 
+/** [2026-07-31] Shaman of Forgotten Ways' "{T}: Add two mana in any
+ *  combination of colors. Spend this mana only to cast creature spells."
+ *  Same merge-and-reconcile trick as callCreatureAbilityFn() above, but for
+ *  a single payMana(costStr) call rather than an arbitrary fn() — used at
+ *  each of this file's three creature-spell-cast payment sites (the
+ *  standard `cast_spell` action, the tutor-fast-path `cast_spell` variant,
+ *  and `cast_commander` for Yeva). restrictedCreatureG gets its own
+ *  separate pool (see GameState's constructor comment) because it funds a
+ *  DIFFERENT category of cost than restrictedG (spell casts, not ability
+ *  activations) — conflating the two would let either card's restricted
+ *  mana illegally fund the other's category. */
+function payManaForCreatureCast(state, costStr, isCreature) {
+  if (!isCreature || (state.restrictedCreatureG ?? 0) === 0) {
+    return state.payMana(costStr);   // fast path: nothing to merge
+  }
+  const R0 = state.restrictedCreatureG;
+  const G0 = state.mana.G;
+  const merged = state.clone();
+  merged.mana = state.mana.clone();
+  merged.mana.G = G0 + R0;
+  merged.restrictedCreatureG = 0;   // hidden for the duration of this call
+  const raw = merged.payMana(costStr);
+  if (!raw) return null;
+  const totalDelta = (G0 + R0) - raw.mana.G;   // positive = spent
+  const s2 = raw.clone();
+  s2.mana = raw.mana.clone();
+  const spentFromRestricted = Math.min(totalDelta, R0);
+  s2.restrictedCreatureG = R0 - spentFromRestricted;
+  s2.mana.G = G0 - (totalDelta - spentFromRestricted);
+  return s2;
+}
+
 function effectiveCost(state, def) {
   // ── Ultra-fast path ─────────────────────────────────────────────────────
   // In the vast majority of states (no STAX, no Defiler, no cost reducers)
@@ -18123,11 +18424,19 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
     if (def.canCast && !def.canCast(state)) continue; // card-specific preconditions (e.g. Aura targeting)
 
     const costStr = effectiveCost(state, def);
-    const testPay = state.mana.pay(costStr);
+    const isCreature   = def.types.includes('creature');
+    // [2026-07-31] Shaman of Forgotten Ways' restrictedCreatureG can fund a
+    // creature-spell cast — testPay must account for it, or this pre-check
+    // rejects (and never even offers) a cast that payManaForCreatureCast()
+    // would actually allow at apply() time. Only relevant when isCreature
+    // AND some restrictedCreatureG is floating; otherwise identical to the
+    // plain general-pool check.
+    const testPay = (isCreature && (state.restrictedCreatureG ?? 0) > 0)
+      ? payManaForCreatureCast(state, costStr, true)
+      : state.mana.pay(costStr);
     if (testPay === null) continue;
     if (vexingBaubleBlocks(state, def, costStr)) continue; // Vexing Bauble counters 0-mana spells
 
-    const isCreature   = def.types.includes('creature');
     const isEnchantment = def.types.includes('enchantment');
     const isArtifact   = def.types.includes('artifact');
     const isInstant    = def.types.includes('instant');
@@ -18342,7 +18651,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
       priority: HOLD_FOR_WIN.has(cardKey) ? 1 : (isCreature ? 9 : 8),
       apply(s) {
         const ec = effectiveCost(s, def);
-        const afterPay = s.payMana(ec);
+        const afterPay = payManaForCreatureCast(s, ec, isCreature);
         if (!afterPay) return null;
         let ns = afterPay.removeFromHand(cardKey);
         if (!ns) return null;
@@ -19243,7 +19552,13 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
       ? `${totalGeneric}${coloredPart}`
       : coloredPart || '0';
 
-    const testPay = state.mana.pay(taxedCost);
+    // [2026-07-31] Same restrictedCreatureG fix as the hand-cast pre-check
+    // above — Yeva is a creature, so her cast from the command zone can
+    // also be funded by Shaman of Forgotten Ways' restricted mana.
+    const cmdIsCreature = def.types.includes('creature');
+    const testPay = (cmdIsCreature && (state.restrictedCreatureG ?? 0) > 0)
+      ? payManaForCreatureCast(state, taxedCost, true)
+      : state.mana.pay(taxedCost);
     if (testPay === null) continue;
 
     actions.push({
@@ -19256,7 +19571,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         const col2 = Object.entries(p2.colored)
           .flatMap(([c, n]) => Array(n).fill(c)).join('');
         const ec = g2 > 0 ? `${g2}${col2}` : col2 || '0';
-        const afterPay = s.payMana(ec);
+        const afterPay = payManaForCreatureCast(s, ec, def.types.includes('creature'));
         if (!afterPay) return null;
         let ns = afterPay.clone();
         // Move from command zone to battlefield
@@ -20982,17 +21297,25 @@ class Solver {
     const m = next.mana;
     const W = m.W, U = m.U, B = m.B, R = m.R, G = m.G, C = m.C;
     const RG = next.restrictedG ?? 0;
+    // RCG = restrictedCreatureG (Shaman of Forgotten Ways' "creature spells
+    // only" mana). Same treatment as RG immediately above and for the same
+    // reason: not interchangeable with general G (or with RG — RG can't
+    // fund a creature CAST, RCG can't fund an ability ACTIVATION), so it
+    // gets its own dimension, included in both the `>=` gate and the
+    // "strictly greater" trigger exactly like RG.
+    const RCG = next.restrictedCreatureG ?? 0;
     const OW = 3 - (next.opponentTurnsThisRound ?? 0);
     const existingList = frontier.get(structKey);
     if (!existingList) {
-      frontier.set(structKey, [[W, U, B, R, G, C, RG, OW]]);
+      frontier.set(structKey, [[W, U, B, R, G, C, RG, RCG, OW]]);
       return false;
     }
     for (const existing of existingList) {
       if (existing[0] >= W && existing[1] >= U && existing[2] >= B &&
-          existing[3] >= R && existing[4] >= G && existing[5] >= C && existing[6] >= RG && existing[7] >= OW &&
+          existing[3] >= R && existing[4] >= G && existing[5] >= C && existing[6] >= RG &&
+          existing[7] >= RCG && existing[8] >= OW &&
           (existing[0] > W || existing[1] > U || existing[2] > B ||
-           existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG)) {
+           existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG || existing[7] > RCG)) {
         return true; // STRICTLY dominated: ≥ in every dimension (OW included), > in at least one EXCLUDING OW (see soundness fix above)
       }
     }
@@ -21039,18 +21362,20 @@ class Solver {
     for (let i = existingList.length - 1; i >= 0; i--) {
       const existing = existingList[i];
       if (W === existing[0] && U === existing[1] && B === existing[2] &&
-          R === existing[3] && G === existing[4] && C === existing[5] && RG === existing[6] && OW === existing[7]) {
+          R === existing[3] && G === existing[4] && C === existing[5] && RG === existing[6] &&
+          RCG === existing[7] && OW === existing[8]) {
         exactTieFound = true;
         continue;
       }
       if (W >= existing[0] && U >= existing[1] && B >= existing[2] &&
-          R >= existing[3] && G >= existing[4] && C >= existing[5] && RG >= existing[6] && OW >= existing[7] &&
+          R >= existing[3] && G >= existing[4] && C >= existing[5] && RG >= existing[6] &&
+          RCG >= existing[7] && OW >= existing[8] &&
           (W > existing[0] || U > existing[1] || B > existing[2] ||
-           R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6])) {
+           R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6] || RCG > existing[7])) {
         existingList.splice(i, 1);   // reverse iteration keeps indices valid
       }
     }
-    if (!exactTieFound) existingList.push([W, U, B, R, G, C, RG, OW]);
+    if (!exactTieFound) existingList.push([W, U, B, R, G, C, RG, RCG, OW]);
     return false;
   }
 
@@ -21092,17 +21417,25 @@ class Solver {
     // states that happen to be sitting at zero mana (e.g. right after
     // spending everything on a cast).
     if (m.W === 0 && m.U === 0 && m.B === 0 && m.R === 0 && m.G === 0 && m.C === 0 &&
-        (next.restrictedG ?? 0) === 0) {
+        (next.restrictedG ?? 0) === 0 && (next.restrictedCreatureG ?? 0) === 0) {
       return null;
     }
     const structKey = next.structKey();
     const RG = next.restrictedG ?? 0;
+    // RCG (Shaman of Forgotten Ways' restricted creature-spell mana) gets
+    // the SAME conservative treatment as RG immediately below, for the same
+    // false-positive-report reason: pure RCG growth means "you could cast
+    // more creature spells," not "you have genuinely unrestricted infinite
+    // mana" — crediting it alone here would let a Shaman-only loop (that
+    // never touches general G) wrongly claim a generic MANA_POSITIVE win.
+    const RCG = next.restrictedCreatureG ?? 0;
     const OW = 3 - (next.opponentTurnsThisRound ?? 0);
     for (let n = chainHead; n !== null; n = n.parent) {
       const anc = n.state;
       if (anc.structKey() !== structKey) continue;
       const am = anc.mana;
       const aRG = anc.restrictedG ?? 0;
+      const aRCG = anc.restrictedCreatureG ?? 0;
       const aOW = 3 - (anc.opponentTurnsThisRound ?? 0);
       // Same strict-dominance formula as _isManaDominated's own "candidate
       // dominates existing" check (OW required as a >= gate, excluded from
@@ -21125,7 +21458,7 @@ class Solver {
       // fires correctly via the `m.G > am.G` arm — only pure RG-only growth
       // is now excluded.
       if (m.W >= am.W && m.U >= am.U && m.B >= am.B && m.R >= am.R &&
-          m.G >= am.G && m.C >= am.C && RG >= aRG && OW >= aOW &&
+          m.G >= am.G && m.C >= am.C && RG >= aRG && RCG >= aRCG && OW >= aOW &&
           (m.W > am.W || m.U > am.U || m.B > am.B || m.R > am.R ||
            m.G > am.G || m.C > am.C)) {
         return anc;
@@ -21866,6 +22199,7 @@ function printBestPlay(result) {
     const manaStr = state.mana.toString();
     if (manaStr !== '{0}') console.log(`       └─ Mana: ${manaStr}`);
     if (state.restrictedG > 0) console.log(`       └─ Ability Mana: {G}x${state.restrictedG}`);
+    if (state.restrictedCreatureG > 0) console.log(`       └─ Creature-Spell Mana: {G}x${state.restrictedCreatureG}`);
     const losses = state.getLosses();
     if (losses.length) for (const l of losses) console.log(`       ⚠  ${l.reason}`);
   }
