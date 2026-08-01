@@ -516,6 +516,9 @@ var _CDM = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, 
  *   exile       — string[] of card names in your exile
  */
 
+// combo_data.js has zero require() dependencies of its own (pure data — see
+// its own top comment), so every export it has is safe to pull in here at
+// module scope, no circularity risk — unlike cards.js/actions.js below.
 // [perf] cards.js and GameState.js are circularly dependent (cards.js requires
 // GameState for ManaPool/Permanent inside its functions), so cards cannot be
 // required at top-level here — it would capture a half-initialised export.
@@ -529,6 +532,18 @@ var _CDM = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, 
 var _cardsModule = null;
 function _cards() {
   return _cardsModule ?? (_cardsModule = CARDS);
+}
+
+// [perf] Same circularity as cards.js above — actions.js requires GameState
+// for parseCost/ManaPool at ITS OWN module top level, so this file can't
+// _ACM at ITS top level either. Was previously re-required
+// (paying the module-cache-lookup cost every time) at ~10 separate call
+// sites scattered through this file's card-specific ETB/tutor logic; found
+// while profiling a Ranger-loop-heavy bench with `node --prof` (see the
+// matching fix + comment in combos.js for the sibling cards.js case).
+var _actionsModuleCache = null;
+function _actionsModule() {
+  return _actionsModuleCache ?? (_actionsModuleCache = _ACM);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -832,6 +847,7 @@ class Player {
       // resolved (unknown cards, any token names not filtered by Fix 5) fall
       // back to 'unknown' so they still count toward library size.
       // Lazy-require to avoid a circular dependency at module load time.
+      const { NAME_TO_KEY } = _actionsModule();
       const gyKeys = p.graveyard.map(name => NAME_TO_KEY[name] ?? 'unknown');
       p.library = [...p.library, ...gyKeys];
     }
@@ -1287,6 +1303,7 @@ class GameState {
             commandZone: this.commandZone,
             hand:        this.hand,
             graveyard:   (() => {
+              const { NAME_TO_KEY } = _actionsModule();
               return (data.graveyard ?? []).map(name => NAME_TO_KEY[name]).filter(Boolean);
             })(),
           }),
@@ -2339,6 +2356,7 @@ class GameState {
       const gy = s.players[0].graveyard; // array of card names, index 0 = top
 
       // Build present set (hand + battlefield) to find missing combo pieces
+      const { NAME_TO_KEY } = _actionsModule();
       const present = new Set(s.hand);
       for (const p of s.battlefield) {
         const ck = NAME_TO_KEY[p.name];
@@ -2444,6 +2462,7 @@ class GameState {
       const newPerm = s.battlefield[s.battlefield.length - 1];
       if (!newPerm?.isToken) {
         const gy = s.players[0].graveyard;
+        const { NAME_TO_KEY } = _actionsModule();
         const present = new Set(s.hand);
         for (const p of s.battlefield) {
           const ck = NAME_TO_KEY[p.name];
@@ -2540,9 +2559,8 @@ class GameState {
     // Targets: Woodland Bellower (MV 6), Kogla (MV 6), Regal Force (MV 7), etc.
     if (!skipETB && cardKey === 'fierce_empath') {
       const cardsModule = _cards();
-      var { parseCost: pc } = _GSM;
       // Pick the highest-priority MV≥6 creature in library
-      var { NAME_TO_KEY: N2K } = _ACM;
+      const { NAME_TO_KEY: N2K } = _actionsModule();
       let bestKey = null, bestScore = -1;
       const present = new Set(s.hand);
       for (const p of s.battlefield) { const k = N2K[p.name]; if (k) present.add(k); }
@@ -2550,7 +2568,7 @@ class GameState {
         if (ck === 'unknown' || isStax(ck)) continue;
         const def = cardsModule[ck];
         if (!def?.types.includes('creature') || !def.cost) continue;
-        const parsed = pc(def.cost);
+        const parsed = parseCost(def.cost);
         const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
         if (mv < 6) continue;
         const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
@@ -2784,7 +2802,7 @@ class GameState {
     // Prefers missing combo pieces (same logic as Eternal Witness).
     // Note: the opponent also returns a card — not modelled (no opponent graveyard).
     if (!skipETB && cardKey === 'skullwinder' && s.players[0].graveyard.length > 0) {
-      var { NAME_TO_KEY: N2K } = _ACM;
+      const { NAME_TO_KEY: N2K } = _actionsModule();
       const gy = s.players[0].graveyard;
       const present = new Set(s.hand);
       for (const p of s.battlefield) { const k = N2K[p.name]; if (k) present.add(k); }
@@ -2845,7 +2863,7 @@ class GameState {
           // or high-value pieces not yet on battlefield)
           const handCopy = [...new Set(s.hand)].filter(k => k !== bestTutor);
           const present = new Set(s.battlefield.map(p => {
-            var { NAME_TO_KEY: N2K } = _ACM;
+            const { NAME_TO_KEY: N2K } = _actionsModule();
             return N2K[p.name];
           }).filter(Boolean));
           const PROTECT_THRESHOLD = 70;
@@ -2943,8 +2961,8 @@ class GameState {
     // fetch. C-15's premise was mistaken; reverted to match the real card.
     if (!skipETB && cardKey === 'sowing_mycospawn') {
       const cardsModule = _cards();
-      var { TUTOR_PRIORITY_SCORE: TPS } = _CDM;
-      var { NAME_TO_KEY: N2K } = _ACM;
+      const TPS = TUTOR_PRIORITY_SCORE;
+      const { NAME_TO_KEY: N2K } = _actionsModule();
       // Find the highest-priority land in library
       let bestLandKey = null, bestLandScore = -1;
       const present = new Set(s.hand);
@@ -9834,6 +9852,26 @@ var CARDS = {
  *                                                (it IS a land under Ashaya)
  */
 
+// [perf] cards.js can't be require()'d at this file's own module top level —
+// cards.js lazily require()s './combos' back (a genuine circular dependency,
+// see cards.js's own comment on that), and while cards.js's require of this
+// file is itself lazy (safe regardless of load order), keeping combos.js's
+// side lazy too avoids ever depending on which module happens to load
+// first. Memoized the same way GameState.js's own `_cardsModule` helper is:
+// require() is cache-hit-fast after the first call, but ~20 detector
+// check() functions were each still paying that per-call cache-lookup cost
+// on every invocation (some, like flatDorkOutput, are called many times per
+// state during a search) — this was found while profiling the Ranger-loop
+// bench (`node --prof`), where require()'s internal module-cache lookups
+// were a nontrivial, easily-avoidable share of ticks.
+var _cardsModule = null;
+function _cards() {
+  return _cardsModule ?? (_cardsModule = CARDS);
+}
+
+// GameState.js has no dependency on this file (verified: no _COM
+// anywhere in it), so unlike cards.js above there's no circularity risk —
+// safe to import directly at module scope instead of a lazy per-call require.
 // ── Loop type taxonomy (O-1) ──────────────────────────────────────────────
 //
 // Each detector exposes a `loopType` describing what the loop actually
@@ -10039,6 +10077,7 @@ function elfCount(state) {
 }
 
 function devotionG(state) {
+  const CARDS = _cards();
   let n = 0;
   for (const p of state.battlefield) {
     const def = CARDS[p.cardKey];
@@ -10071,6 +10110,7 @@ function steadyStateSelvalaPower(state) {
 // Mana value of a card from its cost string (counts generic digits + colour pips).
 // "G" → 1, "1G" → 2, "2GG" → 4, null/"" → 0.
 function cardMV(cardKey) {
+  const CARDS = _cards();
   const cost = CARDS[cardKey]?.cost;
   if (!cost) return 0;
   let mv = 0;
@@ -10347,6 +10387,7 @@ function flatDorkOutput(state, p) {
   const aura = () => enchantedDorkBonusG(state, p);
   if (BASIC_GREEN_DORKS.has(p.name)) return 1 + bump() + aura();
 
+  const CARDS = _cards();
   const def = CARDS[p.cardKey];
   // [2026-07-27] Gaea's Cradle/Itlimoc/Nykthos have real, precise
   // creatureCount/devotion-scaled formulas elsewhere in this file — bail
@@ -10431,6 +10472,7 @@ function flatDorkOutput(state, p) {
 function maxCurrentlyPayableMana(state, excludeNames) {
   let total = state.mana ? state.mana.total() : 0;
   const scActive = shangChiActive(state);
+  const CARDS = _cards();
   for (const p of state.battlefield) {
     if (p.tapped) continue;
     if (p.summoningSick && !scActive) continue;
@@ -10516,7 +10558,7 @@ function hasRepeatableCreatureRecast(state) {
     const creatureCountTotal =
       state.creatures().length +
       (state.hand ? state.hand.filter(k => {
-        var def = CARDS;
+        const def = _cards()[k];
         return def && def.types && def.types.includes('creature');
       }).length : 0);
     if (creatureCountTotal >= 2) return true;
@@ -10555,6 +10597,7 @@ function hasSelfRecastBounce(state, selfName) {
   // Cloudstone Curio needs a partner creature (≠ the looped creature) to
   // ping-pong with, so it bounces the looped creature back each cycle.
   if (hasPerm(state, 'Cloudstone Curio')) {
+    const CARDS = _cards();
     let partners = 0;
     for (const c of state.creatures()) if (c.name !== selfName) partners++;
     if (state.hand) for (const k of state.hand) {
@@ -10805,7 +10848,7 @@ function hasGeierReachUntapper(state) {
 //     Ashaya, a Quirion/Scryb Ranger returning ITSELF (also a Forest, but
 //     still a creature card) to hand.
 function hasCreatureToDiscard(state, excludeKey = null) {
-  var CARDS_local = CARDS;
+  const CARDS_local = _cards();
   if (state.hand?.some(k => k !== excludeKey && CARDS_local[k]?.types?.includes('creature'))) return true;
   if (hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape')) {
     return state.creatures().some(c =>
@@ -10908,6 +10951,7 @@ function hasGlobalHaste(state) {
 // compare the green count in each successor's mana pool to the original
 // state's pool. If any option produces ≥1 net green, the creature qualifies.
 function hasGreenTapper(state) {
+  const CARDS = _cards();
   const beforeG = state.mana?.G ?? 0;
   const scActive = shangChiActive(state);
   return state.creatures().some(c => {
@@ -11322,6 +11366,7 @@ var DETECTORS = [
       // spell. On an opponent's turn that's illegal without flash.
       if (!canCastGreenCreatureNow(state)) return false;
       if (!hasPerm(state, 'Badgermole Cub')) return false;
+      const CARDS = _cards();
       const scActive = shangChiActive(state);
       // Need any creature (other than Badgermole itself, or the Ranger
       // being bounced-and-recast each cycle) with SOME way to tap for
@@ -12029,6 +12074,7 @@ var DETECTORS = [
       if (!ashayaOut(state)) return false;
       if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
 
+      const CARDS = _cards();
       // Every OTHER land Magus can untap and re-tap for mana this cycle:
       // native mana lands and any creature she's made a Forest (isForest).
       // Summoning-sick creature-lands can't use their {T} mana ability
@@ -12707,10 +12753,11 @@ var DETECTORS = [
       // green creature spells, illegal mid an opponent's turn without flash.
       if (!canCastGreenCreatureNow(state)) return false;
 
+      const CARDS = _cards();
       function mv(cardKey) {
         const def = CARDS[cardKey];
         if (!def?.cost) return null;   // no mana cost → can't be "recast" (e.g. Dryad Arbor, played as a land)
-        const p = parseCost(def.cost);
+        const p = _parseCost(def.cost);
         return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
       }
 
@@ -12798,10 +12845,11 @@ var DETECTORS = [
       const hasCreatureBonus = hasPerm(state, 'Badgermole Cub') || hasPerm(state, 'Leyline of Abundance');
       if (!hasCreatureBonus) return false;
 
+      const CARDS = _cards();
       function mv(cardKey) {
         const def = CARDS[cardKey];
         if (!def?.cost) return null;
-        const p = parseCost(def.cost);
+        const p = _parseCost(def.cost);
         return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
       }
 
@@ -12879,10 +12927,11 @@ var DETECTORS = [
       if (!symbioteAvailable(state)) return false;
       if (!canCastGreenCreatureNow(state)) return false;
 
+      const CARDS = _cards();
       function mv(cardKey) {
         const def = CARDS[cardKey];
         if (!def?.cost) return null;
-        const p = parseCost(def.cost);
+        const p = _parseCost(def.cost);
         return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
       }
 
@@ -13431,6 +13480,7 @@ var DETECTORS = [
       'Human dorks (his bounce ability targets Humans only); Temur has no type ' +
       'restriction.',
     check(state) {
+      const CARDS = _cards();
       const hasTemur = hasPerm(state, 'Temur Sabertooth');
       const hasKogla = hasPerm(state, 'Kogla, the Titan Ape');
       if (!hasTemur && !hasKogla) return false;
@@ -13499,7 +13549,7 @@ var DETECTORS = [
       // l.basic is not a Permanent field; use the card definition's isBasic flag instead.
       // l.name === 'Forest' is a reliable fallback since 'Forest' is the only named basic
       // land in this decklist, but cards[l.cardKey]?.isBasic is the canonical check.
-      var cards = CARDS;
+      const cards = _cards();
       const hasBasicForest = state.lands().some(l =>
         l.name === 'Forest' || cards[l.cardKey]?.isBasic
       );
@@ -14019,13 +14069,13 @@ var DETECTORS = [
       );
       if (!hasSurvival && !faunaReady) return false;
 
-
+      const CARDS     = _cards();
       // ── Mana helper ───────────────────────────────────────────────────────
       // Returns the total mana value (generic + colored pips) of a card key.
       function mv(ck) {
         const def = CARDS[ck];
         if (!def?.cost) return 0;
-        const p = parseCost(def.cost);
+        const p = _parseCost(def.cost);
         return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
       }
 
@@ -16365,7 +16415,7 @@ var WIN_CONDITIONS = [
       // tutor cannot find anything and the win condition does not apply.
       const lib = state.players?.[0]?.library ?? [];
       const libHasCreature = (() => {
-        var CARDS_local = CARDS;
+        const CARDS_local = _cards();
         const hasKnown = lib.some(ck => {
           if (ck === 'unknown') return false;
           const def = CARDS_local[ck];
@@ -16490,7 +16540,7 @@ var WIN_CONDITIONS = [
       // Only count this as a win if the topDecked card isn't already in play
       // (Harbinger sets topDecked but the card may have been cast this same turn).
       if (state.topDecked) {
-        var CARDS_local = CARDS;
+        const CARDS_local = _cards();
         const def = CARDS_local[state.topDecked];
         if (def && def.types.includes('creature')) {
           const alreadyOnBF   = state.battlefield.some(p => p.cardKey === state.topDecked);
@@ -16824,7 +16874,7 @@ var WIN_CONDITIONS = [
       // In practice: any mana dork (1/1+), Argothian Elder/Ley Weaver (2/2),
       // or Ashaya (power = lands controlled, typically 4+).
       const tapLoopCreature = state.creatures().find(c => {
-        var CARDS_local = CARDS;
+        const CARDS_local = _cards();
         const def = CARDS_local[c.cardKey];
         return def?.tapForMana && (c.power ?? 0) >= 1;
       });
@@ -16842,7 +16892,7 @@ var WIN_CONDITIONS = [
       // and a tap-loop creature with power ≥ 1 must already be on the field.
       if (state.hand && state.hand.includes('legolas_quick_reflexes')) {
         const tapLoopCreature = state.creatures().find(c => {
-          var CARDS_local = CARDS;
+          const CARDS_local = _cards();
           const def = CARDS_local[c.cardKey];
           return def?.tapForMana && (c.power ?? 0) >= 1;
         });
@@ -17615,6 +17665,7 @@ var _COM = { checkCombos, checkVictory };
 // actions.js — shims for renamed destructuring imports
 var STAX_CARDS = _CDM.STAX_KEYS;
 var _parseCost = _GSM.parseCost;
+var _ManaPool  = _GSM.ManaPool;
 // actions.js
 /**
  * MTG Combo Solver — Action Generator (v2)
@@ -17791,8 +17842,7 @@ function shepherdProtects(state, def) {
 function chaliceBlocks(state, def) {
   if (!state.hasStax('Chalice of the Void')) return false;
   if (shepherdProtects(state, def)) return false;
-  var { parseCost: _pc } = _GSM;
-  const parsed = def._parsedCost ?? _pc(def.cost);
+  const parsed = def._parsedCost ?? _parseCost(def.cost);
   const cmc = parsed.generic + Object.values(parsed.colored).reduce((a,b) => a+b, 0);
 
   // Check own Chalice (with charge counters matching CMC)
@@ -17819,8 +17869,7 @@ function chaliceBlocks(state, def) {
 function vexingBaubleBlocks(state, def, effectiveCostStr) {
   if (!state.hasStax('Vexing Bauble')) return false;
   if (shepherdProtects(state, def)) return false;
-  var { parseCost: _pc } = _GSM;
-  const parsed = _pc(effectiveCostStr);
+  const parsed = _parseCost(effectiveCostStr);
   const totalMana = parsed.generic + Object.values(parsed.colored).reduce((a,b) => a+b, 0);
   return totalMana === 0;
 }
@@ -18386,11 +18435,10 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
               ns = ns.addMana('G');
               // Second landfall this turn: find an Elf or Elemental from library
               if (isSecondLand) {
-                var cards = CARDS;
                 let bestKey = null, bestScore = -1;
                 for (const ck of ns.players[0].library) {
                   if (ck === 'unknown' || isStax(ck)) continue;
-                  const d = cards[ck];
+                  const d = CARDS[ck];
                   if (!d?.types.includes('creature')) continue;
                   if (!d.subtypes?.includes('Elf') && !d.subtypes?.includes('Elemental')) continue;
                   const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
@@ -18398,7 +18446,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
                 }
                 if (bestKey) {
                   const { state: ns2, cardKey: ck } = ns.searchLibraryFor(k => k === bestKey);
-                  if (ck) ns = ns2.addToHand(ck).log(`Nissa, Resurgent Animist (2nd landfall): search library → ${cards[ck]?.name ?? ck} to hand`);
+                  if (ck) ns = ns2.addToHand(ck).log(`Nissa, Resurgent Animist (2nd landfall): search library → ${CARDS[ck]?.name ?? ck} to hand`);
                 }
               }
             }
@@ -18712,7 +18760,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
           );
           const lecturers = ns.battlefield.filter(p => precastLecturerIds.has(p.id));
           if (lecturers.length > 0) {
-            const parsed   = parseCost(effectiveCost(s, def));
+            const parsed   = _parseCost(effectiveCost(s, def));
             const manaSpent = parsed.generic +
               Object.values(parsed.colored).reduce((a, b) => a + b, 0);
             // Own the battlefield BEFORE mutating — calling ns.log() inside the loop
@@ -19743,8 +19791,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         // Mana drains between phases — always construct a fresh ManaPool.
         // Previously used `new ns.mana.constructor()` which is fragile if
         // ManaPool ever gains required constructor arguments.
-        var { ManaPool: _MP } = _GSM;
-        ns.mana = new _MP();
+        ns.mana = new _ManaPool();
         // [2026-07-11 — see ToDo.md IMP-14] CR 602.5b: "once each turn"
         // restrictions are tied to the ACTUAL GAME TURN, a discrete per-
         // player event — the restriction resets with EACH NEW turn, whether
@@ -19908,8 +19955,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
         apply(s) {
           let ns = s.clone();
           ns.opponentTurnsThisRound = (s.opponentTurnsThisRound ?? 0) + 1;
-          var { ManaPool: _MP } = _GSM;
-          ns.mana = new _MP();
+          ns.mana = new _ManaPool();
           // [2026-07-11 — IMP-14] Same CR 602.5b reset as the first opponent
           // window above — each subsequent opponent's turn is ALSO a new,
           // separate turn. See the detailed comment on the first window.
@@ -20006,8 +20052,7 @@ function generateActions(state, _presentHint = null, exhaustive = false, simulat
             const ns = s.clone();
             ns.isOpponentTurn = false;
             ns.endingTurn = true;
-            var { ManaPool: _MP } = _GSM;
-            ns.mana = new _MP();
+            ns.mana = new _ManaPool();
             return ns;
           },
         });
