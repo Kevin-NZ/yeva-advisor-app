@@ -135,6 +135,11 @@ var COMBO_REQUIRED_KEYS = [
   ['ley_weaver','maze_of_ith','gaeas_cradle'],
   ['ley_weaver','maze_of_ith','nykthos'],
 
+  // [2026-08-01] Magus of the Candelabra + Maze of Ith infinite mana loop
+  // (Combo 71) — Magus's own paid untap-two-lands ability substitutes for
+  // Elder/Weaver's free one; same Maze-of-Ith pairing, no Ashaya needed.
+  ['magus_of_the_candelabra','maze_of_ith'],
+
   // Tireless Provisioner + Ashaya + Ranger loops (Combo Summary #9)
   // Ranger ETB triggers Landfall → Treasure; Treasure pays Ranger recast cost.
   ['tireless_provisioner','ashaya','quirion_ranger'],
@@ -10933,7 +10938,16 @@ function hasGlobalHaste(state) {
     hasPerm(state, 'Concordant Crossroads') ||
     hasPerm(state, 'Thousand-Year Elixir') ||
     hasPerm(state, 'Surrak and Goreclaw') ||
-    shangChiActive(state)
+    shangChiActive(state) ||
+    // [2026-08-01] Lightning Greaves: Equip {0} clears summoning sickness on
+    // any one creature (see cards.js — modeled as a direct summoningSick
+    // clear, not attachment tracking), any number of times per turn. Every
+    // haste-gated bounce-recast loop in this file only ever needs ONE
+    // creature (the freshly recast piece) to act immediately each cycle, so
+    // a free, repeatable single-target haste grant is functionally
+    // equivalent to the static "creatures have haste" effects above for
+    // every detector that calls this helper.
+    hasPerm(state, 'Lightning Greaves')
   );
 }
 
@@ -11113,6 +11127,25 @@ var DETECTORS = [
           case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus + rangerSelfTapBonus >= 2;
           case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 2;
           case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 2;
+          // [2026-08-01] These six all have a native `tapForMana` on a
+          // non-land creature, which flatDorkOutput's fallback deliberately
+          // bails on at 0 (comment there: "native-tapForMana non-lands have
+          // dedicated math elsewhere") — but no dedicated math previously
+          // existed for them anywhere in this file, so none could ever fire
+          // this detector. Real outputs mirror cards.js's own tapForMana
+          // exactly (see there for the oracle-text source of each number).
+          case 'Joraga Treespeaker':
+            return ((p.levelCounters ?? 0) >= 1 ? 2 : 1) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Llanowar Tribe':
+            return 3 + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Incubation Druid':
+            return ((p.counters?.['+1/+1'] ?? 0) >= 1 ? 3 : 1) + dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Ilysian Caryatid':
+          case 'Whisperer of the Wilds':
+            return (state.creatures().some(c => (c.power ?? 0) >= 4) ? 2 : 1) +
+              dorkBonus + rangerSelfTapBonus >= 2;
+          case 'Leafkin Druid':
+            return (creatureCount(state) >= 4 ? 2 : 1) + dorkBonus + rangerSelfTapBonus >= 2;
           default:
             // flatDorkOutput already folds in enchantedDorkBonusG (Wild
             // Growth/Utopia Sprawl on this dork's enchanted land), covering
@@ -11173,6 +11206,20 @@ var DETECTORS = [
           case 'Fanatic of Rhonas':           return (greatestPower(state) >= 4 ? 4 : 1) + dorkBonus + rangerSelfTapBonus >= 3;
           case 'Marwyn, the Nurturer':        return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 3;
           case 'Topiary Lecturer':            return (p.power || 0) + dorkBonus + rangerSelfTapBonus >= 3;
+          // [2026-08-01] Same fix as the Quirion (≥2G) sibling above — see
+          // its own comment for why flatDorkOutput bails on these six.
+          case 'Joraga Treespeaker':
+            return ((p.levelCounters ?? 0) >= 1 ? 2 : 1) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Llanowar Tribe':
+            return 3 + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Incubation Druid':
+            return ((p.counters?.['+1/+1'] ?? 0) >= 1 ? 3 : 1) + dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Ilysian Caryatid':
+          case 'Whisperer of the Wilds':
+            return (state.creatures().some(c => (c.power ?? 0) >= 4) ? 2 : 1) +
+              dorkBonus + rangerSelfTapBonus >= 3;
+          case 'Leafkin Druid':
+            return (creatureCount(state) >= 4 ? 2 : 1) + dorkBonus + rangerSelfTapBonus >= 3;
           default:
             // [2026-07-27] Same fix as the Quirion sibling above: use
             // flatDorkOutput (now folding in enchantedDorkBonusG) instead of
@@ -11992,6 +12039,23 @@ var DETECTORS = [
           }
           case 'Marwyn, the Nurturer':        return (p.power || 0) >= 3;
           case 'Topiary Lecturer':            return (p.power || 0) >= 3;
+          // [2026-08-01] Same gap as the Ashaya+Ranger sibling detectors —
+          // these six have a native tapForMana on a non-land creature, which
+          // the `default` branch below only credits for LANDS
+          // (`if (!p.types?.includes('land')) return false;`), so none of
+          // them could ever qualify here despite real, board-dependent
+          // output. Values mirror cards.js's own tapForMana exactly.
+          case 'Joraga Treespeaker':
+            return ((p.levelCounters ?? 0) >= 1 ? 2 : 1) + dorkBonus >= 3;
+          case 'Llanowar Tribe':
+            return 3 + dorkBonus >= 3;
+          case 'Incubation Druid':
+            return ((p.counters?.['+1/+1'] ?? 0) >= 1 ? 3 : 1) + dorkBonus >= 3;
+          case 'Ilysian Caryatid':
+          case 'Whisperer of the Wilds':
+            return (state.creatures().some(c => (c.power ?? 0) >= 4) ? 2 : 1) + dorkBonus >= 3;
+          case 'Leafkin Druid':
+            return (creatureCount(state) >= 4 ? 2 : 1) + dorkBonus >= 3;
           default: {
             // [2026-07-27] Bare/basic land — or a Badgermole Cub-earthbent
             // land, now ALSO a creature live on the battlefield — boosted
@@ -12128,6 +12192,23 @@ var DETECTORS = [
       // best-output source once more per cycle before Magus resets
       // everyone, on top of the per-source sum above.
       if (sources.some(p => p.name === 'Arbor Elf')) gain += bestSourceGain;
+      // [2026-08-01] Shang-Chi, when he's himself one of the isForest
+      // `sources` (Ashaya made him one), is strictly better tapped for his
+      // OWN ability ("{T}: add {G}{G}, spend only on activated abilities
+      // of creature sources") than tapped as a generic land: he still
+      // costs exactly one of Magus's X slots either way (already counted
+      // in `sources.length`), but produces {G}{G} restricted-to-
+      // creature-ability-costs mana instead of a flat {G} land-tap. Magus
+      // of the Candelabra's own {X} activation IS an activated ability of
+      // a creature source, so that {G}{G} can fund it directly. Swapping
+      // him out of the generic-tap gain pool (-1, already counted above
+      // via the `else` branch's flat `g=1`) and crediting his {G}{G}
+      // toward the cost side instead (+2) nets the loop's margin +1
+      // overall. Found via a user repro whose real repeating segment
+      // funded Magus's activation partly off Shang-Chi's own restricted
+      // ability every cycle, which this detector's land-tap-only model
+      // couldn't see — only the generic auto-detector caught the win.
+      if (sources.some(p => p.cardKey === 'shang_chi')) gain += 1;
       const cost = sources.length + 1 + extraActivationCost; // steady-state X = herself + all sources
       if (gain <= cost) return false;
       // [2026-07-26 — 2nd bootstrap-affordability follow-up] Unlike the
@@ -13065,7 +13146,19 @@ var DETECTORS = [
       // counts her — adding +1 again would double-count and overstate the
       // loop's real output.
       const tenderInHand = state.hand?.includes('hope_tender') && !hasPerm(state, 'Hope Tender');
-      const cradleCount = creatureCount(state) + (tenderInHand ? 1 : 0);
+      // [2026-08-01] Cradle's own tap output also includes any Wild Growth/
+      // Utopia Sprawl bonus attached directly to Cradle itself (real engine:
+      // actions.js applyTapBonuses stacks these on top of the per-creature
+      // count for ANY land, Cradle included) — this was previously omitted
+      // entirely, only ever checked on the SECOND (non-Cradle) land below.
+      // A user repro (Wild Growth cast on Gaea's Cradle via Crop Rotation,
+      // no second land in play) undercounted a real gain of 6 as 5, missing
+      // the >5 threshold and falling back to the generic auto-detector.
+      const cradlePerm = state.battlefield.find(
+        p => p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun'
+      );
+      const cradleAuraBonus = cradlePerm ? enchantedDorkBonusG(state, cradlePerm) : 0;
+      const cradleCount = creatureCount(state) + (tenderInHand ? 1 : 0) + cradleAuraBonus;
       // A second, non-Cradle land to pair with Cradle in the same exert
       // activation (untap_two_lands). Pick the BEST available candidate's
       // real output, not a flat +1 — Nykthos taps for devotion (after its
@@ -13114,20 +13207,21 @@ var DETECTORS = [
     description:
       "With a haste enabler, bounced creatures re-enter with haste and can tap immediately. " +
       "Enablers: Concordant Crossroads, Thousand-Year Elixir, Surrak and Goreclaw, " +
-      "Shang-Chi, Master of Kung Fu. " +
-      "Circle (≥6 creatures), Selvala (greatest power ≥7), Karametra's Acolyte (devotion ≥7). " +
+      "Shang-Chi, Master of Kung Fu, Lightning Greaves (free repeatable equip). " +
+      "Circle (≥6 creatures), Selvala (greatest power ≥7), Karametra's Acolyte (devotion ≥7), " +
+      "Priest of Titania (≥5 elves, recast {1G}), Elvish Archdruid (≥6 elves, recast {1GG}), " +
+      "Wirewood Channeler (≥7 elves, recast {3G}). " +
       "NOTE: Surrak and Goreclaw (6/5) acts as haste enabler only — Selvala taps for 6 with " +
       "Surrak as the only big creature, which is break-even (cost 6). Need another creature " +
       "with power ≥7 for Selvala to produce a net-positive loop.",
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
-      const hasElixir = hasPerm(state, 'Thousand-Year Elixir');
-      const hasShangChi = state.battlefield.some(p => p.cardKey === 'shang_chi');
-      const hasHaste =
-        hasPerm(state, 'Concordant Crossroads') ||
-        hasElixir ||
-        hasPerm(state, 'Surrak and Goreclaw') ||
-        hasShangChi;
+      // [2026-08-01] hasGlobalHaste() (used by every sibling detector) already
+      // covers this same enabler set plus Lightning Greaves — reuse it instead
+      // of re-deriving a duplicate, narrower list here. A board with Lightning
+      // Greaves and no other enabler previously fell through to the generic
+      // auto-detector.
+      const hasHaste = hasGlobalHaste(state);
       if (!hasHaste) return false;
       // Check each haste-loop variant
       if (permReady(state, 'Circle of Dreams Druid') && creatureCount(state) >= 6) return true;
@@ -13154,6 +13248,19 @@ var DETECTORS = [
         (!p.summoningSick || hasHaste)
       );
       if (devotionG(state) >= 7 && acolyteReady) return true;
+      // [2026-08-01] Priest of Titania / Elvish Archdruid / Wirewood Channeler
+      // — same elf-count-scaling tap-dork shape already handled for the
+      // Shang-Chi-specific sibling detector just below, but that one never
+      // got mirrored here. Per-dork thresholds are loop cost + 1 (net
+      // positive), where loop cost = Temur's {1G} bounce (2 mana) + the
+      // dork's own recast cost: Priest {1G}=2 (total 4, need ≥5), Archdruid
+      // {1GG}=3 (total 5, need ≥6), Channeler {3G}=4 (total 6, need ≥7).
+      const elfDorkReady = (name) => state.battlefield.some(p =>
+        p.name === name && !p.tapped && (!p.summoningSick || hasHaste)
+      );
+      if (elfDorkReady('Priest of Titania') && elfCount(state) >= 5) return true;
+      if (elfDorkReady('Elvish Archdruid') && elfCount(state) >= 6) return true;
+      if (elfDorkReady('Wirewood Channeler') && elfCount(state) >= 7) return true;
       return false;
     },
   },
@@ -13835,15 +13942,26 @@ var DETECTORS = [
       'and Vitalize or Emerald Charm in hand: ' +
       'Tap Marwyn for ≥7G. Cast untap spell {G}. ' +
       'Temur bounces EWit {1G}. Cast EWit {1GG} — returns untap spell from GY. ' +
-      'Loop cost 6G total. Net +≥1G at power ≥7.',
+      'Loop cost 6G total. Net +≥1G at power ≥7. ' +
+      'Timeless Witness ({2}{G}{G} recast, one more than Eternal Witness) needs power ≥8 instead.',
     check(state) {
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
-      if (!hasPerm(state, 'Eternal Witness')) return false;
+      // [2026-08-01] Timeless Witness is the established "Eternal Witness
+      // twin" elsewhere in this codebase (same ETB: return a card from
+      // graveyard to hand) but costs {2}{G}{G} (4 mana) to recast, one more
+      // than Eternal Witness's {1}{G}{G} (3) — the loop's own steady-state
+      // cost is one higher (7 vs 6), so the power threshold is one higher
+      // too (≥8, not ≥7). A board with Timeless Witness and no Eternal
+      // Witness previously fell through to the generic auto-detector.
+      const hasEWit = hasPerm(state, 'Eternal Witness');
+      const hasTWit = hasPerm(state, 'Timeless Witness');
+      if (!hasEWit && !hasTWit) return false;
+      const powerThreshold = hasEWit ? 7 : 8;
       const marwyn = state.battlefield.find(
         p => p.name === 'Marwyn, the Nurturer' && !p.tapped &&
              (!p.summoningSick || shangChiActive(state))
       );
-      if (!marwyn || (marwyn.power || 0) < 7) return false;
+      if (!marwyn || (marwyn.power || 0) < powerThreshold) return false;
       return (state.hand && (
         state.hand.includes('vitalize') ||
         state.hand.includes('emerald_charm')
@@ -13968,13 +14086,18 @@ var DETECTORS = [
       "targeting Deserted Temple to untap it. Deserted Temple ({1},{T}) untaps " +
       "Gaea's Cradle/Itlimoc/Nykthos. Tap the big land. Loop cost " +
       "{1G}+{1GG}+{G}+{1} = 7. Cradle/Itlimoc: creatureCount > 7. " +
-      "Nykthos: devotion > 9 (after its own {2} activation).",
+      "Nykthos: devotion > 9 (after its own {2} activation). " +
+      "Deserted Temple can be substituted with any {1}-cost creature-untapper " +
+      "(Hope Tender, Magus of the Candelabra, Formidable Speaker) that LQR " +
+      "targets directly instead — same cost, same thresholds. If the big land " +
+      "itself has already been made a creature (e.g. Badgermole Cub's " +
+      "earthbend), LQR can untap it directly with no hop needed at all — " +
+      "loop cost drops to 5, lowering both thresholds by 2.",
     check(state) {
       const bouncerAvailable =
         hasPerm(state, 'Temur Sabertooth') || hasPerm(state, 'Kogla, the Titan Ape');
       if (!bouncerAvailable) return false;
       if (!inHandOrField(state, 'Eternal Witness', 'eternal_witness')) return false;
-      if (!hasPerm(state, 'Deserted Temple')) return false;
       // LQR must be recoverable each cycle — in hand already, or in the
       // graveyard where Eternal Witness's own ETB recurs it every cycle.
       if (!hasLQRAvailable(state)) return false;
@@ -13985,22 +14108,49 @@ var DETECTORS = [
       );
       if (!bigLand) return false;
 
+      // [2026-08-01] Was hard-gated on Deserted Temple alone. LQR itself
+      // only ever targets a CREATURE (its real castFn filters
+      // state.creatures()) — Deserted Temple is never one, so the only way
+      // this loop is actually legal is either (a) an intermediate
+      // {1}-cost creature-untapper (Hope Tender / Magus of the Candelabra /
+      // Formidable Speaker — the same untapper family COMBO 68 already
+      // uses) that LQR untaps directly, which THEN untaps the big land, or
+      // (b) the big land has itself been turned into a creature (Badgermole
+      // Cub's earthbend — a sticky per-permanent stamp, see
+      // earthbentLandNames in GameState.js), letting LQR untap it with no
+      // hop at all. Found via two user repros: one using Hope Tender as the
+      // hop (no Deserted Temple anywhere), one using Badgermole-animated
+      // Gaea's Cradle directly (no Deserted Temple OR a dedicated
+      // untapper) — both only won through the generic auto-detector.
+      const hopUntapper = state.battlefield.find(p =>
+        (p.name === 'Deserted Temple' || p.name === 'Hope Tender' ||
+         p.name === 'Magus of the Candelabra' || p.name === 'Formidable Speaker')
+      );
+      const bigLandIsCreature = bigLand.types?.includes('creature');
+      if (!hopUntapper && !bigLandIsCreature) return false;
+      // Extra {1} for the hop untapper's own activation — not needed when
+      // LQR targets the (creature-ified) big land directly.
+      const hopCost = bigLandIsCreature ? 0 : 1;
+
       // Bootstrap-affordability: the first cycle's paid steps must be
       // payable RIGHT NOW. If Eternal Witness is already in hand (mid-loop,
       // just bounced), the {1G} bounce step is moot.
       const ewitOnField = hasPerm(state, 'Eternal Witness');
-      const bootstrapCost = ewitOnField ? 7 : 5;
-      if (maxCurrentlyPayableMana(state, new Set(['Eternal Witness'])) < bootstrapCost) return false;
+      const bootstrapCost = (ewitOnField ? 6 : 4) + hopCost;
+      const excludeFromFunding = new Set(['Eternal Witness']);
+      if (hopUntapper) excludeFromFunding.add(hopUntapper.name);
+      if (maxCurrentlyPayableMana(state, excludeFromFunding) < bootstrapCost) return false;
 
+      const threshold = 6 + hopCost; // steady-state loop cost (see description)
       if (bigLand.name === 'Nykthos, Shrine to Nyx') {
-        return devotionG(state) - 2 > 7;
+        return devotionG(state) - 2 > threshold;
       }
       // Eternal Witness counts toward Cradle's own creatureCount whether
       // she's on the battlefield now or about to be recast from hand —
       // creatureCount(state) already includes her if she's present; if
       // she's currently in hand (mid-loop), credit her back in.
       const ewitInHand = state.hand?.includes('eternal_witness') && !ewitOnField;
-      return creatureCount(state) + (ewitInHand ? 1 : 0) > 7;
+      return creatureCount(state) + (ewitInHand ? 1 : 0) > threshold;
     },
   },
 
@@ -14305,12 +14455,14 @@ var DETECTORS = [
   // ══════════════════════════════════════════════════════════════════════════
 
   {
-    name: 'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)',
+    name: 'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)  [COMBO 72]',
     description:
-      "Elder/Weaver taps: untap Maze + big land. Tap big land for mana. " +
-      "Maze (free) untaps Elder/Weaver. Repeat. " +
-      "Gaea's Cradle: ≥1 other creature (produces ≥1G net). " +
-      "Nykthos: devotion ≥3 (produces ≥3G minus 2 activation = ≥1G net). " +
+      "Elder/Weaver taps: untap Maze + a second land. Tap that land for mana. " +
+      "Maze (free) untaps Elder/Weaver. Repeat. Loop costs 0 mana, so ANY " +
+      "mana-producing second land nets a pure profit — Gaea's Cradle needs " +
+      "≥1 other creature (produces ≥1G), Nykthos needs devotion ≥3 (nets " +
+      "≥1G after its own {2} activation), and a plain land (basic Forest, " +
+      "etc.) nets its own base output outright since the loop costs nothing. " +
       "No Ashaya required.",
     check(state) {
       if (!permReadyOrSCActive(state, 'Argothian Elder') && !permReadyOrSCActive(state, 'Ley Weaver')) return false;
@@ -14327,6 +14479,81 @@ var DETECTORS = [
       if (cradleUntapped(state) && creatureCount(state) >= elderOrWeaverCount + 1) return true;
       // Nykthos: {2},{T} → adds devotion×G. Needs devotion ≥3 to net after {2} cost.
       if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 3) return true;
+      // [2026-08-01] Any OTHER mana-producing land — the loop's own cost is
+      // genuinely {0} (Elder/Weaver's untap-two-lands ability and Maze's
+      // untap-creature ability are both free), so unlike every threshold
+      // above (which must overcome Elder's own recurring {2}/creature-count
+      // gate), a plain land pairing needs no minimum output at all: even a
+      // single basic Forest tapping for {G} is pure, unconditional profit
+      // every cycle. Elder/Weaver itself is excluded (it's the untapper, not
+      // the tapped-for-mana land) and life-cost lands are excluded (looping
+      // Ancient Tomb would be a slow self-kill, not a real "infinite mana"
+      // win). Found via the reference combo list (#42, #52), whose simplest
+      // form uses just "any other mana-producing land" — previously
+      // undetected because this detector hard-required Cradle or Nykthos.
+      // Cradle/Itlimoc/Nykthos are deliberately excluded here — they're
+      // already handled by their own, more specific branches just above.
+      const EXCLUDED = new Set([
+        'Argothian Elder', 'Ley Weaver', 'Maze of Ith',
+        "Gaea's Cradle", 'Itlimoc, Cradle of the Sun', 'Nykthos, Shrine to Nyx',
+        'Ancient Tomb',
+      ]);
+      const hasPlainLand = state.lands().some(l => !EXCLUDED.has(l.name));
+      if (hasPlainLand) return true;
+      return false;
+    },
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  MAGUS OF THE CANDELABRA + MAZE OF ITH + BIG LAND
+  //
+  //  Sibling of "Argothian Elder + Maze of Ith + Big Land" just above, but
+  //  Magus's own untap ability ("{X},{T}: Untap X target lands") costs {X}
+  //  mana (Elder/Ley Weaver's is free), so unlike that sibling this loop
+  //  is NOT a 0-cost loop — a plain land is not automatic profit here, the
+  //  usual per-source thresholds apply.
+  //
+  //  In this engine, Maze of Ith's untap-creature ability targets ANY tapped
+  //  creature (see cards.js — not gated on attacking), so the reference
+  //  combo's "declare Magus as attacker" step is flavor only; the modeled
+  //  loop needs no combat at all:
+  //   1. Magus (untapped): pay {2}, tap, untap Maze + the big land (X=2).
+  //   2. Tap the big land for mana.
+  //   3. Maze (now untapped by step 1): tap, untap Magus.
+  //   4. Repeat — Magus and Maze end each cycle re-untapped for the next.
+  //  Loop cost: {2} (Magus's own activation). Gaea's Cradle: creatureCount
+  //  > 2. Itlimoc: creatureCount+1 > 2 (its own +1 bonus over Cradle — see
+  //  cards.js `itlimoc.tapForMana`). Nykthos: its own {2} devotion-mode
+  //  activation stacks on top of Magus's {2}, total cost {4} — devotion > 4.
+  //
+  //  Found via the reference combo list (#72, #77, #84) — no detector paired
+  //  Magus of the Candelabra with Maze of Ith at all before this.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    name: 'Infinite Mana (Magus of the Candelabra + Maze of Ith + Big Land)  [COMBO 71]',
+    description:
+      "Magus ({2},{T}, X=2) untaps Maze of Ith + the big land. Tap the big land for mana. " +
+      "Maze (free) untaps Magus. Repeat — loop cost {2} per cycle. " +
+      "Gaea's Cradle: creatureCount > 2. Itlimoc: creatureCount+1 > 2. " +
+      "Nykthos: total cost {2}(Magus)+{2}(Nykthos) = 4 — devotion > 4.",
+    check(state) {
+      if (!permReadyOrSCActive(state, 'Magus of the Candelabra')) return false;
+      if (!hasPerm(state, 'Maze of Ith')) return false;
+      const fundMagus = new Set(['Magus of the Candelabra']);
+      const cradlePerm = state.battlefield.find(
+        p => p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun'
+      );
+      if (cradlePerm) {
+        const output = cradlePerm.name === 'Itlimoc, Cradle of the Sun'
+          ? creatureCount(state) + 1
+          : creatureCount(state);
+        if (output > 2 && maxCurrentlyPayableMana(state, fundMagus) >= 2) return true;
+      }
+      if (hasPerm(state, 'Nykthos, Shrine to Nyx') &&
+          devotionG(state) > 4 &&
+          maxCurrentlyPayableMana(state, fundMagus) >= 4) {
+        return true;
+      }
       return false;
     },
   },
@@ -14937,15 +15164,39 @@ var DETECTORS = [
       // is required.
       const magusPerm = state.battlefield.find(p => p.name === 'Magus of the Candelabra');
       const bootstrapCore = !magusPerm ? 2 : (magusPerm.tapped ? 4 : 1);
+      // [2026-08-01] Magus herself (a creature, cost {G} = 1 devotion pip) is
+      // part of the board being measured, but the state being checked may
+      // catch her IN HAND mid-loop (just bounced by Kogla/Temur, about to be
+      // recast) rather than on the battlefield — same "may be caught
+      // mid-cycle" gap already handled elsewhere in this file (e.g. the
+      // sibling Temur/Kogla + Hope Tender + Cradle detector's `tenderInHand`
+      // adjustment). creatureCount(state)/devotionG(state) only see her when
+      // she's actually on the battlefield, undercounting by exactly 1 (her
+      // own body) whenever she's caught in hand. Found via a user repro
+      // whose real line tapped Nykthos for devotion 7 with Magus freshly
+      // recast (on the battlefield), but the printed FINAL state — after
+      // one more Kogla bounce closing out the line — had her back in hand,
+      // so devotionG(state) there was only 6, one short of this detector's
+      // own documented threshold, even though the loop genuinely clears it.
+      const magusInHand = !magusPerm && state.hand?.includes('magus_of_the_candelabra');
       const hasCradle = state.battlefield.some(
         p => p.name === "Gaea's Cradle" || p.name === 'Itlimoc, Cradle of the Sun'
       );
-      if (hasCradle && creatureCount(state) >= 5 &&
+      if (hasCradle && creatureCount(state) + (magusInHand ? 1 : 0) >= 5 &&
           maxCurrentlyPayableMana(state, new Set(['Magus of the Candelabra'])) >= bootstrapCore) {
         return true;
       }
       // Nykthos's devotion mode itself costs {2} on top of the core loop.
-      if (permUntapped(state, 'Nykthos, Shrine to Nyx') && devotionG(state) >= 7 &&
+      // [2026-08-01] Was `permUntapped(state, 'Nykthos, Shrine to Nyx')` —
+      // too strict, same "target may currently be tapped" gap already fixed
+      // on every sibling Cradle/Nykthos detector in this file: Magus's own
+      // {1},{T} (X=1) ability untaps Nykthos itself as the loop's own first
+      // action, so a currently-tapped Nykthos (e.g. right after its own
+      // devotion tap, mid-cycle) is not disqualifying — only its EXISTENCE
+      // matters, same as the Cradle branch just above (which never checked
+      // tapped state at all). The {2} activation cost is still charged via
+      // maxCurrentlyPayableMana below regardless.
+      if (hasPerm(state, 'Nykthos, Shrine to Nyx') && devotionG(state) + (magusInHand ? 1 : 0) >= 7 &&
           maxCurrentlyPayableMana(state, new Set(['Magus of the Candelabra'])) >= bootstrapCore + 2) {
         return true;
       }
@@ -15153,7 +15404,8 @@ var DETECTORS = [
       "Ashaya makes a creature-dork also a land, so Woodcaller Automaton's ETB " +
       "('untap target land') can untap the dork directly — no Cradle/Nykthos needed. " +
       "Temur Sabertooth bounces Woodcaller ({1G}), recast ({2GG}). Loop cost 6 mana. " +
-      "Priest/Archdruid/Channeler: elves > 6. Circle: creatures > 6. Acolyte: devotion > 6.",
+      "Priest/Archdruid/Channeler: elves > 6. Circle: creatures > 6. Acolyte: devotion > 6. " +
+      "Selvala: power > 6 (plus her own {G} activation). Marwyn/Topiary Lecturer: power > 6.",
     check(state) {
       if (!ashayaOut(state)) return false;
       if (!hasPerm(state, 'Temur Sabertooth')) return false;
@@ -15174,6 +15426,18 @@ var DETECTORS = [
           case 'Wirewood Channeler':     return elfCount(state) + dorkBonus > 6;
           case 'Circle of Dreams Druid': return creatureCount(state) + dorkBonus > 6;
           case "Karametra's Acolyte":    return devotionG(state) + dorkBonus > 6;
+          // [2026-08-01] These three were already correctly wired into every
+          // OTHER dork-scaling detector in this file (Ranger, Magus, Hyrax,
+          // Shang-Chi, Hope Tender) but missing here specifically.
+          case 'Marwyn, the Nurturer':
+          case 'Topiary Lecturer':
+            // Her own {G},{T} activation must be payable BEFORE she taps —
+            // same bootstrap-affordability reasoning as every other Selvala/
+            // Marwyn branch in this file.
+            return (p.power || 0) + dorkBonus > 6;
+          case 'Selvala, Heart of the Wilds':
+            return greatestPower(state) + dorkBonus > 6 &&
+              maxCurrentlyPayableMana(state, new Set(['Selvala, Heart of the Wilds'])) >= 1;
           default: return false;
         }
       });
@@ -17011,6 +17275,10 @@ function checkVictory(state, _infiniteMana, present) {
         // "Win: Tutor for Finisher"'s tutor-chain advice). Both get shown —
         // see printResult's "INFINITE-MANA ASSEMBLY" section.
         manaDescription: infiniteMana.description,
+        // Only the generic auto-detector (Solver._synthesizeGenericLoopCombo)
+        // sets this — undefined for every hand-authored DETECTORS entry,
+        // whose manaDescription prose already explains the loop card-by-card.
+        loopSteps:     infiniteMana.loopSteps,
         deployed:      true,
       };
     }
@@ -17024,6 +17292,7 @@ function checkVictory(state, _infiniteMana, present) {
         winCondition:  wc.name,
         manaCombo:     infiniteMana.name,
         manaDescription: infiniteMana.description,
+        loopSteps:     infiniteMana.loopSteps,
         deployed:      false,
       };
     }
@@ -17043,6 +17312,13 @@ function checkVictory(state, _infiniteMana, present) {
     description:  infiniteMana.description + ' — Win condition not yet on battlefield.',
     winCondition: null,
     manaCombo:    infiniteMana.name,
+    // No manaDescription here (unlike the two branches above) — `description`
+    // just above already carries the same detector text plus the "Win
+    // condition not yet on battlefield" suffix, printed inline by the caller;
+    // setting manaDescription too would print that text a second time under
+    // a redundant "INFINITE-MANA ASSEMBLY" header. loopSteps is still
+    // exposed so the caller can list the repeating segment either way.
+    loopSteps:    infiniteMana.loopSteps,
     deployed:     true,
   };
 }
@@ -17099,8 +17375,9 @@ var DETECTOR_REQUIRED_KEYS = {
   'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]':  ['marwyn','eternal_witness','kogla'],
   'Infinite Mana (Selvala + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 39]': ['selvala','eternal_witness','temur_sabertooth'],
   'Infinite Mana (Selvala + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 44]': ['selvala','eternal_witness','kogla'],
-  "Infinite Mana (Temur Sabertooth/Kogla + Eternal Witness + Legolas's Quick Reflexes + Deserted Temple + Big Land)": ['eternal_witness','deserted_temple','temur_sabertooth'],
-  'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':                    ['argothian_elder','maze_of_ith'],
+  "Infinite Mana (Temur Sabertooth/Kogla + Eternal Witness + Legolas's Quick Reflexes + Deserted Temple + Big Land)": ['eternal_witness','temur_sabertooth'],
+  'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)  [COMBO 72]':                    ['argothian_elder','maze_of_ith'],
+  'Infinite Mana (Magus of the Candelabra + Maze of Ith + Big Land)  [COMBO 71]':            ['magus_of_the_candelabra','maze_of_ith'],
   'Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]': ['tireless_provisioner','ashaya','quirion_ranger'],
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Big Land)':          ['woodcaller_automaton','temur_sabertooth'],
   'Infinite Mana (Woodcaller Automaton + Temur Sabertooth + Ashaya + Mana Dork)': ['woodcaller_automaton','temur_sabertooth','ashaya'],
@@ -17338,8 +17615,14 @@ var _DETECTOR_PREFILTER = {
     { all: ['temur_sabertooth'], any: [['gaeas_cradle', 'itlimoc']] },  // argothian_elder equiv-grouped with ley_weaver
   'Infinite Mana (Formidable Speaker + Wirewood Lodge + Magus of the Candelabra + Big Land)':
     { all: ['formidable_speaker', 'wirewood_lodge', 'magus_of_the_candelabra'] },
-  'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)':
-    { all: ['argothian_elder', 'maze_of_ith'] },
+  // [2026-08-01] Was `all: ['argothian_elder', 'maze_of_ith']` — hard-required
+  // Argothian Elder even though check() already accepts Ley Weaver as a
+  // substitute (same free untap-two-lands ability), silently skipping any
+  // Ley-Weaver-only board before check() ever ran.
+  'Infinite Mana (Argothian Elder + Maze of Ith + Big Land)  [COMBO 72]':
+    { all: ['maze_of_ith'], any: [['argothian_elder', 'ley_weaver']] },
+  'Infinite Mana (Magus of the Candelabra + Maze of Ith + Big Land)  [COMBO 71]':
+    { all: ['magus_of_the_candelabra', 'maze_of_ith'] },
 
   // Selvala + Ranger / Cloudstone variants
   'Infinite Mana (Selvala + Quirion/Scryb Ranger + Power ≥2)  [COMBO 11]':
@@ -17364,9 +17647,13 @@ var _DETECTOR_PREFILTER = {
     { all: ['wirewood_symbiote'] },
   'Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Selvala)  [COMBO 12, 13, 16]':
     { all: ['temur_sabertooth', 'wirewood_symbiote', 'selvala'] },
+  // [2026-08-01] `any` widened to 'shang_chi' and 'lightning_greaves' — the
+  // check() function's `hasHaste` gate (now hasGlobalHaste(state)) already
+  // accepted both, but the prefilter never did, silently skipping any board
+  // that reached this detector via one of them and no other enabler.
   'Infinite Mana (Temur Sabertooth + Haste Enabler + Dork)  [COMBO 9, 10, 20, 29, 37]':
     { all: ['temur_sabertooth'],
-      any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw']] },
+      any: [['concordant_crossroads', 'thousand_year_elixir', 'surrak_goreclaw', 'shang_chi', 'lightning_greaves']] },
   'Infinite ETB / Storm (Selvala + Temur Sabertooth + Haste Enabler, break-even)  [COMBO 22]':
     { all: ['selvala', 'temur_sabertooth'] },
   // [2026-07-30] Was `all: [..., 'hyrax_tower_scout']`, which blocked the
@@ -17439,9 +17726,11 @@ var _DETECTOR_PREFILTER = {
     { all: ['kogla', 'shang_chi'] },
 
   // Marwyn / Selvala + Eternal Witness + Temur/Kogla + Vitalize/Charm
+  // [2026-08-01] 'eternal_witness' widened to 'timeless_witness' too — the
+  // check() function accepts either witness, so the prefilter must too.
   'Infinite Mana (Marwyn + Eternal Witness + Temur + Vitalize/Emerald Charm)  [COMBO 33, 58]':
-    { all: ['marwyn', 'eternal_witness', 'temur_sabertooth'],
-      any: [['vitalize', 'emerald_charm']] },
+    { all: ['marwyn', 'temur_sabertooth'],
+      any: [['eternal_witness', 'timeless_witness'], ['vitalize', 'emerald_charm']] },
   'Infinite Mana (Marwyn + Eternal Witness + Kogla + Vitalize/Emerald Charm)  [COMBO 51]':
     { all: ['marwyn', 'eternal_witness', 'kogla'],
       any: [['vitalize', 'emerald_charm']] },
@@ -21519,6 +21808,19 @@ class Solver {
   // generic detection has no card-by-card explanation available, only the
   // proof (same board, seen before this turn with less mana).
   _synthesizeGenericLoopCombo(next, ancestor) {
+    // [2026-08-01] `next` and `ancestor` share the same persistent history
+    // chain (ancestor is a genuine ancestor of next on this DFS path — see
+    // _detectGenericManaLoop's doc comment), so next.history's entries PAST
+    // ancestor.history.length are exactly the actions that turned `ancestor`
+    // into `next` — i.e. the repeatable segment itself. Extracting the plain
+    // message strings here (not the states) keeps this cheap and avoids
+    // retaining full GameState objects on the combo result. "--"-prefixed
+    // entries are internal turn/phase boundary markers (see the identical
+    // filter used by the main OPTIMAL LINE printer), never shown to the user.
+    const loopSteps = next.history
+      .slice(ancestor.history.length)
+      .map(e => e.msg)
+      .filter(msg => msg && !msg.startsWith('--'));
     return {
       achieved: true,
       name: 'Infinite Mana (auto-detected repeating state)',
@@ -21526,9 +21828,9 @@ class Solver {
         'hand, and turn-scoped resources) was already reached earlier this turn with ' +
         `less mana (${ancestor.mana} → ${next.mana}), proving some repeatable sequence ` +
         'of actions nets positive mana each cycle. Found automatically, not via a hand-' +
-        'authored detector — no card-by-card explanation is available; review the move ' +
-        'history around this point for the repeating segment.',
+        'authored detector — the exact repeating steps are listed below.',
       loopType: LOOP_TYPE.MANA_POSITIVE,
+      loopSteps,
     };
   }
 
