@@ -1,0 +1,441 @@
+<title>The Deep Roots — A Yeva, Nature's Herald Story</title>
+<style>
+  :root{
+    --bg:#10150f;
+    --bg-raised:#161d13;
+    --bg-inset:#0c100b;
+    --ink:#e7e8d6;
+    --ink-dim:#9fae8c;
+    --ink-faint:#66795a;
+    --accent:#c9a75c;
+    --accent-soft:rgba(201,167,92,.16);
+    --accent-2:#6fb0a6;
+    --rule:rgba(201,167,92,.22);
+    --shadow:rgba(0,0,0,.45);
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#eef0e2;
+      --bg-raised:#e4e8d4;
+      --bg-inset:#dde2cc;
+      --ink:#1c2317;
+      --ink-dim:#4c5c3f;
+      --ink-faint:#7c8a6c;
+      --accent:#8a6d2b;
+      --accent-soft:rgba(138,109,43,.12);
+      --accent-2:#3f7d74;
+      --rule:rgba(138,109,43,.3);
+      --shadow:rgba(60,60,40,.15);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10150f; --bg-raised:#161d13; --bg-inset:#0c100b;
+    --ink:#e7e8d6; --ink-dim:#9fae8c; --ink-faint:#66795a;
+    --accent:#c9a75c; --accent-soft:rgba(201,167,92,.16); --accent-2:#6fb0a6;
+    --rule:rgba(201,167,92,.22); --shadow:rgba(0,0,0,.45);
+  }
+  :root[data-theme="light"]{
+    --bg:#eef0e2; --bg-raised:#e4e8d4; --bg-inset:#dde2cc;
+    --ink:#1c2317; --ink-dim:#4c5c3f; --ink-faint:#7c8a6c;
+    --accent:#8a6d2b; --accent-soft:rgba(138,109,43,.12); --accent-2:#3f7d74;
+    --rule:rgba(138,109,43,.3); --shadow:rgba(60,60,40,.15);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:Charter,"Iowan Old Style","Palatino Linotype",Georgia,"Noto Serif",serif;
+    font-size:19px;
+    line-height:1.75;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent-soft);color:var(--ink);}
+
+  a{color:var(--accent);}
+  a:focus-visible, button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+
+  .display{
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    font-weight:600;
+    text-wrap:balance;
+  }
+  .label{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    text-transform:uppercase;
+    letter-spacing:.11em;
+    font-size:12.5px;
+    color:var(--ink-faint);
+  }
+
+  /* ---------- hero ---------- */
+  .hero{
+    position:relative;
+    padding:5.5rem 1.5rem 4rem;
+    text-align:center;
+    overflow:hidden;
+    background:
+      radial-gradient(ellipse 90% 60% at 50% -10%, var(--accent-soft), transparent 65%),
+      var(--bg-inset);
+    border-bottom:1px solid var(--rule);
+  }
+  .hero canvas{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    opacity:.55;
+    pointer-events:none;
+  }
+  .hero-inner{position:relative;z-index:1;}
+  .eyebrow{
+    display:inline-flex;
+    align-items:center;
+    gap:.6em;
+    margin-bottom:1.4rem;
+  }
+  .eyebrow::before,.eyebrow::after{
+    content:"";
+    width:2.2rem;height:1px;
+    background:var(--rule);
+  }
+  h1.title{
+    margin:0 0 .5rem;
+    font-size:clamp(2.4rem,6vw,4rem);
+    letter-spacing:.01em;
+    color:var(--ink);
+  }
+  .subtitle{
+    max-width:34rem;
+    margin:0 auto;
+    color:var(--ink-dim);
+    font-style:italic;
+    font-size:1.05rem;
+  }
+  .deckline{
+    margin-top:2rem;
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:12.5px;
+    letter-spacing:.08em;
+    color:var(--ink-faint);
+    text-transform:uppercase;
+  }
+  .deckline b{color:var(--accent);font-weight:600;}
+
+  /* ---------- contents strip ---------- */
+  .contents{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:.4rem .1rem;
+    max-width:56rem;
+    margin:0 auto;
+    padding:1.1rem 1.5rem;
+    border-bottom:1px solid var(--rule);
+    background:var(--bg-raised);
+  }
+  .contents a{
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:11.5px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:var(--ink-dim);
+    text-decoration:none;
+    padding:.45rem .7rem;
+    border-radius:2px;
+    transition:color .15s ease, background .15s ease;
+    white-space:nowrap;
+  }
+  .contents a:hover{color:var(--accent);background:var(--accent-soft);}
+  .contents span.sep{color:var(--ink-faint);align-self:center;font-size:11px;}
+
+  /* ---------- article ---------- */
+  main{
+    max-width:38rem;
+    margin:0 auto;
+    padding:0 1.5rem 5rem;
+  }
+  .chapter{
+    padding-top:4.2rem;
+    scroll-margin-top:2rem;
+  }
+  .chapter-head{
+    display:flex;
+    align-items:baseline;
+    gap:.9rem;
+    margin-bottom:1.8rem;
+  }
+  .chapter-num{
+    font-family:"Iowan Old Style",Georgia,serif;
+    font-style:italic;
+    color:var(--accent);
+    font-size:1.05rem;
+  }
+  h2{
+    margin:0;
+    font-size:1.55rem;
+    font-weight:600;
+  }
+  .chapter > p{margin:0 0 1.35rem;}
+  .chapter > p:first-of-type::first-letter{
+    float:left;
+    font-family:"Iowan Old Style",Georgia,serif;
+    font-size:3.4rem;
+    line-height:.8;
+    padding:.1rem .12rem 0 0;
+    color:var(--accent);
+    font-weight:600;
+  }
+  strong{color:var(--ink);font-weight:600;}
+  em{color:var(--ink-dim);font-style:italic;}
+
+  blockquote{
+    margin:2rem 0;
+    padding:.2rem 0 .2rem 1.2rem;
+    border-left:2px solid var(--accent-2);
+    color:var(--ink-dim);
+    font-style:italic;
+    font-size:1.05rem;
+  }
+
+  .rootbreak{
+    display:block;
+    width:100%;
+    height:34px;
+    margin:2.6rem 0;
+    opacity:.5;
+  }
+
+  footer{
+    max-width:42rem;
+    margin:0 auto;
+    padding:3rem 1.5rem 4rem;
+    color:var(--ink-faint);
+    font-size:.85rem;
+    text-align:center;
+    line-height:1.6;
+  }
+
+  @media (max-width:640px){
+    body{font-size:16.5px;}
+    .hero{padding:4rem 1.2rem 3rem;}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none !important;transition:none !important;}
+  }
+</style>
+
+<div class="hero">
+  <canvas id="canopy" aria-hidden="true"></canvas>
+  <div class="hero-inner">
+    <div class="eyebrow"><span class="label">Yeva, Nature's Herald · Competitive</span></div>
+    <h1 class="title display">The Deep&nbsp;Roots</h1>
+    <p class="subtitle">Being an account of what came through the root-seams of Yavimaya, and how the wood answered.</p>
+    <div class="deckline">Ninety-one cards · Eight chapters · One forest, briefly not alone</div>
+  </div>
+</div>
+
+<nav class="contents" aria-label="Chapters">
+  <a href="#ch1">I · The Herald Wakes</a><span class="sep">·</span>
+  <a href="#ch2">II · What the Roots Brought</a><span class="sep">·</span>
+  <a href="#ch3">III · The Glassroot</a><span class="sep">·</span>
+  <a href="#ch4">IV · Gathering the Wood</a><span class="sep">·</span>
+  <a href="#ch5">V · The Small Gods of Green</a><span class="sep">·</span>
+  <a href="#ch6">VI · What the Relics Remembered</a><span class="sep">·</span>
+  <a href="#ch7">VII · The Turning</a><span class="sep">·</span>
+  <a href="#ch8">VIII · After the Rain</a>
+</nav>
+
+<main>
+
+  <article class="chapter" id="ch1">
+    <div class="chapter-head"><span class="chapter-num">I</span><h2>The Herald Wakes</h2></div>
+    <p>Beneath the canopy of Yavimaya, where the oldest trees of Dominaria still remembered the songs of Multani, the forest had a heartbeat. It skipped once — and <strong>Yeva, Nature's Herald</strong>, opened her eyes.</p>
+    <p>She had slept in flash, the way her kind always did: not truly dreaming, but waiting, coiled like a fern before the rain. Something had disturbed the root-song. A tremor from below, where no tremor should be.</p>
+    <p>Yeva rose from the loam without a sound and found <strong>Eladamri, Korvecdal</strong>, already awake, sword bare, standing at the edge of the Skyshroud eaves. He had led elves through worse than a bad dream once, in the days when Rath's shadow fell across this very wood. He had not forgotten how to listen for danger in silence.</p>
+    <p>"The roots are cold," Eladamri said. "Cold where they should be warm. Something is drinking from the deep water."</p>
+    <p>Behind him, <strong>Ashaya, Soul of the Wild</strong>, unfolded from the hillside itself — not a creature <em>in</em> the forest so much as the forest given a shape, bark-skinned and moss-crowned, older than either elf. When she spoke, the leaves spoke with her.</p>
+    <blockquote>"The Deep Roots are opening," she said. "Not just ours. Others'."</blockquote>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 4 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent)"/>
+  </svg>
+
+  <article class="chapter" id="ch2">
+    <div class="chapter-head"><span class="chapter-num">II</span><h2>What the Roots Brought</h2></div>
+    <p>It began at Dryad Arbor — a single tree that had always been more than a tree, and this night it groaned and split its bark into a seam of light. Through that seam, and through a dozen more like it across the wood — beneath Boseiju far to the west, through the shrine-steps of Nykthos, and up through the black stone teeth of the Talon Gates of Madara — the world tree's root-network had torn itself open into other worlds.</p>
+    <p>Two strangers stumbled out first.</p>
+    <p>One was an archer, quiet and quick, an arrow already nocked before his knees had finished remembering how gravity worked on this side of the seam. He said his name was a word the elves had never heard, but the Quirion scouts who watched him move — a green blur through Yavimaya's canopy before anyone else had finished blinking — simply started calling him kin. His quick reflexes entered the wood's memory that night as a new kind of prayer: <em>may your feet be that certain.</em></p>
+    <p>The second came in fighting — fists first, in a stance the elves had no name for, cutting down a shadow that had followed him through the tear before it could widen. He introduced himself between breaths as <strong>Shang-Chi</strong>, master of a kung fu no elf had ever seen, and when Eladamri asked what he had been fighting, he only said: "Something made of rings and rot. It isn't from my world either."</p>
+    <p>Ashaya's bark creaked with unease. <em>"Then it followed the roots, same as you."</em></p>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 30 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent-2)"/>
+  </svg>
+
+  <article class="chapter" id="ch3">
+    <div class="chapter-head"><span class="chapter-num">III</span><h2>The Glassroot</h2></div>
+    <p>They did not have to search long. Three days south, past the Geier Reach Sanitarium — a lonely stone waystation where lost travelers were still sometimes found half-mad, murmuring — the forest floor had gone the color of dirty glass. Vines grew wrong there: brittle, veined with a faint metallic sheen, and where they touched living wood, the wood <em>stopped being alive</em>, joint by joint, without ever falling down. The elves called it the Glassroot before they had even agreed to call it anything.</p>
+    <p>A collector ouphe found the first cache: buried under a fold of glassroot vine, a nest of humming devices, half machine and half husk. Ouphes hate few things as purely as they hate artifice, and this one set fire to the cache with its bare hands before anyone could stop it. A green detonation followed close behind — the elves' answering blessing, a storm of thorns that scoured two more nests from the hillside in a single breath.</p>
+    <p>But the Glassroot had already reached the Woodcaller, a druidic construct built generations ago from Argivian brass and Yavimayan heartwood, meant to ring the great warning bells when danger came from outside the wood. Its bell-song, when the vines took it, turned inward and wrong. Small horrors answered that bell all across the district: crawling glass-veined things that had once been rabbits, once been birds.</p>
+    <p><strong>Endurance</strong> answered in turn. The great white hart shimmered into being at the tree line, and when the corrupted things tried to drag their fallen back up out of the dirt, she simply would not allow it. What died near Endurance stayed dead — a small mercy, but the elves needed it. Where a threat could not be met with steel, it was simply unmade, turned back into ordinary wilderness and left to grow harmless in the sun.</p>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 4 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent)"/>
+  </svg>
+
+  <article class="chapter" id="ch4">
+    <div class="chapter-head"><span class="chapter-num">IV</span><h2>Gathering the Wood</h2></div>
+    <p>Word of the Glassroot spread the way all news spread in Yavimaya — root to root, faster than any rider.</p>
+    <p>At Gaea's Cradle, the ancient standing grove where the wood's power pooled thickest, the priest of Titania raised her staff and called the elves home. They came from every corner: the archdruid and his silent council of green-robed kin, Fyndhorn folk down from the cold hills, twin scouts who could vanish into any copse and reappear a mile off, a harbinger whose songs always seemed to know which fighter would be needed next.</p>
+    <p><strong>Fauna Shaman</strong> walked among them with her satchel of totems, trading a fox's tooth for a bear's claw, a bear's claw for something with far more teeth — because when the Glassroot's horrors came, Yavimaya would need exactly the right beast for exactly the right moment. It was an old lesson, older than her, that the forest provides — if you know how to ask.</p>
+    <p>Asking was its own small ritual. When Eladamri planted a single green shoot into the earth at Gaea's Cradle and it grew, in a single heartbeat, into a towering half-plant giant — <strong>Woodland Bellower</strong> — the Glassroot's small horrors at the treeline actually paused.</p>
+    <p>The storytellers kept the war-council's memory alive as the fighting stretched into its second week, and atop the Cradle's central stone, a lone speaker declared Yavimaya's answer to the invasion, in a voice that made every root within a mile stand a little straighter.</p>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 30 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent-2)"/>
+  </svg>
+
+  <article class="chapter" id="ch5">
+    <div class="chapter-head"><span class="chapter-num">V</span><h2>The Small Gods of Green</h2></div>
+    <p>Not every hero of the Deep Roots war was large.</p>
+    <p>The countless small, quiet folk who spent every day of their lives with a hand on bark never stopped their work even as the Glassroot spread. A halfling kept baking bread at her hearth three trees down from the front line, because, she said, soldiers fight better fed. Acolytes walked the wounded lines with green light spilling from their palms, while quieter druids kept every mana-well humming.</p>
+    <p>Birds of paradise wheeled overhead as living signal-flags. Scouts and runners kept the roads open between camps. A little shapeshifter who had wandered in from who-knew-which opened root simply decided to stay and helped guard the nurseries, where the youngest creatures sheltered under old, patient eyes — and more than one arrow meant for a sleeping fawn found itself gently, inexplicably, missing.</p>
+    <p>A recruiter walked the perimeter each dusk, and by each dawn her numbers had grown, because there was always someone in Yavimaya willing to pick up a spear once they saw what glass-eyed things did to a forest.</p>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 4 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent)"/>
+  </svg>
+
+  <article class="chapter" id="ch6">
+    <div class="chapter-head"><span class="chapter-num">VI</span><h2>What the Relics Remembered</h2></div>
+    <p>Deep under Gaea's Cradle, in vaults older than the elves who guarded them, Yavimaya kept the leavings of Urza's long-ago war: a scatter of small, humming powerstones nobody quite trusted and nobody could afford to leave buried. Runners traded one buried treasure for the exact ley-line the war-council needed next, whether that was the swift-striking mana of an ancient tomb, the patient renewal of a deserted temple, or the war room at the Cradle's heart, where Eladamri and Ashaya planned each counterattack.</p>
+    <p>Old bindings held green power straight in the soil, and a lone magus, working beside the wood's fastest scouts, learned to wake a dozen lands' worth of power out of a single well when the front line needed a miracle before dawn.</p>
+    <p>The wounded were kept moving long after their legs should have given out. Even Urza's Cave, sealed since the Brothers' War, cracked open one final time, and what it gave the war-council — nobody would ever quite say, only that the tide turned a little, afterward.</p>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 30 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent-2)"/>
+  </svg>
+
+  <article class="chapter" id="ch7">
+    <div class="chapter-head"><span class="chapter-num">VII</span><h2>The Turning</h2></div>
+    <p>The Glassroot made its true move at the equinox, pouring out of every seam at once — Kamigawa's stolen light through the shattered Talon Gates, Theros's stars gone dim over Nykthos, oil-slicked things wearing shapes that had once, somewhere, been beautiful.</p>
+    <p>The call went out and rang across the whole of Yavimaya at once. The oldest law the forest knew answered it: <em>let the strongest come forward.</em> And the strongest came.</p>
+    <p><strong>Kogla</strong>, titan ape of the eastern peaks, came down with a boulder in each fist, and where he stepped, glassroot vine simply ceased to exist. A herd of thunder-footed dinosaurs followed him through the corrupted heartwood, and the ground itself seemed to cheer for them. A stag-king with antlers like living lightning gathered every wounded scout's memory of the fight and gave it back to them as strength.</p>
+    <p>Something flickered in and out of the fighting like a held breath, vanishing an ally out of harm's way and returning them the instant it was safe. Time itself seemed to bend for the defenders, handing them one more chance, and one more, and one more. Eternal Witness walked the battlefield afterward each night, not fighting, just remembering — picking up every fallen blessing and quietly giving it back to whoever needed it most in the morning.</p>
+    <p>At the center of it all, the ground itself rewrote its own shape, turning a killing field into an ambush and back again faster than the Glassroot could adapt. Reinforcement after reinforcement rose out of the deep wood's memory, and every promise of aid was repaid before the next dawn broke, until the earth finally cracked beneath the last of the Glassroot's nests and swallowed it whole.</p>
+    <p>Legolas put an arrow through the last standing glass-eyed horror from four hundred paces, without seeming to aim. Shang-Chi finished the one after that with his bare hands and said only, quietly, "Some things follow you no matter which world you run to. You just have to be ready when they catch up."</p>
+  </article>
+
+  <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 17 Q150 4 300 17 T600 17" fill="none" stroke="var(--rule)" stroke-width="1"/>
+    <circle cx="300" cy="17" r="2.5" fill="var(--accent)"/>
+  </svg>
+
+  <article class="chapter" id="ch8">
+    <div class="chapter-head"><span class="chapter-num">VIII</span><h2>After the Rain</h2></div>
+    <p>The wood spent the following season simply becoming what it needed to become — grief folding slowly into growth, the way it always had in Yavimaya, while a half-finished rite quietly grew into the temple it had always meant to be. <strong>Yisan</strong>, the wanderer bard, walked from camp to camp collecting the story, humming the Deep Roots war into a song that scouts would still be singing a hundred years on.</p>
+    <p>The seams under Dryad Arbor, Boseiju, Nykthos, and the Talon Gates never fully closed. Yavimaya's druids, led by Ashaya and Eladamri together, decided — after long argument and a hard-won consensus in the War Room — not to seal them. Roots that had once carried only Yavimaya's own sap now carried word between a dozen worlds' worth of forests, and that, Yeva said, was worth the risk.</p>
+    <p>Legolas stayed a season, teaching the wood's scouts to read wind, before a root-seam finally called him home. Shang-Chi stayed longer, saying only that Yavimaya needed a keeper for the seams, someone who'd already learned to watch for things that followed travelers between worlds.</p>
+    <p>Yeva walked the healed treeline at the season's end, Ashaya's voice moving through every leaf around her, and for the first time since the roots had first gone cold, the forest's heartbeat was steady again.</p>
+    <p>It would not stay quiet forever. It never did. But Yavimaya had never once needed to fight alone — not with a herald who could flash a whole wood's worth of help into being the instant it was needed most.</p>
+  </article>
+
+</main>
+
+<footer>
+  Written for the Yeva Advisor "Competitive" preset deck.<br>
+  Card names and characters are property of Wizards of the Coast (Magic: The Gathering) and their respective Universes Beyond licensors; this is an unofficial fan story.
+</footer>
+
+<script>
+(function(){
+  var canvas = document.getElementById('canopy');
+  if(!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function styleColor(name, fallback){
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  function size(){
+    var r = canvas.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = r.width * dpr;
+    canvas.height = r.height * dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    return {w:r.width, h:r.height};
+  }
+
+  function seededRandom(seed){
+    var s = seed;
+    return function(){
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+
+  function branch(x, y, angle, length, depth, rand, draw){
+    if(depth <= 0 || length < 4) return;
+    var x2 = x + Math.cos(angle) * length;
+    var y2 = y + Math.sin(angle) * length;
+    draw(x, y, x2, y2, depth);
+    var n = depth > 3 ? 2 : (rand() > 0.4 ? 2 : 1);
+    for(var i=0;i<n;i++){
+      var da = (rand() - 0.5) * 1.1;
+      branch(x2, y2, angle + da, length * (0.68 + rand()*0.15), depth - 1, rand, draw);
+    }
+  }
+
+  function render(){
+    var dims = size();
+    var w = dims.w, h = dims.h;
+    ctx.clearRect(0,0,w,h);
+    var accent = styleColor('--accent', '#c9a75c');
+    var accent2 = styleColor('--accent-2', '#6fb0a6');
+    var rand = seededRandom(42);
+
+    // canopy: branching structure growing up from below the fold, plus a mirrored root system
+    var startX = w * 0.5;
+    ctx.lineCap = 'round';
+
+    function drawUp(x1,y1,x2,y2,depth){
+      ctx.strokeStyle = depth > 5 ? accent : accent2;
+      ctx.globalAlpha = 0.18 + (depth/11)*0.35;
+      ctx.lineWidth = Math.max(0.6, depth * 0.35);
+      ctx.beginPath();
+      ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+      ctx.stroke();
+    }
+
+    for(var k=0;k<3;k++){
+      var rk = seededRandom(11 + k*7);
+      branch(startX + (k-1)*w*0.22, h*1.02, -Math.PI/2 + (k-1)*0.35, h*0.16, 8, rk, drawUp);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  render();
+  window.addEventListener('resize', render);
+  if(!reduced){
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden) render(); });
+  }
+})();
+</script>
