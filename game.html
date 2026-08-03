@@ -284,7 +284,7 @@ document.querySelectorAll('.diff-btn').forEach(b=>{
 const MAX_WAVES=6;
 let state='start', score=0, lives=3, wave=1;
 let player,bullets,enemies,particles,eBullets,barriers,mysteryStar,homingMissiles;
-let keys={}, mouseX=null, shootCD=0, eShootTimer=0;
+let keys={}, mouseX=null, shootCD=0, eShootTimer=0, touchFiring=false;
 let waveDone=false, waveTimer=0, wavePaused=false;
 let frameId, lastTime=0, groundY;
 let shake={x:0,y:0,power:0};
@@ -354,7 +354,9 @@ const WC=[
 ];
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
-function initGame(){
+// Shared reset used by both a fresh 6-wave run and Survival mode, so the two
+// modes can't drift out of sync on which fields get cleared between games.
+function resetGameState(){
   const D=DIFF[difficulty];
   groundY=Math.min(H - 70, H * 0.88); score=0; lives=D.lives; wave=1;
   bullets=[]; eBullets=[]; particles=[]; barriers=[]; enemies=[]; mysteryStar=null; homingMissiles=[];
@@ -370,6 +372,9 @@ function initGame(){
   if(pendingBearCompanion){ pendingBearCompanion=false; bearCompanion={x:W/2-52,hp:2,hitTimer:0,walkPhase:0}; }
   flashCD=FLASH_MAX; // Flash must be earned from kills
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
+}
+function initGame(){
+  resetGameState();
   showWaveCard(1,()=>spawnWave(1,true));
 }
 
@@ -720,7 +725,6 @@ function drawEnemy(e,ts){
   const pulse=Math.sin(ts*0.003+e.phase)*0.06;
   const sc = (e.scale||1) * (1+pulse);
   ctx.save(); ctx.translate(x,y); ctx.scale(sc,sc);
-  if(e.flash>0){ctx.filter='brightness(3)';}
   const grd=ctx.createRadialGradient(0,0,r*0.2,0,0,r);
   grd.addColorStop(0,lighten(tp.color,30)); grd.addColorStop(1,tp.color);
   ctx.fillStyle=grd;
@@ -842,7 +846,15 @@ function drawEnemy(e,ts){
     if(e.shield){ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.setLineDash([4,3]);ctx.beginPath();ctx.arc(0,0,r*1.45,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
   }
 
-  ctx.filter='none';
+  if(e.flash>0){
+    // Cheap hit-flash: tint only the pixels already drawn instead of a per-shape filter
+    ctx.globalCompositeOperation='source-atop';
+    ctx.globalAlpha=Math.min(1,e.flash/6)*0.75;
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(-r*1.6,-r*1.6,r*3.2,r*3.2);
+    ctx.globalCompositeOperation='source-over';
+    ctx.globalAlpha=1;
+  }
   if(e.mhp>1){const bw=e.w,fr=e.hp/e.mhp;ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(-bw/2,r+4,bw,4);ctx.fillStyle=fr>0.5?'#4a9e4a':'#e74c3c';ctx.fillRect(-bw/2,r+4,bw*fr,4);}
   // Carrier indicator — small pulsing gem beneath the enemy
   if(e.carrier){
@@ -1117,17 +1129,7 @@ function startSurvival() {
   survivalMode = true;
   show(null); state='play'; resize(); initAudio(); marchPitch=0;
   // Full reset but survivalMode stays true
-  const D=DIFF[difficulty];
-  groundY=Math.min(H - 70, H * 0.88); score=0; lives=D.lives; wave=1;
-  bullets=[]; eBullets=[]; particles=[]; barriers=[]; enemies=[]; mysteryStar=null; homingMissiles=[];
-  flashCD=0; bombCD=0; shootCD=0; eShootTimer=60;
-  formation={dirX:1,tickTimer:0,dropQ:false};
-  shake={x:0,y:0,power:0};
-  waveDone=false; wavePaused=false;
-  mysteryTimer=1200; diverTimer=400;
-  powerups=[]; combo=0; comboTimer=0; comboDisplay=0; speedBoost=0; autoFireTimer=0;
-  peakCombo=0; waveKills=0; wavePeakCombo=0;
-  initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
+  resetGameState();
   showWaveCard(1,()=>spawnWave(1,true));
   canvas.style.opacity='0'; canvas.style.transition='opacity 0.5s ease';
   setTimeout(()=>{ canvas.style.opacity='1'; },30);
@@ -1751,7 +1753,7 @@ function handleInput(dt){
   if(keys['ArrowLeft']||keys['a']||keys['A'])player.x=Math.max(18,player.x-spd);
   if(keys['ArrowRight']||keys['d']||keys['D'])player.x=Math.min(W-18,player.x+spd);
   if(mouseX!==null){const d=mouseX-player.x;player.x+=d*0.12;player.x=Math.max(18,Math.min(W-18,player.x));}
-  if((keys[' ']||keys['Space'])&&!wavePaused&&!waveTransition)shoot();
+  if((keys[' ']||keys['Space']||touchFiring)&&!wavePaused&&!waveTransition)shoot();
   // Auto-fire — both the timer and shootCD freeze during wave transition
   if(!waveTransition){
     if(autoFire&&!wavePaused){autoFireTimer--;if(autoFireTimer<=0){shoot();autoFireTimer=speedBoost>0?7:14;}}
@@ -2166,8 +2168,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape')pauseGame();
   if(e.key==='s'||e.key==='S')toggleMute();
   if(e.key==='f'||e.key==='F')toggleAutoFire();
-  if((e.key==='q'||e.key==='Q')&&state==='play')useFlash();
-  if((e.key==='e'||e.key==='E')&&state==='play')useBomb();
+  if((e.key==='q'||e.key==='Q')&&state==='play'&&!wavePaused&&!waveTransition)useFlash();
+  if((e.key==='e'||e.key==='E')&&state==='play'&&!wavePaused&&!waveTransition)useBomb();
   if(e.key===' ')e.preventDefault();
 
   // Cheat: accumulate letters on the start screen
@@ -2200,7 +2202,9 @@ canvas.addEventListener('mousemove',e=>{const r=canvas.getBoundingClientRect();m
 canvas.addEventListener('mouseleave',()=>{mouseX=null;});
 canvas.addEventListener('click',()=>{if(state==='play'&&!wavePaused)shoot();});
 canvas.addEventListener('touchmove',e=>{e.preventDefault();const r=canvas.getBoundingClientRect();mouseX=(e.touches[0].clientX-r.left)*(W/r.width);},{passive:false});
-canvas.addEventListener('touchstart',e=>{e.preventDefault();if(state==='play'&&!wavePaused)shoot();},{passive:false});
+canvas.addEventListener('touchstart',e=>{e.preventDefault();touchFiring=true;if(state==='play'&&!wavePaused)shoot();},{passive:false});
+canvas.addEventListener('touchend',e=>{e.preventDefault();if(e.touches.length===0)touchFiring=false;},{passive:false});
+canvas.addEventListener('touchcancel',()=>{touchFiring=false;});
 window.addEventListener('resize',()=>{resize();groundY=Math.min(H-70,H*0.88);if(player)player.y=groundY-8;initPX();bgStars=[];});
 
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&state==='play')pauseGame();});
