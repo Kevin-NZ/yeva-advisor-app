@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-03T00:33:08Z
-// Solver MD5 : 2be71f927738
+// Generated : 2026-08-03T01:16:11Z
+// Solver MD5 : 9ee99b642620
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -16008,8 +16008,13 @@ ${ex}`;
         node._path = path;
         return path;
       }
+      function _isGenuineMana(combo) {
+        if (!combo?.manaCombo) return false;
+        const det = DETECTORS.find((d) => d.name === combo.manaCombo);
+        return det?.loopType === LOOP_TYPE.MANA_POSITIVE;
+      }
       function relabelFormidableFallback(combo, finalState) {
-        if (!combo || combo.winCondition || !finalState.hasPermanent("Formidable Speaker") || !formidableSpeakerLooseRetutor(finalState)) {
+        if (!combo || combo.winCondition || !finalState.hasPermanent("Formidable Speaker") || !formidableSpeakerLooseRetutor(finalState) || !_isGenuineMana(combo)) {
           return combo;
         }
         return { ...combo, winCondition: "Win: Tutor for Finisher (infinite mana + creature tutor)" };
@@ -17403,7 +17408,7 @@ ${ex}`;
           }
         }
         const victory = checkVictory(s);
-        if (victory && !victory.winCondition && onField("Formidable Speaker") && formidableSpeakerLooseRetutor(s)) {
+        if (victory && !victory.winCondition && onField("Formidable Speaker") && formidableSpeakerLooseRetutor(s) && _isGenuineMana(victory)) {
           victory.winCondition = "Win: Tutor for Finisher (infinite mana + creature tutor)";
         }
         const terminalWin = victory && victory.deployed && victory.winCondition;
