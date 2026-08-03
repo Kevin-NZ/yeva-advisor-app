@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-03T12:36:25Z
-// Solver MD5 : d5033b5a2bdf
+// Generated : 2026-08-03T21:46:27Z
+// Solver MD5 : f4ea78ce1658
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -6941,7 +6941,7 @@
             });
             const allTappedCreatures = state.creatures().filter((c) => c.tapped);
             const seenPairs = /* @__PURE__ */ new Set();
-            const selfUntapEntry = perm.tapped ? { ...perm, _isSelf: true } : null;
+            const selfUntapEntry = perm.tapped ? Object.assign(perm.clone(), { _isSelf: true }) : null;
             for (const target of bounceable) {
               const creaturesCanUntap = allTappedCreatures.filter((c) => c.id !== target.id);
               const selfUntapOption = target.id !== perm.id && selfUntapEntry ? [selfUntapEntry] : [];
@@ -13635,6 +13635,7 @@ ${ex}`;
           this.name = data.name;
           this.types = data.types ?? [];
           this.subtypes = data.subtypes ?? [];
+          this._cow = false;
           this.tapped = data.tapped ?? false;
           this.summoningSick = data.summoningSick ?? false;
           this.cardKey = data.cardKey;
@@ -13644,6 +13645,16 @@ ${ex}`;
           this.power = data.power;
           this.toughness = data.toughness;
           this.isToken = data.isToken ?? false;
+          this.imprintedColor = data.imprintedColor;
+          this.enchantedLandId = data.enchantedLandId;
+          this.elvishGuidance = data.elvishGuidance;
+          this.cauldronAbilityKey = data.cauldronAbilityKey;
+          this.copyKey = data.copyKey;
+          this.copyName = data.copyName;
+          this.levelCounters = data.levelCounters;
+          this.namedCard = data.namedCard;
+          this.luckCounter = data.luckCounter;
+          this._isSelf = false;
         }
         is(type) {
           return this.types.includes(type.toLowerCase());
@@ -13663,16 +13674,17 @@ ${ex}`;
           p.counters = this.counters;
           p.power = this.power;
           p.toughness = this.toughness;
-          if (this.isToken) p.isToken = this.isToken;
-          if (this.imprintedColor !== void 0) p.imprintedColor = this.imprintedColor;
-          if (this.enchantedLandId !== void 0) p.enchantedLandId = this.enchantedLandId;
-          if (this.elvishGuidance) p.elvishGuidance = this.elvishGuidance;
-          if (this.cauldronAbilityKey !== void 0) p.cauldronAbilityKey = this.cauldronAbilityKey;
-          if (this.copyKey !== void 0) p.copyKey = this.copyKey;
-          if (this.copyName !== void 0) p.copyName = this.copyName;
-          if (this.levelCounters) p.levelCounters = this.levelCounters;
-          if (this.namedCard !== void 0) p.namedCard = this.namedCard;
-          if (this.luckCounter) p.luckCounter = this.luckCounter;
+          p.isToken = this.isToken;
+          p.imprintedColor = this.imprintedColor;
+          p.enchantedLandId = this.enchantedLandId;
+          p.elvishGuidance = this.elvishGuidance;
+          p.cauldronAbilityKey = this.cauldronAbilityKey;
+          p.copyKey = this.copyKey;
+          p.copyName = this.copyName;
+          p.levelCounters = this.levelCounters;
+          p.namedCard = this.namedCard;
+          p.luckCounter = this.luckCounter;
+          p._isSelf = this._isSelf;
           return p;
         }
         /** Copy types/subtypes arrays if they're shared (COW). Call before push/mutation. */
@@ -14044,6 +14056,11 @@ ${ex}`;
           s.creatureSpellsCastThisTurn = this.creatureSpellsCastThisTurn;
           s.hand = this.hand;
           s.battlefield = this.battlefield;
+          s._bfOwned = false;
+          s._plOwned = true;
+          s._bfArrOwned = false;
+          s._ownedPerms = null;
+          s._permNames = this._permNames;
           s.mana = this.mana.clone();
           s.restrictedG = this.restrictedG;
           s.restrictedCreatureG = this.restrictedCreatureG;
@@ -14068,9 +14085,6 @@ ${ex}`;
           s.pactOwed = this.pactOwed;
           s._fp = null;
           s._structKey = null;
-          s._plOwned = true;
-          s._bfArrOwned = false;
-          s._ownedPerms = null;
           return s;
         }
         /** Deep-copy battlefield (all permanents cloned). Call before any BF mutation. */
