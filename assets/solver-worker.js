@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-03T01:16:11Z
-// Solver MD5 : 9ee99b642620
+// Generated : 2026-08-03T12:36:25Z
+// Solver MD5 : d5033b5a2bdf
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -1016,7 +1016,17 @@
         // a free, repeatable single-target haste grant is functionally
         // equivalent to the static "creatures have haste" effects above for
         // every detector that calls this helper.
-        hasPerm(state, "Lightning Greaves");
+        hasPerm(state, "Lightning Greaves") || // [2026-08-03] Ulvenwald Behemoth (transformed Ulvenwald Oddity — see
+        // cards.js's `transform` ability): "Other creatures you control ...
+        // have ... haste." cards.js models the transform as a one-time
+        // summoningSick clear on whatever's on the battlefield AT THAT MOMENT
+        // (not a live continuous static onto creatures entering later), but
+        // every caller of this helper only ever needs the CURRENT check-time
+        // override (same pattern already relied on for Surrak/Shang-Chi/
+        // Lightning Greaves above — none of those retroactively stamp
+        // GameState.enterBattlefield either), so checking for her post-
+        // transform name here is sufficient and consistent.
+        hasPerm(state, "Ulvenwald Behemoth");
       }
       function hasGreenTapper(state) {
         const CARDS2 = _cards();
@@ -4857,10 +4867,7 @@
             const hasRecastEngine = hasPerm(state, "Temur Sabertooth") || hasPerm(state, "Cloudstone Curio");
             if (!hasRecastEngine) return false;
             const yeva = state.battlefield.find((p) => p.name === "Yeva, Nature's Herald");
-            if (yeva.summoningSick) {
-              const hasHaste = hasPerm(state, "Concordant Crossroads") || hasPerm(state, "Thousand-Year Elixir") || hasPerm(state, "Surrak and Goreclaw") || shangChiActive(state);
-              if (!hasHaste) return false;
-            }
+            if (yeva.summoningSick && !hasGlobalHaste(state)) return false;
             return true;
           },
           deployed(state) {
@@ -4869,10 +4876,7 @@
             const hasRecastEngine = hasPerm(state, "Temur Sabertooth") || hasPerm(state, "Cloudstone Curio");
             if (!hasRecastEngine) return false;
             const yeva = state.battlefield.find((p) => p.name === "Yeva, Nature's Herald");
-            if (yeva.summoningSick) {
-              const hasHaste = hasPerm(state, "Concordant Crossroads") || hasPerm(state, "Thousand-Year Elixir") || hasPerm(state, "Surrak and Goreclaw") || shangChiActive(state);
-              if (!hasHaste) return false;
-            }
+            if (yeva.summoningSick && !hasGlobalHaste(state)) return false;
             return true;
           }
         },
@@ -13333,6 +13337,18 @@
         }
         return true;
       }
+      function _insertionSortStrings(arr) {
+        for (let i = 1; i < arr.length; i++) {
+          const key = arr[i];
+          let j = i - 1;
+          while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j--;
+          }
+          arr[j + 1] = key;
+        }
+        return arr;
+      }
       var _fingerprintCanonicalName = /* @__PURE__ */ new Map();
       for (const group of FINGERPRINT_EQUIVALENTS) {
         const sorted = [...group].sort();
@@ -15483,7 +15499,7 @@ ${ex}`;
             }
             segs[i] = s;
           }
-          const bf = segs.sort().join("|");
+          const bf = _insertionSortStrings(segs).join("|");
           const mn = this.mana;
           const m = mn.W + ":" + mn.U + ":" + mn.B + ":" + mn.R + ":" + mn.G + ":" + mn.C + ":" + this.restrictedG + ":" + this.restrictedCreatureG + ":" + this.opponentTurnsThisRound;
           const p0 = this.players[0], p1 = this.players[1], p2 = this.players[2], p3 = this.players[3];
