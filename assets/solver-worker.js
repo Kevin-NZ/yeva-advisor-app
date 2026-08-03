@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-02T23:21:21Z
-// Solver MD5 : 891308c663fc
+// Generated : 2026-08-03T00:33:08Z
+// Solver MD5 : 2be71f927738
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -5704,6 +5704,9 @@
         if (state.opponentStax?.has("Trinisphere")) return 3;
         return 0;
       }
+      function radagastEligible(state, def) {
+        return def.types.includes("creature") && (state.creatureSpellsCastThisTurn ?? 0) === 0 && state.hasPermanent("Radagast of Rhosgobel");
+      }
       function costReductions(state, def) {
         let genericReduction = 0;
         for (const perm of state.battlefield) {
@@ -5718,6 +5721,7 @@
             genericReduction += 1;
           }
         }
+        if (radagastEligible(state, def)) genericReduction += 2;
         return genericReduction;
       }
       function defilerGreenReduction(state, def) {
@@ -5795,7 +5799,7 @@
         if (!state._hasSTAX) {
           let hasReducer = false;
           for (const perm of state.battlefield) {
-            if (perm.name === "Defiler of Vigor" || perm.name === "Nylea, Keen-Eyed") {
+            if (perm.name === "Defiler of Vigor" || perm.name === "Nylea, Keen-Eyed" || perm.name === "Radagast of Rhosgobel") {
               hasReducer = true;
               break;
             }
@@ -5897,6 +5901,7 @@
           if (flashThisTurn) return true;
           if (isOpponentTurn || endStepReached) {
             if (def.types.includes("creature") && def.cost?.includes("G") && yevaOnBattlefield) return true;
+            if (radagastEligible(state, def)) return true;
             return false;
           }
           return true;
@@ -6048,10 +6053,15 @@
                 }
                 if (def.selfBoundedTutor) {
                   for (const r of allResults) {
+                    let rr = r;
+                    if (isCreature) {
+                      rr = rr.clone();
+                      rr.creatureSpellsCastThisTurn = (rr.creatureSpellsCastThisTurn ?? 0) + 1;
+                    }
                     actions.push({
                       type: "cast_spell",
                       label: `Cast ${def.name}: ${r.lastHistMsg() ?? ""}`,
-                      apply: (_s) => r
+                      apply: (_s) => rr
                     });
                   }
                   continue;
@@ -6102,6 +6112,10 @@
                           let result2 = afterSearch.enterBattlefield(found);
                           if (spellGoesToGraveyard) result2 = result2.addToGraveyard(0, def.name);
                           if (def.reshufflesIntoLibrary) result2 = result2.addToLibrary(cardKey);
+                          if (isCreature) {
+                            result2 = result2.clone();
+                            result2.creatureSpellsCastThisTurn = (result2.creatureSpellsCastThisTurn ?? 0) + 1;
+                          }
                           return result2.log(msg);
                         }
                         ns = afterPay.removeFromHand(cardKey) ?? ns;
@@ -6117,6 +6131,10 @@
                       }
                       if (result && def.reshufflesIntoLibrary) {
                         result = result.addToLibrary(cardKey);
+                      }
+                      if (result && isCreature) {
+                        result = result.clone();
+                        result.creatureSpellsCastThisTurn = (result.creatureSpellsCastThisTurn ?? 0) + 1;
                       }
                       return result;
                     }
@@ -6142,6 +6160,10 @@
                 ns = ns.enterBattlefield(cardKey);
               } else {
                 ns = ns.addToGraveyard(0, def.name);
+              }
+              if (isCreature) {
+                ns = ns.clone();
+                ns.creatureSpellsCastThisTurn = (ns.creatureSpellsCastThisTurn ?? 0) + 1;
               }
               if (isOpponentTurn && s.hasPermanent("Glademuse")) {
                 const drawnKey = ns.players[0].library[0];
@@ -6632,6 +6654,7 @@
               ns.isOpponentTurn = true;
               ns.opponentTurnsThisRound = (s.opponentTurnsThisRound ?? 0) + 1;
               ns.mana = new _ManaPool();
+              ns.creatureSpellsCastThisTurn = 0;
               ns._ensureBF();
               for (const p of ns.battlefield) {
                 if (!p.abilitiesUsed) continue;
@@ -6692,6 +6715,7 @@
                 let ns = s.clone();
                 ns.opponentTurnsThisRound = (s.opponentTurnsThisRound ?? 0) + 1;
                 ns.mana = new _ManaPool();
+                ns.creatureSpellsCastThisTurn = 0;
                 ns._ensureBF();
                 for (const p of ns.battlefield) {
                   if (!p.abilitiesUsed) continue;
@@ -10111,6 +10135,34 @@
           // The tapForMana is not set (she doesn't tap for mana herself).
           //
           // Implementation note: the landfall triggers live in actions.js's play_land section.
+        },
+        radagast_rhosgobel: {
+          externallyImplemented: true,
+          // [drift-detector] cost reduction + flash grant in actions.js (costReductions/canCastNow via radagastEligible); creatureSpellsCastThisTurn tracked in GameState.js
+          name: "Radagast of Rhosgobel",
+          types: ["creature"],
+          subtypes: ["Legendary", "Avatar", "Wizard"],
+          cost: "2GG",
+          power: 2,
+          toughness: 5
+          // Static: The first creature spell you cast each turn costs {2} less to
+          // cast (generic mana only, same convention as every other reducer in
+          // this file) and can be cast as though it had flash.
+          //
+          // Real-card ruling (this is the project's rename of Radagast the
+          // Brown): the "first creature spell" check looks at the WHOLE turn,
+          // even a creature spell cast before Radagast entered the battlefield
+          // this same turn — and casting Radagast HIMSELF counts as a creature
+          // spell too, so if he's your first creature spell of the turn, no
+          // other creature spell that turn is eligible. Modeled via
+          // GameState.creatureSpellsCastThisTurn, a per-turn counter incremented
+          // on every creature spell cast (see actions.js's cast_spell sites) and
+          // reset at the start of every turn, including each simulated
+          // opponent-turn window — independent of whether Radagast was on the
+          // battlefield for any given cast.
+          //
+          // No activated ability; no onEnter. All effects are the static
+          // cost-reduction/flash grant, handled in actions.js.
         },
         skullwinder: {
           name: "Skullwinder",
@@ -13647,6 +13699,7 @@ ${ex}`;
           this.endingTurn = data.endingTurn ?? false;
           this.landDrops = data.landDrops ?? 1;
           this.landsPlayedThisTurn = data.landsPlayedThisTurn ?? 0;
+          this.creatureSpellsCastThisTurn = data.creatureSpellsCastThisTurn ?? 0;
           this.hand = data.hand ? [...data.hand].sort() : [];
           this.battlefield = data.battlefield ? data.battlefield.map((p) => p instanceof Permanent ? p : new Permanent(p)) : [];
           const earthbentNames = new Set(data.earthbentLandNames ?? []);
@@ -13972,6 +14025,7 @@ ${ex}`;
           s.endingTurn = this.endingTurn;
           s.landDrops = this.landDrops;
           s.landsPlayedThisTurn = this.landsPlayedThisTurn;
+          s.creatureSpellsCastThisTurn = this.creatureSpellsCastThisTurn;
           s.hand = this.hand;
           s.battlefield = this.battlefield;
           s.mana = this.mana.clone();
@@ -14129,6 +14183,7 @@ ${ex}`;
           s.endingTurn = this.endingTurn;
           s.landDrops = this.landDrops;
           s.landsPlayedThisTurn = this.landsPlayedThisTurn;
+          s.creatureSpellsCastThisTurn = this.creatureSpellsCastThisTurn;
           s.hand = this.hand;
           s.battlefield = this.battlefield;
           s._bfOwned = this._bfOwned;
@@ -15168,6 +15223,7 @@ ${ex}`;
           s.turn++;
           s.landDrops = 1;
           s.landsPlayedThisTurn = 0;
+          s.creatureSpellsCastThisTurn = 0;
           s.storm = 0;
           s.isOpponentTurn = false;
           s.endStepReached = false;
@@ -15435,7 +15491,21 @@ ${ex}`;
           const players = p0.life + "/" + p0.librarySize + "/" + p0.poison + "/" + gy0 + "/" + p0.exile.length + "," + p1.life + "/" + p1.librarySize + "/" + p1.poison + "/" + p1.graveyard.length + "/" + p1.exile.length + "," + p2.life + "/" + p2.librarySize + "/" + p2.poison + "/" + p2.graveyard.length + "/" + p2.exile.length + "," + p3.life + "/" + p3.librarySize + "/" + p3.poison + "/" + p3.graveyard.length + "/" + p3.exile.length;
           const cmd = [...this.commandZone].sort().join(",") + ":" + this.commanderTax;
           const prefix = "T" + this.turn + "|H:" + hand + "|BF:" + bf;
-          const suffix = "|L:" + this.landDrops + "|P:" + players + "|CZ:" + cmd + (this.flashThisTurn ? "|FL" : "") + (this.pactOwed ? "|PC" : "") + (this.landsPlayedThisTurn > 0 ? "|LP:" + this.landsPlayedThisTurn : "") + (this.isOpponentTurn ? "|OT" : "") + (this.endingTurn ? "|ET" : "") + (this.endStepReached ? "|ES" : "") + ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? "|OS:" + [...this.opponentStax].sort().join(",") : "") + (this.topDecked ? "|TD:" + this.topDecked : "");
+          const suffix = "|L:" + this.landDrops + "|P:" + players + "|CZ:" + cmd + (this.flashThisTurn ? "|FL" : "") + (this.pactOwed ? "|PC" : "") + (this.landsPlayedThisTurn > 0 ? "|LP:" + this.landsPlayedThisTurn : "") + // [perf/soundness] Gated on Radagast actually being on the
+          // battlefield (not "count > 0" unconditionally, unlike
+          // landsPlayedThisTurn above): creatureSpellsCastThisTurn
+          // increments on EVERY creature cast, in EVERY hand, whether
+          // or not Radagast of Rhosgobel is anywhere in the game — an
+          // unconditional fingerprint contribution fragmented dedup/
+          // dominance-pruning buckets for every existing hand (state
+          // counts on multiple pinned benches roughly doubled),
+          // even though the field is provably inert (never read by
+          // radagastEligible or anything else) unless Radagast is out.
+          // Radagast never appears in DEFAULT_DECKLIST, so this keeps
+          // every existing baseline byte-identical; a hand that
+          // deliberately includes Radagast accepts a narrow,
+          // conservative trade-off in exchange — see the comment below.
+          (this.creatureSpellsCastThisTurn > 0 && this.hasPermanent("Radagast of Rhosgobel") ? "|CS:" + this.creatureSpellsCastThisTurn : "") + (this.isOpponentTurn ? "|OT" : "") + (this.endingTurn ? "|ET" : "") + (this.endStepReached ? "|ES" : "") + ((this.opponentStax?.size ?? this.opponentStax?.length ?? 0) > 0 ? "|OS:" + [...this.opponentStax].sort().join(",") : "") + (this.topDecked ? "|TD:" + this.topDecked : "");
           this._fp = prefix + "|M:" + m + suffix;
           this._structKey = prefix + suffix;
           return this._fp;
