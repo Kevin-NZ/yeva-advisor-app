@@ -11,7 +11,6 @@
     --accent-soft:rgba(201,167,92,.16);
     --accent-2:#6fb0a6;
     --rule:rgba(201,167,92,.22);
-    --shadow:rgba(0,0,0,.45);
   }
   @media (prefers-color-scheme: light){
     :root{
@@ -25,20 +24,19 @@
       --accent-soft:rgba(138,109,43,.12);
       --accent-2:#3f7d74;
       --rule:rgba(138,109,43,.3);
-      --shadow:rgba(60,60,40,.15);
     }
   }
   :root[data-theme="dark"]{
     --bg:#10150f; --bg-raised:#161d13; --bg-inset:#0c100b;
     --ink:#e7e8d6; --ink-dim:#9fae8c; --ink-faint:#66795a;
     --accent:#c9a75c; --accent-soft:rgba(201,167,92,.16); --accent-2:#6fb0a6;
-    --rule:rgba(201,167,92,.22); --shadow:rgba(0,0,0,.45);
+    --rule:rgba(201,167,92,.22);
   }
   :root[data-theme="light"]{
     --bg:#eef0e2; --bg-raised:#e4e8d4; --bg-inset:#dde2cc;
     --ink:#1c2317; --ink-dim:#4c5c3f; --ink-faint:#7c8a6c;
     --accent:#8a6d2b; --accent-soft:rgba(138,109,43,.12); --accent-2:#3f7d74;
-    --rule:rgba(138,109,43,.3); --shadow:rgba(60,60,40,.15);
+    --rule:rgba(138,109,43,.3);
   }
 
   *{box-sizing:border-box;}
@@ -55,7 +53,7 @@
   ::selection{background:var(--accent-soft);color:var(--ink);}
 
   a{color:var(--accent);}
-  a:focus-visible, button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+  a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
 
   .display{
     font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
@@ -122,7 +120,6 @@
     color:var(--ink-faint);
     text-transform:uppercase;
   }
-  .deckline b{color:var(--accent);font-weight:600;}
 
   /* ---------- contents strip ---------- */
   .contents{
@@ -178,7 +175,7 @@
     font-size:1.55rem;
     font-weight:600;
   }
-  .chapter > p{margin:0 0 1.35rem;}
+  .chapter p{margin:0 0 1.35rem;}
   .chapter > p:first-of-type::first-letter{
     float:left;
     font-family:"Iowan Old Style",Georgia,serif;
@@ -190,6 +187,17 @@
   }
   strong{color:var(--ink);font-weight:600;}
   em{color:var(--ink-dim);font-style:italic;}
+
+  /* the story's hinges — set apart, quiet, unmissable */
+  p.turn{
+    margin:2.2rem 0;
+    padding-left:1.1rem;
+    border-left:2px solid var(--accent);
+    font-size:1.25rem;
+    line-height:1.5;
+    color:var(--ink);
+  }
+  p.turn::first-letter{font-size:inherit;float:none;padding:0;color:inherit;}
 
   blockquote{
     margin:2rem 0;
@@ -209,18 +217,20 @@
   }
 
   footer{
-    max-width:42rem;
+    max-width:38rem;
     margin:0 auto;
     padding:3rem 1.5rem 4rem;
     color:var(--ink-faint);
     font-size:.85rem;
     text-align:center;
     line-height:1.6;
+    border-top:1px solid var(--rule);
   }
 
   @media (max-width:640px){
-    body{font-size:16.5px;}
+    body{font-size:17px;}
     .hero{padding:4rem 1.2rem 3rem;}
+    p.turn{font-size:1.12rem;}
   }
 
   @media (prefers-reduced-motion:reduce){
@@ -233,19 +243,19 @@
   <div class="hero-inner">
     <div class="eyebrow"><span class="label">Yeva, Nature's Herald · Competitive</span></div>
     <h1 class="title display">The Deep&nbsp;Roots</h1>
-    <p class="subtitle">Being an account of what came through the root-seams of Yavimaya, and how the wood answered.</p>
-    <div class="deckline">Ninety-one cards · Eight chapters · One forest, briefly not alone</div>
+    <p class="subtitle">Being an account of what came through the root-seams of Yavimaya, what it cost, and who held the door.</p>
+    <div class="deckline">Eight chapters · One bell · One halfling</div>
   </div>
 </div>
 
 <nav class="contents" aria-label="Chapters">
   <a href="#ch1">I · The Herald Wakes</a><span class="sep">·</span>
   <a href="#ch2">II · What the Roots Brought</a><span class="sep">·</span>
-  <a href="#ch3">III · The Glassroot</a><span class="sep">·</span>
-  <a href="#ch4">IV · Gathering the Wood</a><span class="sep">·</span>
-  <a href="#ch5">V · The Small Gods of Green</a><span class="sep">·</span>
-  <a href="#ch6">VI · What the Relics Remembered</a><span class="sep">·</span>
-  <a href="#ch7">VII · The Turning</a><span class="sep">·</span>
+  <a href="#ch3">III · The Bell</a><span class="sep">·</span>
+  <a href="#ch4">IV · The Cradle</a><span class="sep">·</span>
+  <a href="#ch5">V · The Nursery</a><span class="sep">·</span>
+  <a href="#ch6">VI · What the Vaults Remembered</a><span class="sep">·</span>
+  <a href="#ch7">VII · The Bell-Tower</a><span class="sep">·</span>
   <a href="#ch8">VIII · After the Rain</a>
 </nav>
 
@@ -253,12 +263,17 @@
 
   <article class="chapter" id="ch1">
     <div class="chapter-head"><span class="chapter-num">I</span><h2>The Herald Wakes</h2></div>
-    <p>Beneath the canopy of Yavimaya, where the oldest trees of Dominaria still remembered the songs of Multani, the forest had a heartbeat. It skipped once — and <strong>Yeva, Nature's Herald</strong>, opened her eyes.</p>
-    <p>She had slept in flash, the way her kind always did: not truly dreaming, but waiting, coiled like a fern before the rain. Something had disturbed the root-song. A tremor from below, where no tremor should be.</p>
-    <p>Yeva rose from the loam without a sound and found <strong>Eladamri, Korvecdal</strong>, already awake, sword bare, standing at the edge of the Skyshroud eaves. He had led elves through worse than a bad dream once, in the days when Rath's shadow fell across this very wood. He had not forgotten how to listen for danger in silence.</p>
-    <p>"The roots are cold," Eladamri said. "Cold where they should be warm. Something is drinking from the deep water."</p>
-    <p>Behind him, <strong>Ashaya, Soul of the Wild</strong>, unfolded from the hillside itself — not a creature <em>in</em> the forest so much as the forest given a shape, bark-skinned and moss-crowned, older than either elf. When she spoke, the leaves spoke with her.</p>
-    <blockquote>"The Deep Roots are opening," she said. "Not just ours. Others'."</blockquote>
+    <p>Yeva had never once been late.</p>
+    <p>That was the whole of her, the way another creature might be fast, or strong, or cruel. When something in Yavimaya needed help, Yeva was simply there, stepping out of green nothing in the half-second between the danger and the harm. Elves who had been saved by her all described it the same way: no warning, no sound, only the sudden certainty that the worst had already been prevented while they were still deciding to be afraid.</p>
+    <p>Four hundred years. She had never missed.</p>
+    <p>So when the root-song went cold beneath her, she did not wake gently. She came up out of the loam already moving, already listening for the place that needed her, and found nothing. No cry. No wound. Only a coldness running west to east under the whole of Yavimaya, Cradle of Growth, as though something enormous had put its mouth to the deep water and begun, patiently, to drink.</p>
+    <p><strong>Eladamri, Korvecdal</strong> was awake before her, which never happened. He stood at the edge of the Skyshroud eaves with his sword already bare, head tilted, doing the thing he had learned in the years when Rath's shadow lay across this wood: listening for danger inside silence.</p>
+    <p>"Where," Yeva said.</p>
+    <p>"That's the trouble." Eladamri did not look at her. "Everywhere. A little. All at once."</p>
+    <p>Behind them the hillside stood up.</p>
+    <p><strong>Ashaya, Soul of the Wild</strong> did not so much arrive as stop pretending she had ever been scenery. Bark-skinned, moss-crowned, older than both of them put together and older than the elves' word for old. When she spoke, every leaf within a hundred paces spoke the same syllables a half-beat behind her, so that her voice arrived twice.</p>
+    <blockquote>"The Deep Roots are opening. Not just ours. Others'."</blockquote>
+    <p>Yeva turned east, toward the cold. For the first time in four centuries she had the feeling of a thing already happening somewhere she was not.</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -268,11 +283,16 @@
 
   <article class="chapter" id="ch2">
     <div class="chapter-head"><span class="chapter-num">II</span><h2>What the Roots Brought</h2></div>
-    <p>It began at Dryad Arbor — a single tree that had always been more than a tree, and this night it groaned and split its bark into a seam of light. Through that seam, and through a dozen more like it across the wood — beneath Boseiju far to the west, through the shrine-steps of Nykthos, and up through the black stone teeth of the Talon Gates of Madara — the world tree's root-network had torn itself open into other worlds.</p>
-    <p>Two strangers stumbled out first.</p>
-    <p>One was an archer, quiet and quick, an arrow already nocked before his knees had finished remembering how gravity worked on this side of the seam. He said his name was a word the elves had never heard, but the Quirion scouts who watched him move — a green blur through Yavimaya's canopy before anyone else had finished blinking — simply started calling him kin. His quick reflexes entered the wood's memory that night as a new kind of prayer: <em>may your feet be that certain.</em></p>
-    <p>The second came in fighting — fists first, in a stance the elves had no name for, cutting down a shadow that had followed him through the tear before it could widen. He introduced himself between breaths as <strong>Shang-Chi</strong>, master of a kung fu no elf had ever seen, and when Eladamri asked what he had been fighting, he only said: "Something made of rings and rot. It isn't from my world either."</p>
-    <p>Ashaya's bark creaked with unease. <em>"Then it followed the roots, same as you."</em></p>
+    <p>It began at <strong>Dryad Arbor</strong>, which had never been only a tree. That night it groaned like a ship and split its bark along a seam of white light.</p>
+    <p>It was not alone. Under <strong>Boseiju, Who Endures</strong>, far west, a root the width of a river tore open. The shrine-steps of <strong>Nykthos, Shrine to Nyx</strong> rang like struck bronze and let through a light with stars in it that had no business under a canopy. And at the eastern edge of the wood, where the black stone teeth of the <strong>Talon Gates of Madara</strong> had stood sealed and sullen since before the elves kept records, something on the other side began, very slowly, to push.</p>
+    <p>Two strangers came through before anything else did.</p>
+    <p>The first was an archer. He landed in a crouch with an arrow already nocked, before his knees had finished remembering how gravity worked on this side. He gave a name in a language no elf had heard, and the <strong>Quirion Ranger</strong> scouts who watched him go up a trunk — a green blur through the canopy before anyone else finished blinking — stopped asking about the name and started calling him kin. What the wood remembered of him afterward was not the name at all. It was <strong>Legolas's Quick Reflexes</strong>, which entered Yavimaya's memory that season as a kind of prayer the scouts said over each other: <em>may your feet be that certain.</em></p>
+    <p>The second came through fighting.</p>
+    <p>He arrived fists-first, mid-stance, and cut down something that had followed him through the tear before the tear had finished widening. It came apart into a smell like hot oil and old copper. He straightened, breathing hard, and looked at the elves with the particular exhaustion of a man who has been running for a long time in a straight line.</p>
+    <p>"Shang-Chi," he said. "Master of what my people call kung fu. That thing is not mine. But it has been behind me through four worlds."</p>
+    <p>The roll-keepers wrote him down that night as <strong>Shang-Chi, Master of Kung Fu</strong>, because it was what he had given them and because none of them could spell the rest.</p>
+    <p>Ashaya's bark creaked. <em>"Then it followed the roots,"</em> she said. <em>"Same as you."</em></p>
+    <p>Shang-Chi did not answer that, which Eladamri noticed, and remembered.</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -281,11 +301,19 @@
   </svg>
 
   <article class="chapter" id="ch3">
-    <div class="chapter-head"><span class="chapter-num">III</span><h2>The Glassroot</h2></div>
-    <p>They did not have to search long. Three days south, past the Geier Reach Sanitarium — a lonely stone waystation where lost travelers were still sometimes found half-mad, murmuring — the forest floor had gone the color of dirty glass. Vines grew wrong there: brittle, veined with a faint metallic sheen, and where they touched living wood, the wood <em>stopped being alive</em>, joint by joint, without ever falling down. The elves called it the Glassroot before they had even agreed to call it anything.</p>
-    <p>A collector ouphe found the first cache: buried under a fold of glassroot vine, a nest of humming devices, half machine and half husk. Ouphes hate few things as purely as they hate artifice, and this one set fire to the cache with its bare hands before anyone could stop it. A green detonation followed close behind — the elves' answering blessing, a storm of thorns that scoured two more nests from the hillside in a single breath.</p>
-    <p>But the Glassroot had already reached the Woodcaller, a druidic construct built generations ago from Argivian brass and Yavimayan heartwood, meant to ring the great warning bells when danger came from outside the wood. Its bell-song, when the vines took it, turned inward and wrong. Small horrors answered that bell all across the district: crawling glass-veined things that had once been rabbits, once been birds.</p>
-    <p><strong>Endurance</strong> answered in turn. The great white hart shimmered into being at the tree line, and when the corrupted things tried to drag their fallen back up out of the dirt, she simply would not allow it. What died near Endurance stayed dead — a small mercy, but the elves needed it. Where a threat could not be met with steel, it was simply unmade, turned back into ordinary wilderness and left to grow harmless in the sun.</p>
+    <div class="chapter-head"><span class="chapter-num">III</span><h2>The Bell</h2></div>
+    <p>They found it three days south, past the <strong>Geier Reach Sanitarium</strong>, where travellers had always turned up occasionally half-mad and murmuring and where now nobody turned up at all.</p>
+    <p>The forest floor had gone the colour of dirty glass. Vines grew wrong there: brittle, faintly metallic in the vein, and where they touched living wood the wood stopped being alive without ever falling down. It kept its shape. It kept its leaves. It simply ceased, joint by joint, to be anything. The elves called it the Glassroot before anyone had proposed the name, the way a wood agrees on things.</p>
+    <p>A <strong>Collector Ouphe</strong> found the first cache. Ouphes hate few things as purely as they hate artifice, and this one went into the nest of humming half-machine husks with its bare hands and set them alight before anyone could tell it not to. <strong>Force of Vigor</strong> answered from the elves' side, a green detonation that scoured two more nests off the hillside in a single storm of thorns. Where a thing came at them too fast to name, <strong>Beast Within</strong> unmade it and left an ordinary, blameless creature standing in the wreck, blinking.</p>
+    <p>They were winning. That was what made the rest of it so bad.</p>
+    <p>Because the Glassroot had already reached the <strong>Woodcaller Automaton</strong>.</p>
+    <p>It stood where it had stood for nine generations, at the top of the southern rise: a druid-construct of Argivian brass and Yavimayan heartwood, built to ring the great warning bells when danger came from outside the wood. It had rung four times in its life. Every elf alive knew the sound the way they knew their own heartbeat.</p>
+    <p>The vines had gone in through its joints. Its bell-song, when it came, was the same song turned inside out.</p>
+    <p class="turn">It was not a warning any more. It was a summons.</p>
+    <p>Every glass-veined thing within nine miles began moving toward the sound, and every thing they had thought was merely dead in the southern groves stood up to join them. By dawn the whole southern range was gone. Not burned. Not fought over. <em>Gone</em>, in the Glassroot's particular way, standing there in perfect green silence and no longer alive in any sense the wood could feel.</p>
+    <p><strong>Endurance</strong> came at the tree line as the sun rose, a white hart with frost in her breath, and put a stop to the worst of it: what died near her stayed dead, and could not be walked back up out of the dirt. The elves took what comfort they could from that. It was a small comfort. It would get smaller.</p>
+    <p>Eladamri stood looking south at the silence for a long time.</p>
+    <p>"That's the rule, then," he said. "The bell rings. We lose something."</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -294,12 +322,30 @@
   </svg>
 
   <article class="chapter" id="ch4">
-    <div class="chapter-head"><span class="chapter-num">IV</span><h2>Gathering the Wood</h2></div>
-    <p>Word of the Glassroot spread the way all news spread in Yavimaya — root to root, faster than any rider.</p>
-    <p>At Gaea's Cradle, the ancient standing grove where the wood's power pooled thickest, the priest of Titania raised her staff and called the elves home. They came from every corner: the archdruid and his silent council of green-robed kin, Fyndhorn folk down from the cold hills, twin scouts who could vanish into any copse and reappear a mile off, a harbinger whose songs always seemed to know which fighter would be needed next.</p>
-    <p><strong>Fauna Shaman</strong> walked among them with her satchel of totems, trading a fox's tooth for a bear's claw, a bear's claw for something with far more teeth — because when the Glassroot's horrors came, Yavimaya would need exactly the right beast for exactly the right moment. It was an old lesson, older than her, that the forest provides — if you know how to ask.</p>
-    <p>Asking was its own small ritual. When Eladamri planted a single green shoot into the earth at Gaea's Cradle and it grew, in a single heartbeat, into a towering half-plant giant — <strong>Woodland Bellower</strong> — the Glassroot's small horrors at the treeline actually paused.</p>
-    <p>The storytellers kept the war-council's memory alive as the fighting stretched into its second week, and atop the Cradle's central stone, a lone speaker declared Yavimaya's answer to the invasion, in a voice that made every root within a mile stand a little straighter.</p>
+    <div class="chapter-head"><span class="chapter-num">IV</span><h2>The Cradle</h2></div>
+    <p>Word travelled the way all news travelled in Yavimaya: root to root, faster than any rider.</p>
+    <p>They gathered at <strong>Gaea's Cradle</strong>, the standing grove where the wood's power pooled thickest, and for a few days it was almost a festival. The <strong>Priest of Titania</strong> raised her staff and called, and they came in from everywhere. <strong>Elvish Archdruid</strong> and his silent green-robed council. <strong>Fyndhorn Elves</strong> down out of the cold hills, still wearing snow. <strong>Elvish Mystic</strong> and <strong>Llanowar Elves</strong> and <strong>Arbor Elf</strong> and <strong>Boreal Druid</strong> and the <strong>Fanatic of Rhonas</strong>, the ordinary quiet folk who spend their whole lives with one hand on bark and generally decline to be called heroes.</p>
+    <p>The scouts came in by every road: <strong>Misty Rainforest</strong> and <strong>Verdant Catacombs</strong> to the south, <strong>Windswept Heath</strong> and <strong>Wooded Foothills</strong> to the north, <strong>Hyrax Tower Scout</strong> and <strong>Elvish Reclaimer</strong> running the gaps between. <strong>Scryb Ranger</strong> arrived before the messenger sent to fetch her. <strong>Birds of Paradise</strong> wheeled overhead in their hundreds, flashing colour-signals faster than any horn could carry.</p>
+    <p><strong>Elvish Harbinger</strong> sang the roll, and her songs had always had the unnerving habit of naming the fighter who would matter next. <strong>Fierce Empath</strong> went out into the deep wood to find the ones her song had named. <strong>Fauna Shaman</strong> worked her satchel of totems on the Cradle steps, trading a fox's tooth for a bear's claw and a bear's claw for something with a great many more teeth, because <strong>Survival of the Fittest</strong> was not a philosophy in Yavimaya. It was a procedure. The wood provides, if you know the exact shape of what you need.</p>
+    <p><strong>Worldly Tutor</strong> and <strong>Green Sun's Zenith</strong> were how they asked. Eladamri pressed a single green shoot into the earth at the Cradle's heart, and it came up in one breath as a half-plant giant forty feet at the shoulder — <strong>Woodland Bellower</strong>, who looked around with mild interest at the smallness of everything.</p>
+    <p>And there was bread.</p>
+    <p>The <strong>Delighted Halfling</strong> had set up three trees down from the war-council without asking anyone's permission, in a hearth she had built herself out of a fallen log, and the smell of it went through the whole encampment. Her name was Poppy. Nobody could remember which seam she had come through or how long ago, and Poppy declined to clarify.</p>
+    <p>"Soldiers fight better fed," she said, when Eladamri asked what she thought she was doing this close to a front. "Also, everyone here is being very brave and very miserable about it, and I think that's a false economy."</p>
+    <p>She gave him a loaf. He ate it. It was extremely good bread.</p>
+    <p><strong>Beast Whisperer</strong>, <strong>Heartwood Storyteller</strong>, and <strong>Glademuse</strong> kept the record, singing each day's courage into the wood's long memory before the day was over, and the <strong>Duskwatch Recruiter</strong> walked the perimeter each dusk and came back each dawn with more spears than she left with. <strong>Karametra's Acolyte</strong>, <strong>Disciple of Freyalise</strong>, and <strong>Hope Tender</strong> worked the wounded lines. <strong>Circle of Dreams Druid</strong> and <strong>Argothian Elder</strong> kept the mana-wells lit through the night. It was, for four days, the largest and best-provisioned gathering the wood had assembled in a century.</p>
+    <p>On the fifth day, Eladamri said the thing out loud.</p>
+    <p>"We seal the seams."</p>
+    <p>The <strong>Formidable Speaker</strong> on the central stone stopped mid-sentence. Everyone looked up.</p>
+    <p>"All four," Eladamri said. "Dryad Arbor. Boseiju. Nykthos. The Gates. It came in through them. It is <em>still</em> coming in through them. We close the door."</p>
+    <p><em>"No,"</em> said Ashaya, and every leaf in the grove said it a half-beat later, which made it sound like the wood itself refusing.</p>
+    <p>"Give me a better answer."</p>
+    <p><em>"There isn't one yet. That is not the same as yours being right."</em> Ashaya turned her great mossed head. <em>"Those roots have carried our sap alone for ten thousand years. They are carrying more than that now. If you burn them shut you will save this wood and you will make it an island, and islands die slowly and think they are winning the whole time."</em></p>
+    <p>"And if we leave them open," Eladamri said, "we lose it fast instead. I've seen both. Fast is worse."</p>
+    <p>They both looked at Yeva.</p>
+    <p>She was aware, standing there, that she had spent four hundred years being certain, and that the certainty had all been about <em>where</em> and never once about <em>whether</em>.</p>
+    <p>"Not yet," she said.</p>
+    <p>It was not a decision. Everyone present understood that it was not a decision.</p>
+    <p>Two hours later, the bell rang.</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -308,11 +354,23 @@
   </svg>
 
   <article class="chapter" id="ch5">
-    <div class="chapter-head"><span class="chapter-num">V</span><h2>The Small Gods of Green</h2></div>
-    <p>Not every hero of the Deep Roots war was large.</p>
-    <p>The countless small, quiet folk who spent every day of their lives with a hand on bark never stopped their work even as the Glassroot spread. A halfling kept baking bread at her hearth three trees down from the front line, because, she said, soldiers fight better fed. Acolytes walked the wounded lines with green light spilling from their palms, while quieter druids kept every mana-well humming.</p>
-    <p>Birds of paradise wheeled overhead as living signal-flags. Scouts and runners kept the roads open between camps. A little shapeshifter who had wandered in from who-knew-which opened root simply decided to stay and helped guard the nurseries, where the youngest creatures sheltered under old, patient eyes — and more than one arrow meant for a sleeping fawn found itself gently, inexplicably, missing.</p>
-    <p>A recruiter walked the perimeter each dusk, and by each dawn her numbers had grown, because there was always someone in Yavimaya willing to pick up a spear once they saw what glass-eyed things did to a forest.</p>
+    <div class="chapter-head"><span class="chapter-num">V</span><h2>The Nursery</h2></div>
+    <p>The nurseries were nine miles north, in a hollow the scouts called the <strong>Emergence Zone</strong>, chosen because the ground there folded over itself and hid what it held. Every young thing in the district was in it: fawns, cubs, fledglings, elf-children, the year's whole crop of the wood's future stacked in one soft place.</p>
+    <p>Poppy had gone up the day before with four sacks of flour, because, she said, children eat constantly and nobody ever plans for it.</p>
+    <p>The bell rang at moonrise, and this time the wood knew what the sound meant, and the whole encampment turned north at once.</p>
+    <p>Yeva went first, and Yeva went instantly.</p>
+    <p>She stepped out of green nothing at the hollow's lip with her hands already open, in the half-second where she had always arrived, in the gap between danger and harm that had been hers alone for four hundred years —</p>
+    <p class="turn">— and she was late.</p>
+    <p>The fight was already old. <strong>Badgermole Cub</strong> was down and breathing wrong. <strong>Chomping Changeling</strong>, who had come through some seam nobody had catalogued and simply decided to stay and be useful, had taken a shape twice its usual size and was holding the eastern gap with a stubbornness that had nothing to do with its size. <strong>Destiny Spinner</strong> stood over the smallest of the sleepers with her old patient eyes narrowed, and arrows that should have found the young went inexplicably, gently wide. <strong>Wirewood Symbiote</strong> darted between the wounded, getting the ones who could still run to their feet and pointing them at the <strong>Wirewood Lodge</strong> road.</p>
+    <p>And the north door of the nursery was shut, and holding, because Poppy had shut it.</p>
+    <p>She had put her back against it and braced her feet in the dirt, a halfling in a flour-dusted apron holding a door against the far side of the world, and she had held it long enough — this was the part the storytellers could never get through cleanly afterward — she had held it long enough for every child in the hollow to get out the south side.</p>
+    <p>All of them. Every one. The count was checked three times because nobody believed it.</p>
+    <p>Yeva got the door open on the half-second she had always owned. It was the wrong half-second. It was several minutes past the right one.</p>
+    <p>Endurance came through the trees at first light with frost in her breath, and stood over the small body, and did what she did.</p>
+    <p>Poppy stayed dead. That was the mercy. In the country the Glassroot was making, that was what mercy had been reduced to: your dead stay yours.</p>
+    <p>Yeva knelt in the churned dirt of the hollow for a long time, holding a hand that had gone cold, and understood two things she had gone four hundred years without needing to know.</p>
+    <p>The first was that she was one creature, and the wood was very large.</p>
+    <p>The second was that she was going to have to stop being the answer, and start being the door.</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -321,10 +379,30 @@
   </svg>
 
   <article class="chapter" id="ch6">
-    <div class="chapter-head"><span class="chapter-num">VI</span><h2>What the Relics Remembered</h2></div>
-    <p>Deep under Gaea's Cradle, in vaults older than the elves who guarded them, Yavimaya kept the leavings of Urza's long-ago war: a scatter of small, humming powerstones nobody quite trusted and nobody could afford to leave buried. Runners traded one buried treasure for the exact ley-line the war-council needed next, whether that was the swift-striking mana of an ancient tomb, the patient renewal of a deserted temple, or the war room at the Cradle's heart, where Eladamri and Ashaya planned each counterattack.</p>
-    <p>Old bindings held green power straight in the soil, and a lone magus, working beside the wood's fastest scouts, learned to wake a dozen lands' worth of power out of a single well when the front line needed a miracle before dawn.</p>
-    <p>The wounded were kept moving long after their legs should have given out. Even Urza's Cave, sealed since the Brothers' War, cracked open one final time, and what it gave the war-council — nobody would ever quite say, only that the tide turned a little, afterward.</p>
+    <div class="chapter-head"><span class="chapter-num">VI</span><h2>What the Vaults Remembered</h2></div>
+    <p>Grief made them thorough. They went into the vaults.</p>
+    <p>Under Gaea's Cradle, in stone older than the elves who guarded it, Yavimaya kept the leavings of Urza's long war: <strong>Sol Ring</strong>, <strong>Chrome Mox</strong>, <strong>Mox Diamond</strong>, <strong>Lotus Petal</strong>, small humming relics nobody had ever quite trusted and nobody had ever been able to justify destroying. <strong>Crop Rotation</strong> and <strong>Sylvan Scrying</strong> sent runners trading one buried thing for the exact ley-line the council needed next — the hard fast mana of <strong>Ancient Tomb</strong>, the patient second breath of the <strong>Deserted Temple</strong>, the <strong>War Room</strong> at the Cradle's heart where Eladamri had a map and a great many pins.</p>
+    <p><strong>Earthcraft</strong>, <strong>Utopia Sprawl</strong>, and <strong>Wild Growth</strong> bound green power straight into the soil so the wood could not be cut off from its own strength. <strong>Magus of the Candelabra</strong> learned, working eighteen hours a day beside the well-keepers, to wake a dozen lands' worth of power out of a single spring when the line needed a miracle before dawn. Even <strong>Urza's Cave</strong> was opened, sealed since the Brothers' War, and what came out of it the council never entered in any record.</p>
+    <p>And in the deepest gallery, where they had laid out everything they had scraped off a dead nest, <strong>Eternal Witness</strong> walked the rows in the dark, doing what she did: picking up what had been lost and setting it back down where it could be found again.</p>
+    <p>She found the match.</p>
+    <p>The oil in the Glassroot's veins had a signature. The council had assumed it was the Talon Gates, because the Gates were the oldest wound and the easiest villain. It was not the Gates. The oldest sample in the gallery, by four days, was scraped off the thing Shang-Chi had killed the night he arrived.</p>
+    <p>Eladamri put it together in about a second and a half, in front of forty people.</p>
+    <p>"It came in <em>with him</em>."</p>
+    <p>"Yes," Shang-Chi said.</p>
+    <p>The gallery went very quiet.</p>
+    <p>"You knew."</p>
+    <p>"I suspected on the second world. I was certain on the third." He did not move, and did not raise his voice, and did not offer a single word in his own defence, which somehow made it worse. "It follows me. It has always followed me. I have never once outrun it, and I have stopped believing that I will."</p>
+    <p>"Poppy is dead," Eladamri said.</p>
+    <p>"I know whose door that was."</p>
+    <p><strong>Archdruid's Charm</strong> was cast on the spot, because someone always does, and the council spent the next hour tearing itself apart in three directions at once: seal the seams and be safe, hold the seams and be quick, put the outworlder through the nearest one and bar it behind him. <strong>Duskwatch Recruiter</strong>, who had buried four of her own that month, argued hardest for the third.</p>
+    <p>Yeva let it run until it had run out.</p>
+    <p>"He goes to the bell," she said.</p>
+    <p>Eladamri turned. "That's a death sentence dressed up as a mission."</p>
+    <p>"It's neither. It's the only door he's ever been able to hold." Yeva looked at Shang-Chi. "You've fought this across four worlds. Nobody else here has fought it across one. You know its shape."</p>
+    <p>"I do."</p>
+    <p>"Then you're the one who goes into the tower." She turned to the rest of them, and to Ashaya, and made the decision she had refused to make five days earlier at the cost of a halfling's life. "And the seams stay open. All four. We're not closing anything."</p>
+    <p>"<em>Yeva—</em>"</p>
+    <p>"I was nine miles away and I was too slow." Her voice did not rise. It never did. "There is no version of this where I am everywhere. I have been pretending there is, and Poppy paid for it. So we stop building a wood that needs one creature to be everywhere." She looked up at Ashaya. "You said islands die slowly and think they're winning. Open them wider."</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -333,13 +411,25 @@
   </svg>
 
   <article class="chapter" id="ch7">
-    <div class="chapter-head"><span class="chapter-num">VII</span><h2>The Turning</h2></div>
-    <p>The Glassroot made its true move at the equinox, pouring out of every seam at once — Kamigawa's stolen light through the shattered Talon Gates, Theros's stars gone dim over Nykthos, oil-slicked things wearing shapes that had once, somewhere, been beautiful.</p>
-    <p>The call went out and rang across the whole of Yavimaya at once. The oldest law the forest knew answered it: <em>let the strongest come forward.</em> And the strongest came.</p>
-    <p><strong>Kogla</strong>, titan ape of the eastern peaks, came down with a boulder in each fist, and where he stepped, glassroot vine simply ceased to exist. A herd of thunder-footed dinosaurs followed him through the corrupted heartwood, and the ground itself seemed to cheer for them. A stag-king with antlers like living lightning gathered every wounded scout's memory of the fight and gave it back to them as strength.</p>
-    <p>Something flickered in and out of the fighting like a held breath, vanishing an ally out of harm's way and returning them the instant it was safe. Time itself seemed to bend for the defenders, handing them one more chance, and one more, and one more. Eternal Witness walked the battlefield afterward each night, not fighting, just remembering — picking up every fallen blessing and quietly giving it back to whoever needed it most in the morning.</p>
-    <p>At the center of it all, the ground itself rewrote its own shape, turning a killing field into an ambush and back again faster than the Glassroot could adapt. Reinforcement after reinforcement rose out of the deep wood's memory, and every promise of aid was repaid before the next dawn broke, until the earth finally cracked beneath the last of the Glassroot's nests and swallowed it whole.</p>
-    <p>Legolas put an arrow through the last standing glass-eyed horror from four hundred paces, without seeming to aim. Shang-Chi finished the one after that with his bare hands and said only, quietly, "Some things follow you no matter which world you run to. You just have to be ready when they catch up."</p>
+    <div class="chapter-head"><span class="chapter-num">VII</span><h2>The Bell-Tower at the Talon Gates</h2></div>
+    <p>They went east in the last week of autumn, all of them, to the black stone teeth where the Woodcaller stood ringing.</p>
+    <p><strong>Chord of Calling</strong> went up from the whole wood at once, every green heart answering in the same breath. <strong>Natural Order</strong> answered it with the oldest law the forest had: <em>let the strongest come forward.</em> And the strongest came.</p>
+    <p><strong>Kogla, the Titan Ape</strong> came down out of the eastern peaks with a boulder in each fist and opened the road, and where he set his feet the glassroot vine simply ceased to exist. <strong>Allosaurus Shepherd</strong> brought the thunder-footed herds the wood had kept hidden a thousand years up through the corrupted heartwood behind him. <strong>Regal Force</strong>, stag-king, antlers like held lightning, went down the line gathering up every scout's memory of the fight and handing it back to them as something they could stand on. <strong>Temur Sabertooth</strong> moved through the press like a held breath, taking an ally out of harm's way and returning them the instant it was survivable. <strong>Seedborn Muse</strong> walked the rear and would not let the day end: each dusk that should have finished them handed the wood one more chance, and one more, and one more.</p>
+    <p><strong>Shifting Woodland</strong> turned a killing field into an ambush and back twice before the Glassroot could learn either shape. <strong>Nature's Rhythm</strong>, <strong>Shared Summons</strong>, and <strong>Summoner's Pact</strong> pulled reinforcement after reinforcement out of the deep wood's memory, every promise of aid coming due and being paid before the next dawn broke. <strong>Sowing Mycospawn</strong> cracked the ground under the last of the outer nests and swallowed them whole.</p>
+    <p>Legolas put an arrow through the tower's highest slit at four hundred paces, without appearing to aim, and the way in was open.</p>
+    <p>Shang-Chi went up alone.</p>
+    <p>What was at the top of that tower was not a soldier and was not really a body. It was the thing that had been walking behind him for four worlds, wearing the Woodcaller like a coat, with its hands on the bell. He had been fighting it, in one form or another, since before he could remember choosing to. It took him a long time. When it was over he was on his knees, and the automaton was so much scattered brass, and the wood held its breath.</p>
+    <p class="turn">The bell went on ringing.</p>
+    <p>There was no bell any more. There was no ringer. The sound came up out of the ground now, from every root the Glassroot had ever touched, which by then was most of them. It had never really been a machine's song. The machine had only taught it.</p>
+    <p><em>"It's in the roots,"</em> Ashaya said, and for the first time in ten thousand years the leaves that repeated her sounded frightened. <em>"We cannot break a song. We can only sing over it. And there are not enough of us left. There has not been enough of us for a month."</em></p>
+    <p>Yeva was already turning east, toward the Gates.</p>
+    <p>Toward all four seams, standing open, exactly as she had ordered, into a dozen worlds' worth of forest.</p>
+    <p>She put both hands into the ground and did the only thing she had ever known how to do, and did it for the first time in her life as a door instead of an answer.</p>
+    <p>And Yavimaya was not alone.</p>
+    <p>Jukai came through Boseiju, cedar-choked and patient and <em>loud</em>. The green under Nykthos came through singing in a mode that had no business in a forest and worked anyway. Woods with no names in any elvish record came up through the Talon Gates and through Dryad Arbor and through root-seams nobody had known were seams, and every one of them arrived already singing, because a forest asked for help by another forest does not stop to negotiate.</p>
+    <p>The Glassroot's song lasted about ninety seconds against that. Then it was simply drowned, the way a shout is drowned, and the roots went quiet, and the quiet held.</p>
+    <p>Elves who were there described the same thing afterward: no warning, no sound, only the sudden certainty that the worst had already been prevented.</p>
+    <p>They were not describing Yeva. They were describing the whole world, arriving at once.</p>
   </article>
 
   <svg class="rootbreak" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
@@ -349,11 +439,15 @@
 
   <article class="chapter" id="ch8">
     <div class="chapter-head"><span class="chapter-num">VIII</span><h2>After the Rain</h2></div>
-    <p>The wood spent the following season simply becoming what it needed to become — grief folding slowly into growth, the way it always had in Yavimaya, while a half-finished rite quietly grew into the temple it had always meant to be. <strong>Yisan</strong>, the wanderer bard, walked from camp to camp collecting the story, humming the Deep Roots war into a song that scouts would still be singing a hundred years on.</p>
-    <p>The seams under Dryad Arbor, Boseiju, Nykthos, and the Talon Gates never fully closed. Yavimaya's druids, led by Ashaya and Eladamri together, decided — after long argument and a hard-won consensus in the War Room — not to seal them. Roots that had once carried only Yavimaya's own sap now carried word between a dozen worlds' worth of forests, and that, Yeva said, was worth the risk.</p>
-    <p>Legolas stayed a season, teaching the wood's scouts to read wind, before a root-seam finally called him home. Shang-Chi stayed longer, saying only that Yavimaya needed a keeper for the seams, someone who'd already learned to watch for things that followed travelers between worlds.</p>
-    <p>Yeva walked the healed treeline at the season's end, Ashaya's voice moving through every leaf around her, and for the first time since the roots had first gone cold, the forest's heartbeat was steady again.</p>
-    <p>It would not stay quiet forever. It never did. But Yavimaya had never once needed to fight alone — not with a herald who could flash a whole wood's worth of help into being the instant it was needed most.</p>
+    <p>The wood spent the following season becoming what it needed to become, grief folding slowly into growth, the way it always had here. <strong>Eldritch Evolution</strong> and <strong>Elvish Spirit Guide</strong> did the quiet work in the ruined districts. The half-finished rite in the western grove finally came into its own and stood up as a temple, and the <strong>Growing Rites of Itlimoc</strong> were held in it that winter for the first time.</p>
+    <p>The seams were never closed. That was written down and argued about for a century afterward, and the argument is still going, and Ashaya considers this a healthy sign.</p>
+    <p>Legolas stayed a season, teaching the Quirion scouts to read wind the way his own world's rangers did, and then a seam called him and he went, the way he had come, without much ceremony.</p>
+    <p>Shang-Chi stayed.</p>
+    <p>He had asked for a job and been given the one nobody else wanted: keeper of the seams, watching the four open doors for whatever else might come through behind a traveller. He was extremely good at it. He never once said the word atonement and nobody was rude enough to say it for him. On the anniversary he walked nine miles north to the hollow and left a loaf at the north door, which he had baked badly, and which he kept baking badly every year for the rest of his long life.</p>
+    <p><strong>Yisan, the Wanderer Bard</strong> walked camp to camp collecting all of it, and the song he made is still sung, and the verse everyone knows is not about Kogla or the tower or the drowning of the Glassroot's song. It is four lines about a halfling and a door.</p>
+    <p>Yeva walked the healed treeline at the season's end, Ashaya's voice moving through every leaf around her, and the <strong>Forest</strong> underfoot was warm again all the way down.</p>
+    <p>She would be late again. She knew that now, the way she had once known the opposite. Something in this wood would need her at a moment she could not reach, and she would arrive in the wrong half-second, and it would cost somebody everything.</p>
+    <p>But she was not the door out of this any more. She had opened four of them, and she had no intention of ever closing them, and Yavimaya would not have to fight alone again.</p>
   </article>
 
 </main>
@@ -368,7 +462,6 @@
   var canvas = document.getElementById('canopy');
   if(!canvas) return;
   var ctx = canvas.getContext('2d');
-  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function styleColor(name, fallback){
     var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -410,10 +503,7 @@
     ctx.clearRect(0,0,w,h);
     var accent = styleColor('--accent', '#c9a75c');
     var accent2 = styleColor('--accent-2', '#6fb0a6');
-    var rand = seededRandom(42);
 
-    // canopy: branching structure growing up from below the fold, plus a mirrored root system
-    var startX = w * 0.5;
     ctx.lineCap = 'round';
 
     function drawUp(x1,y1,x2,y2,depth){
@@ -427,15 +517,13 @@
 
     for(var k=0;k<3;k++){
       var rk = seededRandom(11 + k*7);
-      branch(startX + (k-1)*w*0.22, h*1.02, -Math.PI/2 + (k-1)*0.35, h*0.16, 8, rk, drawUp);
+      branch(w*0.5 + (k-1)*w*0.22, h*1.02, -Math.PI/2 + (k-1)*0.35, h*0.16, 8, rk, drawUp);
     }
     ctx.globalAlpha = 1;
   }
 
   render();
   window.addEventListener('resize', render);
-  if(!reduced){
-    document.addEventListener('visibilitychange', function(){ if(!document.hidden) render(); });
-  }
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) render(); });
 })();
 </script>
