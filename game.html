@@ -371,6 +371,7 @@ function resetGameState(){
   bearCompanion=null;
   if(pendingBearCompanion){ pendingBearCompanion=false; bearCompanion={x:W/2-52,hp:2,hitTimer:0,walkPhase:0}; }
   flashCD=FLASH_MAX; // Flash must be earned from kills
+  hudLivesKey=''; // force one life-pip rebuild at the start of each game
   initPX(); spawnPlayer(); spawnBarriers(); updateHUD();
 }
 function initGame(){
@@ -1133,7 +1134,7 @@ function startSurvival() {
   showWaveCard(1,()=>spawnWave(1,true));
   canvas.style.opacity='0'; canvas.style.transition='opacity 0.5s ease';
   setTimeout(()=>{ canvas.style.opacity='1'; },30);
-  lastTime=performance.now(); frameId=requestAnimationFrame(loop);
+  startLoop();
 }
 
 function spawnSurvivalWave(wNum) {
@@ -1175,12 +1176,8 @@ function spawnSurvivalWave(wNum) {
 function drawBear(){
   if(!bearCompanion||!player) return;
   const b=bearCompanion;
-  b.walkPhase+=0.12;
-  const tx=player.x-28;
-  b.x+=(tx-b.x)*0.25;
   const bx=Math.round(b.x), by=Math.round(player.y-8);
   const hurt=b.hitTimer>0;
-  if(b.hitTimer>0) b.hitTimer--;
   const pulse=0.7+Math.sin(Date.now()*0.005)*0.3;
 
   ctx.save();
@@ -1232,6 +1229,10 @@ function drawBear(){
 
 function updateBear(){
   if(!bearCompanion||!player) return;
+  // Follow the player (simulation — kept out of drawBear so it ticks at a fixed rate)
+  bearCompanion.walkPhase+=0.12;
+  bearCompanion.x+=((player.x-28)-bearCompanion.x)*0.25;
+  if(bearCompanion.hitTimer>0) bearCompanion.hitTimer--;
   // Wide shield hitbox — protects a broad area around the bear
   const shieldW=58, shieldH=52;
   for(let i=eBullets.length-1;i>=0;i--){
@@ -1763,25 +1764,33 @@ function handleInput(dt){
 }
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
+let hudLivesKey='';
 function updateHUD(){
   document.getElementById('hud-score').textContent=score.toLocaleString();
   document.getElementById('hud-wave').textContent=survivalMode?`∞${wave}`:wave;
-  const lc=document.getElementById('hud-lives');lc.innerHTML='';
-  const forestSVG=`<svg viewBox="0 0 14 16" xmlns="http://www.w3.org/2000/svg">
-    <polygon points="7,1 13,9 10,9 12,13 2,13 4,9 1,9" fill="#2ecc71" stroke="#1a7a40" stroke-width="0.6"/>
-    <rect x="5.5" y="13" width="3" height="2.5" fill="#8B5E3C"/>
-  </svg>`;
-  const deadSVG=`<svg viewBox="0 0 14 16" xmlns="http://www.w3.org/2000/svg">
-    <polygon points="7,1 13,9 10,9 12,13 2,13 4,9 1,9" fill="#2a3a2a" stroke="#1a2a1a" stroke-width="0.6"/>
-    <rect x="5.5" y="13" width="3" height="2.5" fill="#3a2a1a"/>
-  </svg>`;
-  for(let i=0;i<Math.max(lives,DIFF[difficulty].lives);i++){
-    const p=document.createElement('div');
-    p.className='life-pip'+(i>=lives?' dead':'');
-    p.innerHTML=i<lives?forestSVG:deadSVG;
-    lc.appendChild(p);
+  const lc=document.getElementById('hud-lives');
+  // updateHUD() runs on every kill; only re-parse the pip SVGs when lives actually change
+  const total=Math.max(lives,DIFF[difficulty].lives);
+  const livesKey=`${lives}/${total}`;
+  if(livesKey!==hudLivesKey){
+    hudLivesKey=livesKey;
+    lc.innerHTML='';
+    const forestSVG=`<svg viewBox="0 0 14 16" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="7,1 13,9 10,9 12,13 2,13 4,9 1,9" fill="#2ecc71" stroke="#1a7a40" stroke-width="0.6"/>
+      <rect x="5.5" y="13" width="3" height="2.5" fill="#8B5E3C"/>
+    </svg>`;
+    const deadSVG=`<svg viewBox="0 0 14 16" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="7,1 13,9 10,9 12,13 2,13 4,9 1,9" fill="#2a3a2a" stroke="#1a2a1a" stroke-width="0.6"/>
+      <rect x="5.5" y="13" width="3" height="2.5" fill="#3a2a1a"/>
+    </svg>`;
+    for(let i=0;i<total;i++){
+      const p=document.createElement('div');
+      p.className='life-pip'+(i>=lives?' dead':'');
+      p.innerHTML=i<lives?forestSVG:deadSVG;
+      lc.appendChild(p);
+    }
   }
-  // Speed boost pip
+  // Speed boost pip (re-added below if the pip row was just rebuilt)
   let sb=document.getElementById('speed-pip');
   if(speedBoost>0){
     if(!sb){sb=document.createElement('div');sb.id='speed-pip';sb.style.cssText='width:9px;height:9px;border-radius:50%;background:#f4d03f;box-shadow:0 0 6px #f4d03f;margin-left:4px;';lc.appendChild(sb);}
@@ -1798,18 +1807,41 @@ function updateHUD(){
 }
 
 // ── MAIN LOOP ─────────────────────────────────────────────────────────────────
-function loop(ts){
-  if(state!=='play')return;
-  frameId=requestAnimationFrame(loop);
-  const dt=Math.min((ts-lastTime)/1000,0.05);lastTime=ts;
+// The simulation is tuned in per-frame units (bullet vy, cooldowns, formation
+// ticks are all "per step"), so it runs on a fixed 60Hz timestep decoupled from
+// the display refresh rate. Without this the whole game runs 2x fast on a 120Hz
+// screen. Rendering still happens once per animation frame.
+const FIXED_MS = 1000/60, FIXED_DT = 1/60, MAX_CATCHUP_STEPS = 5;
+let accumulator = 0;
+
+function startLoop(){
+  lastTime = performance.now();
+  accumulator = 0;
+  frameId = requestAnimationFrame(loop);
+}
+
+function updateStep(){
   applyShake();
+  if(!wavePaused){
+    updatePx();
+    moveEnemies();moveEBullets();moveBullets(); // kills registered here
+    checkWaveClear(); // waveDone set immediately after kills, before handleInput
+    handleInput(FIXED_DT); // auto-fire checks waveDone — won't fire if wave just cleared
+    updateHomingMissiles();
+    updateMystery();updateDivers();updateAbUI();
+    updatePowerups(); updateCombo(); updateBear();
+  } else {
+    checkWaveClear(); // ticks waveTimer countdown during wavePaused
+  }
+}
+
+function render(ts){
   ctx.save();ctx.translate(shake.x,shake.y);
   ctx.clearRect(-20,-20,W+40,H+40);
   drawBG(ts);
   drawEggBears();
   barriers.forEach(b=>drawBarrier(b));
   if(!wavePaused){
-    updatePx();
     particles.forEach(p=>{
     if(p.text){
       ctx.globalAlpha=p.life/p.mLife;
@@ -1829,19 +1861,29 @@ function loop(ts){
     eBullets.forEach(b=>drawBullet(b));
     homingMissiles.forEach(m=>drawHomingMissile(m));
     drawYeva(); drawBear(); drawCrosshair();
-    moveEnemies();moveEBullets();moveBullets(); // kills registered here
-    checkWaveClear(); // waveDone set immediately after kills, before handleInput
-    handleInput(dt); // auto-fire checks waveDone — won't fire if wave just cleared
-    updateHomingMissiles();
-    updateMystery();updateDivers();updateAbUI();
-    updatePowerups(); updateCombo(); updateBear();
     powerups.forEach(p=>drawPowerup(p));
   } else {
     if(enemies.length) enemies.forEach(e=>drawEnemy(e,ts));
     drawYeva();
-    checkWaveClear(); // ticks waveTimer countdown during wavePaused
   }
   ctx.restore();
+}
+
+function loop(ts){
+  if(state!=='play')return;
+  frameId=requestAnimationFrame(loop);
+  let frameMs = ts-lastTime; lastTime = ts;
+  if(!isFinite(frameMs) || frameMs < 0) frameMs = FIXED_MS;
+  // Cap catch-up so a stall (tab switch, breakpoint) can't spiral into a burst of steps
+  accumulator += Math.min(frameMs, FIXED_MS*MAX_CATCHUP_STEPS);
+  let steps = 0;
+  while(accumulator >= FIXED_MS && steps < MAX_CATCHUP_STEPS){
+    updateStep();
+    accumulator -= FIXED_MS;
+    steps++;
+    if(state!=='play') break; // endGame() may have fired mid-step
+  }
+  render(ts);
 }
 
 // ── SCREENS ───────────────────────────────────────────────────────────────────
@@ -1851,7 +1893,7 @@ function startGame(){
   // Fade-in
   canvas.style.opacity='0'; canvas.style.transition='opacity 0.5s ease';
   setTimeout(()=>{ canvas.style.opacity='1'; },30);
-  lastTime=performance.now();frameId=requestAnimationFrame(loop);
+  startLoop();
 }
 function endGame(win){
   state='end';cancelAnimationFrame(frameId);
@@ -1876,7 +1918,7 @@ function endGame(win){
   }
   survivalMode=false;
 }
-function pauseGame(){if(state==='play'){state='pause';cancelAnimationFrame(frameId);show('screen-pause');}else if(state==='pause'){state='play';show(null);lastTime=performance.now();frameId=requestAnimationFrame(loop);}}
+function pauseGame(){if(state==='play'){state='pause';cancelAnimationFrame(frameId);show('screen-pause');}else if(state==='pause'){state='play';show(null);startLoop();}}
 
 // ── AUDIO ─────────────────────────────────────────────────────────────────────
 let AC=null,MG=null,soundMuted=false,volLevel=0.5;
@@ -2205,7 +2247,9 @@ canvas.addEventListener('touchmove',e=>{e.preventDefault();const r=canvas.getBou
 canvas.addEventListener('touchstart',e=>{e.preventDefault();touchFiring=true;if(state==='play'&&!wavePaused)shoot();},{passive:false});
 canvas.addEventListener('touchend',e=>{e.preventDefault();if(e.touches.length===0)touchFiring=false;},{passive:false});
 canvas.addEventListener('touchcancel',()=>{touchFiring=false;});
-window.addEventListener('resize',()=>{resize();groundY=Math.min(H-70,H*0.88);if(player)player.y=groundY-8;initPX();bgStars=[];});
+// initPX() regenerates the starfield and parallax trees for the new size —
+// don't blank bgStars afterwards or the stars never come back after a resize.
+window.addEventListener('resize',()=>{resize();groundY=Math.min(H-70,H*0.88);if(player)player.y=groundY-8;initPX();});
 
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&state==='play')pauseGame();});
 
