@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-03T21:46:27Z
-// Solver MD5 : f4ea78ce1658
+// Generated : 2026-08-04T10:32:07Z
+// Solver MD5 : 8d3d2f8992b0
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -2199,7 +2199,7 @@
           // mana available THIS turn and report a full WIN even though the mana
           // only accrues one turn boundary at a time.
           loopType: LOOP_TYPE.MANA_POSITIVE_PER_TURN,
-          description: "Symbiote (free, once each turn \u2014 including opponents' turns with --simulate-opponent-turns) bounces a 1-mana Elf to untap a Badgermole Cub/Leyline of Abundance-boosted earthbent land (1 base + 1 bonus = 2G). Recast the Elf for {G}. Net +1G per turn boundary \u2014 unbounded over enough turns, even though not repeatable within a single priority window.",
+          description: `Symbiote (free, once each turn \u2014 including opponents' turns with --simulate-opponent-turns) bounces a 1-mana Elf to untap a Badgermole Cub/Leyline of Abundance-boosted earthbent land (1 base + 1 bonus = 2G). Recast the Elf for {G}. Net +1G per turn boundary, NOT repeatable within a single priority window. [2026-08-03] This description previously claimed the gain was "unbounded over enough turns". That was never verified and does not hold: mana pools empty at end of turn (startNewTurn, CR 500.4), so a flat +1G each turn does not accumulate into a growing pile \u2014 it only compounds if the surplus is spent developing the board. Measured by direct simulation (src/PerTurnVerifier.js) on a representative board: peak mana per turn was 5,5,3,3,3,3 over six consecutive own-turns \u2014 flat, then declining, never growing. Treat this as a fixed per-turn bonus, not an engine that goes infinite; this is why no WIN_CONDITION accepts MANA_POSITIVE_PER_TURN.`,
           check(state) {
             if (!symbioteAvailable(state)) return false;
             if (!canCastGreenCreatureNow(state)) return false;
@@ -2263,7 +2263,7 @@
           // LOOP_TYPE.MANA_POSITIVE_PER_TURN doc comment — per-turn, not
           // same-turn, so it must not be treated as real infinite mana this turn.
           loopType: LOOP_TYPE.MANA_POSITIVE_PER_TURN,
-          description: "Symbiote (free, once each turn \u2014 including opponents' turns with --simulate-opponent-turns) bounces an Elf to untap a scaling mana dork (Fanatic of Rhonas, Priest of Titania, Circle of Dreams Druid, etc). Recast the Elf at its own mana cost. Net positive per turn boundary once the dork's gross output exceeds that cost \u2014 unbounded over enough turns.",
+          description: `Symbiote (free, once each turn \u2014 including opponents' turns with --simulate-opponent-turns) bounces an Elf to untap a scaling mana dork (Fanatic of Rhonas, Priest of Titania, Circle of Dreams Druid, etc). Recast the Elf at its own mana cost. Net positive per turn boundary once the dork's gross output exceeds that cost. [2026-08-03] Previously claimed "unbounded over enough turns"; corrected \u2014 see the sibling Badgermole/Leyline detector's description for the full reasoning. Direct simulation (src/PerTurnVerifier.js) measured peak mana per turn on a representative board as 14,14,14,14,14,14 across six consecutive own-turns: perfectly flat. The +1G is a fixed per-turn bonus, not a compounding engine.`,
           check(state) {
             if (!symbioteAvailable(state)) return false;
             if (!canCastGreenCreatureNow(state)) return false;
@@ -3652,6 +3652,7 @@
             if (!hasPerm(state, "Kogla, the Titan Ape") && !hasPerm(state, "Temur Sabertooth")) return false;
             const magusAvailable = state.hand && state.hand.includes("magus_of_the_candelabra") || hasPerm(state, "Magus of the Candelabra");
             if (!magusAvailable) return false;
+            if (!hasGlobalHaste(state)) return false;
             const magusPerm = state.battlefield.find((p) => p.name === "Magus of the Candelabra");
             const bootstrapCore = !magusPerm ? 2 : magusPerm.tapped ? 4 : 1;
             const magusInHand = !magusPerm && state.hand?.includes("magus_of_the_candelabra");
@@ -4444,8 +4445,9 @@
         // ══════════════════════════════════════════════════════════════════════════
         {
           name: "Win: Infectious Bite (poison counters)",
-          description: "Cast Infectious Bite ({1G}): target creature you control deals damage to a creature you don't control. Each opponent gets ONE poison counter. Infectious Bite is an instant \u2014 casting it sends it to the graveyard, so infinite mana alone only casts it once. To reach 10 poison you must recur it from the graveyard each cast: Eternal/Timeless Witness returns it and a bouncer (Temur Sabertooth / Kogla) loops the Witness. Repeat 10\xD7 \u2192 each opponent reaches 10 poison and loses.",
+          description: "Cast Infectious Bite ({1G}): target creature you control deals damage to a creature you don't control. Each opponent gets ONE poison counter. Infectious Bite is an instant \u2014 casting it sends it to the graveyard, so infinite mana alone only casts it once. To reach 10 poison you must recur it from the graveyard each cast: Eternal/Timeless Witness returns it and a bouncer (Temur Sabertooth / Kogla) loops the Witness. Repeat 10\xD7 \u2192 each opponent reaches 10 poison and loses. NOTE: Infectious Bite REQUIRES a creature you don't control as its target \u2014 against a creature-less opposing board it cannot be cast at all. Pass --opponent-creatures N to state the opposing board; left unspecified, an opposing creature is optimistically assumed.",
           check(state) {
+            if (state.opponentCreatures !== null && state.opponentCreatures === 0) return false;
             const biteInHand = state.hand && state.hand.includes("infectious_bite");
             const biteInGrave = state.players?.[0]?.graveyard?.includes("Infectious Bite");
             if (!biteInHand && !biteInGrave) return false;
@@ -4497,9 +4499,10 @@
         // ══════════════════════════════════════════════════════════════════════════
         {
           name: "Win: Shaman of Forgotten Ways (Formidable)",
-          description: "Formidable \u2014 {9}{G}{G},{T}: each player's life total becomes the number of creatures they control. Requires total power among your creatures \u2265 8. With infinite mana this is trivially payable; every opponent's board is modelled as empty, so all three opponents' life totals become 0 and they lose.",
+          description: "Formidable \u2014 {9}{G}{G},{T}: each player's life total becomes the number of creatures they control. Requires total power among your creatures \u2265 8. With infinite mana this is trivially payable. NOTE: this only KILLS an opponent who controls ZERO creatures \u2014 an opponent with N creatures merely drops to N life. Pass --opponent-creatures N to state the opposing board; left unspecified, the long-standing optimistic assumption (empty opposing boards) is kept.",
           check(state) {
             if (!permReadyOrSCActive(state, "Shaman of Forgotten Ways")) return false;
+            if (state.opponentCreatures !== null && state.opponentCreatures > 0) return false;
             const totalPower = state.creatures().reduce((sum, c) => sum + (c.power || 0), 0);
             return totalPower >= 8;
           }
@@ -4669,6 +4672,27 @@
         {
           name: "Win: Tutor for Finisher (infinite mana + creature tutor)",
           description: "With infinite mana, any creature tutor finds Duskwatch Recruiter. Activate Duskwatch ({2G}) to pull every creature from the library into hand. Cast them all, then execute Hitzel's Sequence or another terminal win.\nSpell tutors (in hand): GSZ, Shared Summons, Chord of Calling, Summoner's Pact, Archdruid's Charm, Nature's Rhythm, Eldritch Evolution, Natural Order, Worldly Tutor.\nCreature tutors (cast from hand \u2192 activate): Fauna Shaman, Formidable Speaker, Duskwatch Recruiter, Yisan, Elvish Harbinger.\nEnchantment tutor (cast from hand): Survival of the Fittest.\nETB chain: Woodland Bellower \u2192 Duskwatch; Fierce Empath \u2192 Bellower \u2192 Duskwatch.\nDraw engines: Beast Whisperer (cast + repeatable creature loop draws deck), Glademuse (with Yeva + creature loop: recast on opponents' turns to draw deck).\nLand paths: Sylvan Scrying \u2192 War Room; Crop Rotation \u2192 War Room (Ashaya = always a Forest to sac).\nSowing Mycospawn \u2192 on-cast fetches War Room/Geier Reach \u2192 draw to finisher.",
+          // [2026-08-03] Optional near-miss reporter. check() above stays STRICT
+          // about Formidable Speaker's retutor (formidableSpeakerCanRetutor needs a
+          // card genuinely in hand to discard), so the search is never
+          // short-circuited into stopping before a win is actually verified. But
+          // when the search DOES stop at "infinite mana, no win yet" and she is the
+          // only missing link, describing the concrete path there is far more
+          // useful than a bare "(win condition needed)".
+          //
+          // This exists so that judgement lives HERE — beside the win condition it
+          // describes, evaluated by checkVictory, which is the single place that
+          // knows the loop-type rules. Previously Solver.js re-derived it twice
+          // (relabelFormidableFallback + an inline override inside assembleWin),
+          // and because neither knew about loop types, both happily attached this
+          // label to a per-turn-only ramp engine — a reported WIN the board could
+          // never actually pay for. Returning a near-miss from here means the
+          // display layer PRESENTS a decision it no longer MAKES.
+          nearMiss(state) {
+            if (!hasPerm(state, "Formidable Speaker")) return null;
+            if (!formidableSpeakerLooseRetutor(state)) return null;
+            return "Formidable Speaker is on the battlefield and a bounce source is available: bounce and recast her to re-trigger her ETB tutor (you need a card in hand to discard \u2014 pass to an opponent's turn to draw one if necessary), then fetch a finisher.";
+          },
           check(state) {
             const lib = state.players?.[0]?.library ?? [];
             const libHasCreature = (() => {
@@ -4934,8 +4958,9 @@
         // ══════════════════════════════════════════════════════════════════════════
         {
           name: "Win: Ulvenwald Tracker Fight Loop / Legolas Tap Loop (clear opponent board)",
-          description: "Two paths to board-wiping all opponent creatures with infinite mana:\nULVENWALD TRACKER: Tap Tracker ({1}{G},{T}) \u2192 your creature fights an opponent's creature. Temur Sabertooth or Kogla bounces Tracker ({1}{G}); recast it ({G}) \u2014 a global-haste effect (Concordant Crossroads / Thousand-Year Elixir / Surrak and Goreclaw / Shang-Chi) lets the freshly-recast Tracker activate despite summoning sickness. Repeat to kill every opponent creature.\nLEGOLAS'S QUICK REFLEXES: Cast LQR ({G}) on any creature in the infinite tap loop (Hope Tender, Argothian Elder, Ashaya, any mana dork) \u2014 it gains 'whenever this becomes tapped, deal damage = power to target creature' until EOT. The infinite tap loop fires the trigger repeatedly; point it at a different opponent creature each cycle. No bounce engine or global haste needed \u2014 the tap loop itself provides the repetition. LQR can be in graveyard (Eternal Witness / Noxious Revival recurs it). Both paths: attack with your board for lethal once the opponent's board is clear.",
+          description: "Two paths to board-wiping all opponent creatures with infinite mana:\nULVENWALD TRACKER: Tap Tracker ({1}{G},{T}) \u2192 your creature fights an opponent's creature. Temur Sabertooth or Kogla bounces Tracker ({1}{G}); recast it ({G}) \u2014 a global-haste effect (Concordant Crossroads / Thousand-Year Elixir / Surrak and Goreclaw / Shang-Chi) lets the freshly-recast Tracker activate despite summoning sickness. Repeat to kill every opponent creature.\nLEGOLAS'S QUICK REFLEXES: Cast LQR ({G}) on any creature in the infinite tap loop (Hope Tender, Argothian Elder, Ashaya, any mana dork) \u2014 it gains 'whenever this becomes tapped, deal damage = power to target creature' until EOT. The infinite tap loop fires the trigger repeatedly; point it at a different opponent creature each cycle. No bounce engine or global haste needed \u2014 the tap loop itself provides the repetition. LQR can be in graveyard (Eternal Witness / Noxious Revival recurs it). Both paths: attack with your board for lethal once the opponent's board is clear. NOTE: both paths are board-CLEARING \u2014 they need opposing creatures to remove. Pass --opponent-creatures N to state the opposing board; left unspecified, an opposing board worth clearing is optimistically assumed.",
           check(state) {
+            if (state.opponentCreatures !== null && state.opponentCreatures === 0) return false;
             if (hasPerm(state, "Ulvenwald Tracker")) {
               const hasBounceRecast = hasPerm(state, "Temur Sabertooth") || hasPerm(state, "Kogla, the Titan Ape");
               if (hasBounceRecast && hasGlobalHaste(state)) {
@@ -4985,6 +5010,24 @@
         }
         return null;
       }
+      function checkSimulatedVictory(state) {
+        if (!state || typeof state.opponentsAllLost !== "function") return null;
+        if (state.youLost()) return null;
+        if (!state.opponentsAllLost()) return null;
+        const reasons = state.players.slice(1).map((p) => p.hasLost().reason);
+        return {
+          achieved: true,
+          name: "Win: opponents eliminated (verified by simulation)",
+          description: "Every opponent has actually lost in the simulated game state \u2014 this was not matched against a known combo, it was executed. " + reasons.join("; ") + ". You are still alive, so this is a win rather than a draw.",
+          winCondition: "Win: opponents eliminated (verified by simulation)",
+          manaCombo: null,
+          deployed: true,
+          // Distinguishes this from every hand-authored WIN_CONDITIONS result, so
+          // display and audit layers can tell "proven" from "asserted".
+          simulated: true,
+          reasons
+        };
+      }
       function checkVictory(state, _infiniteMana, present) {
         const infiniteMana = _infiniteMana !== void 0 ? _infiniteMana : checkCombos(state, present);
         if (!infiniteMana) return null;
@@ -5030,12 +5073,26 @@
           }
         }
         if (bestUndeployed) return bestUndeployed;
+        const nearMisses = [];
+        for (const wc of WIN_CONDITIONS) {
+          if (typeof wc.nearMiss !== "function") continue;
+          if (!wc._acceptedLoopTypes.has(detectorLoopType)) continue;
+          if (!_passesPrefilter(wc, present)) continue;
+          let hint = null;
+          try {
+            hint = wc.nearMiss(state);
+          } catch {
+            hint = null;
+          }
+          if (hint) nearMisses.push({ winCondition: wc.name, hint });
+        }
         return {
           achieved: true,
           name: `${infiniteMana.name} [win condition needed]`,
           description: resolvedManaDescription + " \u2014 Win condition not yet on battlefield.",
           winCondition: null,
           manaCombo: infiniteMana.name,
+          nearMisses,
           // No manaDescription here (unlike the two branches above) — `description`
           // just above already carries the same detector text plus the "Win
           // condition not yet on battlefield" suffix, printed inline by the caller;
@@ -5245,7 +5302,20 @@
         "Infinite Mana (Ashaya + Quirion Ranger + Arbor Elf + Enchanted Land)": { all: ["ashaya", "quirion_ranger", "arbor_elf"] },
         "Infinite Mana (Ashaya + Quirion Ranger + Arbor Elf + Yavimaya + Big Land)": { all: ["ashaya", "quirion_ranger", "arbor_elf", "yavimaya"] },
         "Infinite Mana (Earthcraft + Ashaya + Quirion Ranger + Basic Forest)  [Combo Summary #4]": { all: ["earthcraft", "ashaya", "quirion_ranger"] },
-        "Infinite Mana (Survival/Fauna Shaman \u2192 Ashaya + Ranger + Big Dork)": { all: ["ashaya", "quirion_ranger", "survival_fittest"] },
+        // [2026-08-03 — prefilter soundness fix] survival_fittest was in `all`, but
+        // check() accepts `hasSurvival || faunaReady` — an OR. A board running Fauna
+        // Shaman INSTEAD of Survival of the Fittest was therefore skipped before
+        // check() ever ran. Confirmed a genuine missed detection, not just a
+        // theoretical gap: on {BF: ashaya, quirion_ranger, fauna_shaman, arbor_elf;
+        // hand: llanowar_elves; lib: priest_of_titania; 4 mana} this detector's
+        // check() returns true but checkCombos() found NO combo at all — the
+        // prefilter suppressed the only detector that covers that board.
+        // (quirion_ranger staying in `all` is sound: quirion_ranger/scryb_ranger are
+        // FUNCTIONAL_EQUIVALENTS, so a Scryb board already expands to include it.)
+        "Infinite Mana (Survival/Fauna Shaman \u2192 Ashaya + Ranger + Big Dork)": {
+          all: ["ashaya", "quirion_ranger"],
+          any: [["survival_fittest", "fauna_shaman"]]
+        },
         "Infinite Mana (Destiny Spinner/Vengeant Earth + Ashaya + Ranger + Big Land)": { all: ["ashaya"], any: [["destiny_spinner", "vengeant_earth"], ["quirion_ranger", "scryb_ranger"]] },
         "Infinite ETB / Landfall (Tireless Provisioner + Ashaya + Ranger)  [Combo Summary #9]": { all: ["ashaya", "tireless_provisioner", "quirion_ranger"] },
         "Infinite Mana (Ashaya + Ranger + Shang-Chi, self-funded)": {
@@ -5328,9 +5398,19 @@
         "Infinite Mana (Selvala + Cloudstone Curio + Wirewood Symbiote + 1-drop Elf)  [COMBO 53, 54, 55]": { all: ["selvala", "cloudstone_curio", "wirewood_symbiote"] },
         "Infinite Mana (Cloudstone Curio + Defiler of Vigor + Haste + Two 1-drop Elves)": { all: ["cloudstone_curio", "defiler_of_vigor"] },
         // Kogla + Acolyte (combo 2)
+        // [2026-08-03 — prefilter soundness fix] shang_chi added: check()'s own
+        // hasHaste clause explicitly accepts it (`p.cardKey === 'shang_chi'`)
+        // alongside the other three, so a Shang-Chi-only haste board was skipped
+        // before check() ran. Unlike the Survival/Fauna fix above, this one is
+        // currently MASKED rather than user-visible — Karametra's Acolyte is itself
+        // a tap-dork, so the sibling "Kogla + Shang-Chi + Human Tap-Dork
+        // bounce-recast" detector fires on every such board anyway (verified on two
+        // constructed devotion-7 boards). Fixed regardless: the detector being
+        // unreachable is objectively wrong, and the masking is coincidental — it
+        // evaporates the moment that sibling's own conditions tighten.
         "Infinite Mana (Kogla + Karametra's Acolyte, devotion \u22657)  [COMBO 2]": {
           all: ["kogla", "karametra_acolyte"],
-          any: [["concordant_crossroads", "thousand_year_elixir", "surrak_goreclaw"]]
+          any: [["concordant_crossroads", "thousand_year_elixir", "surrak_goreclaw", "shang_chi"]]
         },
         // Temur Sabertooth + various engines
         "Infinite Mana (Temur Sabertooth + Wirewood Symbiote + Mana Dork \u22655)  [COMBO 4, 5, 17]": { all: ["temur_sabertooth", "wirewood_symbiote"] },
@@ -5567,7 +5647,7 @@
         wc.requiresLoopType = Array.isArray(requires) ? requires : [requires];
         wc._acceptedLoopTypes = new Set(wc.requiresLoopType);
       }
-      module.exports = { checkCombos, checkVictory, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
+      module.exports = { checkCombos, checkVictory, checkSimulatedVictory, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
     }
   });
 
@@ -7645,8 +7725,11 @@
           cost: null,
           tapForMana: simpleTap("{C}", [["C", 1]]),
           // {2}, {T}: Each player draws a card.
-          // In the Hitzel mill loop this is activated repeatedly (opponents mill via Endurance shuffle).
-          // In the solver we model it as: pay {2}, tap → you draw a card (opponents drawing is not tracked).
+          // [2026-08-04] Opponents now actually draw. Previously only player 0 did,
+          // so the Mikokoro mill WIN_CONDITION asserted a deck-out that the
+          // simulation never performed — opponents' libraries never moved. Symmetry
+          // matters here: the loop mills us at exactly the same rate it mills them,
+          // which is precisely why the line needs Endurance to refill our library.
           abilities: {
             group_draw: {
               label: "{2}, {T}: Each player draws a card",
@@ -7657,9 +7740,10 @@
                 const at = ap.tapPermanent(perm.id);
                 if (!at) return [];
                 const drawnKey = at.players[0].library[0];
-                const s = at.playerDraws(0, 1);
+                let s = at.playerDraws(0, 1);
+                for (let pi = 1; pi < s.players.length; pi++) s = s.playerDraws(pi, 1);
                 const drawnName = drawnKey && drawnKey !== "unknown" ? CARDS2[drawnKey]?.name ?? drawnKey : "(empty library)";
-                return [s.log(`Mikokoro: {2}, tap \u2192 draw ${drawnName} (each player draws)`)];
+                return [s.log(`Mikokoro: {2}, tap \u2192 each player draws (you draw ${drawnName})`)];
               }
             }
           }
@@ -12157,10 +12241,17 @@
           // Oracle: Target creature you control deals damage to a creature you don't control.
           // Each opponent gets a poison counter. Win with 10 poison counters.
           // Solver: this card IS in the WIN_CONDITIONS (checkVictory detects it in hand).
-          // The castFn here just models "cast it once" — no opponent creature modelled,
-          // so we treat each cast as dealing 1 poison counter to all opponents.
+          // [2026-08-04] The poison counter is now actually applied. Previously this
+          // castFn logged the effect and returned the state UNCHANGED, so no amount
+          // of casting ever moved an opponent toward the 10-poison loss threshold —
+          // the win was asserted structurally and never simulated.
+          // The damage half ("target creature you control deals damage to a creature
+          // you don't control") is still unmodelled: there is no combat/opponent-
+          // creature model, and the poison counter is what the win line cares about.
           castFn(state) {
-            return [state.log("Infectious Bite: cast (each opponent gets a poison counter)")];
+            let s = state;
+            for (let pi = 1; pi < s.players.length; pi++) s = s.addPoison(pi, 1);
+            return [s.log("Infectious Bite: cast (each opponent gets a poison counter)")];
           }
         },
         natures_claim: {
@@ -13058,6 +13149,39 @@
             s = s.addRestrictedCreatureMana(2);
             s = s.log(`Tap ${perm.name} \u2192 {G}x2 (creature spells only)`);
             return [s];
+          },
+          abilities: {
+            // Formidable — {9}{G}{G}, {T}: Each player's life total BECOMES the
+            // number of creatures they control. Activate only if creatures you
+            // control have total power 8 or greater.
+            //
+            // [2026-08-04] Previously unmodelled: the card carried only tapForMana,
+            // and the matching WIN_CONDITION asserted the kill structurally. This is
+            // a pure life-setting effect with no combat involved, so it simulates
+            // exactly. Note it sets EACH player's life, including ours — with a big
+            // enough board that's a life gain, with a small one it's a real cost.
+            formidable_life_set: {
+              label: "{9}{G}{G}, {T}: Each player's life total becomes their creature count",
+              fn(state, perm) {
+                if (perm.tapped || perm.summoningSick) return [];
+                const mine = state.creatures();
+                const totalPower = mine.reduce((sum, c) => sum + (c.power || 0), 0);
+                if (totalPower < 8) return [];
+                const ap = state.payMana("9GG");
+                if (!ap) return [];
+                let s = ap.tapPermanent(perm.id);
+                if (!s) return [];
+                const oppCount = state.opponentCreatures ?? 0;
+                const myCount = s.creatures().length;
+                s = s.modifyPlayer(0, { life: myCount - s.players[0].life });
+                for (let pi = 1; pi < s.players.length; pi++) {
+                  s = s.modifyPlayer(pi, { life: oppCount - s.players[pi].life });
+                }
+                return [s.log(
+                  `Shaman of Forgotten Ways (Formidable): each player's life becomes their creature count (you \u2192 ${myCount}, each opponent \u2192 ${oppCount}${state.opponentCreatures === null ? ", opposing boards assumed empty" : ""})`
+                )];
+              }
+            }
           }
         },
         // Oracle: "Reach / {T}, Tap an untapped creature you control: Add one mana
@@ -13383,6 +13507,7 @@
           this.poison = data.poison ?? 0;
           this.graveyard = data.graveyard ? [...data.graveyard] : [];
           this.exile = data.exile ? [...data.exile] : [];
+          this._drewFromEmpty = data._drewFromEmpty ?? false;
           this._sizeOnly = data._sizeOnly ?? false;
           if (this._sizeOnly) {
             this._libSize = data._libSize ?? data.librarySize ?? (data.library ? data.library.length : DEFAULT_LIBRARY_SIZE);
@@ -13398,6 +13523,7 @@
         }
         /** Backward-compat setter */
         set librarySize(n) {
+          if (n < 0) n = 0;
           if (this._sizeOnly) {
             this._libSize = n;
             return;
@@ -13417,6 +13543,7 @@
           p.poison = this.poison;
           p.graveyard = this.graveyard.length ? [...this.graveyard] : [];
           p.exile = this.exile.length ? [...this.exile] : [];
+          p._drewFromEmpty = this._drewFromEmpty;
           p._sizeOnly = this._sizeOnly;
           if (this._sizeOnly) {
             p._libSize = this._libSize;
@@ -13431,6 +13558,8 @@
             return { lost: true, reason: `${this.name} has 0 or less life (${this.life})` };
           if (this.poison >= POISON_LOSS_THRESHOLD)
             return { lost: true, reason: `${this.name} has ${this.poison} poison counters` };
+          if (this._drewFromEmpty)
+            return { lost: true, reason: `${this.name} attempted to draw from an empty library` };
           return { lost: false };
         }
         /**
@@ -13439,6 +13568,7 @@
          */
         draw(n = 1) {
           const p = this.clone();
+          if (n > p.librarySize) p._drewFromEmpty = true;
           if (p._sizeOnly) {
             p._libSize = Math.max(0, p._libSize - n);
           } else {
@@ -13451,7 +13581,12 @@
          * Removes it from the library.
          */
         drawCard() {
-          if (this.librarySize === 0) return { player: this, cardKey: null };
+          if (this.librarySize === 0) {
+            if (this._drewFromEmpty) return { player: this, cardKey: null };
+            const p2 = this.clone();
+            p2._drewFromEmpty = true;
+            return { player: p2, cardKey: null };
+          }
           const p = this.clone();
           let cardKey;
           if (p._sizeOnly) {
@@ -13760,6 +13895,7 @@ ${ex}`;
           this.topDecked = data.topDecked ?? null;
           this.drawForTurn = data.drawForTurn ?? false;
           this._hasSTAX = data._hasSTAX ?? false;
+          this.opponentCreatures = data.opponentCreatures ?? null;
           this.opponentStax = data.opponentStax instanceof Set ? data.opponentStax : new Set(Array.isArray(data.opponentStax) ? data.opponentStax : []);
           if (data._hasSTAX === void 0 && this.opponentStax.size > 0) {
             for (const entry of this.opponentStax) {
@@ -13784,7 +13920,8 @@ ${ex}`;
                 _sizeOnly: isOpponent,
                 poison: p.poison ?? 0,
                 graveyard: p.graveyard ?? [],
-                exile: p.exile ?? []
+                exile: p.exile ?? [],
+                _drewFromEmpty: p._drewFromEmpty ?? false
               });
             });
           } else {
@@ -14079,6 +14216,7 @@ ${ex}`;
           s.topDecked = this.topDecked;
           s.drawForTurn = this.drawForTurn;
           s._hasSTAX = this._hasSTAX;
+          s.opponentCreatures = this.opponentCreatures;
           s.opponentStax = this.opponentStax;
           s.threats = this.threats;
           s.flashThisTurn = this.flashThisTurn;
@@ -14239,6 +14377,7 @@ ${ex}`;
           s.topDecked = this.topDecked;
           s.drawForTurn = this.drawForTurn;
           s._hasSTAX = this._hasSTAX;
+          s.opponentCreatures = this.opponentCreatures;
           s.opponentStax = this.opponentStax;
           s.threats = this.threats;
           s.flashThisTurn = this.flashThisTurn;
@@ -15518,7 +15657,7 @@ ${ex}`;
           const m = mn.W + ":" + mn.U + ":" + mn.B + ":" + mn.R + ":" + mn.G + ":" + mn.C + ":" + this.restrictedG + ":" + this.restrictedCreatureG + ":" + this.opponentTurnsThisRound;
           const p0 = this.players[0], p1 = this.players[1], p2 = this.players[2], p3 = this.players[3];
           const gy0 = p0.graveyard.length ? [...p0.graveyard].sort().join(";") : "";
-          const players = p0.life + "/" + p0.librarySize + "/" + p0.poison + "/" + gy0 + "/" + p0.exile.length + "," + p1.life + "/" + p1.librarySize + "/" + p1.poison + "/" + p1.graveyard.length + "/" + p1.exile.length + "," + p2.life + "/" + p2.librarySize + "/" + p2.poison + "/" + p2.graveyard.length + "/" + p2.exile.length + "," + p3.life + "/" + p3.librarySize + "/" + p3.poison + "/" + p3.graveyard.length + "/" + p3.exile.length;
+          const players = p0.life + "/" + p0.librarySize + "/" + p0.poison + "/" + gy0 + "/" + p0.exile.length + (p0._drewFromEmpty ? "/X" : "") + "," + p1.life + "/" + p1.librarySize + "/" + p1.poison + "/" + p1.graveyard.length + "/" + p1.exile.length + (p1._drewFromEmpty ? "/X" : "") + "," + p2.life + "/" + p2.librarySize + "/" + p2.poison + "/" + p2.graveyard.length + "/" + p2.exile.length + (p2._drewFromEmpty ? "/X" : "") + "," + p3.life + "/" + p3.librarySize + "/" + p3.poison + "/" + p3.graveyard.length + "/" + p3.exile.length + (p3._drewFromEmpty ? "/X" : "");
           const cmd = [...this.commandZone].sort().join(",") + ":" + this.commanderTax;
           const prefix = "T" + this.turn + "|H:" + hand + "|BF:" + bf;
           const suffix = "|L:" + this.landDrops + "|P:" + players + "|CZ:" + cmd + (this.flashThisTurn ? "|FL" : "") + (this.pactOwed ? "|PC" : "") + (this.landsPlayedThisTurn > 0 ? "|LP:" + this.landsPlayedThisTurn : "") + // [perf/soundness] Gated on Radagast actually being on the
@@ -15571,7 +15710,7 @@ ${ex}`;
       "use strict";
       var { generateActions, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, effectiveCost } = require_actions();
       var { COMBO_REQUIRED_KEYS, FUNCTIONAL_EQUIVALENTS } = require_combo_data();
-      var { checkVictory, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
+      var { checkVictory, checkSimulatedVictory, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
       var CARDS2 = require_cards();
       var __fastManaRegime = false;
       var FAST_MANA_KEYS = /* @__PURE__ */ new Set([
@@ -15860,8 +15999,19 @@ ${ex}`;
         }
         return { present, minMissing };
       }
+      function _opponentUnderPressure(state) {
+        const pl = state.players;
+        for (let i = 1; i < pl.length; i++) {
+          const p = pl[i];
+          if (p.poison > 0) return true;
+          if (p.life < 40) return true;
+          if (p.librarySize === 0) return true;
+        }
+        return false;
+      }
       function canReachCombo(state, turnsLeft, analysis, _infiniteMana) {
         if (globalThis.__disableCanReachCombo) return true;
+        if (_opponentUnderPressure(state)) return true;
         const fired = _infiniteMana !== void 0 ? _infiniteMana : checkCombos(state);
         if (fired) return true;
         const { minMissing } = analysis ?? analyzeState(state, null);
@@ -16038,16 +16188,11 @@ ${ex}`;
         node._path = path;
         return path;
       }
-      function _isGenuineMana(combo) {
-        if (!combo?.manaCombo) return false;
-        const det = DETECTORS.find((d) => d.name === combo.manaCombo);
-        return det?.loopType === LOOP_TYPE.MANA_POSITIVE;
-      }
-      function relabelFormidableFallback(combo, finalState) {
-        if (!combo || combo.winCondition || !finalState.hasPermanent("Formidable Speaker") || !formidableSpeakerLooseRetutor(finalState) || !_isGenuineMana(combo)) {
-          return combo;
-        }
-        return { ...combo, winCondition: "Win: Tutor for Finisher (infinite mana + creature tutor)" };
+      function relabelFormidableFallback(combo, _finalState) {
+        if (!combo || combo.winCondition) return combo;
+        const nm = combo.nearMisses?.[0];
+        if (!nm) return combo;
+        return { ...combo, winCondition: nm.winCondition, nearMissHint: nm.hint };
       }
       var Solver2 = class {
         constructor(options = {}) {
@@ -16267,6 +16412,14 @@ ${ex}`;
             this.pruned++;
             return;
           }
+          {
+            const simWin = checkSimulatedVictory(state);
+            if (simWin) {
+              this._recordWin(reconstructPath({ state, parent: parentNode }), simWin, score(state, depth));
+              if (this.opts.firstWin) this._stopSearch = true;
+              return;
+            }
+          }
           const s = pre && pre.score !== void 0 ? pre.score : score(state, depth);
           if (this.opts.bestPlay) {
             const k = _bestPlayKey(depth, s);
@@ -16322,6 +16475,23 @@ ${ex}`;
               continue;
             }
             if (!next) continue;
+            {
+              const simWin = checkSimulatedVictory(next);
+              if (simWin) {
+                if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
+                this.statesExplored++;
+                this._recordWin(
+                  reconstructPath({ state: next, parent: { state, parent: parentNode } }),
+                  simWin,
+                  score(next, childDepth)
+                );
+                if (this.opts.firstWin) {
+                  this._stopSearch = true;
+                  return;
+                }
+                continue;
+              }
+            }
             const childScore = score(next, childDepth);
             if (!this.opts.exhaustive) {
               const cut = this.opts.allLines ? childScore > this.bestScore : childScore >= this.bestScore;
@@ -16475,6 +16645,17 @@ ${ex}`;
               if (this._stopSearch) return;
               if (state.youLost()) continue;
               if (depth > this.opts.maxDepth) continue;
+              {
+                const simWin = checkSimulatedVictory(state);
+                if (simWin) {
+                  this._recordWin(reconstructPath(node), simWin, score(state, depth));
+                  if (this.opts.firstWin) {
+                    this._stopSearch = true;
+                    return;
+                  }
+                  continue;
+                }
+              }
               if (this.opts.bestPlay) {
                 const k = _bestPlayKey(depth, score(state, depth));
                 if (k < this.bestPlayScore) {
@@ -16508,6 +16689,22 @@ ${ex}`;
                   continue;
                 }
                 if (!next || next.turn > this.opts.maxTurns) continue;
+                {
+                  const simWin = checkSimulatedVictory(next);
+                  if (simWin) {
+                    this.statesExplored++;
+                    this._recordWin(
+                      reconstructPath({ state: next, parent: node }),
+                      simWin,
+                      score(next, depth + 1)
+                    );
+                    if (this.opts.firstWin) {
+                      this._stopSearch = true;
+                      return;
+                    }
+                    continue;
+                  }
+                }
                 const childPresent = buildPresentSet(next);
                 let childInfiniteMana = checkCombos(next, childPresent);
                 if (!childInfiniteMana) {
@@ -17438,8 +17635,8 @@ ${ex}`;
           }
         }
         const victory = checkVictory(s);
-        if (victory && !victory.winCondition && onField("Formidable Speaker") && formidableSpeakerLooseRetutor(s) && _isGenuineMana(victory)) {
-          victory.winCondition = "Win: Tutor for Finisher (infinite mana + creature tutor)";
+        if (victory && !victory.winCondition && victory.nearMisses?.length) {
+          victory.winCondition = victory.nearMisses[0].winCondition;
         }
         const terminalWin = victory && victory.deployed && victory.winCondition;
         if (terminalWin) {
