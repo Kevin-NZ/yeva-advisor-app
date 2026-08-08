@@ -1,0 +1,380 @@
+<title>Hitzel's Sequence — a field guide for the other side of the table</title>
+<style>
+  :root {
+    --ground:      #F2F4EF;
+    --panel:       #E9EDE6;
+    --ink:         #131A15;
+    --ink-2:       #4E5B53;
+    --ink-3:       #6F7C74;
+    --accent:      #2F6B42;
+    --accent-soft: #DCE7DC;
+    --signal:      #96601A;
+    --signal-soft: #F2E6D2;
+    --rule:        #D2D9CF;
+    --rule-strong: #B4BFB2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0F1310;
+      --panel:       #171C18;
+      --ink:         #E3E9E1;
+      --ink-2:       #A4B0A6;
+      --ink-3:       #7C887F;
+      --accent:      #74B387;
+      --accent-soft: #1D2E22;
+      --signal:      #D9A25E;
+      --signal-soft: #2C2415;
+      --rule:        #262E27;
+      --rule-strong: #38423A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #0F1310;
+    --panel:       #171C18;
+    --ink:         #E3E9E1;
+    --ink-2:       #A4B0A6;
+    --ink-3:       #7C887F;
+    --accent:      #74B387;
+    --accent-soft: #1D2E22;
+    --signal:      #D9A25E;
+    --signal-soft: #2C2415;
+    --rule:        #262E27;
+    --rule-strong: #38423A;
+  }
+
+  :root {
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, Georgia, serif;
+    --mono:  ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 18px;
+    line-height: 1.62;
+    margin: 0;
+    padding: clamp(1.6rem, 4vw, 4.5rem) clamp(1.1rem, 5vw, 2rem) 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 39rem; margin: 0 auto; display: flex; flex-direction: column; gap: 2.6rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 6vw, 2.9rem);
+    line-height: 1.08;
+    letter-spacing: -0.021em;
+    text-wrap: balance;
+    margin: 0.5rem 0 0;
+    font-weight: 600;
+  }
+  .standfirst {
+    font-size: 1.16rem;
+    color: var(--ink-2);
+    margin: 0.9rem 0 0;
+    text-wrap: pretty;
+  }
+
+  h2 {
+    font-size: 1.32rem;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+    margin: 0;
+    font-weight: 600;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  h3 { font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: -0.004em; }
+
+  section { display: flex; flex-direction: column; gap: 1rem; }
+  p { margin: 0; text-wrap: pretty; }
+
+  .card {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .cost {
+    font-family: var(--mono);
+    font-size: 0.8em;
+    background: var(--accent-soft);
+    color: var(--ink);
+    padding: 0.1em 0.42em;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  .oracle {
+    background: var(--panel);
+    border-left: 2px solid var(--accent);
+    padding: 0.9rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .oracle .nm { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.03em; color: var(--ink-3); }
+  .oracle .tx { font-size: 0.97rem; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .chart { width: 100%; height: auto; overflow: visible; }
+  .ax      { stroke: var(--rule-strong); stroke-width: 1; }
+  .gridln  { stroke: var(--rule); stroke-width: 1; }
+  .lineOpp { fill: none; stroke: var(--signal); stroke-width: 2.2; }
+  .lineYou { fill: none; stroke: var(--accent); stroke-width: 2.2; }
+  .tick    { font-family: var(--mono); font-size: 9px; fill: var(--ink-3); }
+  .dead    { fill: var(--signal); }
+  figcaption { font-size: 0.9rem; color: var(--ink-2); }
+
+  .key { display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem; font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.04em; }
+  .key span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .swatch { width: 1.1rem; height: 2px; display: inline-block; }
+
+  ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 0.85rem; }
+  ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 1.9rem 1fr; gap: 0.7rem; align-items: baseline; }
+  ol.steps > li::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--mono); font-size: 0.72rem; color: var(--ink-3);
+    letter-spacing: 0.04em; padding-top: 0.18em;
+  }
+
+  /* The two engine supports. Kept lighter than .window below — these are
+     explanation, the windows are the things you can actually do. */
+  .supports { display: flex; flex-direction: column; gap: 1.25rem; }
+  .support {
+    display: flex; flex-direction: column; gap: 0.5rem;
+    padding-left: 1.05rem; border-left: 2px solid var(--rule-strong);
+  }
+  .support p { font-size: 0.97rem; color: var(--ink-2); }
+
+  /* Interchangeable options render as a set, not a comma list: six nowrap
+     monospace card names inline can only break at the commas, which rags
+     badly and can overflow a narrow screen on the longest name. */
+  ul.chips { margin: 0.15rem 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  ul.chips > li {
+    font-family: var(--mono); font-size: 0.76rem; line-height: 1.5;
+    background: var(--accent-soft); color: var(--ink);
+    border: 1px solid var(--rule); border-radius: 2px;
+    padding: 0.22em 0.6em; white-space: nowrap;
+  }
+
+  .windows { display: flex; flex-direction: column; gap: 1.15rem; }
+  .window {
+    display: grid; grid-template-columns: auto 1fr; gap: 0.9rem;
+    border-left: 2px solid var(--signal);
+    background: var(--signal-soft);
+    padding: 0.9rem 1.1rem;
+  }
+  .window .when {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.11em;
+    text-transform: uppercase; color: var(--signal); white-space: nowrap; padding-top: 0.28em;
+  }
+  .window .body { display: flex; flex-direction: column; gap: 0.4rem; }
+  .window p { font-size: 0.97rem; }
+
+  .myth { display: flex; flex-direction: column; gap: 1.15rem; }
+  .myth > div { display: flex; flex-direction: column; gap: 0.3rem; }
+  .myth .claim { font-style: italic; color: var(--ink-2); }
+  .myth .claim::before { content: "“"; }
+  .myth .claim::after  { content: "”"; }
+  .myth p { font-size: 0.97rem; }
+
+  .tell { background: var(--panel); padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.55rem; }
+
+  a { color: var(--accent); }
+  a:focus-visible, li:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Commander · mono-green · deck-out combo</p>
+    <h1>Hitzel's Sequence</h1>
+    <p class="standfirst">Nobody takes damage. Nobody attacks. You lose because your library runs out and theirs doesn't. Here is exactly how that happens, and the three moments where you can still do something about it.</p>
+  </header>
+
+  <section>
+    <h2>The whole thing in one paragraph</h2>
+    <p>They assemble unlimited mana and a way to untap one specific land over and over. That land makes <em>every</em> player draw a card and then discard a card. Repeat it enough times and everyone's library empties at the same rate — except they have a creature that scoops their own discard pile back into their library, and you don't. They refill; you hit zero; you lose the next time you're asked to draw.</p>
+  </section>
+
+  <section>
+    <h2>The engine is three cards, and one of them is the win</h2>
+
+    <div class="oracle">
+      <span class="nm">Geier Reach Sanitarium — legendary land</span>
+      <span class="tx">{T}: Add {C}. &nbsp;·&nbsp; <strong>{2}, {T}: Each player draws a card, then discards a card.</strong></span>
+    </div>
+
+    <p>That second ability is the entire win condition. Each activation costs one card from every library at the table, including theirs. It is not optional for you and it cannot be responded to profitably — there will be a great many activations.</p>
+
+    <p>Two things turn one activation into arbitrarily many:</p>
+
+    <div class="supports">
+      <div class="support">
+        <h3>A repeatable untap for the Sanitarium</h3>
+        <p>Any one of these does it. They are interchangeable, and the deck plays several — so removing one is rarely enough.</p>
+        <ul class="chips">
+          <li>Deserted Temple</li>
+          <li>Argothian Elder</li>
+          <li>Hope Tender</li>
+          <li>Magus of the Candelabra</li>
+          <li>Ley Weaver</li>
+          <li>Woodcaller Automaton</li>
+        </ul>
+      </div>
+      <div class="support">
+        <h3>Unlimited green mana</h3>
+        <p>From whichever of the deck's mana loops it assembled — most often <span class="card">Ashaya, Soul of the Wild</span> with a Ranger and a large mana creature, or a <span class="card">Temur Sabertooth</span> bounce loop.</p>
+      </div>
+    </div>
+
+    <p>Note what is <em>not</em> in that list: <span class="card">Endurance</span>. Endurance does not mill you and is not part of the kill. It is their life support.</p>
+  </section>
+
+  <section>
+    <h2>The asymmetry is the whole combo</h2>
+
+    <div class="oracle">
+      <span class="nm">Endurance — {1}{G}{G} · flash · 3/4</span>
+      <span class="tx">When this creature enters, <strong>up to one target player</strong> puts all the cards from their graveyard on the bottom of their library in a random order.</span>
+    </div>
+
+    <p>They target <strong>themselves</strong>. Every card they discarded to the Sanitarium goes back under their library. Because it has flash, they can hold it until their own library is nearly gone and then cast it as a refuel.</p>
+
+    <p>It never touches your graveyard. That single targeting restriction is the reason a symmetrical effect kills only you.</p>
+
+    <p>Notice what this makes their library: not a resource that depletes, but a <strong>closed loop</strong>. An activation moves one of their cards from library to graveyard; Endurance moves them all back. Nothing is spent. If they can recast Endurance freely — and the bounce versions do it once per activation — the size of their library stops mattering at all. Yours, meanwhile, only goes one way.</p>
+
+    <figure>
+      <svg class="chart" viewBox="0 0 560 232" role="img" aria-label="Line chart: with each Sanitarium activation both libraries fall together, but the combo player's jumps back up when Endurance recycles their graveyard, while the opponent's continues to zero.">
+        <line class="gridln" x1="48" y1="30"  x2="540" y2="30" />
+        <line class="gridln" x1="48" y1="80"  x2="540" y2="80" />
+        <line class="gridln" x1="48" y1="130" x2="540" y2="130" />
+        <line class="ax"     x1="48" y1="180" x2="540" y2="180" />
+        <line class="ax"     x1="48" y1="24"  x2="48"  y2="180" />
+
+        <text class="tick" x="40" y="34"  text-anchor="end">full</text>
+        <text class="tick" x="40" y="184" text-anchor="end">0</text>
+        <text class="tick" x="48"  y="199">first activation</text>
+        <text class="tick" x="540" y="199" text-anchor="end">later</text>
+        <text class="tick" x="6"   y="110" transform="rotate(-90 12 110)" text-anchor="middle">library</text>
+
+        <!-- Every falling segment below is drawn at an identical gradient of
+             exactly 1/3 (54px down per 162px across, 56/168 on the last),
+             because everyone loses exactly one card per activation. The ONLY
+             difference between the two lines is the vertical step back up. -->
+
+        <!-- combo player: starts slightly lower (they have been drawing all
+             game), falls, steps back up on each Endurance, falls again -->
+        <path class="lineYou" d="M48,50 L210,104 L210,52 L372,106 L372,54 L540,110" />
+        <!-- you: same gradient, no step, straight to empty -->
+        <path class="lineOpp" d="M48,40 L468,180 L540,180" />
+        <circle class="dead" cx="468" cy="180" r="4.5" />
+        <text class="tick" x="462" y="166" text-anchor="end" style="fill:var(--signal)">you draw from an empty library</text>
+
+        <text class="tick" x="214" y="48" style="fill:var(--accent)">Endurance</text>
+        <text class="tick" x="376" y="50" style="fill:var(--accent)">Endurance</text>
+      </svg>
+      <div class="key">
+        <span><i class="swatch" style="background:var(--accent)"></i> combo player</span>
+        <span><i class="swatch" style="background:var(--signal)"></i> you</span>
+      </div>
+      <figcaption>Every falling segment has an identical gradient, because everyone loses exactly one card per activation — the effect really is symmetrical. The only difference in the whole picture is the vertical step back up. Note also where the green line starts: their library is <em>smaller</em> than yours, since they have been drawing all game. Without the step, they lose the race.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Four things that feel like answers and aren't</h2>
+    <div class="myth">
+      <div>
+        <p class="claim">Kill the Endurance in response.</p>
+        <p>Removing the creature does nothing to the trigger. Once that enters-the-battlefield ability is on the stack it exists independently of the creature that made it, and it will still recycle their graveyard. Several published versions of this line <em>deliberately</em> destroy their own Endurance while its trigger is waiting, because that puts it in the graveyard where <span class="card">Eternal Witness</span> can return it for another lap.</p>
+      </div>
+      <div>
+        <p class="claim">Counter the Endurance.</p>
+        <p>Worth doing, but budget for it not being the end. Eternal Witness returns it from the graveyard, and <span class="card">Kogla, the Titan Ape</span> or <span class="card">Temur Sabertooth</span> bounce the Witness to hand to do it again. Expect to need more than one answer.</p>
+      </div>
+      <div>
+        <p class="claim">Gain life, fog, prevent the damage.</p>
+        <p>There is no damage anywhere in this line, and no combat. Life total is irrelevant — you die to an empty library.</p>
+      </div>
+      <div>
+        <p class="claim">Exile their graveyard and they have nothing to recycle.</p>
+        <p>Only if it is a <em>static</em> effect. A one-shot exile removes cards from a pool that does not need to be big — see the section below. This one catches people out precisely because it feels like the clean answer.</p>
+      </div>
+      <div>
+        <p class="claim">Hold up an answer and act mid-loop.</p>
+        <p>Usually you won't get the chance. The written sequences hold priority through each cycle specifically to avoid handing you a window between activations. Assume that once the loop is genuinely running, it finishes.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where you can actually act</h2>
+    <p>In time order. The earlier ones matter far more than the later ones.</p>
+
+    <div class="windows">
+      <div class="window">
+        <span class="when">Before</span>
+        <div class="body">
+          <h3>Attack the mana, not the mill</h3>
+          <p>Every part of this needs unlimited mana. The Sanitarium loop is only the payoff bolted onto whichever infinite-mana engine the deck found. Killing the mana creature — the Ashaya, the Ranger, the large dork — is the real answer, and it is the one that also stops every other win the deck has.</p>
+        </div>
+      </div>
+
+      <div class="window">
+        <span class="when">Before</span>
+        <div class="body">
+          <h3>The win condition is a land, and they can only have one</h3>
+          <p>Geier Reach Sanitarium is legendary, so a second copy does them no good. It is also a land, which means <span class="card">Strip Mine</span>, <span class="card">Ghost Quarter</span>, <span class="card">Field of Ruin</span> and similar answer the essential piece cleanly — and land destruction is the sort of card people leave in hand because it looks weak. Against this deck it is removal for the win condition.</p>
+        </div>
+      </div>
+
+      <div class="window">
+        <span class="when">Any time</span>
+        <div class="body">
+          <h3>Deny the refuel — but only a <em>static</em> effect does it</h3>
+          <p>Graveyard hate is the right instinct and the wrong card. To see why, count what an activation actually does to them: one card leaves the library, one card enters the graveyard. Nothing is destroyed. Endurance moves the whole pile back. Their library and graveyard together are a <strong>closed pool</strong>, and the loop just cycles cards around it.</p>
+          <p>That is why one-shot exile fails. In the bounce versions they recast Endurance <em>every single activation</em> — cast it, bounce it with <span class="card">Temur Sabertooth</span> while the trigger is on the stack, activate the Sanitarium, repeat. Their library never drops more than a card or two below where the refuel puts it back. Exiling the graveyard once takes away a pool they did not need to be large; a handful of cards is enough to run the loop indefinitely.</p>
+          <p><strong>What does work is a replacement effect that never lets the graveyard fill:</strong> <span class="card">Rest in Peace</span>, <span class="card">Leyline of the Void</span>, <span class="card">Planar Void</span>. Now each discard is exiled instead, Endurance's trigger finds nothing every time, and their library falls by one per activation with no way back. Everyone drains at the same rate — and their library is smaller than yours, because they have been drawing all game. They deck first.</p>
+          <p>They can answer an enchantment; this is a mono-green deck with <span class="card">Force of Vigor</span> and <span class="card">Bane of Progress</span>. So treat it as buying a turn and forcing them to spend a card, not as a lock.</p>
+        </div>
+      </div>
+
+      <div class="window">
+        <span class="when">On the trigger</span>
+        <div class="body">
+          <h3>One-shot exile, only against the no-engine version</h3>
+          <p>There is a version of this line with no bounce engine at all: Endurance is simply cast from hand once, as a single large refuel, roughly doubling their remaining activations to library-plus-graveyard. Against <em>that</em> version, exiling the graveyard in response to the trigger genuinely matters — it halves the budget, which can put the largest library at the table out of reach.</p>
+          <p>The catch is that you usually cannot tell which version you are facing until the bounce engine shows up. Treat instant-speed exile as a reasonable gamble, not the answer.</p>
+        </div>
+      </div>
+
+      <div class="window">
+        <span class="when">Too late</span>
+        <div class="body">
+          <h3>Once it is assembled, it is over</h3>
+          <p>Countering one activation does nothing against an unbounded number of them. If unlimited mana, the Sanitarium and a repeatable untapper are all on the battlefield at once with Endurance available, the game is decided. Spend your interaction before that point.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Spotting it early</h2>
+    <div class="tell">
+      <p><strong>The tell is Geier Reach Sanitarium in a mono-green deck.</strong> Green has almost no reason to play a colourless legendary land whose ability helps everyone draw. If it hits the battlefield, it is there to win the game.</p>
+      <p>Treat it as urgent when you also see an untapper — <span class="card">Deserted Temple</span>, <span class="card">Hope Tender</span>, <span class="card">Argothian Elder</span> — or any of the deck's mana loops starting to assemble. The gap between "that looks fine" and "the loop is running" is usually one turn.</p>
+    </div>
+  </section>
+
+</div>
