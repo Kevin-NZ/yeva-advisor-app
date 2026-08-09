@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-04T10:32:07Z
-// Solver MD5 : 8d3d2f8992b0
+// Generated : 2026-08-09T11:56:09Z
+// Solver MD5 : 15246a1f43b5
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -647,10 +647,14 @@
             case "Birds of Paradise":
             case "Boreal Druid":
             case "Delighted Halfling":
-            case "Arbor Elf":
-            case "Wirewood Symbiote":
               total += 1;
               break;
+            // [audit 2026-08-04] Arbor Elf and Wirewood Symbiote were listed here as
+            // 1-mana dorks. Neither has a mana ability at all — Arbor Elf untaps a
+            // Forest, Symbiote untaps a creature (verified: no tapForMana on either
+            // card definition). Counting them inflated this total by one apiece, and
+            // the Great Oak Guardian >=9 detector fired at a real production of 7
+            // against an 8-mana loop cost.
             default:
               break;
           }
@@ -862,6 +866,13 @@
             return null;
         }
       }
+      function landProducesMana(perm) {
+        if (perm.isForest) return true;
+        const def = _cards()[perm.cardKey];
+        if (!def) return false;
+        if (def.producesNoMana) return false;
+        return typeof def.tapForMana === "function";
+      }
       function maxCurrentlyPayableMana(state, excludeNames) {
         let total = state.mana ? state.mana.total() : 0;
         const scActive = shangChiActive(state);
@@ -896,6 +907,7 @@
           if (p.name === "Selvala, Heart of the Wilds") continue;
           const def = CARDS2[p.cardKey];
           if (typeof def?.tapForMana === "function") {
+            if (def.producesNoMana) continue;
             total += 1;
             continue;
           }
@@ -1083,8 +1095,14 @@
             case "Selvala, Heart of the Wilds":
               output = greatestPower(state);
               break;
+            // [audit 2026-08-04] Was `greatestPower >= 4 ? greatestPower : 0`, wrong in
+            // BOTH directions against the oracle ("{T}: Add {G}" / Ferocious "{T}: Add
+            // {G}{G}{G}{G}"): it credited greatestPower (7 on a Kogla board, not 4)
+            // when Ferocious was live, and 0 rather than her guaranteed base {G} when
+            // it was not — so a genuine self-funded Ranger loop went undetected.
+            // Lines 679, 2096 and 2244 already had it right; only this one drifted.
             case "Fanatic of Rhonas":
-              output = greatestPower(state) >= 4 ? greatestPower(state) : 0;
+              output = greatestPower(state) >= 4 ? 4 : 1;
               break;
             case "Marwyn, the Nurturer":
               output = p.power || 0;
@@ -1773,7 +1791,7 @@
             if (sources.length === 0) return false;
             const hasCreatureBonus = hasPerm(state, "Badgermole Cub") || hasPerm(state, "Leyline of Abundance");
             let gain = 0;
-            let bestSourceGain = 0;
+            const sourceGain = /* @__PURE__ */ new Map();
             let extraActivationCost = 0;
             for (const p of sources) {
               let g;
@@ -1789,9 +1807,22 @@
                 if (p.types?.includes("creature") && p.name !== "Badgermole Cub" && hasCreatureBonus) g += 1;
               }
               gain += g;
-              if (g > bestSourceGain) bestSourceGain = g;
+              sourceGain.set(p, g);
             }
-            if (sources.some((p) => p.name === "Arbor Elf")) gain += bestSourceGain;
+            const arborElves = sources.filter((p) => p.name === "Arbor Elf");
+            if (arborElves.length > 0) {
+              let bestOther = 0;
+              for (const p of sources) {
+                if (p.name === "Arbor Elf") continue;
+                if (!(p.isForest || p.subtypes?.includes("Forest"))) continue;
+                const g = sourceGain.get(p);
+                if (g > bestOther) bestOther = g;
+              }
+              for (const elf of arborElves) {
+                const forgone = sourceGain.get(elf);
+                if (bestOther > forgone) gain += bestOther - forgone;
+              }
+            }
             if (sources.some((p) => p.cardKey === "shang_chi")) gain += 1;
             const cost = sources.length + 1 + extraActivationCost;
             if (gain <= cost) return false;
@@ -3141,12 +3172,23 @@
               (p) => UNTAP_FOREST_KEYS.has(p.cardKey) && !p.tapped && (!p.summoningSick || shangChiActive(state))
             );
             if (ashayaOnBF) {
-              if (!libBigDork) return false;
-              if (!hasReadyUntapper) return false;
-              const creaturesInHand = state.hand ? state.hand.filter((k) => CARDS2[k]?.types.includes("creature") && k !== libBigDork) : [];
-              if (creaturesInHand.length === 0) return false;
-              const needed = 1 + mv(libBigDork);
-              return totalMana >= needed;
+              if (libBigDork && hasReadyUntapper) {
+                const creaturesInHand = state.hand ? state.hand.filter((k) => CARDS2[k]?.types.includes("creature") && k !== libBigDork) : [];
+                if (creaturesInHand.length > 0 && totalMana >= 1 + mv(libBigDork)) return true;
+              }
+              if (hasQR && libSet.has("badgermole_cub")) {
+                const hasExistingDork = state.battlefield.some((p) => {
+                  if (p.name === "Badgermole Cub" || p.tapped) return false;
+                  if (p.summoningSick && !shangChiActive(state)) return false;
+                  if (!p.types?.includes("creature")) return false;
+                  return typeof CARDS2[p.cardKey]?.tapForMana === "function";
+                });
+                if (hasExistingDork) {
+                  const creaturesInHand = state.hand ? state.hand.filter((k) => CARDS2[k]?.types.includes("creature") && k !== "badgermole_cub") : [];
+                  if (creaturesInHand.length > 0 && totalMana >= 1 + mv("badgermole_cub")) return true;
+                }
+              }
+              return false;
             }
             if (ashayaInHand) {
               if (!libBigDork) return false;
@@ -3162,21 +3204,6 @@
               if (creaturesInHand.length < 2) return false;
               const needed = 2 + mv("ashaya") + mv(libBigDork);
               return totalMana >= needed;
-            }
-            if (ashayaOnBF && hasQR && libSet.has("badgermole_cub")) {
-              const hasExistingDork = state.battlefield.some((p) => {
-                if (p.name === "Badgermole Cub" || p.tapped) return false;
-                if (p.summoningSick && !shangChiActive(state)) return false;
-                if (!p.types?.includes("creature")) return false;
-                return typeof CARDS2[p.cardKey]?.tapForMana === "function";
-              });
-              if (hasExistingDork) {
-                const creaturesInHand = state.hand ? state.hand.filter((k) => CARDS2[k]?.types.includes("creature") && k !== "badgermole_cub") : [];
-                if (creaturesInHand.length > 0) {
-                  const needed = 1 + mv("badgermole_cub");
-                  if (totalMana >= needed) return true;
-                }
-              }
             }
             if (ashayaInLib && hasQR && libSet.has("badgermole_cub")) {
               const hasExistingDork = state.battlefield.some((p) => {
@@ -3247,7 +3274,7 @@
               "Nykthos, Shrine to Nyx",
               "Ancient Tomb"
             ]);
-            const hasPlainLand = state.lands().some((l) => !EXCLUDED.has(l.name));
+            const hasPlainLand = state.lands().some((l) => !EXCLUDED.has(l.name) && landProducesMana(l));
             if (hasPlainLand) return true;
             return false;
           }
@@ -3347,11 +3374,15 @@
             if (state.lands().length < 2) return false;
             const secondLandOutput = (bigLandName) => {
               const LIFE_COST_LANDS = /* @__PURE__ */ new Set(["Ancient Tomb"]);
-              const other = state.battlefield.find(
-                (p) => p.types?.includes("land") && p.name !== bigLandName && !LIFE_COST_LANDS.has(p.name)
-              );
-              if (!other) return 0;
-              return 1 + enchantedDorkBonusG(state, other);
+              let best = 0;
+              for (const p of state.battlefield) {
+                if (!p.types?.includes("land")) continue;
+                if (p.name === bigLandName || LIFE_COST_LANDS.has(p.name)) continue;
+                if (!landProducesMana(p)) continue;
+                const out = 1 + enchantedDorkBonusG(state, p);
+                if (out > best) best = out;
+              }
+              return best;
             };
             if (hasPerm(state, "Gaea's Cradle") || hasPerm(state, "Itlimoc, Cradle of the Sun")) {
               const bigLandName = hasPerm(state, "Gaea's Cradle") ? "Gaea's Cradle" : "Itlimoc, Cradle of the Sun";
@@ -4999,10 +5030,16 @@
         for (const detector of DETECTORS) {
           if (!_passesPrefilter(detector, present)) continue;
           if (detector.check(state)) {
+            let _desc;
             return {
               achieved: true,
               name: detector.name,
-              description: detector.description,
+              get description() {
+                if (_desc === void 0) {
+                  _desc = typeof detector.describe === "function" ? detector.describe(state) : detector.description;
+                }
+                return _desc;
+              },
               loopType: detector.loopType
               // O-1 wiring: forwarded to checkVictory
             };
@@ -5031,7 +5068,6 @@
       function checkVictory(state, _infiniteMana, present) {
         const infiniteMana = _infiniteMana !== void 0 ? _infiniteMana : checkCombos(state, present);
         if (!infiniteMana) return null;
-        const resolvedManaDescription = typeof infiniteMana.describe === "function" ? infiniteMana.describe(state) : infiniteMana.description;
         const detectorLoopType = infiniteMana.loopType ?? LOOP_TYPE.MANA_POSITIVE;
         let bestUndeployed = null;
         for (const wc of WIN_CONDITIONS) {
@@ -5051,7 +5087,7 @@
               // from `description` above (the WIN CONDITION's strategic text, e.g.
               // "Win: Tutor for Finisher"'s tutor-chain advice). Both get shown —
               // see printResult's "INFINITE-MANA ASSEMBLY" section.
-              manaDescription: resolvedManaDescription,
+              manaDescription: infiniteMana.description,
               // Only the generic auto-detector (Solver._synthesizeGenericLoopCombo)
               // sets this — undefined for every hand-authored DETECTORS entry,
               // whose manaDescription prose already explains the loop card-by-card.
@@ -5066,7 +5102,7 @@
               description: wc.description,
               winCondition: wc.name,
               manaCombo: infiniteMana.name,
-              manaDescription: resolvedManaDescription,
+              manaDescription: infiniteMana.description,
               loopSteps: infiniteMana.loopSteps,
               deployed: false
             };
@@ -5089,9 +5125,16 @@
         return {
           achieved: true,
           name: `${infiniteMana.name} [win condition needed]`,
-          description: resolvedManaDescription + " \u2014 Win condition not yet on battlefield.",
+          description: infiniteMana.description + " \u2014 Win condition not yet on battlefield.",
           winCondition: null,
           manaCombo: infiniteMana.name,
+          // [2026-08-04] The firing detector's loop type, carried out so callers can
+          // ask "could this loop EVER produce a win?" without re-deriving it. The
+          // Solver needs exactly that: its non-exhaustive "a deployed combo is good
+          // enough, stop searching" shortcut must not fire on a loop type no win
+          // condition accepts. Absent here, that shortcut ended the search on a
+          // per-turn ramp engine and reported it as the result.
+          loopType: detectorLoopType,
           nearMisses,
           // No manaDescription here (unlike the two branches above) — `description`
           // just above already carries the same detector text plus the "Win
@@ -5647,7 +5690,12 @@
         wc.requiresLoopType = Array.isArray(requires) ? requires : [requires];
         wc._acceptedLoopTypes = new Set(wc.requiresLoopType);
       }
-      module.exports = { checkCombos, checkVictory, checkSimulatedVictory, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
+      var _WINNABLE_LOOP_TYPES = /* @__PURE__ */ new Set();
+      for (const wc of WIN_CONDITIONS) for (const lt of wc._acceptedLoopTypes) _WINNABLE_LOOP_TYPES.add(lt);
+      function loopTypeCanWin(loopType) {
+        return _WINNABLE_LOOP_TYPES.has(loopType ?? LOOP_TYPE.MANA_POSITIVE);
+      }
+      module.exports = { checkCombos, checkVictory, checkSimulatedVictory, loopTypeCanWin, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
     }
   });
 
@@ -5783,7 +5831,7 @@
         return totalMana === 0;
       }
       function trinisphereMin(state) {
-        const t = state.battlefield.find((p) => p.name === "Trinisphere" && !p.tapped);
+        const t = state.battlefield.find((p) => p.name === "Trinisphere");
         if (t) return 3;
         if (state.opponentStax?.has("Trinisphere")) return 3;
         return 0;
@@ -6101,7 +6149,7 @@
           const isSorcery = def.types.includes("sorcery");
           const entersBattlefield = isCreature || isEnchantment || isArtifact;
           if (def.castFn) {
-            const afterPay0 = state.payMana(costStr);
+            const afterPay0 = payManaForCreatureCast(state, costStr, isCreature);
             const fromHand0 = afterPay0?.removeFromHand(cardKey);
             if (fromHand0) {
               const allResults = def.castFn(fromHand0);
@@ -6126,11 +6174,14 @@
                   return k;
                 };
                 if (def.isRemoval) {
+                  const removalToGraveyard = (def.types.includes("instant") || def.types.includes("sorcery")) && !def.reshufflesIntoLibrary;
                   for (const r of allResults) {
+                    const rr = removalToGraveyard ? r.addToGraveyard(0, def.name) : r;
                     actions.push({
                       type: "cast_spell",
                       label: `Cast ${def.name}: ${r.lastHistMsg() ?? ""}`,
-                      apply: (_s) => r
+                      priority: 8,
+                      apply: (_s) => rr
                     });
                   }
                   continue;
@@ -6145,6 +6196,11 @@
                     actions.push({
                       type: "cast_spell",
                       label: `Cast ${def.name}: ${r.lastHistMsg() ?? ""}`,
+                      // [audit 2026-08-04] Same missing-priority bug as the
+                      // isRemoval branch above — see its comment. selfBoundedTutor
+                      // is currently only set on creature cards, so this takes the
+                      // 9 the normal path gives a creature cast.
+                      priority: isCreature ? 9 : 8,
                       apply: (_s) => rr
                     });
                   }
@@ -6182,7 +6238,7 @@
                     priority: HOLD_FOR_WIN.has(cardKey) ? 1 : isCreature ? 9 : 8,
                     apply(s) {
                       const ec = effectiveCost(s, def);
-                      const afterPay = s.payMana(ec);
+                      const afterPay = payManaForCreatureCast(s, ec, isCreature);
                       if (!afterPay) return null;
                       let ns = afterPay.removeFromHand(cardKey);
                       if (!ns) return null;
@@ -6240,8 +6296,11 @@
               if (!afterPay) return null;
               let ns = afterPay.removeFromHand(cardKey);
               if (!ns) return null;
+              let castPermId = null;
               if (entersBattlefield) {
+                const idsBefore = new Set(ns.battlefield.map((p) => p.id));
                 ns = ns.enterBattlefield(cardKey);
+                castPermId = ns.battlefield.find((p) => p.cardKey === cardKey && !idsBefore.has(p.id))?.id ?? null;
               } else {
                 ns = ns.addToGraveyard(0, def.name);
               }
@@ -6321,7 +6380,7 @@
                 }
               }
               const _isGreenPerm = def.cost?.includes("G") && (def.types.includes("creature") || def.types.includes("enchantment") || def.types.includes("artifact") || def.types.includes("planeswalker"));
-              if (ns.hasPermanent("Defiler of Vigor") && _isGreenPerm && ns.life > 2) {
+              if (s.hasPermanent("Defiler of Vigor") && _isGreenPerm && ns.life > 2) {
                 ns.life -= 2;
                 ns = ns.log(`Defiler of Vigor: pay 2 life for {G} reduction (life: ${ns.life})`);
                 ns._ensureBF();
@@ -6340,7 +6399,7 @@
               }
               if (isCreature && ns.hasPermanent("Surrak and Goreclaw")) {
                 ns._ensureBF();
-                const entered = ns.battlefield[ns.battlefield.length - 1];
+                const entered = castPermId !== null ? ns.battlefield.find((p) => p.id === castPermId) : null;
                 if (entered && entered.name !== "Surrak and Goreclaw") {
                   entered.summoningSick = false;
                   entered.counters = { ...entered.counters, "+1/+1": (entered.counters?.["+1/+1"] ?? 0) + 1 };
@@ -6426,6 +6485,24 @@
           const subKey = [...p.subtypes || []].sort().join(",");
           return `EQ:${typeKey}:${subKey}:${manaProfile}:${p.tapped}:${p.summoningSick}:${powKey}:${forestKey}:${countersKey}:${usedKey}`;
         }
+        function _commutativeTapKey(before, after, perm) {
+          const bm = before.mana, am = after.mana;
+          if (am.W < bm.W || am.U < bm.U || am.B < bm.B || am.R < bm.R || am.G < bm.G || am.C < bm.C) return null;
+          if (after.restrictedG < before.restrictedG) return null;
+          if (after.restrictedCreatureG < before.restrictedCreatureG) return null;
+          if (after.hand.length !== before.hand.length) return null;
+          if (after.players[0].librarySize !== before.players[0].librarySize) return null;
+          const bb = before.battlefield, ab = after.battlefield;
+          if (bb.length !== ab.length) return null;
+          for (let i = 0; i < bb.length; i++) {
+            const b = bb[i], a = ab[i];
+            if (b.id !== a.id) return null;
+            if (b.id === perm.id) {
+              if (b.tapped || !a.tapped) return null;
+            } else if (b.tapped !== a.tapped) return null;
+          }
+          return perm.id;
+        }
         function addQuestCounter(ns) {
           if (ns.isOpponentTurn) return ns;
           if (!ns.hasPermanent("Quest for Renewal")) return ns;
@@ -6466,7 +6543,8 @@
           if (!preResults.length) continue;
           if (preResults.length === 1) {
             const _pm = preResults[0].mana, _sm = state.mana;
-            const manaProfile = exhaustive ? "" : `${_pm.W - _sm.W}:${_pm.U - _sm.U}:${_pm.B - _sm.B}:${_pm.R - _sm.R}:${_pm.G - _sm.G}:${_pm.C - _sm.C}`;
+            const _pr = preResults[0], _rg = state.restrictedG ?? 0, _rc = state.restrictedCreatureG ?? 0;
+            const manaProfile = exhaustive ? "" : `${_pm.W - _sm.W}:${_pm.U - _sm.U}:${_pm.B - _sm.B}:${_pm.R - _sm.R}:${_pm.G - _sm.G}:${_pm.C - _sm.C}:${(_pr.restrictedG ?? 0) - _rg}:${(_pr.restrictedCreatureG ?? 0) - _rc}`;
             const sig = _tapSignature(perm, manaProfile, exhaustive, def.tapForMana.isFixedOutput === true);
             if (sig !== null) {
               if (_seenTapSignatures.has(sig)) continue;
@@ -6474,8 +6552,10 @@
             }
           }
           if (preResults.length === 1) {
+            const porKey = exhaustive ? null : _commutativeTapKey(state, preResults[0], perm);
             actions.push({
               type: "tap_for_mana",
+              porKey,
               label: `Tap ${perm.name} for mana`,
               priority: 7,
               apply(s) {
@@ -6495,6 +6575,11 @@
               const optionMsg = preResults[ri].lastHistMsg() ?? `option ${ri}`;
               actions.push({
                 type: "tap_for_mana",
+                // Always declared (never left undefined) so every tap action shares
+                // one shape — this file is careful about hidden-class stability.
+                // Multi-option taps are a genuine CHOICE between different outputs,
+                // not an ordering, so they are never commutative.
+                porKey: null,
                 label: `Tap ${perm.name} for mana: ${optionMsg}`,
                 priority: 7,
                 apply(s) {
@@ -6578,12 +6663,8 @@
                 const liveForAbil = scNowActive && live.summoningSick ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false }) : live;
                 const results = capturedGraftedDef.tapForMana(s, liveForAbil);
                 if (!results.length) return null;
-                let ns = results[0];
-                if (ns.hasPermanent("Leyline of Abundance")) ns = ns.addMana("G");
-                if (ns.hasPermanent("Badgermole Cub") && capturedPerm.name !== "Badgermole Cub") {
-                  ns = ns.addMana("G");
-                }
-                return ns;
+                const ns = results[0];
+                return addQuestCounter(applyTapBonuses(ns, live));
               }
             });
           }
@@ -6611,7 +6692,6 @@
               const oncePerTurn = ability.label?.includes("once per turn") || ability.label?.includes("Activate only once");
               const capturedAbilKey = abilKey;
               const capturedPermId = perm.id;
-              const capturedFluteBlk = fluteBlocked;
               const capturedIdx = i;
               const capturedOPT = oncePerTurn;
               actions.push({
@@ -6619,11 +6699,7 @@
                 label: `${perm.name}: ${ability.label ?? abilKey}` + (results.length > 1 ? ` [opt ${i + 1}/${results.length} : ${result.lastHistMsg()}]` : ""),
                 priority: 6,
                 apply(_s) {
-                  let liveState = _s;
-                  if (capturedFluteBlk) {
-                    liveState = _s.payMana("3");
-                    if (!liveState) return null;
-                  }
+                  const liveState = _s;
                   const livePerm = liveState.getPermanentById(capturedPermId);
                   if (!livePerm) return null;
                   const scLive = liveState.battlefield.some((p) => p.cardKey === "shang_chi");
@@ -6927,6 +7003,16 @@
             return [];
           },
           // fetch lands don't tap for mana
+          // [audit 2026-08-04] Explicit marker: this tapForMana exists but can NEVER
+          // produce mana, unlike every other one in this file, which returns []
+          // only when it happens to be unavailable right now (tapped, summoning
+          // sick, no legal partner). combos.js's maxCurrentlyPayableMana was
+          // treating "has a tapForMana function" as "is a mana source" and crediting
+          // fetch lands +1 apiece, so affordability gates passed on mana that does
+          // not exist. Testing the FLAG rather than calling the function matters:
+          // calling it on the live state conflates "never makes mana" with "cannot
+          // right now", which made six genuine combos stop being detected.
+          producesNoMana: true,
           abilities: {
             fetch: {
               label: "Fetch Forest or Dryad Arbor",
@@ -8106,6 +8192,84 @@
         },
         // ─── ARTIFACTS ───────────────────────────────────────────────────────────
         sol_ring: { name: "Sol Ring", types: ["artifact"], subtypes: [], cost: "1", tapForMana: simpleTap("{C}{C}", [["C", 2]]) },
+        // Shared land-tutor target list for effects that search the library for a
+        // land and put it in HAND. Deliberately NOT unified with the three inline
+        // copies already in this file (Growing Rites ~5044, Crop Rotation ~5553,
+        // Sylvan Scrying ~5833): they are not identical — the Growing Rites copy
+        // omits 'emergence_zone' — so folding them together would silently change
+        // that card's choice. Recorded rather than done; see ToDo.md.
+        expedition_map: {
+          name: "Expedition Map",
+          types: ["artifact"],
+          subtypes: [],
+          cost: "1",
+          // Oracle: {2}, {T}, Sacrifice this artifact: Search your library for a
+          // land card, reveal it, put it into your hand, then shuffle.
+          //
+          // No summoning-sickness check: sickness restricts {T} abilities of
+          // CREATURES only (CR 302.6), so an artifact may tap the turn it enters.
+          // Same treatment as Urza's Cave's sac-tutor below.
+          //
+          // Single best target rather than one branch per land (the C-23/C-26
+          // convention this file settled on): fanning out over every land in the
+          // library produced ~20 near-identical children per activation. Urza's
+          // Cave still branches that way and is the odd one out; not changed here
+          // because its targets go to the BATTLEFIELD, where which land you took is
+          // immediately load-bearing.
+          abilities: {
+            sac_tutor: {
+              label: "{2}, {T}, Sacrifice Expedition Map: Search library for a land \u2192 hand",
+              fn(state, perm) {
+                if (perm.tapped) return [];
+                const ap = state.payMana("2");
+                if (!ap) return [];
+                const at = ap.removeFromBattlefield(perm.id, "graveyard");
+                if (!at) return [];
+                const cards = CARDS2;
+                const LAND_PRIORITY = [
+                  "gaeas_cradle",
+                  "nykthos",
+                  "deserted_temple",
+                  "yavimaya",
+                  "ancient_tomb",
+                  "wirewood_lodge",
+                  "geier_reach_sanitarium",
+                  "boseiju",
+                  "emergence_zone",
+                  "forest"
+                ];
+                const UNIQUE_LANDS = /* @__PURE__ */ new Set([
+                  "gaeas_cradle",
+                  "nykthos",
+                  "deserted_temple",
+                  "yavimaya",
+                  "ancient_tomb",
+                  "wirewood_lodge",
+                  "geier_reach_sanitarium",
+                  "boseiju",
+                  "emergence_zone"
+                ]);
+                const onBF = new Set(at.battlefield.map((p) => _nameToKey()[p.name]).filter(Boolean));
+                let best = null;
+                const seen = /* @__PURE__ */ new Set();
+                for (const ck of at.players[0].library) {
+                  if (seen.has(ck) || ck === "unknown" || isStax(ck)) continue;
+                  seen.add(ck);
+                  const def = cards[ck];
+                  if (!def || !def.types.includes("land")) continue;
+                  if (UNIQUE_LANDS.has(ck) && onBF.has(ck)) continue;
+                  const pri = LAND_PRIORITY.indexOf(ck);
+                  const score = pri === -1 ? 99 : pri;
+                  if (!best || score < best.score) best = { ck, def, score };
+                }
+                if (!best) return [at.log("Expedition Map: sac \u2192 no land in library")];
+                const { state: ns, cardKey } = at.searchLibraryFor((k) => k === best.ck);
+                if (!cardKey) return [at.log("Expedition Map: sac \u2192 no land in library")];
+                return [ns.addToHand(cardKey).log(`Expedition Map: sac \u2192 find ${best.def.name}`)];
+              }
+            }
+          }
+        },
         lightning_greaves: {
           name: "Lightning Greaves",
           types: ["artifact"],
@@ -15502,7 +15666,7 @@ ${ex}`;
           if (s.topDecked !== null) {
             const topCard = s.topDecked;
             s.topDecked = null;
-            s.players[0] = s.players[0].draw(1);
+            if (s.players[0].librarySize > 0) s.players[0] = s.players[0].draw(1);
             const h = s.hand;
             let lo = 0, hi = h.length;
             while (lo < hi) {
@@ -15512,7 +15676,7 @@ ${ex}`;
             }
             s.hand = [...h.slice(0, lo), topCard, ...h.slice(lo)];
             drawnCardKey = topCard;
-          } else if (s.drawForTurn && s.players[0].library.length > 0) {
+          } else if (s.drawForTurn) {
             const drawnKey = s.players[0].library[0];
             s.players[0] = s.players[0].draw(1);
             if (drawnKey && drawnKey !== "unknown") {
@@ -15545,7 +15709,7 @@ ${ex}`;
             const topCard = s.topDecked;
             s.topDecked = null;
             s._ensurePlayers();
-            s.players[0] = s.players[0].draw(1);
+            if (s.players[0].librarySize > 0) s.players[0] = s.players[0].draw(1);
             const h = s.hand;
             let lo = 0, hi = h.length;
             while (lo < hi) {
@@ -15559,7 +15723,7 @@ ${ex}`;
               turn: s.turn,
               msg: `Draw ${CARDS2[topCard]?.name ?? topCard}`
             });
-          } else if (s.drawForTurn && s.players[0].library.length > 0) {
+          } else if (s.drawForTurn) {
             const drawnKey = s.players[0].library[0];
             s._ensurePlayers();
             s.players[0] = s.players[0].draw(1);
@@ -15710,7 +15874,7 @@ ${ex}`;
       "use strict";
       var { generateActions, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, effectiveCost } = require_actions();
       var { COMBO_REQUIRED_KEYS, FUNCTIONAL_EQUIVALENTS } = require_combo_data();
-      var { checkVictory, checkSimulatedVictory, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
+      var { checkVictory, checkSimulatedVictory, loopTypeCanWin, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
       var CARDS2 = require_cards();
       var __fastManaRegime = false;
       var FAST_MANA_KEYS = /* @__PURE__ */ new Set([
@@ -15813,6 +15977,14 @@ ${ex}`;
         // part of the cost is a real cost the actual search still pays in full;
         // this map only needs to know reaching-for-a-land is possible at all.
         urza_cave: "land",
+        // [2026-08-04] Expedition Map — "{2}, {T}, Sacrifice: Search your library for
+        // a land card ... put it into your hand". A real, unconditional land tutor;
+        // without an entry here a hand relying on it to find Gaea's Cradle scores as
+        // having no tutor access at all, inflating minMissing past turnsLeft and
+        // pruning the branch before the Map is ever activated (the same gap that
+        // O-50 fixed for Sowing Mycospawn / Elvish Reclaimer and the 2026-07-23 note
+        // above fixed for Growing Rites).
+        expedition_map: "land",
         // ── O-55: systematic searchLibraryFor cross-reference ──────────────────
         // O-49 through O-54 were each found one card at a time (a user report, or
         // a single primer mention). Given the pattern was always the same shape
@@ -15923,7 +16095,7 @@ ${ex}`;
         if (state.drawForTurn && state.players?.[0]?.library?.length > 0) {
           counts.any += 10;
         }
-        counts.sameTurnCreatureEngine = state.hasPermanent("Formidable Speaker") || handSet.has("formidable_speaker");
+        counts.sameTurnCreatureEngine = state.hasPermanent("Formidable Speaker") || handSet.has("formidable_speaker") || state.hasPermanent("Duskwatch Recruiter") || handSet.has("duskwatch_recruiter") || state.hasPermanent("Survival of the Fittest") || handSet.has("survival_fittest");
         return counts;
       }
       var _equivGroupOf = /* @__PURE__ */ new Map();
@@ -15999,28 +16171,101 @@ ${ex}`;
         }
         return { present, minMissing };
       }
+      var _crcSlack = 0;
+      var _oppLifeBaseline = null;
       function _opponentUnderPressure(state) {
         const pl = state.players;
         for (let i = 1; i < pl.length; i++) {
           const p = pl[i];
           if (p.poison > 0) return true;
-          if (p.life < 40) return true;
+          const base = _oppLifeBaseline !== null ? _oppLifeBaseline[i] : 40;
+          if (p.life < base) return true;
           if (p.librarySize === 0) return true;
         }
         return false;
       }
+      function _newPruneReasons() {
+        return {
+          youLost: 0,
+          score: 0,
+          dedup: 0,
+          manaDominated: 0,
+          canReachCombo: 0,
+          maxBranches: 0,
+          heuristic: 0,
+          tapOrder: 0
+        };
+      }
+      var _MinHeap = class {
+        constructor() {
+          this.a = [];
+          this.seq = 0;
+        }
+        get size() {
+          return this.a.length;
+        }
+        push(f, node) {
+          const item = { f, i: this.seq++, node };
+          const a = this.a;
+          a.push(item);
+          let c = a.length - 1;
+          while (c > 0) {
+            const p = c - 1 >> 1;
+            if (a[p].f < a[c].f || a[p].f === a[c].f && a[p].i < a[c].i) break;
+            [a[p], a[c]] = [a[c], a[p]];
+            c = p;
+          }
+        }
+        pop() {
+          const a = this.a;
+          if (a.length === 0) return null;
+          const top = a[0];
+          const last = a.pop();
+          if (a.length > 0) {
+            a[0] = last;
+            let p = 0;
+            for (; ; ) {
+              const l = 2 * p + 1, r = l + 1;
+              let m = p;
+              if (l < a.length && (a[l].f < a[m].f || a[l].f === a[m].f && a[l].i < a[m].i)) m = l;
+              if (r < a.length && (a[r].f < a[m].f || a[r].f === a[m].f && a[r].i < a[m].i)) m = r;
+              if (m === p) break;
+              [a[p], a[m]] = [a[m], a[p]];
+              p = m;
+            }
+          }
+          return top.node;
+        }
+      };
       function canReachCombo(state, turnsLeft, analysis, _infiniteMana) {
         if (globalThis.__disableCanReachCombo) return true;
         if (_opponentUnderPressure(state)) return true;
         const fired = _infiniteMana !== void 0 ? _infiniteMana : checkCombos(state);
         if (fired) return true;
         const { minMissing } = analysis ?? analyzeState(state, null);
-        return minMissing <= turnsLeft;
+        return minMissing <= turnsLeft + (turnsLeft >= 1 ? _crcSlack : 0);
       }
       var DEFAULT_OPTIONS = {
         maxTurns: 4,
         maxDepth: 40,
         maxStates: 5e5,
+        // escalate: when the fast search ends WITHOUT a confirmed win condition,
+        // re-run it once with combo-reachability pruning relaxed and a real win
+        // required, bounded by whatever budget is left. See _shouldEscalate for the
+        // full reasoning and the measurements behind it.
+        //   'auto'  (default) — only when maxStates exceeds the default above
+        //   true              — always
+        //   false             — never
+        escalate: "auto",
+        // heuristicWeight: the `w` in weighted A*'s f = g + w*h, used only by
+        // strategy 'astar'. h is NOT admissible (it is a tuned child-ordering score,
+        // not a lower bound on remaining steps), so w > 1 does not trade away an
+        // optimality guarantee that ever existed — it just makes the search greedier
+        // toward the heuristic's judgement. Completeness is unaffected by w: with
+        // pruning disabled the heap still eventually pops every reachable state, so
+        // `--exhaustive --strategy astar` remains a complete reference search, just
+        // in a different expansion order.
+        heuristicWeight: 3,
         // maxTimeMs: an alternative, wall-clock budget cap alongside maxStates —
         // whichever limit is hit first stops the search. `Infinity` (default)
         // means no time cap; only maxStates applies, unchanged from before this
@@ -16098,6 +16343,10 @@ ${ex}`;
       }
       function _bestPlayKey(depth, s) {
         return -depth * 1e7 + s;
+      }
+      var _HISTORY_WEIGHT = 40;
+      function _historyKey(action) {
+        return action.label;
       }
       function heuristic(minMissing, state, exhaustive = false, _infiniteMana = void 0, _searchSpellWins = void 0, _checkedVictory = void 0) {
         const fired = _infiniteMana !== void 0 ? _infiniteMana : minMissing === 0 ? checkCombos(state) : null;
@@ -16204,6 +16453,10 @@ ${ex}`;
           this.statesExplored = 0;
           this.linesFound = 0;
           this.pruned = 0;
+          this.pruneReasons = _newPruneReasons();
+          this._requireRealWin = false;
+          this._porEnabled = this.opts.maxBranches === Infinity;
+          this._history = /* @__PURE__ */ new Map();
           this.visited = /* @__PURE__ */ new Map();
           this.manaFrontier = /* @__PURE__ */ new Map();
         }
@@ -16212,19 +16465,129 @@ ${ex}`;
          * @param {import('./GameState').GameState} initialState
          * @returns {{ line, combo, score, allLines? } | null}
          */
+        /**
+         * ESCALATION PASS (2026-08-04).
+         *
+         * Three separate user-reported hands found no real win in default mode
+         * while --exhaustive found one. All three shared a diagnosis, and neither
+         * half of it was a budget problem — the first explored 787 states against
+         * an 8,000,000-state budget, the second 195, the third 126:
+         *
+         *   a) canReachCombo pruned every promising branch. Its minMissing counts
+         *      STEPS but is compared against TURNS, implicitly budgeting about one
+         *      combo piece per turn; this deck routinely assembles three or more in
+         *      one explosive turn. (Measured: every prune on each hand was the
+         *      identical "need N, have N-1 or N-2" case.)
+         *   b) Even with (a) relaxed, the search STOPPED anyway on the
+         *      non-exhaustive "a deployed combo is good enough" shortcut, reporting
+         *      infinite mana with `winCondition: null` — not a win — and
+         *      --first-win treated that as the answer.
+         *
+         * Fixing either alone is not enough: measured on all three hands, (a)
+         * without (b) still ends on a non-win, and (b) without (a) explores almost
+         * nothing because the pruning fires first.
+         *
+         * Applying both unconditionally is far too expensive, which is why this is
+         * a second pass rather than a settings change: on the pinned bench suite
+         * (b) alone drives three benchmarks from 8,080 / 21,195 / 2,276 states to
+         * the full 500,001 budget without improving their answers.
+         *
+         * So: run the normal, fast search first, unchanged. Escalate only when it
+         * failed to produce a real win — exactly the case where its answer was
+         * inadequate anyway — and bound the second pass by the budget the caller
+         * already granted, so total work never exceeds --budget. Keep the
+         * escalated result only if it genuinely carries a win condition.
+         *
+         * Deliberately skipped when: exhaustive (already thorough), bestPlay (its
+         * contract is "show progress when nothing wins"), or the budget is spent.
+         */
+        _shouldEscalate(result, spent) {
+          if (this.opts.escalate === false) return false;
+          if (this.opts.exhaustive || this.opts.bestPlay) return false;
+          if (this._escalating) return false;
+          if (this._timedOut) return false;
+          if (spent >= this.opts.maxStates) return false;
+          if (result && result.combo && result.combo.winCondition != null) return false;
+          if (this.opts.escalate === true) return true;
+          if (!result) return true;
+          return this.opts.maxStates > DEFAULT_OPTIONS.maxStates;
+        }
         solve(initialState) {
+          _oppLifeBaseline = (initialState.players ?? []).map((p) => p.life);
+          const first = this._solveOnce(initialState);
+          const spent = this.statesExplored;
+          const firstPruned = this.pruned;
+          const firstFields = {
+            bestLine: this.bestLine,
+            bestCombo: this.bestCombo,
+            bestScore: this.bestScore,
+            fallbackWin: this.fallbackWin,
+            linesFound: this.linesFound,
+            allWinLines: this.allWinLines,
+            bestPlayLine: this.bestPlayLine,
+            bestPlayScore: this.bestPlayScore
+          };
+          const restoreFirst = () => Object.assign(this, firstFields);
+          if (!this._shouldEscalate(first, spent)) return first;
+          console.log(`
+\u{1F501} No confirmed win in the fast pass \u2014 escalating within the remaining ${(this.opts.maxStates - spent).toLocaleString()}-state budget (relaxing combo-reachability pruning; requiring a real win condition)...`);
+          const savedMax = this.opts.maxStates;
+          this._escalating = true;
+          this._requireRealWinNext = true;
+          _crcSlack = 2;
+          let second = null;
+          try {
+            this.opts.maxStates = savedMax - spent;
+            second = this._solveOnce(initialState);
+          } finally {
+            this.opts.maxStates = savedMax;
+            this._escalating = false;
+            this._requireRealWinNext = false;
+            _crcSlack = 0;
+          }
+          this.statesExplored += spent;
+          this.pruned += firstPruned;
+          if (second && second.combo && second.combo.winCondition != null) return second;
+          if (!first) {
+            if (second) {
+            } else {
+            }
+            return second;
+          }
+          if (second && second.score < first.score) {
+            console.log(`   (no confirmed win; the deeper pass found a better line than the fast pass)`);
+            return second;
+          }
+          restoreFirst();
+          return first;
+        }
+        _solveOnce(initialState) {
+          const carriedDeadline = this._escalating ? this._deadlineAt : void 0;
           this._reset();
+          if (carriedDeadline !== void 0) this._deadlineAt = carriedDeadline;
+          this._requireRealWin = !!this._requireRealWinNext;
           __fastManaRegime = countFastManaSources(initialState) >= 2;
           const maxTimeNote = Number.isFinite(this.opts.maxTimeMs) ? `, max ${(this.opts.maxTimeMs / 1e3).toLocaleString()}s` : "";
           const t0 = Date.now();
           if (this.opts.strategy === "bfs") {
             this._bfs(initialState);
+          } else if (this.opts.strategy === "astar") {
+            this._astar(initialState);
           } else if (this.opts.strategy === "iddfs") {
             this._iddfs(initialState);
           } else {
             this._dfs(initialState, null, 0);
           }
           const elapsed = ((Date.now() - t0) / 1e3).toFixed(2);
+          if (this.opts.verbose || this.linesFound === 0) {
+            const rs = Object.entries(this.pruneReasons).filter(([, n]) => n > 0);
+            if (rs.length) {
+              rs.sort((a, b) => b[1] - a[1]);
+              if (this.statesExplored < this.opts.maxStates * 0.5 && !this._timedOut) {
+                console.log(`   \u21B3 the search ended well inside its ${this.opts.maxStates.toLocaleString()}-state budget, so '${rs[0][0]}' cut it short \u2014 raising --budget will not help; try --exhaustive`);
+              }
+            }
+          }
           if (!this.bestLine) {
             if (this.fallbackWin) {
               const fb = this.fallbackWin;
@@ -16402,7 +16765,7 @@ ${ex}`;
         }
         // ── DFS ───────────────────────────────────────────────────────────────────
         // #1: parentNode is { state, parent } linked list node (null at root)
-        _dfs(state, parentNode, depth, pre) {
+        _dfs(state, parentNode, depth, pre, tapMark = null) {
           this.statesExplored++;
           this._checkDeadline();
           if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
@@ -16410,9 +16773,10 @@ ${ex}`;
           if (state.turn > this.opts.maxTurns) return;
           if (state.youLost()) {
             this.pruned++;
+            this.pruneReasons.youLost++;
             return;
           }
-          {
+          if (parentNode === null) {
             const simWin = checkSimulatedVictory(state);
             if (simWin) {
               this._recordWin(reconstructPath({ state, parent: parentNode }), simWin, score(state, depth));
@@ -16432,6 +16796,7 @@ ${ex}`;
             const cut = this.opts.allLines ? s > this.bestScore : s >= this.bestScore;
             if (cut) {
               this.pruned++;
+              this.pruneReasons.score++;
               return;
             }
           }
@@ -16439,6 +16804,7 @@ ${ex}`;
           const prev = this.visited.get(fp);
           if (prev !== void 0 && prev <= depth) {
             this.pruned++;
+            this.pruneReasons.dedup++;
             return;
           }
           this.visited.set(fp, depth);
@@ -16449,7 +16815,7 @@ ${ex}`;
           const combo = checkVictory(state, infiniteMana, present);
           if (combo) {
             const node2 = { state, parent: parentNode };
-            if (combo.deployed && (combo.winCondition != null || !this.opts.exhaustive)) {
+            if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
               this._recordWin(reconstructPath(node2), combo, s);
               if (this.opts.firstWin) {
                 this._stopSearch = true;
@@ -16475,8 +16841,13 @@ ${ex}`;
               continue;
             }
             if (!next) continue;
+            if (this._porEnabled && action.porKey != null && tapMark != null && action.porKey <= tapMark) {
+              this.pruned++;
+              this.pruneReasons.tapOrder++;
+              continue;
+            }
             {
-              const simWin = checkSimulatedVictory(next);
+              const simWin = next.turn > this.opts.maxTurns ? null : checkSimulatedVictory(next);
               if (simWin) {
                 if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
                 this.statesExplored++;
@@ -16499,6 +16870,7 @@ ${ex}`;
                 if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
                 this.statesExplored++;
                 this.pruned++;
+                this.pruneReasons.score++;
                 continue;
               }
             }
@@ -16508,6 +16880,7 @@ ${ex}`;
               if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
               this.statesExplored++;
               this.pruned++;
+              this.pruneReasons.dedup++;
               continue;
             }
             const childPresent = buildPresentSet(next);
@@ -16521,6 +16894,7 @@ ${ex}`;
               if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
               this.statesExplored++;
               this.pruned++;
+              this.pruneReasons.manaDominated++;
               continue;
             }
             const childAnalysis = analyzeState(next, childInfiniteMana, childPresent);
@@ -16528,11 +16902,15 @@ ${ex}`;
               const childTurns = this.opts.maxTurns - next.turn;
               if (childTurns >= 0 && !canReachCombo(next, childTurns + 1, childAnalysis, childInfiniteMana)) {
                 this.pruned++;
+                this.pruneReasons.canReachCombo++;
                 continue;
               }
             }
             children.push({
               next,
+              // null for any non-commutative action: that ends the tap run and
+              // frees every commutative tap again.
+              tapMark: action.porKey ?? null,
               // [O-8] heuristicBias is null by default — `+ 0` is a guaranteed
               // no-op so existing state counts/bench.js results are unaffected
               // unless a caller (AdversarialSolver) explicitly supplies one.
@@ -16558,18 +16936,30 @@ ${ex}`;
               // of one resting on an unstated assumption about sort stability —
               // confirmed via direct bench/test re-run to be a pure no-op (see
               // ToDo.md).
-              priority: action.priority ?? 0
+              priority: action.priority ?? 0,
+              // History bonus, subtracted from h at sort time (lower = explored
+              // first). Read once here so the comparator stays a pure numeric sort.
+              hist: this._history.get(_historyKey(action)) ?? 0,
+              histKey: _historyKey(action),
+              // Did this action measurably shorten the distance to a combo?
+              progressed: childAnalysis.minMissing < analysis.minMissing
             });
           }
-          if (children.length > 1) children.sort((a, b) => a.h - b.h || b.priority - a.priority);
+          for (const c of children) {
+            if (c.progressed) this._history.set(c.histKey, (this._history.get(c.histKey) ?? 0) + 1);
+          }
+          if (children.length > 1) {
+            children.sort((a, b) => a.h - _HISTORY_WEIGHT * Math.log1p(a.hist) - (b.h - _HISTORY_WEIGHT * Math.log1p(b.hist)) || b.priority - a.priority);
+          }
           if (!this.opts.exhaustive && children.length > this.opts.maxBranches) {
             this.pruned += children.length - this.opts.maxBranches;
+            this.pruneReasons.maxBranches += children.length - this.opts.maxBranches;
             children.length = this.opts.maxBranches;
           }
           const node = { state, parent: parentNode };
-          for (const { next, pre: childPre } of children) {
+          for (const { next, pre: childPre, tapMark: childTapMark } of children) {
             if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
-            this._dfs(next, node, depth + 1, childPre);
+            this._dfs(next, node, depth + 1, childPre, childTapMark);
             if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
           }
         }
@@ -16667,7 +17057,7 @@ ${ex}`;
               const infiniteMana = pre ? pre.infiniteMana : checkCombos(state, present);
               const combo = checkVictory(state, infiniteMana, present);
               if (combo) {
-                if (combo.deployed && (combo.winCondition != null || !this.opts.exhaustive)) {
+                if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
                   this._recordWin(reconstructPath(node), combo, score(state, depth));
                   if (!this.opts.allLines) return;
                   continue;
@@ -16715,16 +17105,19 @@ ${ex}`;
                 const childTurnsLeft = this.opts.maxTurns - next.turn;
                 if (!this.opts.exhaustive && !this.opts.bestPlay && childTurnsLeft >= 0 && !canReachCombo(next, childTurnsLeft + 1, ca, childInfiniteMana)) {
                   this.pruned++;
+                  this.pruneReasons.canReachCombo++;
                   continue;
                 }
                 const childFp = next.fingerprint();
                 if (this.visited.has(childFp)) {
                   this.pruned++;
+                  this.pruneReasons.dedup++;
                   continue;
                 }
                 const childCombo = !this.opts.exhaustive ? checkVictory(next, childInfiniteMana, childPresent) : null;
                 if (!this.opts.exhaustive && !childCombo && this._isManaDominated(next, childFp, this.manaFrontier)) {
                   this.pruned++;
+                  this.pruneReasons.manaDominated++;
                   continue;
                 }
                 this.visited.set(childFp, depth + 1);
@@ -16743,6 +17136,7 @@ ${ex}`;
               if (children.length > 1) children.sort((a, b) => a.h - b.h || b.priority - a.priority);
               if (!this.opts.exhaustive && children.length > this.opts.maxBranches) {
                 this.pruned += children.length - this.opts.maxBranches;
+                this.pruneReasons.maxBranches += children.length - this.opts.maxBranches;
                 children.length = this.opts.maxBranches;
               }
               for (const { next, pre: pre2 } of children) {
@@ -16750,6 +17144,166 @@ ${ex}`;
               }
             }
             if (this.bestLine && !this.opts.allLines) return;
+          }
+        }
+        /**
+         * BEST-FIRST / WEIGHTED A* (2026-08-04).
+         *
+         * heuristic() has existed for a long time but was only ever used to ORDER
+         * CHILDREN within a single node's expansion, in DFS and BFS alike. That
+         * makes it a purely local tie-break: a well-tuned estimate of "how close is
+         * this state to a win" whose judgement is thrown away the moment the search
+         * descends. This strategy puts it on a global priority queue instead, so
+         * the most promising state ANYWHERE in the frontier is expanded next.
+         *
+         * That directly targets DFS's structural weakness, which is what actually
+         * bit every one of the four user-reported missed wins: one unlucky early
+         * commitment dooms an entire subtree, and only relaxing the pruning (the
+         * escalation pass) rescued it. Best-first has no equivalent failure mode —
+         * a bad branch simply stops being the cheapest thing in the queue.
+         *
+         *   f = g + w*h,  g = depth,  h = heuristic(...)
+         *
+         * With w = 1 and an admissible h this would be optimal A*. h here is NOT
+         * admissible (it is a tuned ordering score with large penalty terms, not a
+         * lower bound on remaining steps), so no optimality is claimed — and w
+         * defaults above 1 deliberately, trading the optimality we do not have
+         * anyway for the greediness that makes it fast. This is standard weighted
+         * A*; the honest description is "aggressively goal-directed best-first".
+         *
+         * Everything else — dedup at enqueue, mana dominance, canReachCombo, the
+         * simulated-victory oracle, opponent windows — is deliberately identical to
+         * _bfs, so the two differ ONLY in frontier order.
+         */
+        _astar(initialState) {
+          const w = this.opts.heuristicWeight;
+          const frontier = new _MinHeap();
+          const enqueue = (node, f) => frontier.push(f, node);
+          enqueue({ state: initialState, parent: null, depth: 0 }, 0);
+          this.visited.set(initialState.fingerprint(), 0);
+          {
+            {
+              while (frontier.size > 0) {
+                if (this._stopSearch || this.statesExplored > this.opts.maxStates) return;
+                const node = frontier.pop();
+                const { state, depth, pre } = node;
+                this.statesExplored++;
+                this._checkDeadline();
+                if (this._stopSearch) return;
+                if (state.youLost()) continue;
+                if (depth > this.opts.maxDepth) continue;
+                {
+                  const simWin = checkSimulatedVictory(state);
+                  if (simWin) {
+                    this._recordWin(reconstructPath(node), simWin, score(state, depth));
+                    if (this.opts.firstWin) {
+                      this._stopSearch = true;
+                      return;
+                    }
+                    continue;
+                  }
+                }
+                if (this.opts.bestPlay) {
+                  const k = _bestPlayKey(depth, score(state, depth));
+                  if (k < this.bestPlayScore) {
+                    this.bestPlayScore = k;
+                    this.bestPlayLine = reconstructPath(node);
+                  }
+                }
+                const present = pre ? pre.present : buildPresentSet(state);
+                const infiniteMana = pre ? pre.infiniteMana : checkCombos(state, present);
+                const combo = checkVictory(state, infiniteMana, present);
+                if (combo) {
+                  if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
+                    this._recordWin(reconstructPath(node), combo, score(state, depth));
+                    if (this.opts.firstWin) {
+                      this._stopSearch = true;
+                      return;
+                    }
+                    continue;
+                  }
+                  const s = score(state, depth);
+                  if (!this.fallbackWin || s < this.fallbackWin.score) {
+                    this.fallbackWin = { line: reconstructPath(node), combo, score: s };
+                  }
+                }
+                const nodeAnalysis = pre ? pre.analysis : analyzeState(state, infiniteMana, present);
+                const actions = generateActions(state, nodeAnalysis.present, this.opts.exhaustive, this.opts.simulateOpponentTurns);
+                const children = [];
+                for (const action of actions) {
+                  let next;
+                  try {
+                    next = action.apply(state);
+                  } catch (e) {
+                    if (this.opts.verbose) console.warn(`[${action.label}]`, e.message);
+                    continue;
+                  }
+                  if (!next || next.turn > this.opts.maxTurns) continue;
+                  {
+                    const simWin = checkSimulatedVictory(next);
+                    if (simWin) {
+                      this.statesExplored++;
+                      this._recordWin(
+                        reconstructPath({ state: next, parent: node }),
+                        simWin,
+                        score(next, depth + 1)
+                      );
+                      if (this.opts.firstWin) {
+                        this._stopSearch = true;
+                        return;
+                      }
+                      continue;
+                    }
+                  }
+                  const childFp = next.fingerprint();
+                  if (this.visited.has(childFp)) {
+                    this.pruned++;
+                    this.pruneReasons.dedup++;
+                    continue;
+                  }
+                  const childPresent = buildPresentSet(next);
+                  let childInfiniteMana = checkCombos(next, childPresent);
+                  if (!childInfiniteMana) {
+                    const loopAncestor = this._detectGenericManaLoop(next, node);
+                    if (loopAncestor) childInfiniteMana = this._synthesizeGenericLoopCombo(next, loopAncestor);
+                  }
+                  const ca = analyzeState(next, childInfiniteMana, childPresent);
+                  const childTurnsLeft = this.opts.maxTurns - next.turn;
+                  if (!this.opts.exhaustive && !this.opts.bestPlay && childTurnsLeft >= 0 && !canReachCombo(next, childTurnsLeft + 1, ca, childInfiniteMana)) {
+                    this.pruned++;
+                    this.pruneReasons.canReachCombo++;
+                    continue;
+                  }
+                  const childCombo = !this.opts.exhaustive ? checkVictory(next, childInfiniteMana, childPresent) : null;
+                  if (!this.opts.exhaustive && !childCombo && this._isManaDominated(next, childFp, this.manaFrontier)) {
+                    this.pruned++;
+                    this.pruneReasons.manaDominated++;
+                    continue;
+                  }
+                  this.visited.set(childFp, depth + 1);
+                  children.push({
+                    next,
+                    // [O-8] see DFS site above — null by default, guaranteed no-op.
+                    // [O-65] childCombo (already computed above) is passed through so
+                    // heuristic() doesn't need to re-run checkVictory itself.
+                    h: heuristic(ca.minMissing, next, this.opts.exhaustive, childInfiniteMana, void 0, childCombo) + (this.opts.heuristicBias ? this.opts.heuristicBias(next) : 0),
+                    pre: { present: childPresent, infiniteMana: childInfiniteMana, analysis: ca },
+                    // [perf/clarity] see the matching DFS site's comment — makes an
+                    // already-existing, stable-sort-dependent tie-break explicit.
+                    priority: action.priority ?? 0
+                  });
+                }
+                if (children.length > 1) children.sort((a, b) => a.h - b.h || b.priority - a.priority);
+                if (!this.opts.exhaustive && children.length > this.opts.maxBranches) {
+                  this.pruned += children.length - this.opts.maxBranches;
+                  this.pruneReasons.maxBranches += children.length - this.opts.maxBranches;
+                  children.length = this.opts.maxBranches;
+                }
+                for (const { next, pre: pre2, h } of children) {
+                  enqueue({ state: next, parent: node, depth: depth + 1, pre: pre2 }, depth + 1 + w * h);
+                }
+              }
+            }
           }
         }
         // ── Helpers ───────────────────────────────────────────────────────────────
@@ -16761,6 +17315,10 @@ ${ex}`;
           this.statesExplored = 0;
           this.linesFound = 0;
           this.pruned = 0;
+          this.pruneReasons = _newPruneReasons();
+          this._requireRealWin = false;
+          this._porEnabled = this.opts.maxBranches === Infinity;
+          this._history = /* @__PURE__ */ new Map();
           this.visited = /* @__PURE__ */ new Map();
           this.manaFrontier = /* @__PURE__ */ new Map();
           this.fallbackWin = null;
