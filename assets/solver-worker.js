@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-10T08:31:10Z
-// Solver MD5 : 15246a1f43b5
+// Generated : 2026-08-10T22:36:03Z
+// Solver MD5 : 0379a95a7878
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -6130,7 +6130,15 @@
             });
           }
         }
-        for (const cardKey of uniqueCards(state.hand)) {
+        const _castCandidates = uniqueCards(state.hand).map((k) => ({ key: k, fromTop: false }));
+        if (state.hasPermanent("Eladamri, Korvecdal")) {
+          const _top = state.topOfLibrary();
+          if (_top && CARDS2[_top]?.types.includes("creature")) {
+            _castCandidates.push({ key: _top, fromTop: true });
+          }
+        }
+        for (const { key: cardKey, fromTop } of _castCandidates) {
+          const removeCastCard = (s) => fromTop ? s.removeTopOfLibrary() : s.removeFromHand(cardKey);
           const def = CARDS2[cardKey];
           if (!def || def.types.includes("land")) continue;
           if (def.cost === null || def.cost === void 0) continue;
@@ -6150,7 +6158,7 @@
           const entersBattlefield = isCreature || isEnchantment || isArtifact;
           if (def.castFn) {
             const afterPay0 = payManaForCreatureCast(state, costStr, isCreature);
-            const fromHand0 = afterPay0?.removeFromHand(cardKey);
+            const fromHand0 = afterPay0 ? removeCastCard(afterPay0) : null;
             if (fromHand0) {
               const allResults = def.castFn(fromHand0);
               if (allResults && allResults.length > 0) {
@@ -6240,7 +6248,7 @@
                       const ec = effectiveCost(s, def);
                       const afterPay = payManaForCreatureCast(s, ec, isCreature);
                       if (!afterPay) return null;
-                      let ns = afterPay.removeFromHand(cardKey);
+                      let ns = removeCastCard(afterPay);
                       if (!ns) return null;
                       if (useFastPath && plannedTargetKey) {
                         const sacPerm = ns.battlefield.find((p) => p.name === sacName);
@@ -6258,7 +6266,7 @@
                           }
                           return result2.log(msg);
                         }
-                        ns = afterPay.removeFromHand(cardKey) ?? ns;
+                        ns = removeCastCard(afterPay) ?? ns;
                       }
                       const res = def.castFn(ns);
                       if (!res || res.length === 0) return null;
@@ -6286,7 +6294,7 @@
           }
           actions.push({
             type: "cast_spell",
-            label: `Cast ${def.name} {${costStr}}`,
+            label: `Cast ${def.name} {${costStr}}` + (fromTop ? " (from top of library)" : ""),
             // HOLD_FOR_WIN cards get priority 1 (below pass-turn at 2) — the solver
             // will explore every other action first, preserving these for win assembly.
             priority: HOLD_FOR_WIN.has(cardKey) ? 1 : isCreature ? 9 : 8,
@@ -6294,7 +6302,7 @@
               const ec = effectiveCost(s, def);
               const afterPay = payManaForCreatureCast(s, ec, isCreature);
               if (!afterPay) return null;
-              let ns = afterPay.removeFromHand(cardKey);
+              let ns = removeCastCard(afterPay);
               if (!ns) return null;
               let castPermId = null;
               if (entersBattlefield) {
@@ -6407,7 +6415,7 @@
                   entered.toughness = (entered.toughness ?? 0) + 1;
                 }
               }
-              ns = ns.log(`Cast ${def.name}`);
+              ns = ns.log(`Cast ${def.name}` + (fromTop ? " (from top of library \u2014 Eladamri)" : ""));
               return ns;
             }
           });
@@ -9895,13 +9903,28 @@
           power: 3,
           toughness: 3,
           // [P/T verified 2026-07-10 vs card DB; was 2/3]
-          // See top of library, cast creatures from top.
-          // {G}, {T}, tap two untapped creatures: put a creature from top/hand onto battlefield.
+          // Oracle: "You may look at the top card of your library any time. / You may
+          // cast creature spells from the top of your library. / {G}, {T}, Tap two
+          // untapped creatures you control: Reveal a card from your hand OR THE TOP
+          // CARD OF YOUR LIBRARY. If you reveal a creature card this way, put it onto
+          // the battlefield. Activate only during your turn."
+          //
+          // The cast-creature-spells-from-top static lives in actions.js (it is a new
+          // cast SOURCE, not an ability of this permanent). "Look at the top card" needs
+          // no modelling: the solver already has full ordered library knowledge, which
+          // is exactly what makes both casting effects deterministic here.
+          //
+          // [2026-08-10] Two bugs fixed in the activated ability below. It only ever
+          // considered cards in HAND — despite this file's own comment promising
+          // "from top/hand" — and bailed outright on an empty hand, so with no cards
+          // in hand it did nothing at all when by the real card it can still hit off
+          // the top. It also never enforced "Activate only during your turn".
           abilities: {
             cheat_into_play: {
               label: "{G}, {T}, Tap 2 untapped creatures: Put a creature onto battlefield",
               fn(state, perm) {
                 if (perm.tapped || perm.summoningSick) return [];
+                if (state.isOpponentTurn) return [];
                 const ap = state.payMana("G");
                 if (!ap) return [];
                 const others = ap.creatures().filter(
@@ -9909,20 +9932,23 @@
                 );
                 if (others.length < 2) return [];
                 const cards = CARDS2;
-                const creaturesInHand = [...new Set(ap.hand)].filter(
-                  (k) => cards[k] && cards[k].types.includes("creature")
-                );
-                if (creaturesInHand.length === 0) return [];
+                const isCreature = (k) => cards[k] && cards[k].types.includes("creature");
+                const candidates = [...new Set(ap.hand)].filter(isCreature).map((k) => ({ key: k, fromTop: false }));
+                const top = ap.topOfLibrary();
+                if (top && isCreature(top)) candidates.push({ key: top, fromTop: true });
+                if (candidates.length === 0) return [];
                 const results = [];
-                for (const target of creaturesInHand) {
+                for (const { key, fromTop } of candidates) {
                   let s = ap.tapPermanent(perm.id);
                   if (!s) continue;
                   s = s.tapPermanent(others[0].id);
                   s = s.tapPermanent(others[1].id);
-                  s = s.removeFromHand(target);
+                  s = fromTop ? s.removeTopOfLibrary() : s.removeFromHand(key);
                   if (!s) continue;
-                  s = s.enterBattlefield(target);
-                  results.push(s.log(`Eladamri: put ${cards[target].name} onto battlefield`));
+                  s = s.enterBattlefield(key);
+                  results.push(s.log(
+                    `Eladamri: put ${cards[key].name} onto battlefield` + (fromTop ? " (from top of library)" : "")
+                  ));
                 }
                 return results;
               }
@@ -10733,8 +10759,38 @@
           cost: "2G",
           power: 2,
           toughness: 3,
-          // {2G}, {T}: Put a verse counter on Yisan, then search library for a creature
-          // with MV equal to the number of verse counters. Put it onto the battlefield.
+          // {2}{G}, {T}, Put a verse counter on Yisan: Search your library for a
+          // creature card with mana value EQUAL TO the number of verse counters on
+          // Yisan, put it onto the battlefield, then shuffle.
+          //
+          // [2026-08-10] The tutor was not implemented. The verse counters were
+          // tracked correctly, but the search itself was `playerDraws(0, 1)` — it drew
+          // the top card of the library into HAND, unfiltered, while logging "tutor
+          // creature with MV N". Measured: the first activation "tutored for MV 1" and
+          // put Ashaya (MV 5) into hand; nothing ever reached the battlefield.
+          // ref/implementation_gaps.md recorded the card as implemented.
+          //
+          // Follows the Invasion of Ikoria pattern (enumerate the library, filter,
+          // rank by TUTOR_PRIORITY_SCORE, searchLibraryFor -> enterBattlefield), but
+          // branches over the top few rather than collapsing to one: the MV-exact
+          // filter is already narrow, and IMP-20 documents how a single-choice tutor
+          // heuristic can lock out a genuinely different, equally legal combo line.
+          //
+          // COST AND TIMING, confirmed against the card 2026-08-10. The full text is
+          // exactly what ref/card_data.md:698 records:
+          //
+          //   "{2}{G}, {T}, Put a verse counter on Yisan: Search your library for a
+          //    creature card with mana value equal to the number of verse counters on
+          //    Yisan, put it onto the battlefield, then shuffle."
+          //
+          // There is NO "Activate only as a sorcery" clause — an earlier reading of
+          // this file claimed one from memory and was wrong. The ability is correctly
+          // available during opponents' turns, which matters in a deck built around
+          // flash windows. Do not add a timing gate here.
+          //
+          // The verse counter is part of the COST (it precedes the colon), so it is
+          // already on Yisan when the search resolves — which is why the count is
+          // incremented before the library scan below.
           abilities: {
             verse: {
               label: "{2}{G}, {T}: Add verse counter, tutor creature with MV = verses",
@@ -10747,8 +10803,33 @@
                 const verses = (perm.counters?.verse || 0) + 1;
                 const livePerm = s.getPermanentById(perm.id);
                 if (livePerm) livePerm.counters = { ...livePerm.counters, verse: verses };
-                s = s.playerDraws(0, 1);
-                return [s.log(`Yisan: verse counter ${verses}, tutor creature with MV ${verses}`)];
+                const cards = CARDS2;
+                const { parseCost: pc } = require_GameState();
+                const { TUTOR_PRIORITY_SCORE } = require_combo_data();
+                const seen = /* @__PURE__ */ new Set();
+                const matches = [];
+                for (const ck of s.players[0].library) {
+                  if (seen.has(ck) || ck === "unknown" || isStax(ck)) continue;
+                  seen.add(ck);
+                  const def = cards[ck];
+                  if (!def?.types.includes("creature") || !def.cost) continue;
+                  const parsed = pc(def.cost);
+                  const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+                  if (mv !== verses) continue;
+                  matches.push({ ck, score: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
+                }
+                matches.sort((a, b) => b.score - a.score || a.ck.localeCompare(b.ck));
+                if (matches.length === 0) {
+                  return [s.log(`Yisan: verse counter ${verses}, no creature with MV ${verses} in library`)];
+                }
+                const MAX_BRANCHES = 3;
+                const results = [];
+                for (const { ck } of matches.slice(0, MAX_BRANCHES)) {
+                  const { state: found, cardKey } = s.searchLibraryFor((k) => k === ck);
+                  if (!cardKey) continue;
+                  results.push(found.enterBattlefield(cardKey).log(`Yisan: verse counter ${verses} \u2192 ${cards[cardKey].name} (MV ${verses}) onto battlefield`));
+                }
+                return results.length ? results : [s.log(`Yisan: verse counter ${verses}, no creature with MV ${verses} in library`)];
               }
             }
           }
@@ -15521,6 +15602,39 @@ ${ex}`;
           if (idx === -1) return null;
           s.hand = [...s.hand.slice(0, idx), ...s.hand.slice(idx + 1)];
           if (s.topDecked === cardKey) s.topDecked = null;
+          return s;
+        }
+        /**
+         * The top card key of YOUR library, or null when there is nothing usable
+         * there — empty library, or a size-only proxy with no known composition.
+         *
+         * Added for Eladamri, Korvecdal ("You may look at the top card of your
+         * library any time"). The solver already has full, ordered library knowledge
+         * on every CLI run (--library fixes the order, and Tx-Results.sh always
+         * supplies a complete list), so "look at the top card" needs no modelling of
+         * its own — it is what makes the two casting effects below deterministic.
+         */
+        topOfLibrary() {
+          const p = this.players?.[0];
+          if (!p || p.librarySize === 0 || p._sizeOnly) return null;
+          const k = p.library[0];
+          return k === void 0 || k === "unknown" ? null : k;
+        }
+        /**
+         * Remove the top card of YOUR library without drawing it.
+         *
+         * Casting a spell from the top of your library (Eladamri) moves it from
+         * library to stack — it is NOT a draw, so this deliberately does not touch
+         * the `_drewFromEmpty` latch that CR 104.3c losses key off. Returns null
+         * when there is no known top card, so callers fail closed.
+         */
+        removeTopOfLibrary() {
+          const p = this.players?.[0];
+          if (!p || p.librarySize === 0 || p._sizeOnly) return null;
+          const s = this.clone();
+          s._ensurePlayers();
+          s.players[0] = s.players[0].clone();
+          s.players[0].library = s.players[0].library.slice(1);
           return s;
         }
         /** Shuffle a card key back into the library (e.g. Green Sun's Zenith). */
