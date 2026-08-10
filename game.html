@@ -345,12 +345,12 @@ function pickNamedVariant(type) {
   return {...pool[Math.floor(Math.random()*pool.length)]};
 }
 const WC=[
-  {rows:[['red','red','red','red','red']], name:'Red Sun Rising',     cost:'{R}',         art:'🔥',  type:'Sorcery — Mountain',  text:'Five Goblin Raiders advance from the peaks. The mountains march at dawn.', flavor:'"The truly powerful need not explain themselves." —Yeva', num:'1/6'},
-  {rows:[['red','red','red'],['blue','blue','blue']], name:'Tide & Flame', cost:'{2}{U}{R}', art:'🌊', type:'Sorcery — Coalition', text:'Goblin Raiders and Merfolk Tricksters converge. Blue forces carry 2 toughness.', flavor:'"Nature does not negotiate. It simply wins." —Yeva', num:'2/6'},
-  {rows:[['red','red'],['blue','blue'],['black','black']], name:'Three-Color Siege',cost:'{3}{B}', art:'💀', type:'Sorcery — Coalition', text:'Vampire Nighthawks fire triple bolts and dive from the sky. Watch for the zigzag.', flavor:'"I can cast at instant speed. Can you?" —Yeva', num:'3/6'},
-  {rows:[['white','white','white','white'],['red','red','red'],['black','black','black']], name:'Shielded Vanguard',cost:'{2}{W}', art:'✦', type:'Sorcery — Plains', text:'Kor Skyfisher shields regenerate. Destroy them before they reform. Homing missiles inbound.', flavor:'"Flash. Because waiting is for the other colors." —Yeva', num:'4/6'},
-  {rows:[['white','white','white'],['blue','blue','blue'],['black','black','black'],['red','red','red']], name:'The Coalition',cost:'{W}{U}{B}{R}', art:'⭐', type:'Sorcery — Four Color', text:'All four tribes unite. Vampire dive bombers enter the battlefield. Brace for impact.', flavor:'"The forest has always been here. It will outlast you." —Yeva', num:'5/6'},
-  {rows:[['white','black','blue','red','white'],['black','blue','red','black','blue'],['red','white','black','blue','red'],['white','red','blue','black','white']], name:'The Final Siege',cost:'{W}{U}{B}{R}{G}', art:'🌀', type:'Sorcery — Chromatic', text:'Every creature. Maximum speed. This is the final stand for the Gavony forest.', flavor:'"Even Yeva cannot flash in what was never printed." —Reminder Text', num:'6/6'},
+  {rows:[['red','red','red','red','red']], name:'Red Sun Rising',     cost:'{R}',         type:'Sorcery — Mountain',  text:'Five Goblin Raiders advance from the peaks. The mountains march at dawn.', flavor:'"The truly powerful need not explain themselves." —Yeva', num:'1/6'},
+  {rows:[['red','red','red'],['blue','blue','blue']], name:'Tide & Flame', cost:'{2}{U}{R}', type:'Sorcery — Coalition', text:'Goblin Raiders and Merfolk Tricksters converge. Blue forces carry 2 toughness.', flavor:'"Nature does not negotiate. It simply wins." —Yeva', num:'2/6'},
+  {rows:[['red','red'],['blue','blue'],['black','black']], name:'Three-Color Siege',cost:'{3}{B}', type:'Sorcery — Coalition', text:'Vampire Nighthawks fire triple bolts and dive from the sky. Watch for the zigzag.', flavor:'"I can cast at instant speed. Can you?" —Yeva', num:'3/6'},
+  {rows:[['white','white','white','white'],['red','red','red'],['black','black','black']], name:'Shielded Vanguard',cost:'{2}{W}', type:'Sorcery — Plains', text:'Kor Skyfisher shields regenerate. Destroy them before they reform. Homing missiles inbound.', flavor:'"Flash. Because waiting is for the other colors." —Yeva', num:'4/6'},
+  {rows:[['white','white','white'],['blue','blue','blue'],['black','black','black'],['red','red','red']], name:'The Coalition',cost:'{W}{U}{B}{R}', type:'Sorcery — Four Color', text:'All four tribes unite. Vampire dive bombers enter the battlefield. Brace for impact.', flavor:'"The forest has always been here. It will outlast you." —Yeva', num:'5/6'},
+  {rows:[['white','black','blue','red','white'],['black','blue','red','black','blue'],['red','white','black','blue','red'],['white','red','blue','black','white']], name:'The Final Siege',cost:'{W}{U}{B}{R}{G}', type:'Sorcery — Chromatic', text:'Every creature. Maximum speed. This is the final stand for the Gavony forest.', flavor:'"Even Yeva cannot flash in what was never printed." —Reminder Text', num:'6/6'},
 ];
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
@@ -395,6 +395,141 @@ function spawnPlayer(){
   player={x:W/2,y:groundY-8,speed:280,invincible:0};
 }
 
+// ── WAVE CARD ART ─────────────────────────────────────────────────────────────
+// Drawn as vectors rather than emoji: iOS Safari's canvas will not fall back to
+// Apple Color Emoji for a generic `serif` stack, so fillText('🔥') rendered
+// nothing on iPhone while working in desktop browsers. Each card gets the MTG
+// basic-land art matching its colour. Canvas is 210x80.
+function artMountain(ax){
+  const sky=ax.createLinearGradient(0,0,0,80);
+  sky.addColorStop(0,'#2a0d06'); sky.addColorStop(0.5,'#7a2a10'); sky.addColorStop(1,'#c8622c');
+  ax.fillStyle=sky; ax.fillRect(0,0,210,80);
+  // Low sun burning behind the range
+  const sg=ax.createRadialGradient(105,56,2,105,56,30);
+  sg.addColorStop(0,'#fff3c4'); sg.addColorStop(0.4,'#f6a338'); sg.addColorStop(1,'rgba(240,120,40,0)');
+  ax.fillStyle=sg; ax.beginPath(); ax.arc(105,56,30,0,Math.PI*2); ax.fill();
+  ax.fillStyle='#ffe1a0'; ax.beginPath(); ax.arc(105,56,8,0,Math.PI*2); ax.fill();
+  // Distant ridge
+  ax.fillStyle='#7d3418';
+  ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,58); ax.lineTo(30,40); ax.lineTo(54,56);
+  ax.lineTo(80,34); ax.lineTo(106,58); ax.lineTo(134,38); ax.lineTo(160,58);
+  ax.lineTo(186,44); ax.lineTo(210,60); ax.lineTo(210,80); ax.closePath(); ax.fill();
+  // Foreground peaks
+  ax.fillStyle='#331209';
+  ax.beginPath(); ax.moveTo(0,80); ax.lineTo(32,54); ax.lineTo(60,74); ax.lineTo(96,28);
+  ax.lineTo(132,74); ax.lineTo(162,52); ax.lineTo(210,80); ax.closePath(); ax.fill();
+  // Snow cap
+  ax.fillStyle='rgba(255,238,220,0.9)';
+  ax.beginPath(); ax.moveTo(96,28); ax.lineTo(86,42); ax.lineTo(92,40); ax.lineTo(97,45);
+  ax.lineTo(103,39); ax.lineTo(108,44); ax.closePath(); ax.fill();
+}
+function artIsland(ax){
+  const sky=ax.createLinearGradient(0,0,0,46);
+  sky.addColorStop(0,'#08304f'); sky.addColorStop(1,'#3d8fc0');
+  ax.fillStyle=sky; ax.fillRect(0,0,210,46);
+  const sea=ax.createLinearGradient(0,46,0,80);
+  sea.addColorStop(0,'#1c6ea8'); sea.addColorStop(1,'#0d3d63');
+  ax.fillStyle=sea; ax.fillRect(0,46,210,34);
+  // Water shimmer
+  ax.strokeStyle='rgba(174,214,241,0.45)'; ax.lineWidth=1;
+  for(let i=0;i<5;i++){ const y=53+i*6;
+    ax.beginPath(); ax.moveTo(6,y); ax.bezierCurveTo(60,y-3,150,y+3,204,y); ax.stroke(); }
+  // Sandy islet
+  ax.fillStyle='#e0bb68'; ax.beginPath(); ax.ellipse(105,50,32,9,0,0,Math.PI*2); ax.fill();
+  ax.fillStyle='rgba(150,100,20,0.25)'; ax.beginPath(); ax.ellipse(114,52,18,5,0,0,Math.PI*2); ax.fill();
+  // Palm
+  ax.strokeStyle='#7a5230'; ax.lineWidth=2.6; ax.lineCap='round';
+  ax.beginPath(); ax.moveTo(103,48); ax.bezierCurveTo(101,36,108,28,112,21); ax.stroke();
+  ax.strokeStyle='#1f9b52'; ax.lineWidth=2.6;
+  [[-17,6],[-9,-5],[9,-6],[17,5]].forEach(([dx,dy])=>{
+    ax.beginPath(); ax.moveTo(112,21);
+    ax.quadraticCurveTo(112+dx*0.5,21+dy-5,112+dx,21+dy); ax.stroke();
+  });
+}
+function artSwamp(ax){
+  const sky=ax.createLinearGradient(0,0,0,80);
+  sky.addColorStop(0,'#0a1310'); sky.addColorStop(0.5,'#20301f'); sky.addColorStop(1,'#0a1310');
+  ax.fillStyle=sky; ax.fillRect(0,0,210,80);
+  // Waning moon
+  ax.fillStyle='rgba(170,190,140,0.45)'; ax.beginPath(); ax.arc(162,21,11,0,Math.PI*2); ax.fill();
+  ax.fillStyle='#1a2a1d'; ax.beginPath(); ax.arc(156,18,11,0,Math.PI*2); ax.fill();
+  // Stagnant water
+  ax.fillStyle='#14211a'; ax.fillRect(0,54,210,26);
+  ax.strokeStyle='rgba(130,160,115,0.25)'; ax.lineWidth=1;
+  for(let i=0;i<4;i++){ const y=60+i*5;
+    ax.beginPath(); ax.moveTo(8,y); ax.bezierCurveTo(70,y-2,140,y+2,202,y); ax.stroke(); }
+  // Dead trees
+  ax.lineCap='round'; ax.strokeStyle='#080f0a';
+  [[38,1],[74,0.78],[148,1.08]].forEach(([x,s])=>{
+    ax.lineWidth=3; ax.beginPath(); ax.moveTo(x,56); ax.lineTo(x-2,56-28*s); ax.stroke();
+    ax.lineWidth=1.5;
+    ax.beginPath(); ax.moveTo(x-2,56-18*s); ax.lineTo(x-12*s,56-28*s); ax.stroke();
+    ax.beginPath(); ax.moveTo(x-2,56-23*s); ax.lineTo(x+11*s,56-31*s); ax.stroke();
+  });
+  // Low mist
+  ax.fillStyle='rgba(140,160,120,0.10)';
+  ax.beginPath(); ax.ellipse(105,56,92,7,0,0,Math.PI*2); ax.fill();
+}
+function artPlains(ax){
+  const cx=105;
+  const sky=ax.createLinearGradient(0,0,0,80);
+  sky.addColorStop(0,'#1a3a5c'); sky.addColorStop(1,'#0d1f30');
+  ax.fillStyle=sky; ax.fillRect(0,0,210,80);
+  ax.fillStyle='#c8b87a';
+  ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,52);
+  ax.bezierCurveTo(30,52,40,38,60,42);
+  ax.bezierCurveTo(80,46,90,36,105,36);
+  ax.bezierCurveTo(120,36,130,46,150,42);
+  ax.bezierCurveTo(170,38,180,52,210,52);
+  ax.lineTo(210,80); ax.closePath(); ax.fill();
+  ax.fillStyle='rgba(180,160,80,0.35)';
+  ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,56);
+  ax.bezierCurveTo(25,56,38,46,55,48);
+  ax.bezierCurveTo(72,50,85,44,105,44);
+  ax.lineTo(105,80); ax.closePath(); ax.fill();
+  const sg=ax.createRadialGradient(cx,18,2,cx,18,18);
+  sg.addColorStop(0,'#fff8c0'); sg.addColorStop(0.4,'#f4d03f'); sg.addColorStop(1,'rgba(244,208,63,0)');
+  ax.fillStyle=sg; ax.beginPath(); ax.arc(cx,18,18,0,Math.PI*2); ax.fill();
+  ax.fillStyle='#fff8c0'; ax.beginPath(); ax.arc(cx,18,7,0,Math.PI*2); ax.fill();
+  ax.strokeStyle='rgba(244,208,63,0.6)'; ax.lineWidth=1.2;
+  for(let i=0;i<8;i++){
+    const a=(i/8)*Math.PI*2, r1=9, r2=15;
+    ax.beginPath(); ax.moveTo(cx+Math.cos(a)*r1,18+Math.sin(a)*r1); ax.lineTo(cx+Math.cos(a)*r2,18+Math.sin(a)*r2); ax.stroke();
+  }
+  ax.fillStyle='rgba(255,255,255,0.82)';
+  ax.beginPath(); ax.ellipse(62,24,12,6,0,0,Math.PI*2); ax.fill();
+  ax.beginPath(); ax.ellipse(70,20,10,7,0,0,Math.PI*2); ax.fill();
+  ax.beginPath(); ax.ellipse(55,22,9,5,0,0,Math.PI*2); ax.fill();
+  ax.beginPath(); ax.ellipse(152,26,11,5,0,0,Math.PI*2); ax.fill();
+  ax.beginPath(); ax.ellipse(160,22,9,6,0,0,Math.PI*2); ax.fill();
+  ax.beginPath(); ax.ellipse(145,24,8,4,0,0,Math.PI*2); ax.fill();
+  ax.shadowColor='rgba(255,248,192,0.4)'; ax.shadowBlur=8;
+  ax.strokeStyle='rgba(244,208,63,0.25)'; ax.lineWidth=1;
+  ax.strokeRect(1,1,208,78);
+  ax.shadowBlur=0;
+}
+// Coalition waves: a row of proper MTG mana pips instead of a land vista
+function artPips(ax,types){
+  const bg=ax.createLinearGradient(0,0,0,80);
+  bg.addColorStop(0,'#0b160b'); bg.addColorStop(1,'#050c05');
+  ax.fillStyle=bg; ax.fillRect(0,0,210,80);
+  const n=types.length, gap=Math.min(42,186/n), r=n>4?14:16;
+  types.forEach((t,i)=>{
+    const x=105+(i-(n-1)/2)*gap;
+    ax.save(); ax.shadowColor='rgba(0,0,0,0.6)'; ax.shadowBlur=6;
+    drawManaPip(ax,x,40,r,t);
+    ax.restore();
+  });
+}
+const WAVE_ART={
+  1:artMountain, 2:artIsland, 3:artSwamp, 4:artPlains,
+  5:ax=>artPips(ax,['white','blue','black','red']),
+  6:ax=>artPips(ax,['white','blue','black','red','green']),
+};
+function drawWaveArt(ax,wNum){
+  (WAVE_ART[Math.min(wNum,6)]||WAVE_ART[6])(ax);
+}
+
 // ── WAVE CARD ─────────────────────────────────────────────────────────────────
 function showWaveCard(wNum,cb){
   wavePaused=true;
@@ -407,60 +542,7 @@ function showWaveCard(wNum,cb){
   document.getElementById('wc-num').textContent=`${c.num} · YVA`;
   const ac=document.getElementById('wc-canvas'), ax=ac.getContext('2d');
   ax.clearRect(0,0,210,80);
-  const bg=ax.createLinearGradient(0,0,0,80); bg.addColorStop(0,'#071207'); bg.addColorStop(1,'#0a1a0a');
-  ax.fillStyle=bg; ax.fillRect(0,0,210,80);
-
-  if(wNum===4){
-    // MTG Plains symbol — sun over rolling hills
-    const cx=105, cy=40;
-    // Sky gradient behind
-    const sky=ax.createLinearGradient(0,0,0,80);
-    sky.addColorStop(0,'#1a3a5c'); sky.addColorStop(1,'#0d1f30');
-    ax.fillStyle=sky; ax.fillRect(0,0,210,80);
-    // Rolling hills silhouette
-    ax.fillStyle='#c8b87a';
-    ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,52);
-    ax.bezierCurveTo(30,52,40,38,60,42);
-    ax.bezierCurveTo(80,46,90,36,105,36);
-    ax.bezierCurveTo(120,36,130,46,150,42);
-    ax.bezierCurveTo(170,38,180,52,210,52);
-    ax.lineTo(210,80); ax.closePath(); ax.fill();
-    // Hill shading
-    ax.fillStyle='rgba(180,160,80,0.35)';
-    ax.beginPath(); ax.moveTo(0,80); ax.lineTo(0,56);
-    ax.bezierCurveTo(25,56,38,46,55,48);
-    ax.bezierCurveTo(72,50,85,44,105,44);
-    ax.lineTo(105,80); ax.closePath(); ax.fill();
-    // Sun
-    const sg=ax.createRadialGradient(cx,18,2,cx,18,18);
-    sg.addColorStop(0,'#fff8c0'); sg.addColorStop(0.4,'#f4d03f'); sg.addColorStop(1,'rgba(244,208,63,0)');
-    ax.fillStyle=sg; ax.beginPath(); ax.arc(cx,18,18,0,Math.PI*2); ax.fill();
-    // Sun core
-    ax.fillStyle='#fff8c0'; ax.beginPath(); ax.arc(cx,18,7,0,Math.PI*2); ax.fill();
-    // Sun rays
-    ax.strokeStyle='rgba(244,208,63,0.6)'; ax.lineWidth=1.2;
-    for(let i=0;i<8;i++){
-      const a=(i/8)*Math.PI*2, r1=9, r2=15;
-      ax.beginPath(); ax.moveTo(cx+Math.cos(a)*r1,18+Math.sin(a)*r1); ax.lineTo(cx+Math.cos(a)*r2,18+Math.sin(a)*r2); ax.stroke();
-    }
-    // Cloud left
-    ax.fillStyle='rgba(255,255,255,0.82)';
-    ax.beginPath(); ax.ellipse(62,24,12,6,0,0,Math.PI*2); ax.fill();
-    ax.beginPath(); ax.ellipse(70,20,10,7,0,0,Math.PI*2); ax.fill();
-    ax.beginPath(); ax.ellipse(55,22,9,5,0,0,Math.PI*2); ax.fill();
-    // Cloud right
-    ax.beginPath(); ax.ellipse(152,26,11,5,0,0,Math.PI*2); ax.fill();
-    ax.beginPath(); ax.ellipse(160,22,9,6,0,0,Math.PI*2); ax.fill();
-    ax.beginPath(); ax.ellipse(145,24,8,4,0,0,Math.PI*2); ax.fill();
-    // White glow border
-    ax.shadowColor='rgba(255,248,192,0.4)'; ax.shadowBlur=8;
-    ax.strokeStyle='rgba(244,208,63,0.25)'; ax.lineWidth=1;
-    ax.strokeRect(1,1,208,78);
-    ax.shadowBlur=0;
-  } else {
-    // Default: large emoji centred
-    ax.font='36px serif'; ax.textAlign='center'; ax.textBaseline='middle'; ax.fillText(c.art,105,40);
-  }
+  drawWaveArt(ax,wNum);
   const el=document.getElementById('wave-card');
   el.style.opacity='1';
 
@@ -669,6 +751,7 @@ function drawManaPip(ctx, x, y, r, type) {
     blue:  { bg:'#1a5276', ring:'#5dade2', sym:'wave',    symCol:'#aaddff' },
     black: { bg:'#1c2833', ring:'#7d3c98', sym:'skull',   symCol:'#cc88ff' },
     white: { bg:'#8a9a7a', ring:'#dde8dd', sym:'sun',     symCol:'#ffffff' },
+    green: { bg:'#1a5c2e', ring:'#2ecc71', sym:'tree',    symCol:'#8ee8a8' },
   };
   const c = configs[type] || configs.red;
   ctx.save();
@@ -716,6 +799,11 @@ function drawManaPip(ctx, x, y, r, type) {
       ctx.beginPath(); ctx.moveTo(Math.cos(a)*s*0.62,Math.sin(a)*s*0.62);
       ctx.lineTo(Math.cos(a)*s*1.0,Math.sin(a)*s*1.0); ctx.stroke();
     }
+  } else if(type==='green'){
+    // Fir tree — matches the forest motif used for the life pips
+    ctx.beginPath(); ctx.moveTo(0,-s*1.05); ctx.lineTo(s*0.62,-s*0.15); ctx.lineTo(-s*0.62,-s*0.15); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0,-s*0.62); ctx.lineTo(s*0.88,s*0.5); ctx.lineTo(-s*0.88,s*0.5); ctx.closePath(); ctx.fill();
+    ctx.fillRect(-s*0.15,s*0.42,s*0.3,s*0.5);
   }
   ctx.restore();
 }
