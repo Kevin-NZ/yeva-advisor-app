@@ -81,6 +81,34 @@
   }
   #step-ctr { font-size: 11px; color: #4b6b4b; min-width: 72px; text-align: center; }
 
+  /* File picker styled as a button (a bare <input type=file> cannot be) */
+  .file-btn {
+    background: #1a3a1a;
+    border: 1px solid #2d5a2d;
+    color: #86efac;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    display: inline-flex;
+    align-items: center;
+  }
+  .file-btn:hover, #btn-share:hover { border-color: #4ade80; }
+
+  /* Drag-and-drop overlay */
+  #drop-veil {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(13,31,13,.92);
+    border: 3px dashed #4ade80;
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700; color: #4ade80;
+    pointer-events: none;
+  }
+  #drop-veil.on { display: flex; }
+
   /* ── Progress bar ── */
   #progress-track {
     height: 3px;
@@ -88,7 +116,17 @@
     border-radius: 2px;
     margin-bottom: 12px;
     flex-shrink: 0;
+    /* Clickable seek. The bar itself stays 3px for looks; the padded hit area
+       below gives it a usable target without changing the layout. */
+    cursor: pointer;
+    position: relative;
   }
+  #progress-track::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: -8px; bottom: -8px;
+  }
+  #progress-track:hover #progress-fill { background: #4ade80; }
   #progress-fill {
     height: 100%;
     background: #22c55e;
@@ -343,6 +381,8 @@
 </head>
 <body>
 
+<div id="drop-veil">Drop a replay.json to load it</div>
+
 <!-- Card hover popup -->
 <div id="card-popup"><img id="card-popup-img" alt=""></div>
 
@@ -372,6 +412,10 @@
     <button id="btn-play" onclick="togglePlay()">▶ Play</button>
     <button id="btn-next" onclick="navigate(1)">Next ▶</button>
     <div id="step-ctr">—</div>
+    <button id="btn-share" title="Copy a link to this step">🔗 Link</button>
+    <label class="file-btn" title="Load a replay.json file">
+      📂 File<input id="file-input" type="file" accept=".json,application/json" hidden>
+    </label>
   </div>
 </div>
 
@@ -426,6 +470,22 @@
 /* ── Demo data ─────────────────────────────────────────────────────────────── */
 const DEMO = {
    "combo":"Win: Tutor for Finisher (infinite mana + creature tutor)",
+   "hasWin":true,
+   // [2026-08-11] `names` added here too. Without it this bundled sample — the
+   // first thing anyone sees on opening the file — rendered Ashaya, Gaea's
+   // Cradle and Nature's Rhythm as grey placeholders, because the old
+   // title-cased-key fallback produces "Gaeas Cradle" and Scryfall 404s.
+   "names":{
+      "ashaya":"Ashaya, Soul of the Wild",
+      "badgermole_cub":"Badgermole Cub",
+      "duskwatch_recruiter":"Duskwatch Recruiter",
+      "elvish_spirit_guide":"Elvish Spirit Guide",
+      "gaeas_cradle":"Gaea's Cradle",
+      "lotus_petal":"Lotus Petal",
+      "natural_order":"Natural Order",
+      "natures_rhythm":"Nature's Rhythm",
+      "quirion_ranger":"Quirion Ranger"
+   },
    "totalSteps":10,
    "frames":[
       {
@@ -1018,18 +1078,55 @@ let data    = DEMO;
 let idx     = 0;
 let playing = false;
 let timer   = null;
-let prevBF  = new Set();
 const imgErr = {};
 
-/* Build cardKey → name map once from all frames */
+/* Build cardKey → name map.
+ *
+ * [2026-08-11] Prefer the `names` map the solver now emits. Falling back to
+ * harvesting names off battlefield entries only ever worked for cards that
+ * REACHED the battlefield — instants and sorceries never do — and everything
+ * else dropped through to a title-cased key, which is wrong for 29 of the 91
+ * cards in the deck ("gaeas_cradle" -> "Gaeas Cradle", not "Gaea's Cradle").
+ * A wrong name is a failed Scryfall lookup and a grey placeholder. The
+ * battlefield harvest is kept so older replay.json files still work. */
 const nameMap = {};
 function buildNameMap() {
   for (const f of data.frames)
     for (const p of f.battlefield)
       if (!nameMap[p.cardKey]) nameMap[p.cardKey] = p.name;
+  for (const [k, n] of Object.entries(data.names || {})) nameMap[k] = n;
+}
+
+function displayName(key) {
+  // Last-resort guess for pre-`names` replays. Deliberately not silent: a card
+  // reaching this path is the case that renders as a placeholder.
+  return nameMap[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 /* ── Scryfall ─────────────────────────────────────────────────────────────── */
+// Every card image is an api.scryfall.com/cards/named request that 302s to the
+// image CDN, and a full board fires a dozen at once. Scryfall's guidelines ask
+// for rate-limiting, so remember which names have resolved before and let the
+// browser serve those from its own cache rather than re-hitting the API.
+// Names that 404 are remembered too, so a bad name is asked for once, not once
+// per frame.
+const IMG_CACHE_KEY = 'yeva-replay-img-v1';
+let imgCache = {};
+try { imgCache = JSON.parse(localStorage.getItem(IMG_CACHE_KEY) || '{}'); } catch { imgCache = {}; }
+let imgCacheDirty = false;
+function rememberImg(name, ok) {
+  if (imgCache[name] === ok) return;
+  imgCache[name] = ok;
+  imgCacheDirty = true;
+  // Batch writes — render() can touch 20 cards in one frame.
+  clearTimeout(rememberImg._t);
+  rememberImg._t = setTimeout(() => {
+    if (!imgCacheDirty) return;
+    try { localStorage.setItem(IMG_CACHE_KEY, JSON.stringify(imgCache)); } catch { /* quota — fine */ }
+    imgCacheDirty = false;
+  }, 500);
+}
+
 function sfUrl(name) {
   return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=normal`;
 }
@@ -1072,7 +1169,7 @@ function makeCard(p, small = false) {
   const wrap = document.createElement('div');
   wrap.className = 'card-wrap' + (p.tapped ? ' tapped' : '');
 
-  if (imgErr[p.cardKey]) {
+  if (imgErr[p.cardKey] || imgCache[p.name] === false) {
     const ph = document.createElement('div');
     ph.className = 'card-ph' + (small ? ' small' : '');
     ph.textContent = p.name;
@@ -1083,8 +1180,10 @@ function makeCard(p, small = false) {
     img.alt = p.name;
     img.loading = 'lazy';
     img.src = sfUrl(p.name);
+    img.onload  = () => rememberImg(p.name, true);
     img.onerror = () => {
       imgErr[p.cardKey] = true;
+      rememberImg(p.name, false);
       const ph = document.createElement('div');
       ph.className = 'card-ph' + (small ? ' small' : '');
       ph.textContent = p.name;
@@ -1115,11 +1214,63 @@ function makeCard(p, small = false) {
 }
 
 /* ── Zone renderer ────────────────────────────────────────────────────────── */
+// [2026-08-11] Was `innerHTML = ''` plus a full rebuild on every frame, which
+// recreated every <img> ~50 times across a replay. The browser cache spared the
+// network but not the DOM churn, and cards visibly flickered on each step.
+// Reuse nodes keyed by identity and only touch what actually changed, so a tap
+// or an untap animates instead of snapping.
+function cardKeyOf(it) {
+  return it.cardKey + '|' + it.name;
+}
+
 function renderZone(id, items, small = false) {
   const el = document.getElementById(id);
-  el.innerHTML = '';
-  if (!items.length) { el.innerHTML = '<span class="empty-msg">—</span>'; return; }
-  for (const it of items) el.appendChild(makeCard(it, small));
+  if (!items.length) {
+    if (el.dataset.empty !== '1') { el.innerHTML = '<span class="empty-msg">—</span>'; el.dataset.empty = '1'; }
+    el._cards = new Map();
+    return;
+  }
+  if (el.dataset.empty === '1') { el.innerHTML = ''; el.dataset.empty = '0'; }
+
+  const existing = el._cards instanceof Map ? el._cards : new Map();
+  const next = new Map();
+  // Duplicates of the same card share a key, so disambiguate by occurrence.
+  const seen = new Map();
+  for (const it of items) {
+    const base = cardKeyOf(it);
+    const n = (seen.get(base) ?? 0); seen.set(base, n + 1);
+    const k = base + '#' + n;
+    let node = existing.get(k);
+    if (node) { updateCard(node, it); existing.delete(k); }
+    else      { node = makeCard(it, small); }
+    next.set(k, node);
+  }
+  for (const stale of existing.values()) stale.remove();
+  // Re-append in order; appendChild on an existing child just moves it.
+  for (const node of next.values()) el.appendChild(node);
+  el._cards = next;
+}
+
+/* Apply per-frame state to an already-built card node. */
+function updateCard(wrap, p) {
+  wrap.classList.toggle('tapped', !!p.tapped);
+  const img = wrap.querySelector('.card-img');
+  if (img) img.classList.toggle('tapped', !!p.tapped);
+  toggleMarker(wrap, 'sick-ring',  !!p.sick);
+  toggleMarker(wrap, 'new-ring',   !!p.isNew);
+  toggleMarker(wrap, 'forest-badge', !!p.isForest, 'FOREST');
+  toggleMarker(wrap, 'pt-badge', p.power !== undefined, p.power + '/' + p.toughness);
+}
+
+function toggleMarker(wrap, cls, want, text) {
+  let el = wrap.querySelector('.' + cls);
+  if (want && !el) {
+    el = document.createElement('div');
+    el.className = cls;
+    wrap.appendChild(el);
+  }
+  if (!want && el) { el.remove(); return; }
+  if (want && text !== undefined) el.textContent = text;
 }
 
 /* ── Main render ──────────────────────────────────────────────────────────── */
@@ -1130,7 +1281,15 @@ function render() {
 
   /* Header */
   document.getElementById('combo-title').textContent = '♾ ' + (data.combo || 'Replay');
-  document.getElementById('combo-sub').textContent   = data.totalSteps + ' steps · Turn ' + maxTurn + ' win';
+  // [2026-08-11] Was hardcoded "· Turn N win". A run that assembles a mana
+  // engine but never a win condition is not a win, and the solver strips the
+  // "[win condition needed]" marker off combo.name, so the viewer could not
+  // tell. `hasWin` is emitted for exactly this; older replays without the field
+  // keep the old wording rather than silently claiming the opposite.
+  const outcome = data.hasWin === undefined ? 'Turn ' + maxTurn + ' win'
+                : data.hasWin              ? 'Turn ' + maxTurn + ' win'
+                                           : 'no win — mana engine only';
+  document.getElementById('combo-sub').textContent = data.totalSteps + ' steps · ' + outcome;
 
   /* Controls */
   document.getElementById('progress-fill').style.width = (idx / total * 100) + '%';
@@ -1166,13 +1325,18 @@ function render() {
   /*document.getElementById('s-lib').textContent  = Math.max(0, 92 - idx);*/
   renderMana(f.mana);
 
-  /* Battlefield (with new-entry detection) */
-  const currBF = new Set(f.battlefield.map(p => p.cardKey + '|' + p.name));
+  /* Battlefield (with new-entry detection).
+   * [2026-08-11] Was computed against a MUTABLE GLOBAL assigned at the end of
+   * the previous render(). Stepping backwards therefore compared against a
+   * FUTURE board: removed cards lit up as new and genuinely new ones did not
+   * ring. Derive it from the actual preceding frame instead, so the highlight
+   * is correct from any direction and re-rendering the same frame is idempotent. */
+  const prevKeys = new Set((data.frames[idx - 1]?.battlefield ?? [])
+    .map(p => p.cardKey + '|' + p.name));
   const bfItems = f.battlefield.map(p => ({
     ...p,
-    isNew: !prevBF.has(p.cardKey + '|' + p.name) && idx > 0,
+    isNew: idx > 0 && !prevKeys.has(p.cardKey + '|' + p.name),
   }));
-  prevBF = currBF;
   renderZone('bf-zone', bfItems);
 
   /* Graveyard */
@@ -1183,10 +1347,12 @@ function render() {
 
   /* Hand */
   const handItems = f.hand.map(k => ({
-    name: nameMap[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+    name: displayName(k),
     cardKey: k, tapped: false, sick: false, types: [],
   }));
   renderZone('hand-zone', handItems);
+
+  syncUrl();
 }
 
 /* ── Playback ─────────────────────────────────────────────────────────────── */
@@ -1223,14 +1389,7 @@ function loadJSON() {
   const raw = document.getElementById('json-input').value.trim();
   const errEl = document.getElementById('paste-error');
   try {
-    const parsed = JSON.parse(raw);
-    if (!parsed.frames || !Array.isArray(parsed.frames)) throw new Error('Missing frames array');
-    data = parsed;
-    Object.keys(nameMap).forEach(k => delete nameMap[k]);
-    buildNameMap();
-    idx = 0; prevBF = new Set();
-    stop();
-    render();
+    adoptReplay(JSON.parse(raw));
     errEl.textContent = '';
     document.getElementById('paste-panel').removeAttribute('open');
   } catch (e) {
@@ -1238,13 +1397,112 @@ function loadJSON() {
   }
 }
 
+/* ── Seeking ──────────────────────────────────────────────────────────────── */
+function seekTo(i) {
+  stop();
+  idx = Math.max(0, Math.min(data.frames.length - 1, i));
+  render();
+}
+
+// Click (or drag) anywhere on the progress bar to jump. With 40-60 frame
+// replays, Prev/Next alone is a lot of clicking to reach one decision point.
+{
+  const track = document.getElementById('progress-track');
+  const seekFromEvent = (e) => {
+    const r = track.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    seekTo(Math.round(frac * (data.frames.length - 1)));
+  };
+  track.addEventListener('pointerdown', e => {
+    seekFromEvent(e);
+    const move = ev => seekFromEvent(ev);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+}
+
 /* ── Keyboard shortcuts ───────────────────────────────────────────────────── */
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'TEXTAREA') return;
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
   if (e.key === 'ArrowRight' || e.key === 'l') navigate(1);
   if (e.key === 'ArrowLeft'  || e.key === 'h') navigate(-1);
+  if (e.key === 'Home' || e.key === 'g') { stop(); seekTo(0); }
+  if (e.key === 'End'  || e.key === 'G') { stop(); seekTo(data.frames.length - 1); }
   if (e.key === ' ' || e.key === 'k') { e.preventDefault(); togglePlay(); }
 });
+
+/* ── Deep links ───────────────────────────────────────────────────────────── */
+// ?step=N addresses a frame directly, so a specific decision point can be
+// shared. Written with replaceState so stepping does not fill up history.
+function syncUrl() {
+  const u = new URL(location.href);
+  u.searchParams.set('step', String(idx));
+  history.replaceState(null, '', u);
+}
+
+function applyUrlStep() {
+  const n = parseInt(new URL(location.href).searchParams.get('step') ?? '', 10);
+  if (Number.isFinite(n)) idx = Math.max(0, Math.min(data.frames.length - 1, n));
+}
+
+document.getElementById('btn-share').addEventListener('click', async (e) => {
+  syncUrl();
+  const btn = e.currentTarget;
+  const restore = btn.textContent;
+  try { await navigator.clipboard.writeText(location.href); btn.textContent = '✓ Copied'; }
+  catch { btn.textContent = '⧉ ' + idx; }   // clipboard blocked (file:// in some browsers)
+  setTimeout(() => { btn.textContent = restore; }, 1200);
+});
+
+/* ── File loading ─────────────────────────────────────────────────────────── */
+// replay.json is written to disk by `node index.js --json`, so opening the file
+// beats pasting a 40KB blob into a textarea.
+function adoptReplay(parsed) {
+  if (!parsed.frames || !Array.isArray(parsed.frames)) throw new Error('Missing frames array');
+  data = parsed;
+  Object.keys(nameMap).forEach(k => delete nameMap[k]);
+  buildNameMap();
+  idx = 0;
+  // A freshly loaded replay invalidates every reused card node.
+  for (const id of ['bf-zone', 'gy-zone', 'hand-zone']) {
+    const el = document.getElementById(id);
+    if (el) { el.innerHTML = ''; el._cards = new Map(); el.dataset.empty = '0'; }
+  }
+  stop();
+  render();
+}
+
+function readReplayFile(file) {
+  const errEl = document.getElementById('paste-error');
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { adoptReplay(JSON.parse(reader.result)); errEl.textContent = ''; }
+    catch (err) { errEl.textContent = '✗ ' + err.message; document.getElementById('paste-panel').setAttribute('open', ''); }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files?.[0]) readReplayFile(e.target.files[0]);
+  e.target.value = '';   // allow re-picking the same file after a re-solve
+});
+
+{
+  const veil = document.getElementById('drop-veil');
+  let depth = 0;
+  window.addEventListener('dragenter', e => { e.preventDefault(); if (++depth === 1) veil.classList.add('on'); });
+  window.addEventListener('dragover',  e => e.preventDefault());
+  window.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; veil.classList.remove('on'); } });
+  window.addEventListener('drop', e => {
+    e.preventDefault(); depth = 0; veil.classList.remove('on');
+    const f = e.dataTransfer?.files?.[0];
+    if (f) readReplayFile(f);
+  });
+}
 
 /* ── Card hover popup ─────────────────────────────────────────────────────── */
 const popup    = document.getElementById('card-popup');
@@ -1290,6 +1548,7 @@ function hidePopup() {
 
 /* ── Boot ─────────────────────────────────────────────────────────────────── */
 buildNameMap();
+applyUrlStep();     // honour ?step=N before the first paint
 render();
 
 /* ── Height-fit scaling ───────────────────────────────────────────────────── */
