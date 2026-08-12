@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-10T22:36:03Z
-// Solver MD5 : 0379a95a7878
+// Generated : 2026-08-12T22:23:18Z
+// Solver MD5 : ef643ace5b2e
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -447,8 +447,14 @@
         // strong creature tutor, enables assembling combos
         "fauna_shaman": 48,
         // key creature tutor (repeatable Worldly Tutor)
-        "formidable_speaker": 45,
-        // COMBO 64 key piece (Ashaya+SC+Tender loop)
+        "formidable_speaker": 58,
+        // repeatable untapper AND, once a bounce partner (Wirewood
+        //   Symbiote, Temur Sabertooth, Cloudstone Curio) is out, a
+        //   repeatable creature tutor — strictly more than the
+        //   untap-on-ETB cards just below it, and more than the
+        //   one-shot tutors (Fauna Shaman 48, Survival 50).
+        //   [2026-08-12] was 45, labelled only "COMBO 64 key piece",
+        //   which undersold both halves of the card.
         "elvish_harbinger": 42,
         // fetches specific elves, enables elf-chain lines
         "regal_force": 38,
@@ -6044,6 +6050,7 @@
           for (const [abilKey, ability] of Object.entries(def.handAbilities)) {
             const preCheck = ability.fn(state, cardKey);
             if (preCheck === null || preCheck === void 0) continue;
+            if (Array.isArray(preCheck) && preCheck.length === 0) continue;
             actions.push({
               type: "hand_ability",
               label: `${def.name} (hand): ${ability.label ?? abilKey}`,
@@ -6160,7 +6167,7 @@
             const afterPay0 = payManaForCreatureCast(state, costStr, isCreature);
             const fromHand0 = afterPay0 ? removeCastCard(afterPay0) : null;
             if (fromHand0) {
-              const allResults = def.castFn(fromHand0);
+              const allResults = def.castFn(fromHand0, { exhaustive });
               if (allResults && allResults.length > 0) {
                 let isEquivRedundant = function(ck) {
                   return FUNCTIONAL_EQUIVALENTS.some(
@@ -6224,13 +6231,21 @@
                   const k = cachedMsgKey(r);
                   return k !== null && !isEquivRedundant(k);
                 });
-                const pool = relevant.length > 0 ? relevant : fallback;
-                const sorted = pool.slice().sort(
-                  (a, b) => (TUTOR_PRIORITY_SCORE[cachedMsgKey(b)] ?? 0) - (TUTOR_PRIORITY_SCORE[cachedMsgKey(a)] ?? 0)
-                );
+                const byScore = (a, b) => (TUTOR_PRIORITY_SCORE[cachedMsgKey(b)] ?? 0) - (TUTOR_PRIORITY_SCORE[cachedMsgKey(a)] ?? 0);
+                let sorted;
+                if (def.wideTutor) {
+                  const seenR = new Set(relevant);
+                  sorted = [
+                    ...relevant.slice().sort(byScore),
+                    ...fallback.filter((r) => !seenR.has(r)).sort(byScore)
+                  ];
+                } else {
+                  sorted = (relevant.length > 0 ? relevant : fallback).slice().sort(byScore);
+                }
                 const firstMsg = sorted[0]?.lastHistMsg() ?? "";
                 const isBF = firstMsg.includes("fetch ") || firstMsg.includes("Zenith \u2192");
-                const maxBranches = isBF ? 1 : 2;
+                const wideCap = exhaustive ? 8 : 2;
+                const maxBranches = def.wideTutor ? wideCap : isBF ? 1 : 2;
                 for (const resultState of sorted.slice(0, maxBranches)) {
                   const msg = resultState.lastHistMsg() ?? `Cast ${def.name}`;
                   const spellGoesToGraveyard = (def.types.includes("instant") || def.types.includes("sorcery")) && !def.reshufflesIntoLibrary;
@@ -6268,7 +6283,7 @@
                         }
                         ns = removeCastCard(afterPay) ?? ns;
                       }
-                      const res = def.castFn(ns);
+                      const res = def.castFn(ns, { exhaustive });
                       if (!res || res.length === 0) return null;
                       const matched = res.find(
                         (r) => (r.lastHistMsg() ?? "") === msg
@@ -6433,7 +6448,7 @@
             if (!afterPay) continue;
             const afterGY = afterPay.exileFromGraveyard(0, cardName);
             if (!afterGY) continue;
-            const allResults = def.castFn(afterGY);
+            const allResults = def.castFn(afterGY, { exhaustive });
             for (const ns of allResults) {
               if (!ns) continue;
               actions.push({
@@ -6445,7 +6460,7 @@
                   if (!ap) return null;
                   const ag = ap.exileFromGraveyard(0, cardName);
                   if (!ag) return null;
-                  const results2 = def.castFn(ag);
+                  const results2 = def.castFn(ag, { exhaustive });
                   return results2[0] ?? null;
                 }
               });
@@ -6988,6 +7003,18 @@
       }
       function countElves(state) {
         return state.battlefield.filter((p) => p.subtypes && p.subtypes.includes("Elf")).length;
+      }
+      function lowestLifeOpponent(state) {
+        let best = null, bestLife = Infinity;
+        for (let pi = 1; pi < (state.players?.length ?? 0); pi++) {
+          const p = state.players[pi];
+          if (p.life <= 0) continue;
+          if (p.life < bestLife) {
+            bestLife = p.life;
+            best = pi;
+          }
+        }
+        return best;
       }
       function simpleTap(label, colorPairs) {
         const fn = function tapForMana(state, perm) {
@@ -7641,6 +7668,11 @@
           types: ["land"],
           subtypes: ["Legendary"],
           cost: null,
+          // The oracle's "That player may search their library for a land card with a
+          // basic land type, put it onto the battlefield" is the OPPONENT replacing
+          // what channel destroyed. This solver models no opponent permanents or
+          // libraries, so there is nothing to search and nothing to put down.
+          oracleFidelityWaiver: ["onto-battlefield"],
           tapForMana: simpleTap("{G}", [["G", 1]]),
           // Channel — {1}{G}, Discard this card: Destroy target artifact, enchantment, or
           // nonbasic land. This spell can't be countered. Cost reduced by {1} for each
@@ -7657,16 +7689,18 @@
                 const costStr = reducedCost === 0 ? "G" : "1G";
                 const ap = state.payMana(costStr);
                 if (!ap) return [];
-                const s0 = ap.removeFromHand(cardKey);
+                const s0 = ap.discardFromHand(cardKey, "channel cost");
                 if (!s0) return [];
-                const targets = s0.battlefield.filter(
-                  (p) => p.is("artifact") || p.is("enchantment") || p.is("land") && !p.subtypes?.includes("Basic")
-                );
-                if (targets.length === 0) return [];
-                return targets.map((target) => {
-                  const s = s0.removeFromBattlefield(target.id, "graveyard");
-                  return s ? s.log(`Boseiju channel: \u2192 destroy ${target.name}`) : null;
-                }).filter(Boolean);
+                const nameToDef = /* @__PURE__ */ new Map();
+                for (const d of Object.values(CARDS2)) if (d?.name) nameToDef.set(d.name, d);
+                const oppTarget = [...s0.opponentStax].map((e) => e.split("@")[0].trim()).find((n) => {
+                  const d = nameToDef.get(n);
+                  if (!d) return false;
+                  const t = d.types || [];
+                  return t.includes("artifact") || t.includes("enchantment") || t.includes("land") && !(d.subtypes || []).includes("Basic");
+                });
+                if (!oppTarget) return [];
+                return [s0.removeFromOpponentStax(oppTarget).log(`Boseiju channel: \u2192 destroy opponent's ${oppTarget}`)];
               }
             }
           }
@@ -12372,6 +12406,51 @@
           }
         },
         // ─── Custom-library cards (not in DEFAULT_DECKLIST) ───────────────────────
+        // [2026-08-11] Both of these are the engine's first real users of
+        // GameState.dealDamage — it existed with no callers until now.
+        //
+        // TARGETING. Both say a SINGLE target ("target player or planeswalker", "any
+        // target"). Deliberately NOT modelled the way Infectious Bite models its own
+        // effect: that card gives a poison counter to EVERY opponent because its own
+        // oracle says "each", and copying that shape here would turn 1 damage into 3
+        // across the table — an overclaim, and the exact class of bug this codebase
+        // has spent a lot of effort removing. One target, once.
+        //
+        // WHICH target: the opponent with the LOWEST life. There are no opponent
+        // creatures or planeswalkers in this model, so a player is the only meaningful
+        // target, and a player closing a game focuses the one nearest death rather
+        // than spreading damage. Deterministic single-best-target, the same shape as
+        // Manglehorn, Fierce Empath and Invasion of Ikoria, which keeps the branching
+        // factor at 1 instead of 3 per activation.
+        sunscorched_desert: {
+          externallyImplemented: true,
+          // [drift-detector] ETB in GameState.enterBattlefield
+          name: "Sunscorched Desert",
+          types: ["land"],
+          subtypes: ["Desert"],
+          cost: null,
+          tapForMana: simpleTap("{C}", [["C", 1]])
+          // ETB ("When this land enters, it deals 1 damage to target player or
+          // planeswalker") lives in GameState.enterBattlefield, and MUST: the
+          // play_land path in actions.js calls enterBattlefield() and never
+          // def.onEnter, so a cards.js onEnter would simply never fire for a land.
+          // Putting it in exactly one place also avoids the double-fire trap
+          // Manglehorn is still open on (ToDo O-78), where GameState and cards.js
+          // both implement the same ETB.
+        },
+        hornet_sting: {
+          name: "Hornet Sting",
+          types: ["instant"],
+          subtypes: [],
+          cost: "G",
+          // Oracle: Hornet Sting deals 1 damage to any target.
+          castFn(state) {
+            const pi = lowestLifeOpponent(state);
+            if (pi === null) return [];
+            const s = state.dealDamage(pi, { damage: 1 });
+            return [s.log(`Hornet Sting: 1 damage to ${s.players[pi].name} (life ${s.players[pi].life})`)];
+          }
+        },
         vengeant_earth: {
           name: "Vengeant Earth",
           types: ["instant"],
@@ -12766,6 +12845,10 @@
           cost: "XG",
           reshufflesIntoLibrary: true,
           // oracle: "Shuffle Green Sun's Zenith into its owner's library"
+          // Opt out of actions.js's battlefield-tutor cap of 1 branch; this card's own
+          // castFn already bounds its candidate list. Without this the widening below
+          // is invisible — the outer wrapper collapses it straight back to one.
+          wideTutor: true,
           canCast(state) {
             const cards = CARDS2;
             const { parseCost } = require_GameState();
@@ -12783,12 +12866,41 @@
             }
             return false;
           },
-          castFn(state) {
+          // [2026-08-12] Was a SINGLE best-TUTOR_PRIORITY_SCORE pick, returning one
+          // branch. That is the exact failure IMP-20 documented for the other tutors
+          // and fixed there with _creatureTutorCandidates: a genuinely different,
+          // equally legal line can never be explored, because the one target the
+          // heuristic likes best is the only one ever offered.
+          //
+          // Found from a user-reported line on
+          //   --battlefield shifting_woodland,forest,gaeas_cradle,elvish_mystic
+          //   --hand shang_chi,circle_of_dreams_druid,priest_of_titania,
+          //          green_suns_zenith,summoners_pact,fanatic_of_rhonas
+          // where GSZ for X=3 fetching Formidable Speaker (score 45) sets up a proven
+          // infinite-mana win, but Wirewood Symbiote (score 57) was the only branch
+          // ever generated, so no amount of search could reach it. --exhaustive could
+          // not help either: the collapse was inside this function, not in the
+          // solver's pruning.
+          //
+          // Widened to the top 2 by score; exhaustive goes to 8, where the contract is
+          // "never miss a win" and the extra branching is the price.
+          //
+          // The default is 2 and not more for a measured reason. At 3 this hand
+          //   --hand green_suns_zenith,ancient_tomb,sol_ring,lotus_petal,hope_tender,
+          //          gaeas_cradle,quirion_ranger,ashaya
+          // STOPS finding its win: the third target makes a cheap early GSZ for Priest
+          // of Titania available, the bounded first-win search takes it, and it lands
+          // on a mana engine with no win instead of the Hope Tender line that wins.
+          // Widening a tutor is not free — every extra branch competes for the search's
+          // attention at every node, so the default stays as narrow as it can be while
+          // still offering an alternative at all.
+          castFn(state, opts = {}) {
             const cards = CARDS2;
             const { parseCost } = require_GameState();
             const { TUTOR_PRIORITY_SCORE } = require_combo_data();
+            const MAX = opts.exhaustive ? 8 : 2;
             const xMax = state.mana.total();
-            let best = null, bestScore = -Infinity;
+            const eligible = [];
             const seen = /* @__PURE__ */ new Set();
             for (const ck of state.players[0].library) {
               if (seen.has(ck) || ck === "unknown" || isStax(ck)) continue;
@@ -12799,16 +12911,23 @@
               const parsed = parseCost(def.cost);
               const mv = parsed.generic + Object.values(parsed.colored).reduce((a, b) => a + b, 0);
               if (mv > xMax) continue;
-              const score = TUTOR_PRIORITY_SCORE[ck] ?? 0;
-              if (score > bestScore) {
-                bestScore = score;
-                best = { ck, def, mv };
-              }
+              eligible.push({ ck, def, mv, score: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
             }
-            if (!best) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
-            const { state: ns, cardKey } = state.searchLibraryFor((k) => k === best.ck);
-            if (!cardKey) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
-            return [drainMana(ns).enterBattlefield(cardKey).log(`Green Sun's Zenith \u2192 fetch ${best.def.name} (MV ${best.mv})`)];
+            if (!eligible.length) return [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
+            eligible.sort((a, b) => b.score - a.score || a.ck.localeCompare(b.ck));
+            const relevantOrder = _creatureTutorCandidates(state, MAX === Infinity ? 12 : MAX);
+            if (relevantOrder.length) {
+              const rank = new Map(relevantOrder.map((k, i) => [k, i]));
+              const at = (x) => rank.has(x.ck) ? rank.get(x.ck) : Infinity;
+              eligible.sort((a, b) => at(a) - at(b));
+            }
+            const results = [];
+            for (const e of eligible.slice(0, MAX)) {
+              const { state: ns, cardKey } = state.searchLibraryFor((k) => k === e.ck);
+              if (!cardKey) continue;
+              results.push(drainMana(ns).enterBattlefield(cardKey).log(`Green Sun's Zenith \u2192 fetch ${e.def.name} (MV ${e.mv})`));
+            }
+            return results.length ? results : [drainMana(state).log("Green Sun's Zenith: no eligible creature")];
           }
         },
         finale_of_devastation: {
@@ -15255,6 +15374,21 @@ ${ex}`;
               }
             }
           }
+          if (!skipETB && cardKey === "sunscorched_desert") {
+            let target = null, lowest = Infinity;
+            for (let pi = 1; pi < (s.players?.length ?? 0); pi++) {
+              const p = s.players[pi];
+              if (p.life <= 0) continue;
+              if (p.life < lowest) {
+                lowest = p.life;
+                target = pi;
+              }
+            }
+            if (target !== null) {
+              s = s.dealDamage(target, { damage: 1 });
+              s = s.log(`Sunscorched Desert ETB: 1 damage to ${s.players[target].name} (life ${s.players[target].life})`);
+            }
+          }
           if (!skipETB && cardKey === "manglehorn") {
             const staxTargets = s.battlefield.filter(
               (p) => p.is("artifact") && p.name !== "Manglehorn" && ALL_STAX_NAMES.has(p.name)
@@ -15411,14 +15545,7 @@ ${ex}`;
             const libCards = s.players[0].library;
             const creaturesInLib = libCards.filter((k) => cards[k]?.types.includes("creature"));
             if (creaturesInLib.length > 0) {
-              let bestTutor = null, bestScore = -1;
-              for (const k of creaturesInLib) {
-                const score = TUTOR_PRIORITY_SCORE[k] ?? 0;
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestTutor = k;
-                }
-              }
+              const bestTutor = _speakerEtbOrder(s, creaturesInLib)[0] ?? null;
               if (bestTutor) {
                 const handCopy = [...new Set(s.hand)].filter((k) => k !== bestTutor);
                 const present = new Set(s.battlefield.map((p) => {
@@ -15978,6 +16105,37 @@ ${ex}`;
   *** COMBO: ${this.comboName} ***`);
         }
       };
+      var _etbOrderDepth = 0;
+      function _speakerEtbOrder(state, creatureKeys) {
+        const seen = /* @__PURE__ */ new Set();
+        const uniq = [];
+        for (const k of creatureKeys) {
+          if (!seen.has(k)) {
+            seen.add(k);
+            uniq.push(k);
+          }
+        }
+        const byScore = uniq.slice().sort(
+          (a, b) => (TUTOR_PRIORITY_SCORE[b] ?? 0) - (TUTOR_PRIORITY_SCORE[a] ?? 0) || a.localeCompare(b)
+        );
+        let ranked = null;
+        if (_etbOrderDepth === 0) {
+          _etbOrderDepth++;
+          try {
+            const fn = _cards()._creatureTutorCandidates;
+            if (typeof fn === "function") ranked = fn(state, 4);
+          } catch {
+            ranked = null;
+          } finally {
+            _etbOrderDepth--;
+          }
+        }
+        if (!ranked || !ranked.length) return byScore;
+        const inLib = new Set(uniq);
+        const head = ranked.filter((k) => inLib.has(k));
+        const headSet = new Set(head);
+        return [...head, ...byScore.filter((k) => !headSet.has(k))];
+      }
       module.exports = { GameState: GameState2, ManaPool, Permanent, Player, parseCost, buildDefaultLibrary, DEFAULT_DECKLIST };
     }
   });
@@ -19874,8 +20032,14 @@ ${ex}`;
       const solverOpts = {
         maxTurns: Math.min(Math.max(d.maxTurns ?? 4, 1), 5),
         maxDepth: Math.min(Math.max(d.maxDepth ?? 50, 10), 60),
-        maxStates: Math.min(Math.max(d.maxStates ?? 2e5, 1e4), 3e6),
-        maxTimeMs: Math.min(Math.max(d.maxTimeMs ?? 3e4, 100), 3e4),
+        // The user-facing budget is maxTimeMs (see SOLVER_MAX_STATES in
+        // yeva-advisor.jsx). maxStates is still honoured — the Solver stops on
+        // whichever limit it reaches first — but its ceiling is raised past the
+        // 9,999,999 the UI now sends, so clamping no longer silently reimposes a
+        // state cap the user thought they had removed. The time ceiling matches
+        // SOLVER_TIME_MAX_SEC; raise the two together.
+        maxStates: Math.min(Math.max(d.maxStates ?? 2e5, 1e4), 1e7),
+        maxTimeMs: Math.min(Math.max(d.maxTimeMs ?? 3e4, 100), 6e5),
         strategy: ["bfs", "dfs", "iddfs"].includes(d.strategy) ? d.strategy : "dfs",
         allLines: !!d.allLines,
         exhaustive: !!d.exhaustive,
