@@ -1,4 +1,4 @@
-<title>Hitzel's Sequence — a field guide for the other side of the table</title>
+<title>Beating Hitzel's Sequence</title>
 <style>
   :root {
     --ground:      #F2F4EF;
@@ -125,6 +125,23 @@
   .oracle .tx { font-size: 0.97rem; }
 
   figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+
+  /* Card scans are hosted off-site, so they can be blocked. Each plate is
+     given the card's own proportions and a panel fill, so a missing image
+     degrades to a labelled frame rather than to a broken-image glyph — the
+     section still reads without a single pixel loading. */
+  .showcase { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.7rem; }
+  .plate { gap: 0.45rem; min-width: 0; }
+  .plate img {
+    display: block; width: 100%; aspect-ratio: 488 / 680; object-fit: cover;
+    background: var(--panel); border: 1px solid var(--rule-strong);
+    border-radius: 4.75% / 3.4%; color: var(--ink-3); font-size: 0.72rem;
+  }
+  .plate figcaption {
+    font-family: var(--mono); font-size: 0.68rem; line-height: 1.35;
+    color: var(--ink-2); display: flex; flex-direction: column;
+  }
+  .plate figcaption span { color: var(--ink-3); letter-spacing: 0.06em; text-transform: uppercase; font-size: 0.62rem; }
   .chart { width: 100%; height: auto; overflow: visible; }
   .ax      { stroke: var(--rule-strong); stroke-width: 1; }
   .gridln  { stroke: var(--rule); stroke-width: 1; }
@@ -165,6 +182,44 @@
     border: 1px solid var(--rule); border-radius: 2px;
     padding: 0.22em 0.6em; white-space: nowrap;
   }
+  /* A chip for a piece that is a creature — i.e. one you can point ordinary
+     removal at. The distinction is load-bearing, not decorative: it is the
+     difference between "answerable" and "it's a land, good luck". */
+  ul.chips > li.crea { border-color: var(--rule-strong); border-left-width: 3px; border-left-color: var(--accent); }
+
+  /* The three published variants. Lettered A/B/C because the deck's own
+     documentation letters them that way — the marker is a reference, not
+     a decoration. */
+  .variants { display: flex; flex-direction: column; gap: 1.4rem; }
+  .variant { display: grid; grid-template-columns: 1.6rem 1fr; gap: 0.8rem; align-items: start; }
+  .variant .ltr {
+    font-family: var(--mono); font-size: 0.8rem; font-weight: 600;
+    color: var(--accent); padding-top: 0.16em;
+  }
+  .variant .body { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+  .variant p { font-size: 0.95rem; color: var(--ink-2); }
+  .variant .aim { color: var(--ink); }
+  .variant .aim strong { font-weight: 600; }
+
+  /* Severity encoded in the rail colour, so the tiers read at a glance
+     before any of the prose does. */
+  .tiers { display: flex; flex-direction: column; gap: 1.8rem; }
+  .tier { display: flex; flex-direction: column; gap: 0.9rem; }
+  .grade {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.11em;
+    text-transform: uppercase; margin: 0;
+  }
+  .tier-1 .grade { color: var(--accent); }
+  .tier-2 .grade { color: var(--signal); }
+  .tier-3 .grade { color: var(--ink-3); }
+  .hate {
+    display: flex; flex-direction: column; gap: 0.35rem;
+    padding-left: 1.05rem; border-left: 2px solid var(--rule-strong);
+  }
+  .tier-1 .hate { border-left-color: var(--accent); }
+  .tier-2 .hate { border-left-color: var(--signal); }
+  .hate p { font-size: 0.95rem; color: var(--ink-2); }
+  .hate .but { color: var(--ink-3); font-size: 0.9rem; }
 
   .windows { display: flex; flex-direction: column; gap: 1.15rem; }
   .window {
@@ -177,7 +232,7 @@
     font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.11em;
     text-transform: uppercase; color: var(--signal); white-space: nowrap; padding-top: 0.28em;
   }
-  .window .body { display: flex; flex-direction: column; gap: 0.4rem; }
+  .window .body { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
   .window p { font-size: 0.97rem; }
 
   .myth { display: flex; flex-direction: column; gap: 1.15rem; }
@@ -198,7 +253,7 @@
   <header>
     <p class="eyebrow">Commander · mono-green · deck-out combo</p>
     <h1>Hitzel's Sequence</h1>
-    <p class="standfirst">Nobody takes damage. Nobody attacks. You lose because your library runs out and theirs doesn't. Here is exactly how that happens, and the three moments where you can still do something about it.</p>
+    <p class="standfirst">Nobody takes damage. Nobody attacks. You lose because your library runs out and theirs doesn't. Here is exactly how that happens, which cards genuinely stop it, and which ones only look like they do.</p>
   </header>
 
   <section>
@@ -208,11 +263,20 @@
 
   <section>
     <h2>The engine is three cards, and one of them is the win</h2>
-    <span>
-      <img width=32% alt="Endurance" src=https://cards.scryfall.io/large/front/e/b/eb0e0404-4846-4891-acfa-bd0951ecf9c6.jpg>
-      <img width=32% alt="Temur Sabertooth" src=https://cards.scryfall.io/large/front/c/3/c3a5a175-e963-42cc-a0ba-d8914bb93c00.jpg>
-      <img width=32% alt="Geier Reach Sanitarium" src=https://cards.scryfall.io/large/front/c/d/cdb751d3-580f-44dd-a1e2-0f1240f2b891.jpg>
-    </span>
+    <div class="showcase">
+      <figure class="plate">
+        <img alt="Endurance" src="https://cards.scryfall.io/large/front/e/b/eb0e0404-4846-4891-acfa-bd0951ecf9c6.jpg">
+        <figcaption>Endurance<span>the refuel</span></figcaption>
+      </figure>
+      <figure class="plate">
+        <img alt="Temur Sabertooth" src="https://cards.scryfall.io/large/front/c/3/c3a5a175-e963-42cc-a0ba-d8914bb93c00.jpg">
+        <figcaption>Temur Sabertooth<span>the repeat</span></figcaption>
+      </figure>
+      <figure class="plate">
+        <img alt="Geier Reach Sanitarium" src="https://cards.scryfall.io/large/front/c/d/cdb751d3-580f-44dd-a1e2-0f1240f2b891.jpg">
+        <figcaption>Geier Reach Sanitarium<span>the win</span></figcaption>
+      </figure>
+    </div>
     <div class="oracle">
       <span class="nm">Geier Reach Sanitarium — legendary land</span>
       <span class="tx">{T}: Add {C}.</span>
@@ -226,14 +290,14 @@
     <div class="supports">
       <div class="support">
         <h3>A repeatable untap for the Sanitarium</h3>
-        <p>Any one of these does it. They are interchangeable, and the deck plays several — so removing one is rarely enough.</p>
+        <p>Any one of these does it. They are interchangeable, and the deck likely plays several — so removing one is rarely enough. Note that five of the six are creatures (marked): that is what makes the shut-off effects below so much better than spot removal.</p>
         <ul class="chips">
           <li>Deserted Temple</li>
-          <li>Argothian Elder</li>
-          <li>Hope Tender</li>
-          <li>Magus of the Candelabra</li>
-          <li>Ley Weaver</li>
-          <li>Woodcaller Automaton</li>
+          <li class="crea">Argothian Elder</li>
+          <li class="crea">Hope Tender</li>
+          <li class="crea">Magus of the Candelabra</li>
+          <li class="crea">Ley Weaver</li>
+          <li class="crea">Woodcaller Automaton</li>
         </ul>
       </div>
       <div class="support">
@@ -243,6 +307,56 @@
     </div>
 
     <p>Note what is <em>not</em> in that list: <span class="card">Endurance</span>. Endurance does not mill you and is not part of the kill. It is their life support.</p>
+  </section>
+
+  <section>
+    <h2>Three versions, three shopping lists</h2>
+    <p>The deck likely has access to three variants. They share the Sanitarium, unlimited mana, an untapper and Endurance; what differs is <em>how Endurance gets recast every iteration</em>, and that is the part you can attack. Green-bordered pieces are creatures.</p>
+
+    <div class="variants">
+      <div class="variant">
+        <span class="ltr">A</span>
+        <div class="body">
+          <h3>Temur — the short one</h3>
+          <ul class="chips">
+            <li class="crea">Temur Sabertooth</li>
+          </ul>
+          <p>Cast Endurance, hold its trigger on the stack, bounce it to hand with Sabertooth, activate the Sanitarium, untap, repeat. Fewest moving parts and the version you will meet most often.</p>
+          <p class="aim"><strong>Aim at:</strong> Sabertooth. It is the only recursion piece, and it is a creature.</p>
+        </div>
+      </div>
+
+      <div class="variant">
+        <span class="ltr">B</span>
+        <div class="body">
+          <h3>Kogla — the one that kills its own Endurance</h3>
+          <ul class="chips">
+            <li class="crea">Kogla, the Titan Ape</li>
+            <li class="crea">Eternal Witness</li>
+            <li>Beast Within</li>
+            <li>Legolas's Quick Reflexes</li>
+          </ul>
+          <p>Endurance is destroyed on purpose while its trigger is still on the stack, so Eternal Witness can return it from the graveyard; Kogla bounces the Witness to do it again. This is why "kill the Endurance in response" is not just useless but actively helpful to them.</p>
+          <p class="aim"><strong>Aim at:</strong> Eternal Witness, or Kogla. Two creatures, both essential, neither replaceable by the other.</p>
+        </div>
+      </div>
+
+      <div class="variant">
+        <span class="ltr">C</span>
+        <div class="body">
+          <h3>Ashaya — the one with the extra tutor</h3>
+          <ul class="chips">
+            <li class="crea">Ashaya, Soul of the Wild</li>
+            <li class="crea">Quirion Ranger</li>
+            <li class="crea">Scryb Ranger</li>
+            <li class="crea">Duskwatch Recruiter</li>
+            <li>Legolas's Quick Reflexes</li>
+          </ul>
+          <p>A Ranger bounces Endurance by returning a Forest; the line alternates two Endurance triggers so that the one which resolves shuffles Endurance <em>and</em> the Ranger back into the library — where <span class="card">Duskwatch Recruiter</span> immediately digs them out again, for free, as many times as needed.</p>
+          <p class="aim"><strong>Aim at:</strong> <span class="card">Duskwatch Recruiter</span>. It is a two-mana 2/2 doing the work of a tutor engine, it is easy to leave alone because it looks like a value creature, and without it this variant has no way to re-find the pieces it keeps burying.</p>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section>
@@ -298,11 +412,78 @@
   </section>
 
   <section>
-    <h2>Four things that feel like answers and aren't</h2>
+    <h2>The cards this deck is afraid of</h2>
+    <p>Note: almost none of them interact with the Sanitarium at all. They turn off <em>creatures</em>, because everything except the win condition itself is a creature.</p>
+
+    <div class="tiers">
+
+      <div class="tier tier-1">
+        <p class="grade">Turns the engine off</p>
+
+        <div class="hate">
+          <h3>Torpor Orb · Hushwing Gryff · Hushbringer · Tocatli Honor Guard</h3>
+          <p>These are probably the best answers in the game to this deck. Endurance's refuel is an <em>enters-the-battlefield trigger</em>. Switch those off and Endurance is a 3/4 with reach — the loop still mills everyone, including them, and their library is likely the smaller one. They don't just fail to win; they can't safely start.</p>
+          <p>The same effect blanks <span class="card">Eternal Witness</span>, <span class="card">Kogla</span>, <span class="card">Woodcaller Automaton</span>, <span class="card">Scrapshooter</span> and <span class="card">Disciple of Freyalise</span> — most of the deck's other win conditions run on ETB triggers too.</p>
+          <p class="but">Cost: Torpor Orb is an artifact into <span class="card">Force of Vigor</span> and <span class="card">Bane of Progress</span>; the three creature versions dodge that but can be fought. All four are symmetrical — check your own deck first.</p>
+        </div>
+
+        <div class="hate">
+          <h3>Cursed Totem · Linvala, Keeper of Silence</h3>
+          <p>Creatures' activated abilities stop working. That is four of the six untappers, plus <span class="card">Temur Sabertooth</span>, both Rangers, <span class="card">Duskwatch Recruiter</span>, <span class="card">Elvish Reclaimer</span> and likely every mana dork in the deck. What would survive is Deserted Temple — a land, and one they now have no mana to use.</p>
+          <p class="but">Linvala only hits your opponents, so prefer her if your own deck taps creatures for anything. Cursed Totem is symmetrical but harder to remove out of green.</p>
+        </div>
+
+        <div class="hate">
+          <h3>Humility</h3>
+          <p>Everything becomes a 1/1 with no abilities, so nothing on the list above matters. Endurance entering under Humility has no trigger to put on the stack at all, and Ashaya stops turning creatures into lands.</p>
+          <p class="but">Hard to cast at a green table, and enchantment removal is exactly what mono-green has. Expect it to eat a card, not to lock the game.</p>
+        </div>
+      </div>
+
+      <div class="tier tier-2">
+        <p class="grade">Turns their loop into their loss</p>
+
+        <div class="hate">
+          <h3>Orcish Bowmasters</h3>
+          <p>The single most useful card here, because it is the only one that still works <em>after</em> the loop starts. It has flash, and the Sanitarium makes every player draw — so every activation makes an opponent draw outside their draw step, and every one of those pings for 1, aimed wherever you like. Milling out a Commander library takes tens of activations. They cannot pay that in life.</p>
+          <p>It answers the deck's other draw-based kills the same way: the Mikokoro loop and the <span class="card">Disciple of Freyalise</span> draw loop both work by drawing cards.</p>
+          <p class="but">Hold it. Played on curve it is a two-mana value creature they will kill on sight; held up, it is the card that makes the combo unprofitable.</p>
+        </div>
+
+        <div class="hate">
+          <h3>Mayhem Devil</h3>
+          <p>Not an answer to the Sanitarium line, which never sacrifices anything — but the deck's <span class="card">Disciple of Freyalise</span> loop sacrifices a creature every iteration, and Devil converts that into unbounded damage that <em>you</em> point. Keep it in mind as coverage for the rest of the deck rather than for this sequence.</p>
+        </div>
+      </div>
+
+      <div class="tier tier-3">
+        <p class="grade">Attacks the setup, not the loop</p>
+
+        <div class="hate">
+          <h3>Opposition Agent</h3>
+          <p>This is the card that makes land destruction stick. Several cards likely in the deck can search up the Sanitarium, so blowing it up on its own is a delay; while Opposition Agent is out, all seven find nothing and you take the card instead. Flash, so it can arrive in response to the tutor.</p>
+        </div>
+
+        <div class="hate">
+          <h3>Jeska, Thrice Reborn</h3>
+          <p>Repeatable damage from a permanent mono-green struggles to remove. It won't stop a loop that is already running, but across several turns it can pick off whichever creature is currently load-bearing — the untapper, the Sabertooth, the Duskwatch — and force them to re-find each one.</p>
+        </div>
+
+        <div class="hate">
+          <h3>Drannith Magistrate</h3>
+          <p>Locks the commander out of the command zone, so once Yeva is dealt with she stays dealt with. Honest about what it isn't: every piece of the sequence is cast from hand, so this taxes the rebuild rather than stopping the line.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Five things that feel like answers and aren't</h2>
     <div class="myth">
       <div>
         <p class="claim">Kill the Endurance in response.</p>
-        <p>Removing the creature does nothing to the trigger. Once that enters-the-battlefield ability is on the stack it exists independently of the creature that made it, and it will still recycle their graveyard. Several published versions of this line <em>deliberately</em> destroy their own Endurance while its trigger is waiting, because that puts it in the graveyard where <span class="card">Eternal Witness</span> can return it for another lap.</p>
+        <p>Removing the creature does nothing to the trigger. Once that enters-the-battlefield ability is on the stack it exists independently of the creature that made it, and it will still recycle their graveyard. Variant B <em>deliberately</em> destroys its own Endurance while the trigger is waiting, because that puts it in the graveyard where <span class="card">Eternal Witness</span> can return it for another lap.</p>
       </div>
       <div>
         <p class="claim">Counter the Endurance.</p>
@@ -318,7 +499,7 @@
       </div>
       <div>
         <p class="claim">Hold up an answer and act mid-loop.</p>
-        <p>Usually you won't get the chance. The written sequences hold priority through each cycle specifically to avoid handing you a window between activations. Assume that once the loop is genuinely running, it finishes.</p>
+        <p>Usually you won't get the chance. The written sequences hold priority through each cycle specifically to avoid handing you a window between activations. Assume that once the loop is genuinely running, it finishes. <span class="card">Orcish Bowmasters</span> is the exception, and it is an exception because it never needs priority.</p>
       </div>
     </div>
   </section>
@@ -339,8 +520,10 @@
       <div class="window">
         <span class="when">Before</span>
         <div class="body">
-          <h3>The win condition is a land, and they can only have one</h3>
-          <p>Geier Reach Sanitarium is legendary, so a second copy does them no good. It is also a land, which means <span class="card">Strip Mine</span>, <span class="card">Ghost Quarter</span>, <span class="card">Field of Ruin</span> and similar answer the essential piece cleanly — and land destruction is the sort of card people leave in hand because it looks weak. Against this deck it is removal for the win condition.</p>
+          <h3>Killing the land buys a turn, not the game</h3>
+          <p>Geier Reach Sanitarium is legendary, so a second copy does them no good, and <span class="card">Strip Mine</span>, <span class="card">Ghost Quarter</span> and <span class="card">Field of Ruin</span> all answer it. Do it — but know what you are buying.</p>
+          <p><strong>Several cards likely in the deck can go and get it again:</strong> <span class="card">Expedition Map</span>, <span class="card">Crop Rotation</span>, <span class="card">Sylvan Scrying</span>, <span class="card">Urza's Cave</span>, <span class="card">Archdruid's Charm</span>, <span class="card">Sowing Mycospawn</span> and <span class="card">Elvish Reclaimer</span>. Four of those put it straight onto the battlefield, and two — Crop Rotation and Archdruid's Charm — are instants, so a fetch in response to your Strip Mine can mean you don't even get the turn.</p>
+          <p>And the Sanitarium is not the only symmetrical draw land here. <span class="card">Mikokoro, Center of the Sea</span> does the same job for the same {2}, has its own documented loop, and is equally legendary. Treat land destruction as a tempo play that costs them a card and a tutor — genuinely worth it, but not a removal spell for the win condition.</p>
         </div>
       </div>
 
@@ -350,8 +533,8 @@
           <h3>Deny the refuel — but only a <em>static</em> effect does it</h3>
           <p>Graveyard hate is the right instinct and the wrong card. To see why, count what an activation actually does to them: one card leaves the library, one card enters the graveyard. Nothing is destroyed. Endurance moves the whole pile back. Their library and graveyard together are a <strong>closed pool</strong>, and the loop just cycles cards around it.</p>
           <p>That is why one-shot exile fails. In the bounce versions they recast Endurance <em>every single activation</em> — cast it, bounce it with <span class="card">Temur Sabertooth</span> while the trigger is on the stack, activate the Sanitarium, repeat. Their library never drops more than a card or two below where the refuel puts it back. Exiling the graveyard once takes away a pool they did not need to be large; a handful of cards is enough to run the loop indefinitely.</p>
-          <p><strong>What does work is a replacement effect that never lets the graveyard fill:</strong> <span class="card">Rest in Peace</span>, <span class="card">Leyline of the Void</span>, <span class="card">Planar Void</span>. Now each discard is exiled instead, Endurance's trigger finds nothing every time, and their library falls by one per activation with no way back. Everyone drains at the same rate — and their library is smaller than yours, because they have likely been drawing/tutoring extra cards. They deck first.</p>
-          <p>They can answer an enchantment; this is a mono-green deck with <span class="card">Force of Vigor</span> and <span class="card">Bane of Progress</span>. So treat it as buying a turn and forcing them to spend a card, not as a lock.</p>
+          <p><strong>What does work is a replacement effect that never lets the graveyard fill:</strong> <span class="card">Rest in Peace</span>, <span class="card">Leyline of the Void</span>, <span class="card">Planar Void</span>. Now each discard is exiled instead, Endurance's trigger finds nothing every time, and their library falls by one per activation with no way back. Everyone drains at the same rate — and their library is smaller than yours, because they have likely been drawing and tutoring extra cards.</p>
+          <p>Be precise about what that wins you, though: it makes the mill line unprofitable, so they simply won't run it. It does not win the game. This deck has a long list of other ways to close, most of which don't care about graveyards at all. And they can answer an enchantment — this is mono-green with <span class="card">Force of Vigor</span> and <span class="card">Bane of Progress</span>. It buys a turn and forces them to spend a card. That is all, and it is still worth doing.</p>
         </div>
       </div>
 
@@ -368,7 +551,7 @@
         <span class="when">Too late</span>
         <div class="body">
           <h3>Once it is assembled, it is over</h3>
-          <p>Countering one activation does nothing against an unbounded number of them. If unlimited mana, the Sanitarium and a repeatable untapper are all on the battlefield at once with Endurance available, the game is decided. Spend your interaction before that point.</p>
+          <p>Countering one activation does nothing against an unbounded number of them. If unlimited mana, the Sanitarium and a repeatable untapper are all on the battlefield at once with Endurance available, the game is decided. Spend your interaction before that point — the one card that still helps you here is <span class="card">Orcish Bowmasters</span>, because it charges them per activation whether they give you priority or not.</p>
         </div>
       </div>
     </div>
@@ -377,8 +560,9 @@
   <section>
     <h2>Spotting it early</h2>
     <div class="tell">
-      <p><strong>The tell is Geier Reach Sanitarium in a mono-green deck.</strong> Green has almost no reason to play a colourless legendary land whose ability helps everyone draw. If it hits the battlefield, it is there to win the game.</p>
+      <p><strong>The tell is Geier Reach Sanitarium in a mono-green deck.</strong> Green has almost no reason to play a colourless legendary land whose ability helps everyone draw. If it hits the battlefield, it is there to win the game. <span class="card">Mikokoro, Center of the Sea</span> is the same tell wearing a different hat.</p>
       <p>Treat it as urgent when you also see an untapper — <span class="card">Deserted Temple</span>, <span class="card">Hope Tender</span>, <span class="card">Argothian Elder</span> — or any of the deck's mana loops starting to assemble. The gap between "that looks fine" and "the loop is running" is usually one turn.</p>
+      <p>The quieter tell is <span class="card">Duskwatch Recruiter</span>. It reads as a small value creature and it is a tutor engine; against variant C it is the piece holding the loop together, and it is the one people are less likely to spend removal on.</p>
     </div>
   </section>
 
