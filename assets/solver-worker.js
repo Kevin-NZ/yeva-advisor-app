@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-13T07:27:54Z
-// Solver MD5 : afd432eea868
+// Generated : 2026-08-13T11:42:00Z
+// Solver MD5 : b893e25c16d3
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -5986,7 +5986,17 @@
         "saryth"
       ]);
       var _untapLeverKeysCache = null;
-      function generateActions(state, _presentHint = null, exhaustive = false, simulateOpponentTurns = true) {
+      var _narrowed = 0;
+      function narrowedCount() {
+        return _narrowed;
+      }
+      function resetNarrowed() {
+        _narrowed = 0;
+      }
+      function noteNarrowed(n = 1) {
+        _narrowed += n;
+      }
+      function generateActions(state, _presentHint = null, exhaustive = false, simulateOpponentTurns = true, wideTutors = exhaustive) {
         const actions = [];
         if (state.youLost()) return [];
         if (state.endingTurn) {
@@ -6167,7 +6177,7 @@
             const afterPay0 = payManaForCreatureCast(state, costStr, isCreature);
             const fromHand0 = afterPay0 ? removeCastCard(afterPay0) : null;
             if (fromHand0) {
-              const allResults = def.castFn(fromHand0, { exhaustive });
+              const allResults = def.castFn(fromHand0, { exhaustive: wideTutors });
               if (allResults && allResults.length > 0) {
                 let isEquivRedundant = function(ck) {
                   return FUNCTIONAL_EQUIVALENTS.some(
@@ -6244,8 +6254,9 @@
                 }
                 const firstMsg = sorted[0]?.lastHistMsg() ?? "";
                 const isBF = firstMsg.includes("fetch ") || firstMsg.includes("Zenith \u2192");
-                const wideCap = exhaustive ? 8 : 2;
+                const wideCap = wideTutors ? 8 : 2;
                 const maxBranches = def.wideTutor ? wideCap : isBF ? 1 : 2;
+                if (sorted.length > maxBranches) noteNarrowed(sorted.length - maxBranches);
                 for (const resultState of sorted.slice(0, maxBranches)) {
                   const msg = resultState.lastHistMsg() ?? `Cast ${def.name}`;
                   const spellGoesToGraveyard = (def.types.includes("instant") || def.types.includes("sorcery")) && !def.reshufflesIntoLibrary;
@@ -6283,7 +6294,7 @@
                         }
                         ns = removeCastCard(afterPay) ?? ns;
                       }
-                      const res = def.castFn(ns, { exhaustive });
+                      const res = def.castFn(ns, { exhaustive: wideTutors });
                       if (!res || res.length === 0) return null;
                       const matched = res.find(
                         (r) => (r.lastHistMsg() ?? "") === msg
@@ -6448,7 +6459,7 @@
             if (!afterPay) continue;
             const afterGY = afterPay.exileFromGraveyard(0, cardName);
             if (!afterGY) continue;
-            const allResults = def.castFn(afterGY, { exhaustive });
+            const allResults = def.castFn(afterGY, { exhaustive: wideTutors });
             for (const ns of allResults) {
               if (!ns) continue;
               actions.push({
@@ -6460,7 +6471,7 @@
                   if (!ap) return null;
                   const ag = ap.exileFromGraveyard(0, cardName);
                   if (!ag) return null;
-                  const results2 = def.castFn(ag, { exhaustive });
+                  const results2 = def.castFn(ag, { exhaustive: wideTutors });
                   return results2[0] ?? null;
                 }
               });
@@ -6972,7 +6983,7 @@
       function uniqueCards(hand) {
         return [...new Set(hand)];
       }
-      module.exports = { generateActions, artifactAbilitiesSuppressed, effectiveCost, STAX_CARDS, COMBO_REQUIRED_KEYS, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS };
+      module.exports = { generateActions, narrowedCount, resetNarrowed, noteNarrowed, artifactAbilitiesSuppressed, effectiveCost, STAX_CARDS, COMBO_REQUIRED_KEYS, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS };
     }
   });
 
@@ -12922,6 +12933,7 @@
               const at = (x) => rank.has(x.ck) ? rank.get(x.ck) : Infinity;
               eligible.sort((a, b) => at(a) - at(b));
             }
+            if (eligible.length > MAX) require_actions().noteNarrowed(eligible.length - MAX);
             const results = [];
             for (const e of eligible.slice(0, MAX)) {
               const { state: ns, cardKey } = state.searchLibraryFor((k) => k === e.ck);
@@ -16145,7 +16157,7 @@ ${ex}`;
   var require_Solver = __commonJS({
     "Solver.js"(exports, module) {
       "use strict";
-      var { generateActions, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, effectiveCost } = require_actions();
+      var { generateActions, narrowedCount, resetNarrowed, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, effectiveCost } = require_actions();
       var { COMBO_REQUIRED_KEYS, FUNCTIONAL_EQUIVALENTS } = require_combo_data();
       var { checkVictory, checkSimulatedVictory, loopTypeCanWin, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
       var CARDS2 = require_cards();
@@ -16728,6 +16740,8 @@ ${ex}`;
           this.pruned = 0;
           this.pruneReasons = _newPruneReasons();
           this._requireRealWin = false;
+          this._tookUnconfirmedWin = false;
+          this._narrowedInPass = 0;
           this._porEnabled = this.opts.maxBranches === Infinity;
           this._history = /* @__PURE__ */ new Map();
           this.visited = /* @__PURE__ */ new Map();
@@ -16782,12 +16796,14 @@ ${ex}`;
           if (spent >= this.opts.maxStates) return false;
           if (result && result.combo && result.combo.winCondition != null) return false;
           if (this.opts.escalate === true) return true;
+          if (this.pruneReasons.canReachCombo === 0 && !this._tookUnconfirmedWin && this._narrowedInPass === 0) return false;
           if (!result) return true;
           return this.opts.maxStates > DEFAULT_OPTIONS.maxStates;
         }
         solve(initialState) {
           _oppLifeBaseline = (initialState.players ?? []).map((p) => p.life);
           const first = this._solveOnce(initialState);
+          this._narrowedInPass = narrowedCount();
           const spent = this.statesExplored;
           const firstPruned = this.pruned;
           const firstFields = {
@@ -17088,6 +17104,7 @@ ${ex}`;
           const combo = checkVictory(state, infiniteMana, present);
           if (combo) {
             const node2 = { state, parent: parentNode };
+            if (combo.deployed && combo.winCondition == null) this._tookUnconfirmedWin = true;
             if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
               this._recordWin(reconstructPath(node2), combo, s);
               if (this.opts.firstWin) {
@@ -17104,8 +17121,9 @@ ${ex}`;
           const actions = generateActions(
             state,
             analysis.present,
-            this.opts.exhaustive || this._escalating,
-            this.opts.simulateOpponentTurns
+            this.opts.exhaustive,
+            this.opts.simulateOpponentTurns,
+            this.opts.exhaustive || this._escalating
           );
           const children = [];
           const childDepth = depth + 1;
@@ -17335,6 +17353,7 @@ ${ex}`;
               const infiniteMana = pre ? pre.infiniteMana : checkCombos(state, present);
               const combo = checkVictory(state, infiniteMana, present);
               if (combo) {
+                if (combo.deployed && combo.winCondition == null) this._tookUnconfirmedWin = true;
                 if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
                   this._recordWin(reconstructPath(node), combo, score(state, depth));
                   if (!this.opts.allLines) return;
@@ -17349,8 +17368,9 @@ ${ex}`;
               const actions = generateActions(
                 state,
                 nodeAnalysis.present,
-                this.opts.exhaustive || this._escalating,
-                this.opts.simulateOpponentTurns
+                this.opts.exhaustive,
+                this.opts.simulateOpponentTurns,
+                this.opts.exhaustive || this._escalating
               );
               const children = [];
               for (const action of actions) {
@@ -17497,6 +17517,7 @@ ${ex}`;
                 const infiniteMana = pre ? pre.infiniteMana : checkCombos(state, present);
                 const combo = checkVictory(state, infiniteMana, present);
                 if (combo) {
+                  if (combo.deployed && combo.winCondition == null) this._tookUnconfirmedWin = true;
                   if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
                     this._recordWin(reconstructPath(node), combo, score(state, depth));
                     if (this.opts.firstWin) {
@@ -17514,8 +17535,9 @@ ${ex}`;
                 const actions = generateActions(
                   state,
                   nodeAnalysis.present,
-                  this.opts.exhaustive || this._escalating,
-                  this.opts.simulateOpponentTurns
+                  this.opts.exhaustive,
+                  this.opts.simulateOpponentTurns,
+                  this.opts.exhaustive || this._escalating
                 );
                 const children = [];
                 for (const action of actions) {
@@ -17604,6 +17626,9 @@ ${ex}`;
           this.linesFound = 0;
           this.pruned = 0;
           this.pruneReasons = _newPruneReasons();
+          this._tookUnconfirmedWin = false;
+          this._narrowedInPass = 0;
+          resetNarrowed();
           this._requireRealWin = false;
           this._porEnabled = this.opts.maxBranches === Infinity;
           this._history = /* @__PURE__ */ new Map();
