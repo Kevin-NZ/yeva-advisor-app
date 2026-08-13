@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-12T22:23:18Z
-// Solver MD5 : ef643ace5b2e
+// Generated : 2026-08-13T07:27:54Z
+// Solver MD5 : afd432eea868
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -7170,6 +7170,7 @@
                   if (sp) s = s.untapPermanent(sp.id);
                 } else {
                   s = s.untapPermanent(ut.id);
+                  if (!s) continue;
                 }
                 s = s.log(`${perm.name}: return ${target.name} \u2192 untap ${ut._isSelf ? perm.name : ut.name}`);
                 results.push(s);
@@ -16802,7 +16803,7 @@ ${ex}`;
           const restoreFirst = () => Object.assign(this, firstFields);
           if (!this._shouldEscalate(first, spent)) return first;
           console.log(`
-\u{1F501} No confirmed win in the fast pass \u2014 escalating within the remaining ${(this.opts.maxStates - spent).toLocaleString()}-state budget (relaxing combo-reachability pruning; requiring a real win condition)...`);
+\u{1F501} No confirmed win in the fast pass \u2014 escalating within the remaining ${(this.opts.maxStates - spent).toLocaleString()}-state budget (relaxing combo-reachability pruning; widening tutor branching; requiring a real win condition)...`);
           const savedMax = this.opts.maxStates;
           this._escalating = true;
           this._requireRealWinNext = true;
@@ -17100,7 +17101,12 @@ ${ex}`;
               this.fallbackWin = { line: reconstructPath(node2), combo, score: s };
             }
           }
-          const actions = generateActions(state, analysis.present, this.opts.exhaustive, this.opts.simulateOpponentTurns);
+          const actions = generateActions(
+            state,
+            analysis.present,
+            this.opts.exhaustive || this._escalating,
+            this.opts.simulateOpponentTurns
+          );
           const children = [];
           const childDepth = depth + 1;
           const childExceedsTurn = false;
@@ -17340,7 +17346,12 @@ ${ex}`;
                 }
               }
               const nodeAnalysis = pre ? pre.analysis : analyzeState(state, infiniteMana, present);
-              const actions = generateActions(state, nodeAnalysis.present, this.opts.exhaustive, this.opts.simulateOpponentTurns);
+              const actions = generateActions(
+                state,
+                nodeAnalysis.present,
+                this.opts.exhaustive || this._escalating,
+                this.opts.simulateOpponentTurns
+              );
               const children = [];
               for (const action of actions) {
                 let next;
@@ -17500,7 +17511,12 @@ ${ex}`;
                   }
                 }
                 const nodeAnalysis = pre ? pre.analysis : analyzeState(state, infiniteMana, present);
-                const actions = generateActions(state, nodeAnalysis.present, this.opts.exhaustive, this.opts.simulateOpponentTurns);
+                const actions = generateActions(
+                  state,
+                  nodeAnalysis.present,
+                  this.opts.exhaustive || this._escalating,
+                  this.opts.simulateOpponentTurns
+                );
                 const children = [];
                 for (const action of actions) {
                   let next;
