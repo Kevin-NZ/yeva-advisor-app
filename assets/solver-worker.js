@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-14T09:24:07Z
-// Solver MD5 : 0442e0d50ecf
+// Generated : 2026-08-14T20:25:41Z
+// Solver MD5 : 7b6b8068c33f
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -4773,8 +4773,13 @@
               if (hasKnown) return true;
               return lib.every((ck) => ck === "unknown") && lib.length > 0;
             })();
-            const DRAW_OUTLET_LAND_KEYS = ["war_room", "geier_reach", "mikokoro"];
-            const DRAW_OUTLET_LAND_NAMES = ["War Room", "Geier Reach Sanitarium", "Mikokoro, Center of the Sea"];
+            const DRAW_OUTLET_LAND_KEYS = ["war_room", "geier_reach", "mikokoro", "mariposa_military"];
+            const DRAW_OUTLET_LAND_NAMES = [
+              "War Room",
+              "Geier Reach Sanitarium",
+              "Mikokoro, Center of the Sea",
+              "Mariposa Military Base"
+            ];
             const libHasDrawOutlet = (() => {
               const onBF = state.battlefield.some(
                 (p) => p.is("land") && !p.tapped && DRAW_OUTLET_LAND_NAMES.includes(p.name)
@@ -8068,8 +8073,49 @@
             }
           }
         },
-        ominous_cemetery: { name: "Ominous Cemetery", types: ["land"], subtypes: [], cost: null, tapForMana: simpleTap("{C}", [["C", 1]]) },
-        mariposa_military: { name: "Mariposa Military Base", types: ["land"], subtypes: [], cost: null, tapForMana: simpleTap("{C}", [["C", 1]]) },
+        // [2026-08-14 — O-79] "{5}, {T}, Exile this land: Target creature's owner
+        // shuffles it into their library" is single-target removal aimed at an
+        // opponent's creature. No opponent permanents are modelled, and using it on
+        // our own board is strictly self-harm.
+        ominous_cemetery: { name: "Ominous Cemetery", types: ["land"], subtypes: [], cost: null, tapForMana: simpleTap("{C}", [["C", 1]]), oracleFidelityWaiver: ["exile"] },
+        mariposa_military: {
+          name: "Mariposa Military Base",
+          types: ["land"],
+          subtypes: [],
+          cost: null,
+          tapForMana: simpleTap("{C}", [["C", 1]]),
+          // Oracle: You may have this land enter tapped. If you do, you get two rad
+          // counters. / {T}: Add {C}. / {5}, {T}: Draw a card. This ability costs {1}
+          // less to activate for each rad counter you have.
+          //
+          // [2026-08-14 — O-79] Was mana-only, so a genuinely repeatable draw outlet
+          // was invisible to the solver. That matters: with infinite mana plus any
+          // untap effect, a {T}-to-draw land draws the deck, which is the same win
+          // route War Room and Geier Reach Sanitarium already provide.
+          //
+          // Rad counters are NOT modelled — they are a player-level resource this
+          // engine has no concept of, and the enter-tapped choice that grants them is
+          // not offered either. The cost is therefore charged at the full {5} rather
+          // than the {3} the real card usually pays. That errs in the safe direction:
+          // the solver may miss a line that needed the discount, but it can never
+          // claim one it could not afford.
+          abilities: {
+            draw: {
+              label: "{5}, {T}: Draw a card",
+              fn(state, perm) {
+                if (perm.tapped) return [];
+                const ap = state.payMana("5");
+                if (!ap) return [];
+                let s = ap.tapPermanent(perm.id);
+                if (!s) return [];
+                const drawnKey = s.players[0].library[0];
+                s = s.playerDraws(0, 1);
+                const drawnName = drawnKey && drawnKey !== "unknown" ? CARDS2[drawnKey]?.name ?? drawnKey : "(empty library)";
+                return [s.log(`Mariposa Military Base: {5}, {T} \u2192 draw ${drawnName}`)];
+              }
+            }
+          }
+        },
         // Gemstone Caverns: If Gemstone Caverns is in your opening hand and you're
         // not the starting player, you may begin the game with it on the battlefield
         // with a luck counter on it. {T}: Add {C}. If Gemstone Caverns has a luck
@@ -8240,21 +8286,21 @@
           types: ["land"],
           subtypes: [],
           cost: null,
-          // Enters tapped. {T}: Add {G}. {T}, Sacrifice: Add {G}{G}{G}.
+          // Enters tapped. {T}: Add {G}. {T}, Sacrifice: Add {G}{G}.
           tapForMana: simpleTap("{G}", [["G", 1]]),
           abilities: {
             sac_for_mana: {
               manaAbility: true,
               // [2026-07-10] excepted from Disruptor Flute's activation lock (real card exempts mana abilities)
-              label: "{T}, Sacrifice Havenwood Battleground: Add {G}{G}{G}",
+              label: "{T}, Sacrifice Havenwood Battleground: Add {G}{G}",
               fn(state, perm) {
                 if (perm.tapped) return [];
                 let s = state.tapPermanent(perm.id);
                 if (!s) return [];
                 s = s.removeFromBattlefield(perm.id, "graveyard");
                 if (!s) return [];
-                s = s.addMana("G", 3);
-                return [s.log("Havenwood Battleground: {T}, sacrifice \u2192 {G}{G}{G}")];
+                s = s.addMana("G", 2);
+                return [s.log("Havenwood Battleground: {T}, sacrifice \u2192 {G}{G}")];
               }
             }
           }
@@ -9336,37 +9382,48 @@
           power: 0,
           toughness: 3,
           // [P/T verified 2026-07-10 vs card DB; was 2/2]
-          // {T}: Exile up to two target cards from a single graveyard. Add {G} for each artifact exiled.
-          // Modeled as a mana ability — taps to exile opponents' artifacts from graveyard for {G} each.
-          // Simplified: if any artifact names are in graveyard, exile up to 2 for {G}{G};
-          // otherwise tap for {0} (still useful to exile combo pieces from opponent's GY).
+          // Oracle (corrected 2026-08-14 against Scryfall — see below):
+          //   This creature gets +3/+0 as long as it has three or more oil counters on it.
+          //   {T}: Add one mana of any color.
+          //   Whenever this creature becomes tapped, exile target card from a graveyard
+          //   and put an oil counter on this creature.
+          //
+          // [2026-08-14] The previous implementation was a DIFFERENT CARD. It read
+          // "{T}: Exile up to two target cards from a single graveyard. Add {G} for
+          // each artifact card exiled this way" — text that matches no printing of
+          // Armored Scrapgorger — and modelled it faithfully: up to {G}{G} of mana,
+          // and NO mana at all (an empty action list) whenever the graveyard held no
+          // artifact. The real card is a plain one-mana dork that always taps for
+          // mana, so the solver was both overstating it (2 mana) and, far more often,
+          // erasing it as a mana source entirely. Caught by card_data-validator.js on
+          // its first real run against Scryfall.
+          //
+          // Modelled as tapForMana because the exile-and-counter trigger fires on the
+          // tap itself ("whenever this creature becomes tapped"), so there is no
+          // separate action to generate: tapping for mana IS what triggers it.
           tapForMana(state, perm) {
             if (perm.tapped || perm.summoningSick) return [];
-            const s = state.tapPermanent(perm.id);
+            let s = state.tapPermanent(perm.id);
             if (!s) return [];
-            const cards = CARDS2;
-            const gy = s.players[0].graveyard ?? [];
-            const artifactIndices = [];
-            for (let i = 0; i < gy.length && artifactIndices.length < 2; i++) {
-              const { NAME_TO_KEY } = require_actions();
-              const ck = NAME_TO_KEY[gy[i]];
-              const def = ck ? cards[ck] : null;
-              if (def?.types.includes("artifact")) artifactIndices.push(i);
+            s = s.addMana("G", 1);
+            let exiled = null;
+            const gy = s.players?.[0]?.graveyard ?? [];
+            if (gy.length) {
+              const after = s.exileFromGraveyard(0, gy[0]);
+              if (after) {
+                exiled = gy[0];
+                s = after;
+              }
             }
-            const manaAmt = artifactIndices.length;
-            if (manaAmt === 0) {
-              return [];
+            if (exiled) {
+              const live = s.getPermanentById(perm.id);
+              if (live) {
+                const oil = (live.counters?.oil ?? 0) + 1;
+                live.counters = { ...live.counters, oil };
+                if (oil === 3) live.power = (live.power ?? 0) + 3;
+              }
             }
-            let ns = s.clone();
-            ns._ensurePlayers();
-            ns.players[0] = ns.players[0].clone();
-            const newGY = [...ns.players[0].graveyard];
-            for (let j = artifactIndices.length - 1; j >= 0; j--) {
-              newGY.splice(artifactIndices[j], 1);
-            }
-            ns.players[0].graveyard = newGY;
-            ns = ns.addMana("G", manaAmt);
-            return [ns.log(`Tap Armored Scrapgorger: exile ${manaAmt} artifact(s) \u2192 {G}x${manaAmt}`)];
+            return [s.log(exiled ? `Tap Armored Scrapgorger \u2192 {G}; exile ${exiled} from graveyard, +1 oil counter` : `Tap Armored Scrapgorger \u2192 {G} (no graveyard card to exile)`)];
           }
         },
         somberwald_sage: {
@@ -9377,9 +9434,12 @@
           power: 0,
           toughness: 1,
           // [P/T verified 2026-07-10 vs card DB; was 1/1]
-          // {T}: Add three mana in any combination of colors. Spend only on creature spells.
-          // The restriction (creature-only mana) is not modeled in the mana pool,
-          // but the solver primarily casts creatures so this is functionally correct.
+          // {T}: Add three mana of any ONE color. Spend only on creature spells.
+          // [2026-08-14] The comment used to say "in any combination of colors";
+          // Scryfall says one color. No behaviour change — three of one color is
+          // three green here either way — but the note was describing a card that
+          // does not exist. The creature-only restriction is still not modelled in
+          // the mana pool; the solver overwhelmingly spends mana on creatures.
           tapForMana: simpleTap("{G}{G}{G}", [["G", 3]])
         },
         // ─── NEW DRAW-ENGINE CREATURES (added 2026) ───────────────────────────────
@@ -9489,14 +9549,14 @@
           toughness: 1,
           // [P/T verified 2026-07-10 vs card DB; was 2/2]
           // ETB: return target card from graveyard to hand.
-          // Eternalize {4}{G}{G}: exile from GY, create 4/4 Zombie token copy.
+          // Eternalize {5}{G}{G}: exile from GY, create 4/4 Zombie token copy.
           externallyImplemented: true,
           // ETB return in GameState.enterBattlefield
           graveyardAbilities: {
             eternalize: {
-              label: "{4}{G}{G}: Eternalize \u2014 exile from graveyard \u2192 4/4 Zombie Human Shaman token",
+              label: "{5}{G}{G}: Eternalize \u2014 exile from graveyard \u2192 4/4 Zombie Human Shaman token",
               fn(state, cardName) {
-                const ap = state.payMana("4GG");
+                const ap = state.payMana("5GG");
                 if (!ap) return [];
                 let s = ap.clone();
                 s._ensurePlayers();
@@ -10308,8 +10368,21 @@
                   const cardName = player.graveyard[0];
                   let s = ap.exileFromGraveyard(pi, cardName);
                   if (!s) continue;
-                  s = s.gainLife(0, 1);
-                  s = s.log(`Scavenging Ooze: exile ${cardName} from ${player.name}'s graveyard, gain 1 life`);
+                  const { NAME_TO_KEY } = require_actions();
+                  const exiledDef = CARDS2[NAME_TO_KEY[cardName]];
+                  const wasCreature = !!exiledDef?.types?.includes("creature");
+                  if (wasCreature) {
+                    s = s.gainLife(0, 1);
+                    s = s.clone();
+                    s._ensureBF();
+                    const live = s.battlefield.find((p) => p.id === perm.id);
+                    if (live) {
+                      live.counters = { ...live.counters, "+1/+1": (live.counters?.["+1/+1"] ?? 0) + 1 };
+                      live.power = (live.power ?? 0) + 1;
+                      live.toughness = (live.toughness ?? 0) + 1;
+                    }
+                  }
+                  s = s.log(`Scavenging Ooze: exile ${cardName} from ${player.name}'s graveyard` + (wasCreature ? ", +1/+1 counter and gain 1 life" : ""));
                   results.push(s);
                 }
                 return results;
@@ -11128,6 +11201,13 @@
           toughness: 3
         },
         cabbage_merchant: {
+          // [2026-08-14 — O-79] All three verbs hang off things this solver does not
+          // model. Food tokens arrive only from OPPONENTS casting noncreature spells,
+          // the sacrifice trigger needs a creature dealing COMBAT DAMAGE to you, and
+          // the mana ability needs two Foods to tap. With no opponent spellcasting and
+          // no combat, the Food count is permanently zero and every one of the three is
+          // unreachable — there is nothing to implement, not something left undone.
+          oracleFidelityWaiver: ["destroy-or-sac", "add-mana", "gain-life"],
           name: "The Cabbage Merchant",
           types: ["creature"],
           subtypes: ["Legendary", "Human", "Citizen"],
@@ -11445,8 +11525,14 @@
           // Modeled as: draw when any creature enters (simplified — name check skipped for solver).
           // Applied in actions.js cast_spell trigger.
         },
-        compost: { name: "Compost", types: ["enchantment"], subtypes: [], cost: "1G" },
-        viridian_revel: { name: "Viridian Revel", types: ["enchantment"], subtypes: [], cost: "1GG" },
+        // [2026-08-14 — O-79] Triggers on a BLACK card entering an OPPONENT'S graveyard.
+        // Opponents' graveyards are not modelled and this deck is mono-green, so the
+        // trigger has no event that could ever fire.
+        compost: { name: "Compost", types: ["enchantment"], subtypes: [], cost: "1G", oracleFidelityWaiver: ["draw"] },
+        // [2026-08-14 — O-79] Triggers on an artifact reaching an OPPONENT'S graveyard
+        // from the battlefield. Opponents' permanents and graveyards are both
+        // unmodelled, so nothing can trigger it.
+        viridian_revel: { name: "Viridian Revel", types: ["enchantment"], subtypes: [], cost: "1GG", oracleFidelityWaiver: ["draw"] },
         utopia_sprawl: {
           name: "Utopia Sprawl",
           types: ["enchantment"],
@@ -11517,6 +11603,10 @@
           }
         },
         carpet_of_flowers: {
+          // [2026-08-14 — O-79] X is "the number of Islands target opponent controls".
+          // Opponents' permanents are not modelled, so X is always 0 and the ability
+          // adds nothing. Implementing it would mean inventing an opponent's mana base.
+          oracleFidelityWaiver: ["add-mana"],
           name: "Carpet of Flowers",
           types: ["enchantment"],
           subtypes: [],
@@ -12552,6 +12642,12 @@
           }
         },
         touch_of_vitae: {
+          // [2026-08-14 — O-79] The untap-granting half is implemented in castFn. The
+          // draw is delayed — "at the beginning of the NEXT turn's upkeep" — and this
+          // engine has no delayed-trigger queue. Drawing it immediately would be
+          // wrong (it would fund the same turn's line), so it is left out rather than
+          // approximated in the direction that overstates the card.
+          oracleFidelityWaiver: ["draw"],
           name: "Touch of Vitae",
           types: ["instant"],
           subtypes: [],
@@ -13526,6 +13622,12 @@
         // normally like any other creature (its own Vigilance/Reach keywords
         // don't affect mana or combo logic, so no abilities block is needed).
         chancellor_of_the_tangle: {
+          // [2026-08-14 — O-79] The opening-hand {G} IS implemented — see
+          // _chancellorOpeningHandBonus in GameState.js, which checks for this exact
+          // card key. The scanner misses it because the helper computes the bonus and
+          // the addMana happens at its two call sites, so no single block mentions
+          // both the card and the verb. A scanner limitation, not a gap.
+          oracleFidelityWaiver: ["add-mana"],
           name: "Chancellor of the Tangle",
           types: ["creature"],
           subtypes: ["Phyrexian", "Beast"],
@@ -13685,6 +13787,13 @@
         // e.g. chancellor_of_the_tangle's Reach/Vigilance above). Only the mana
         // ability is modelled.
         scavenger_grounds: {
+          // [2026-08-14 — O-79] "{2}, {T}, Sacrifice a Desert: Exile all graveyards"
+          // is symmetric graveyard hate. This deck's graveyard is an ASSET (Eternal
+          // Witness, Timeless Witness, Elvish Reclaimer all recur from it) and
+          // opponents' graveyards are not modelled, so the ability is pure downside
+          // for the solver and would never be correct to take. Left unimplemented
+          // deliberately rather than added as an action the search must consider.
+          oracleFidelityWaiver: ["exile", "destroy-or-sac"],
           name: "Scavenger Grounds",
           types: ["land"],
           subtypes: ["Desert"],
