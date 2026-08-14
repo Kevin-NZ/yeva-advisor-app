@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-13T11:42:00Z
-// Solver MD5 : b893e25c16d3
+// Generated : 2026-08-14T09:24:07Z
+// Solver MD5 : 0442e0d50ecf
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -522,8 +522,39 @@
         // ETB chain: finds Duskwatch directly
         "glademuse",
         // Draw engine: draws on opponent spells
-        "invasion_of_ikoria"
+        "invasion_of_ikoria",
         // Creature tutor (non-Human): same role as Chord of Calling
+        // [2026-08-13 — O-83] The SPELL tutors. This set previously held only
+        // permanent-based converters, which left the most common failure in the
+        // whole corpus unaddressed: of the 412 hands in T3-Results.full that reach a
+        // deployed infinite-mana engine and never convert it, 291 (71%) STARTED with
+        // a converter in the opening hand and ENDED without one — the search spent
+        // its tutor assembling mana and then had nothing left to win with. Nine of
+        // the ten most-spent converters were these, and none was held:
+        //
+        //   green_suns_zenith 76, eldritch_evolution 39, natural_order 38,
+        //   natures_rhythm 35, summoners_pact 31, chord_of_calling 31,
+        //   archdruid_charm 30, shared_summons 27, worldly_tutor 17
+        //   (formidable_speaker 21 was already in this set)
+        //
+        // Every one of them is on 'Win: Tutor for Finisher's handSpellTutors list, so
+        // holding ANY of them alongside infinite mana IS the win — the win condition
+        // fires without the tutor ever being resolved.
+        //
+        // As the note above says, these are deprioritised, NOT blocked: a line that
+        // needs Green Sun's Zenith to assemble the engine in the first place can
+        // still cast it, the DFS just tries everything else first.
+        "green_suns_zenith",
+        "shared_summons",
+        "chord_of_calling",
+        "summoners_pact",
+        "archdruid_charm",
+        "natures_rhythm",
+        "eldritch_evolution",
+        "natural_order",
+        "worldly_tutor",
+        "yisan",
+        "elvish_harbinger"
       ]);
       function isStax(cardKey) {
         return STAX_KEYS.has(cardKey);
@@ -5088,6 +5119,10 @@
               description: wc.description,
               winCondition: wc.name,
               manaCombo: infiniteMana.name,
+              // [2026-08-14 — O-84] Carried so the display can tell a genuinely
+              // unbounded engine from a flat per-turn ramp. Without it printResult
+              // stamped ♾ on both.
+              manaLoopType: infiniteMana.loopType,
               // The mana DETECTOR's own description (how the infinite-mana loop
               // itself works — which permanents to tap/bounce/recast) is distinct
               // from `description` above (the WIN CONDITION's strategic text, e.g.
@@ -5108,6 +5143,10 @@
               description: wc.description,
               winCondition: wc.name,
               manaCombo: infiniteMana.name,
+              // [2026-08-14 — O-84] Carried so the display can tell a genuinely
+              // unbounded engine from a flat per-turn ramp. Without it printResult
+              // stamped ♾ on both.
+              manaLoopType: infiniteMana.loopType,
               manaDescription: infiniteMana.description,
               loopSteps: infiniteMana.loopSteps,
               deployed: false
