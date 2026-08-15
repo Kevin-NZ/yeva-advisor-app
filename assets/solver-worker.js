@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-15T02:47:28Z
-// Solver MD5 : 5013d0e5149f
+// Generated : 2026-08-15T03:15:43Z
+// Solver MD5 : df642d9591a0
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -374,6 +374,80 @@
         // draw
         7: ["regal_force"]
       };
+      var BIG_MANA_DORK_KEYS = /* @__PURE__ */ new Set([
+        "priest_of_titania",
+        "circle_of_dreams_druid",
+        "elvish_archdruid",
+        "wirewood_channeler",
+        "karametra_acolyte",
+        "selvala",
+        "fanatic_of_rhonas"
+      ]);
+      var BIG_MANA_LAND_KEYS = /* @__PURE__ */ new Set(["gaeas_cradle", "itlimoc", "nykthos"]);
+      var FORMIDABLE_FETCH_PLAN = [
+        // "If (BML / BMD) in Play → Symbyote"  →  (LU / CU) + CU + Tutor + Combo Setup
+        {
+          targets: ["wirewood_symbiote"],
+          when: (c) => c.bmlInPlay || c.bmdInPlay
+        },
+        // "If Ramp needed (& assured Land drop) → Mycospawn"  →  BML + LU
+        {
+          targets: ["sowing_mycospawn"],
+          when: (c) => c.rampNeeded && !c.bmlInPlay && c.landDropAssured
+        },
+        // "If Fanatic, Symbiote & 1MV Elf in Play → Badgermole"  →  Temur infinite
+        {
+          targets: ["badgermole_cub"],
+          when: (c) => c.inPlay.has("fanatic_of_rhonas") && c.inPlay.has("wirewood_symbiote") && c.oneMvElfInPlay
+        },
+        // "If Ramp needed via BMD → Karametra"  →  BMD + CU
+        {
+          targets: ["karametra_acolyte"],
+          when: (c) => c.rampNeeded && !c.bmdInPlay
+        },
+        // "If (Magus / Tender) in play → Reclaimer EOT"  →  LU + fetch (BML + Lodge)
+        {
+          targets: ["elvish_reclaimer"],
+          when: (c) => c.inPlay.has("magus_of_the_candelabra") || c.inPlay.has("hope_tender")
+        },
+        // "If BML + Symbiote in Hand / Play → Magus / Tender EOT"
+        {
+          targets: ["magus_of_the_candelabra", "hope_tender"],
+          when: (c) => c.bmlHeld && c.held.has("wirewood_symbiote")
+        },
+        // "If BMD + Symbiote in Hand / Play → Temur"
+        {
+          targets: ["temur_sabertooth"],
+          when: (c) => c.bmdHeld && c.held.has("wirewood_symbiote")
+        },
+        // "If G needed → Freyalise"  →  +1 critical mana to cast next turn.
+        // Disciple of Freyalise // Garden of Freyalise is an MDFC whose back face is
+        // a land that taps for {G} — that, not the 6-mana creature, is the point.
+        {
+          targets: ["disciple_freyalise"],
+          when: (c) => c.greenNeeded
+        }
+      ];
+      function formidableFetchOrder(ctx) {
+        const out = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const rule of FORMIDABLE_FETCH_PLAN) {
+          let ok = false;
+          try {
+            ok = !!rule.when(ctx);
+          } catch {
+            ok = false;
+          }
+          if (!ok) continue;
+          for (const t of rule.targets) {
+            if (!seen.has(t)) {
+              seen.add(t);
+              out.push(t);
+            }
+          }
+        }
+        return out;
+      }
       var TUTOR_PRIORITY_SCORE = {
         // Core combo pieces — highest priority
         "gaeas_cradle": 100,
@@ -621,7 +695,7 @@
       function isStax(cardKey) {
         return STAX_KEYS.has(cardKey);
       }
-      module.exports = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, YISAN_LADDER, FUNCTIONAL_EQUIVALENTS, FINGERPRINT_EQUIVALENTS, STAX_KEYS, HOLD_FOR_WIN, isStax, ALWAYS_RELEVANT_TUTOR_TARGETS };
+      module.exports = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, YISAN_LADDER, FUNCTIONAL_EQUIVALENTS, FINGERPRINT_EQUIVALENTS, STAX_KEYS, HOLD_FOR_WIN, isStax, ALWAYS_RELEVANT_TUTOR_TARGETS, BIG_MANA_DORK_KEYS, BIG_MANA_LAND_KEYS, FORMIDABLE_FETCH_PLAN, formidableFetchOrder };
     }
   });
 
@@ -7331,7 +7405,62 @@
         }
         return result;
       }
-      function _creatureTutorCandidates(state, maxCandidates = 3) {
+      function _formidableFetchContext(state) {
+        const cards = CARDS2;
+        const { BIG_MANA_DORK_KEYS, BIG_MANA_LAND_KEYS } = require_combo_data();
+        const { NAME_TO_KEY } = require_actions();
+        const { parseCost } = require_GameState();
+        const inPlay = /* @__PURE__ */ new Set();
+        for (const p of state.battlefield || []) {
+          const ck = NAME_TO_KEY[p.name];
+          if (ck) inPlay.add(ck);
+        }
+        const hand = new Set(state.hand || []);
+        const held = /* @__PURE__ */ new Set([...inPlay, ...hand]);
+        const anyOf = (set, keys) => [...keys].some((k) => set.has(k));
+        const mvOf = (k) => {
+          const def = cards[k];
+          if (!def || !def.cost) return 0;
+          const p = parseCost(def.cost);
+          return p.generic + Object.values(p.colored).reduce((a, b) => a + b, 0);
+        };
+        let manaSources = 0;
+        for (const p of state.battlefield || []) {
+          const ck = NAME_TO_KEY[p.name];
+          if (ck && typeof cards[ck]?.tapForMana === "function") manaSources++;
+        }
+        let handMaxCost = 0;
+        for (const k of hand) handMaxCost = Math.max(handMaxCost, mvOf(k));
+        const hasLandInHand = [...hand].some((k) => cards[k]?.types?.includes("land"));
+        return {
+          inPlay,
+          hand,
+          held,
+          bmdInPlay: anyOf(inPlay, BIG_MANA_DORK_KEYS),
+          bmlInPlay: anyOf(inPlay, BIG_MANA_LAND_KEYS),
+          bmdHeld: anyOf(held, BIG_MANA_DORK_KEYS),
+          bmlHeld: anyOf(held, BIG_MANA_LAND_KEYS),
+          oneMvElfInPlay: [...inPlay].some(
+            (k) => cards[k]?.subtypes?.includes("Elf") && mvOf(k) === 1
+          ),
+          landDropAssured: hasLandInHand && (state.landsPlayedThisTurn ?? 0) < (state.landDrops ?? 1),
+          rampNeeded: handMaxCost > manaSources,
+          greenNeeded: manaSources === 0
+        };
+      }
+      function _formidableFetchOrder(state) {
+        try {
+          const { formidableFetchOrder } = require_combo_data();
+          return formidableFetchOrder(_formidableFetchContext(state)) || [];
+        } catch {
+          return [];
+        }
+      }
+      function _preferRank(order) {
+        if (!Array.isArray(order) || order.length === 0) return null;
+        return new Map(order.map((k, i) => [k, i]));
+      }
+      function _creatureTutorCandidates(state, maxCandidates = 3, opts = {}) {
         const cards = CARDS2;
         const { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, ALWAYS_RELEVANT_TUTOR_TARGETS } = require_combo_data();
         const { NAME_TO_KEY } = require_actions();
@@ -7348,6 +7477,14 @@
         }
         for (const ck of ALWAYS_RELEVANT_TUTOR_TARGETS) {
           if (!present.has(ck)) missingCombo.add(ck);
+        }
+        const planOnly = /* @__PURE__ */ new Set();
+        if (Array.isArray(opts.preferOrder)) {
+          for (const ck of opts.preferOrder) {
+            if (present.has(ck) || missingCombo.has(ck)) continue;
+            missingCombo.add(ck);
+            planOnly.add(ck);
+          }
         }
         for (const group of FUNCTIONAL_EQUIVALENTS) {
           const hasOne = [...group].some((k) => present.has(k));
@@ -7402,13 +7539,24 @@
           tier1.push({ ck, sc: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
         }
         if (tier1.length > 0) {
-          tier1.sort((a, b) => b.sc - a.sc);
+          const prefRank = _preferRank(opts.preferOrder);
+          if (prefRank) {
+            tier1.sort((a, b) => (planOnly.has(a.ck) ? 1 : 0) - (planOnly.has(b.ck) ? 1 : 0) || (prefRank.get(a.ck) ?? Infinity) - (prefRank.get(b.ck) ?? Infinity) || b.sc - a.sc);
+          } else {
+            tier1.sort((a, b) => b.sc - a.sc);
+          }
           for (const x of tier1) {
             if (picked.length >= maxCandidates) break;
             picked.push(x.ck);
           }
         }
         if (picked.length > 0) return picked;
+        if (_preferRank(opts.preferOrder)) {
+          const libSet = new Set(libCreatures);
+          for (const ck of opts.preferOrder) {
+            if (libSet.has(ck)) return [ck];
+          }
+        }
         let tier2Key = null, tier2Score = -1;
         for (const ck of libCreatures) {
           const sc = TUTOR_PRIORITY_SCORE[ck] ?? 0;
@@ -9883,7 +10031,9 @@
             const libCards = entered.players[0].library;
             const creaturesInLib = libCards.filter((k) => cards[k]?.types.includes("creature"));
             if (creaturesInLib.length === 0) return plainEntry();
-            const candidates = _creatureTutorCandidates(entered, 3);
+            const candidates = _creatureTutorCandidates(entered, 3, {
+              preferOrder: _formidableFetchOrder(entered)
+            });
             if (candidates.length === 0) return plainEntry();
             const { TUTOR_PRIORITY_SCORE } = require_combo_data();
             const { NAME_TO_KEY } = require_actions();
@@ -13903,6 +14053,18 @@
         writable: false,
         configurable: false
       });
+      Object.defineProperty(module.exports, "_formidableFetchOrder", {
+        value: _formidableFetchOrder,
+        enumerable: false,
+        writable: false,
+        configurable: false
+      });
+      Object.defineProperty(module.exports, "_formidableFetchContext", {
+        value: _formidableFetchContext,
+        enumerable: false,
+        writable: false,
+        configurable: false
+      });
     }
   });
 
@@ -16361,10 +16523,13 @@ ${ex}`;
           (a, b) => (TUTOR_PRIORITY_SCORE[b] ?? 0) - (TUTOR_PRIORITY_SCORE[a] ?? 0) || a.localeCompare(b)
         );
         let ranked = null;
+        let planned = null;
         if (_etbOrderDepth === 0) {
           _etbOrderDepth++;
           try {
-            const fn = _cards()._creatureTutorCandidates;
+            const c = _cards();
+            planned = typeof c._formidableFetchOrder === "function" ? c._formidableFetchOrder(state) : null;
+            const fn = c._creatureTutorCandidates;
             if (typeof fn === "function") ranked = fn(state, 4);
           } catch {
             ranked = null;
@@ -16372,11 +16537,14 @@ ${ex}`;
             _etbOrderDepth--;
           }
         }
-        if (!ranked || !ranked.length) return byScore;
         const inLib = new Set(uniq);
+        const planTail = (planned || []).filter((k) => inLib.has(k));
+        const tailSet = new Set(planTail);
+        const tail = [...planTail, ...byScore.filter((k) => !tailSet.has(k))];
+        if (!ranked || !ranked.length) return tail;
         const head = ranked.filter((k) => inLib.has(k));
         const headSet = new Set(head);
-        return [...head, ...byScore.filter((k) => !headSet.has(k))];
+        return [...head, ...tail.filter((k) => !headSet.has(k))];
       }
       module.exports = { GameState: GameState2, ManaPool, Permanent, Player, parseCost, buildDefaultLibrary, DEFAULT_DECKLIST };
     }
