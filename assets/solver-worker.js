@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-15T00:47:07Z
-// Solver MD5 : 7b6b8068c33f
+// Generated : 2026-08-15T02:47:28Z
+// Solver MD5 : 5013d0e5149f
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -312,6 +312,68 @@
         // appear even at top-5 before this addition.
         "wirewood_symbiote"
       ]);
+      var YISAN_LADDER = {
+        1: [
+          "quirion_ranger",
+          // if a big mana dork is out
+          "arbor_elf",
+          // if an enchanted land / Yavimaya is out
+          "magus_of_the_candelabra",
+          // if a big mana land is out
+          "elvish_reclaimer",
+          // if Argothian Elder / a land untapper is out
+          "allosaurus_shepherd",
+          // vs counterspells
+          "wirewood_symbiote"
+        ],
+        // Elf protection / Elf value / Temur loops
+        2: [
+          "badgermole_cub",
+          // land protection, ramp, infinite
+          "shang_chi",
+          // haste
+          "fanatic_of_rhonas",
+          "priest_of_titania",
+          "scryb_ranger",
+          // tempo
+          "destiny_spinner",
+          // counterspells, and turns a BML into a BMD
+          "duskwatch_recruiter",
+          // value
+          "hope_tender"
+        ],
+        // if a big mana land is out
+        3: [
+          "formidable_speaker",
+          "fierce_empath",
+          // chains to Bellower / Kogla / Freyalise / Regal / Automaton
+          "chomping_changeling",
+          // removal
+          "endurance",
+          // graveyard hate
+          "elvish_archdruid",
+          // ramp
+          "eternal_witness",
+          "eladamri"
+        ],
+        4: [
+          "argothian_elder",
+          "karametra_acolyte",
+          "beast_whisperer",
+          // the sheet's "Whisperer (draw)"
+          "temur_sabertooth"
+        ],
+        5: ["ashaya"],
+        6: [
+          "woodland_bellower",
+          // for a combo piece / enabler
+          "kogla",
+          // interaction / combo assembling
+          "disciple_freyalise"
+        ],
+        // draw
+        7: ["regal_force"]
+      };
       var TUTOR_PRIORITY_SCORE = {
         // Core combo pieces — highest priority
         "gaeas_cradle": 100,
@@ -559,7 +621,7 @@
       function isStax(cardKey) {
         return STAX_KEYS.has(cardKey);
       }
-      module.exports = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, FINGERPRINT_EQUIVALENTS, STAX_KEYS, HOLD_FOR_WIN, isStax, ALWAYS_RELEVANT_TUTOR_TARGETS };
+      module.exports = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, YISAN_LADDER, FUNCTIONAL_EQUIVALENTS, FINGERPRINT_EQUIVALENTS, STAX_KEYS, HOLD_FOR_WIN, isStax, ALWAYS_RELEVANT_TUTOR_TARGETS };
     }
   });
 
@@ -1013,6 +1075,7 @@
         if (hasPerm(state, "Deserted Temple")) return true;
         const hasBouncer = inHandOrField(state, "Temur Sabertooth", "temur_sabertooth") || inHandOrField(state, "Kogla, the Titan Ape", "kogla");
         const selfSustainable = ashayaOut(state) || hasBouncer && shangChiActive(state);
+        if (hasBouncer && shangChiActive(state) && permCanActivate(state, "Formidable Speaker")) return true;
         if (selfSustainable) {
           if (permCanActivate(state, "Magus of the Candelabra") || permCanActivate(state, "Hope Tender")) return true;
           if ((permCanActivate(state, "Ley Weaver") || permCanActivate(state, "Argothian Elder")) && (ashayaOut(state) || state.lands().length >= 2)) {
@@ -4419,7 +4482,7 @@
         // ══════════════════════════════════════════════════════════════════════════
         {
           name: "Win: Geier Reach Sanitarium Mill (Hitzel's Sequence)",
-          description: "With infinite mana, loop Geier Reach Sanitarium ({2},{T}: each player draws + discards). Opponents' graveyards are never recycled \u2014 each opponent eventually draws from an empty library and loses. Endurance's ETB targets US: it puts OUR graveyard back on the bottom of OUR library so we don't deck first; cast it (Flash) whenever our library runs low \u2014 one fresh cast roughly doubles our activation budget. Re-buy engines for extra recycles / recasting a battlefield-stranded Endurance: Temur: bounce Endurance with Sabertooth. Ashaya+Ranger: a Ranger bounces Endurance-as-Forest (once per turn per Ranger \u2014 recasts are rare). Kogla+Witness: get Endurance to the graveyard (Beast Within/LQR, hand or graveyard; or under Ashaya: Crop Rotation, or Elvish Reclaimer+Ranger), Witness returns it, Kogla bounces Witness. Cloudstone Curio: alternate casting Endurance and any other creature. Hold-priority stack executions (see ref/decklist_combos.md) are valid ways to run the loop, not requirements.",
+          description: "With infinite mana, loop Geier Reach Sanitarium ({2},{T}: each player draws + discards). Opponents' graveyards are never recycled \u2014 each opponent eventually draws from an empty library and loses. Endurance's ETB targets US: it puts OUR graveyard back on the bottom of OUR library so we don't deck first; cast it (Flash) whenever our library runs low \u2014 one fresh cast roughly doubles our activation budget. Re-buy engines for extra recycles / recasting a battlefield-stranded Endurance: Temur: bounce Endurance with Sabertooth. Ashaya+Ranger: a Ranger bounces Endurance-as-Forest (once per turn per Ranger \u2014 recasts are rare). Kogla+Witness: get Endurance to the graveyard (Beast Within/LQR, hand or graveyard; or under Ashaya: Crop Rotation, or Elvish Reclaimer+Ranger), Witness returns it, Kogla bounces Witness. Cloudstone Curio: alternate casting Endurance and any other creature. Slow Mill (no Endurance \u2014 for when it is exiled): Emergence Zone gives flash, cast Green Sun's Zenith with a Geier Reach trigger on the stack; it shuffles itself back in, and Duskwatch Recruiter puts it back on top, so OUR library never empties while theirs does. Hold-priority stack executions (see ref/decklist_combos.md) are valid ways to run the loop, not requirements.",
           check(state) {
             if (!inHandOrField(state, "Geier Reach Sanitarium", "geier_reach")) return false;
             const inHand = (key) => state.hand && state.hand.includes(key);
@@ -4448,7 +4511,8 @@
               hasAshaya && hasRanger && inHandOrField(state, "Elvish Reclaimer", "elvish_reclaimer"))
             );
             const enduranceOnField = hasPerm(state, "Endurance");
-            if (!(enduranceFreshCast || enduranceOnField && hasRebuy)) return false;
+            const slowMill = inHandOrField(state, "Emergence Zone", "emergence_zone") && inHandOrField(state, "Green Sun's Zenith", "green_suns_zenith") && inHandOrField(state, "Duskwatch Recruiter", "duskwatch_recruiter");
+            if (!(enduranceFreshCast || enduranceOnField && hasRebuy || slowMill)) return false;
             return hasGeierReachUntapper(state);
           },
           // deployed: Hitzel pieces are on the battlefield and ready to execute.
@@ -10958,12 +11022,13 @@
                 if (!ap) return [];
                 let s = ap.tapPermanent(perm.id);
                 if (!s) return [];
+                const MAX_BRANCHES = 3;
                 const verses = (perm.counters?.verse || 0) + 1;
                 const livePerm = s.getPermanentById(perm.id);
                 if (livePerm) livePerm.counters = { ...livePerm.counters, verse: verses };
                 const cards = CARDS2;
                 const { parseCost: pc } = require_GameState();
-                const { TUTOR_PRIORITY_SCORE } = require_combo_data();
+                const { TUTOR_PRIORITY_SCORE, YISAN_LADDER } = require_combo_data();
                 const seen = /* @__PURE__ */ new Set();
                 const matches = [];
                 for (const ck of s.players[0].library) {
@@ -10977,10 +11042,26 @@
                   matches.push({ ck, score: TUTOR_PRIORITY_SCORE[ck] ?? 0 });
                 }
                 matches.sort((a, b) => b.score - a.score || a.ck.localeCompare(b.ck));
+                const rung = YISAN_LADDER[verses] || [];
+                if (rung.length) {
+                  const ladderRank = new Map(rung.map((k, idx) => [k, idx]));
+                  const atLadder = (m) => ladderRank.has(m.ck) ? ladderRank.get(m.ck) : Infinity;
+                  matches.sort((a, b) => atLadder(a) - atLadder(b));
+                }
+                let relevantOrder = [];
+                try {
+                  relevantOrder = _creatureTutorCandidates(s, MAX_BRANCHES) || [];
+                } catch {
+                  relevantOrder = [];
+                }
+                if (relevantOrder.length) {
+                  const rank = new Map(relevantOrder.map((k, idx) => [k, idx]));
+                  const at = (m) => rank.has(m.ck) ? rank.get(m.ck) : Infinity;
+                  matches.sort((a, b) => at(a) - at(b));
+                }
                 if (matches.length === 0) {
                   return [s.log(`Yisan: verse counter ${verses}, no creature with MV ${verses} in library`)];
                 }
-                const MAX_BRANCHES = 3;
                 const results = [];
                 for (const { ck } of matches.slice(0, MAX_BRANCHES)) {
                   const { state: found, cardKey } = s.searchLibraryFor((k) => k === ck);
