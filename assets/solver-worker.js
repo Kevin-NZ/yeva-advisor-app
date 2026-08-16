@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-16T06:10:04Z
-// Solver MD5 : 9efb12fec86e
+// Generated : 2026-08-16T20:22:31Z
+// Solver MD5 : ad26a478ea2d
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -7342,13 +7342,23 @@
             const allTappedCreatures = state.creatures().filter((c) => c.tapped);
             const seenPairs = /* @__PURE__ */ new Set();
             const selfUntapEntry = perm.tapped ? Object.assign(perm.clone(), { _isSelf: true }) : null;
+            const _keyCache = /* @__PURE__ */ new Map();
+            const idKey = (p) => {
+              let k = _keyCache.get(p.id);
+              if (k === void 0) {
+                k = targetIdentityKey(state, p);
+                _keyCache.set(p.id, k);
+              }
+              return k;
+            };
             for (const target of bounceable) {
+              const targetKey = idKey(target);
               const creaturesCanUntap = allTappedCreatures.filter((c) => c.id !== target.id);
               const selfUntapOption = target.id !== perm.id && selfUntapEntry ? [selfUntapEntry] : [];
               const untapTargets = target.id === perm.id ? creaturesCanUntap : [...creaturesCanUntap, ...selfUntapOption];
               if (untapTargets.length === 0) continue;
               for (const ut of untapTargets) {
-                const pairKey = targetIdentityKey(state, target) + "|" + targetIdentityKey(state, ut);
+                const pairKey = targetKey + "|" + idKey(ut);
                 if (seenPairs.has(pairKey)) continue;
                 seenPairs.add(pairKey);
                 let s = state;
@@ -14315,8 +14325,8 @@
           p.name = this.name;
           p.life = this.life;
           p.poison = this.poison;
-          p.graveyard = this.graveyard.length ? [...this.graveyard] : [];
-          p.exile = this.exile.length ? [...this.exile] : [];
+          p.graveyard = this.graveyard;
+          p.exile = this.exile;
           p._drewFromEmpty = this._drewFromEmpty;
           p._sizeOnly = this._sizeOnly;
           if (this._sizeOnly) {
