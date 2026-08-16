@@ -1,10 +1,16 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-15T03:15:43Z
-// Solver MD5 : df642d9591a0
+// Generated : 2026-08-16T02:23:39Z
+// Solver MD5 : 507ae3a0b3df
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __commonJS = (cb, mod) => function __require() {
+  var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+    get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+  }) : x)(function(x) {
+    if (typeof require !== "undefined") return require.apply(this, arguments);
+    throw Error('Dynamic require of "' + x + '" is not supported');
+  });
+  var __commonJS = (cb, mod) => function __require2() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 
@@ -10103,7 +10109,7 @@
                 const cards = CARDS2;
                 const results = [];
                 const seen = /* @__PURE__ */ new Set();
-                const untapped = state.creatures().filter((c) => !c.tapped && !c.summoningSick);
+                const untapped = state.creatures().filter((c) => !c.tapped);
                 const tbasic = state.lands().filter((l) => l.tapped && cards[l.cardKey]?.isBasic);
                 for (const c of untapped) for (const l of tbasic) {
                   let s = state.tapPermanent(c.id);
@@ -10287,7 +10293,7 @@
                 const ap = state.payMana("G");
                 if (!ap) return [];
                 const others = ap.creatures().filter(
-                  (c) => c.id !== perm.id && !c.tapped && !c.summoningSick
+                  (c) => c.id !== perm.id && !c.tapped
                 );
                 if (others.length < 2) return [];
                 const cards = CARDS2;
@@ -16958,6 +16964,29 @@ ${ex}`;
         // states' worth of overshoot past the deadline is an acceptable trade for
         // that.
         maxTimeMs: Infinity,
+        // maxHeapFraction: a MEMORY budget alongside maxStates and maxTimeMs —
+        // whichever is hit first stops the search. Expressed as a fraction of V8's
+        // own heap limit (`v8.getHeapStatistics().heap_size_limit`) rather than an
+        // absolute MB figure, so it tracks whatever `--max-old-space-size` the
+        // process was actually started with instead of hard-coding one machine's.
+        //
+        // [2026-08-15 — O-89/O-81] This exists because maxStates does not bound
+        // memory in BFS, only in DFS. DFS holds one root-to-leaf path live; BFS
+        // holds its entire pending frontier, and `statesExplored` counts DEQUEUED
+        // nodes while the queue holds ENQUEUED ones — so at branching factor b, a
+        // 200,000-state cap keeps up to ~200,000·b states alive. Measured on the
+        // "Tutor-heavy" bench hand, BFS heap grows dead-linearly with the cap:
+        // 213MB at 25k states, 309MB at 50k, 436MB at 100k, 778MB at 200k (~3.9KB
+        // per explored state). Three records across the 2026-08-15 sweeps died at
+        // ~2GB inside the harness's `BFS (200_000 states)` retry, taking the whole
+        // process — and the record it was working on — with them.
+        //
+        // 0.75 is chosen to fire before V8 starts thrashing mark-compact (the OOM
+        // logs show two ~1.2s Mark-Compacts recovering ~15MB each right before the
+        // fatal error) while leaving room for the win-reconstruction that follows a
+        // successful search. A stopped search reports its result normally; a dead
+        // process reports nothing at all.
+        maxHeapFraction: 0.75,
         strategy: "dfs",
         allLines: false,
         verbose: false,
@@ -17190,6 +17219,7 @@ ${ex}`;
           if (this.opts.exhaustive || this.opts.bestPlay) return false;
           if (this._escalating) return false;
           if (this._timedOut) return false;
+          if (this._heapCapped) return false;
           if (spent >= this.opts.maxStates) return false;
           if (result && result.combo && result.combo.winCondition != null) return false;
           if (this.opts.escalate === true) return true;
@@ -17265,11 +17295,13 @@ ${ex}`;
             this._dfs(initialState, null, 0);
           }
           const elapsed = ((Date.now() - t0) / 1e3).toFixed(2);
+          if (this._heapCapped) {
+          }
           if (this.opts.verbose || this.linesFound === 0) {
             const rs = Object.entries(this.pruneReasons).filter(([, n]) => n > 0);
             if (rs.length) {
               rs.sort((a, b) => b[1] - a[1]);
-              if (this.statesExplored < this.opts.maxStates * 0.5 && !this._timedOut) {
+              if (this.statesExplored < this.opts.maxStates * 0.5 && !this._timedOut && !this._heapCapped) {
                 console.log(`   \u21B3 the search ended well inside its ${this.opts.maxStates.toLocaleString()}-state budget, so '${rs[0][0]}' cut it short \u2014 raising --budget will not help; try --exhaustive`);
               }
             }
@@ -17702,7 +17734,7 @@ ${ex}`;
             this._dfs(initialState, null, 0);
             if (this.bestLine) break;
             if (this.statesExplored >= this.opts.maxStates) break;
-            if (this._timedOut) break;
+            if (this._timedOut || this._heapCapped) break;
           }
           this.opts.maxTurns = savedMaxTurns;
           this.opts.firstWin = savedFirstWin;
@@ -18037,14 +18069,29 @@ ${ex}`;
           this._stopSearch = false;
           this._deadlineAt = Number.isFinite(this.opts.maxTimeMs) ? Date.now() + this.opts.maxTimeMs : Infinity;
           this._timedOut = false;
+          this._heapCapped = false;
+          const frac = this.opts.maxHeapFraction;
+          this._heapLimitBytes = Infinity;
+          if (Number.isFinite(frac) && frac > 0) {
+            try {
+              const lim = __require("v8").getHeapStatistics().heap_size_limit;
+              if (lim > 0) this._heapLimitBytes = lim * frac;
+            } catch {
+            }
+          }
         }
         // Checked every 1024 states from _dfs/_bfs's own per-node budget check —
         // see maxTimeMs's doc comment in DEFAULT_OPTIONS for why this isn't
         // called on every single node.
         _checkDeadline() {
-          if (this._deadlineAt !== Infinity && (this.statesExplored & 1023) === 0 && Date.now() >= this._deadlineAt) {
+          if ((this.statesExplored & 1023) !== 0) return;
+          if (this._deadlineAt !== Infinity && Date.now() >= this._deadlineAt) {
             this._stopSearch = true;
             this._timedOut = true;
+          }
+          if (this._heapLimitBytes !== Infinity && process.memoryUsage().heapUsed >= this._heapLimitBytes) {
+            this._stopSearch = true;
+            this._heapCapped = true;
           }
         }
         _recordWin(path, combo, s) {
@@ -18375,7 +18422,7 @@ ${ex}`;
           }
           if (!hasteGranted) {
             if (perm) perm.summoningSick = false;
-            steps.push(`(Need haste enabler for ${creatureName}: Shang-Chi static, Destiny Spinner {3}{G}, Badgermole Cub ETB, or Concordant Crossroads)`);
+            steps.push(`(Need haste enabler for ${creatureName}: Shang-Chi static, Destiny Spinner {3}{G} (needs Ashaya), or Badgermole Cub ETB (needs Ashaya) \u2014 none available)`);
           }
           return hasteGranted;
         }
