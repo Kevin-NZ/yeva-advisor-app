@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-16T02:23:39Z
-// Solver MD5 : 507ae3a0b3df
+// Generated : 2026-08-16T06:10:04Z
+// Solver MD5 : 9efb12fec86e
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -16987,6 +16987,26 @@ ${ex}`;
         // successful search. A stopped search reports its result normally; a dead
         // process reports nothing at all.
         maxHeapFraction: 0.75,
+        // minHeapGrowthFraction: the SECOND half of the memory guard's trip
+        // condition — how much of the heap limit THIS search must itself have added
+        // before the ceiling above is allowed to stop it.
+        //
+        // [2026-08-16] Added after the first version of this guard broke a user's
+        // sweep, and it is the more important of the two conditions. The ceiling was
+        // tested against `process.memoryUsage().heapUsed` alone, which counts garbage
+        // V8 has not collected yet. Tx-Results.sh solves every hand in ONE
+        // long-lived process, so as soon as any single hand pushed the heap past the
+        // ceiling, that dead memory stayed resident and EVERY LATER HAND tripped at
+        // its very first check — `States explored : 1,024`, no search at all. T4 win
+        // rate went from >40% to <1%: not a slower sweep, a sweep that had stopped
+        // searching.
+        //
+        // Requiring the search to have grown the heap by a quarter of the limit
+        // fixes that directly: a process merely sitting on old garbage has grown
+        // nothing, so it runs normally and V8 reclaims the garbage when it needs
+        // the room. A search that genuinely balloons — the OOM case this guard
+        // exists for — adds hundreds of MB on its own and still trips.
+        minHeapGrowthFraction: 0.25,
         strategy: "dfs",
         allLines: false,
         verbose: false,
@@ -17296,6 +17316,8 @@ ${ex}`;
           }
           const elapsed = ((Date.now() - t0) / 1e3).toFixed(2);
           if (this._heapCapped) {
+            const limitMB = this._heapLimitBytes / (1048576 * this.opts.maxHeapFraction);
+            const suggestMB = Math.max(4096, Math.ceil(limitMB * 2 / 1024) * 1024);
           }
           if (this.opts.verbose || this.linesFound === 0) {
             const rs = Object.entries(this.pruneReasons).filter(([, n]) => n > 0);
@@ -18072,10 +18094,17 @@ ${ex}`;
           this._heapCapped = false;
           const frac = this.opts.maxHeapFraction;
           this._heapLimitBytes = Infinity;
+          this._heapGrowthBytes = Infinity;
+          this._heapAtStart = 0;
           if (Number.isFinite(frac) && frac > 0) {
             try {
               const lim = __require("v8").getHeapStatistics().heap_size_limit;
-              if (lim > 0) this._heapLimitBytes = lim * frac;
+              if (lim > 0) {
+                this._heapLimitBytes = lim * frac;
+                const g = this.opts.minHeapGrowthFraction;
+                this._heapGrowthBytes = Number.isFinite(g) && g > 0 ? lim * g : 0;
+                this._heapAtStart = process.memoryUsage().heapUsed;
+              }
             } catch {
             }
           }
@@ -18089,9 +18118,12 @@ ${ex}`;
             this._stopSearch = true;
             this._timedOut = true;
           }
-          if (this._heapLimitBytes !== Infinity && process.memoryUsage().heapUsed >= this._heapLimitBytes) {
-            this._stopSearch = true;
-            this._heapCapped = true;
+          if (this._heapLimitBytes !== Infinity) {
+            const used = process.memoryUsage().heapUsed;
+            if (used >= this._heapLimitBytes && used - this._heapAtStart >= this._heapGrowthBytes) {
+              this._stopSearch = true;
+              this._heapCapped = true;
+            }
           }
         }
         _recordWin(path, combo, s) {
