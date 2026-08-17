@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-16T20:22:31Z
-// Solver MD5 : ad26a478ea2d
+// Generated : 2026-08-17T01:33:53Z
+// Solver MD5 : e0451474bff4
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -7179,7 +7179,7 @@
   var require_cards = __commonJS({
     "cards.js"(exports, module) {
       "use strict";
-      var { isStax } = require_combo_data();
+      var { isStax, FINGERPRINT_EQUIVALENTS } = require_combo_data();
       var _nameToKeyCache = null;
       function _nameToKey() {
         if (!_nameToKeyCache) _nameToKeyCache = require_actions().NAME_TO_KEY;
@@ -7320,6 +7320,22 @@
         const auras = _aurasFor(state.battlefield).get(perm.id);
         if (auras) k += ":A" + auras.join("+");
         return k;
+      }
+      var _enumCanonicalName = /* @__PURE__ */ new Map();
+      for (const group of FINGERPRINT_EQUIVALENTS) {
+        const canonicalKey = [...group].sort()[0];
+        for (const k of group) _enumCanonicalName.set(k, canonicalKey);
+      }
+      function _enumEmptyBag(obj) {
+        for (const k in obj) if (obj[k]) return false;
+        return true;
+      }
+      function enumTargetKey(state, p) {
+        if (!p.isForest && p.enchantedLandId === void 0 && _aurasFor(state.battlefield).get(p.id) === void 0 && !p.summoningSick && (p.power === void 0 || CARDS2[p.cardKey]?.power === p.power) && (!p.counters || _enumEmptyBag(p.counters)) && (!p.abilitiesUsed || _enumEmptyBag(p.abilitiesUsed)) && !p.elvishGuidance && p.imprintedColor === void 0 && p.cauldronAbilityKey === void 0 && p.copyKey === void 0 && (p.levelCounters === void 0 || p.levelCounters === 0) && p.namedCard === void 0 && !p.luckCounter) {
+          const canon = _enumCanonicalName.get(p.cardKey);
+          if (canon !== void 0) return canon + (p.tapped ? ":T" : ":U");
+        }
+        return targetIdentityKey(state, p) + (p.cauldronAbilityKey !== void 0 ? ":CD" + p.cauldronAbilityKey : "") + (p.namedCard !== void 0 ? ":NM[" + p.namedCard + "]" : "") + (p.luckCounter ? ":LK" : "");
       }
       function bounceToUntap(label, filterFn, selfKey, abilityKey) {
         return {
@@ -9929,15 +9945,17 @@
                 if (!at) return [];
                 const tl = at.lands().filter((l) => l.tapped);
                 if (tl.length < 2) return [];
+                const keys = tl.map((l) => enumTargetKey(at, l));
                 const seen = /* @__PURE__ */ new Set();
-                return tl.flatMap((a, i) => tl.slice(i + 1).map((b) => {
-                  let s = at.untapPermanent(a.id);
-                  s = s.untapPermanent(b.id).log(`Argothian Elder \u2192 untap ${a.name} + ${b.name}`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) return null;
-                  seen.add(fp);
-                  return s;
-                })).filter(Boolean);
+                const out = [];
+                for (let i = 0; i < tl.length; i++) for (let j = i + 1; j < tl.length; j++) {
+                  const k = keys[i] <= keys[j] ? keys[i] + "|" + keys[j] : keys[j] + "|" + keys[i];
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  const s = at.untapPermanent(tl[i].id).untapPermanent(tl[j].id).log(`Argothian Elder \u2192 untap ${tl[i].name} + ${tl[j].name}`);
+                  out.push(s);
+                }
+                return out;
               }
             }
           }
@@ -9962,15 +9980,17 @@
                 if (!at) return [];
                 const tl = at.lands().filter((l) => l.tapped);
                 if (tl.length < 2) return [];
+                const keys = tl.map((l) => enumTargetKey(at, l));
                 const seen = /* @__PURE__ */ new Set();
-                return tl.flatMap((a, i) => tl.slice(i + 1).map((b) => {
-                  let s = at.untapPermanent(a.id);
-                  s = s.untapPermanent(b.id).log(`Ley Weaver \u2192 untap ${a.name} + ${b.name}`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) return null;
-                  seen.add(fp);
-                  return s;
-                })).filter(Boolean);
+                const out = [];
+                for (let i = 0; i < tl.length; i++) for (let j = i + 1; j < tl.length; j++) {
+                  const k = keys[i] <= keys[j] ? keys[i] + "|" + keys[j] : keys[j] + "|" + keys[i];
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  const s = at.untapPermanent(tl[i].id).untapPermanent(tl[j].id).log(`Ley Weaver \u2192 untap ${tl[i].name} + ${tl[j].name}`);
+                  out.push(s);
+                }
+                return out;
               }
             }
           }
@@ -9991,14 +10011,14 @@
                 const ap = state.payMana("1");
                 if (!ap) return [];
                 const targets = [...ap.lands().filter((l) => l.tapped), ...ap.creatures().filter((c) => c.tapped && c.id !== perm.id)];
+                const tapped = ap.tapPermanent(perm.id);
+                if (!tapped) return [];
                 const seen = /* @__PURE__ */ new Set();
                 return targets.flatMap((t) => {
-                  let s = ap.tapPermanent(perm.id);
-                  if (!s) return [];
-                  s = s.untapPermanent(t.id).log(`Saryth \u2192 untap ${t.name}`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) return [];
-                  seen.add(fp);
+                  const k = enumTargetKey(ap, t);
+                  if (seen.has(k)) return [];
+                  seen.add(k);
+                  const s = tapped.untapPermanent(t.id).log(`Saryth \u2192 untap ${t.name}`);
                   return [s];
                 });
               }
@@ -10093,15 +10113,14 @@
                 if (perm.tapped || perm.summoningSick) return [];
                 const ap = state.payMana("1");
                 if (!ap) return [];
+                const tapped = ap.tapPermanent(perm.id);
+                if (!tapped) return [];
                 const seen = /* @__PURE__ */ new Set();
                 return ap.battlefield.filter((p) => p.tapped && p.id !== perm.id).flatMap((t) => {
-                  let s = ap.tapPermanent(perm.id);
-                  if (!s) return [];
-                  s = s.untapPermanent(t.id).log(`Formidable Speaker \u2192 untap ${t.name}`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) return [];
-                  seen.add(fp);
-                  return [s];
+                  const k = enumTargetKey(ap, t);
+                  if (seen.has(k)) return [];
+                  seen.add(k);
+                  return [tapped.untapPermanent(t.id).log(`Formidable Speaker \u2192 untap ${t.name}`)];
                 });
               }
             }
@@ -10121,14 +10140,20 @@
                 const seen = /* @__PURE__ */ new Set();
                 const untapped = state.creatures().filter((c) => !c.tapped);
                 const tbasic = state.lands().filter((l) => l.tapped && cards[l.cardKey]?.isBasic);
-                for (const c of untapped) for (const l of tbasic) {
-                  let s = state.tapPermanent(c.id);
-                  if (!s) continue;
-                  s = s.untapPermanent(l.id).log(`Earthcraft: tap ${c.name} \u2192 untap ${l.name}`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) continue;
-                  seen.add(fp);
-                  results.push(s);
+                const landKeys = tbasic.map((l) => enumTargetKey(state, l));
+                for (const c of untapped) {
+                  const ck = enumTargetKey(state, c);
+                  let tapped = null;
+                  for (let li = 0; li < tbasic.length; li++) {
+                    const k = ck + "|" + landKeys[li];
+                    if (seen.has(k)) continue;
+                    seen.add(k);
+                    if (tapped === null) {
+                      tapped = state.tapPermanent(c.id);
+                      if (!tapped) break;
+                    }
+                    results.push(tapped.untapPermanent(tbasic[li].id).log(`Earthcraft: tap ${c.name} \u2192 untap ${tbasic[li].name}`));
+                  }
                 }
                 return results;
               }
@@ -10151,15 +10176,14 @@
                 const cards = CARDS2;
                 const seen = /* @__PURE__ */ new Set();
                 return state.creatures().filter((c) => c.id !== perm.id).flatMap((c) => {
+                  const k = enumTargetKey(state, c) + "|" + c.cardKey;
+                  if (seen.has(k)) return [];
+                  seen.add(k);
                   let s = ap.removeFromBattlefield(c.id, null);
                   if (!s) return [];
                   const ck = _nameToKey()[c.name];
                   if (ck) s = s.addToHand(ck);
-                  s = s.log(`Temur Sabertooth \u2192 return ${c.name} to hand`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) return [];
-                  seen.add(fp);
-                  return [s];
+                  return [s.log(`Temur Sabertooth \u2192 return ${c.name} to hand`)];
                 });
               }
             }
@@ -10181,15 +10205,14 @@
                 const cards = CARDS2;
                 const seen = /* @__PURE__ */ new Set();
                 return state.creatures().filter((c) => c.subtypes && c.subtypes.includes("Human")).flatMap((c) => {
+                  const k = enumTargetKey(state, c) + "|" + c.cardKey;
+                  if (seen.has(k)) return [];
+                  seen.add(k);
                   let s = ap.removeFromBattlefield(c.id, null);
                   if (!s) return [];
                   const ck = _nameToKey()[c.name];
                   if (ck) s = s.addToHand(ck);
-                  s = s.log(`Kogla \u2192 return ${c.name} to hand`);
-                  const fp = s.fingerprint();
-                  if (seen.has(fp)) return [];
-                  seen.add(fp);
-                  return [s];
+                  return [s.log(`Kogla \u2192 return ${c.name} to hand`)];
                 });
               }
             }
@@ -18102,6 +18125,7 @@ ${ex}`;
           this._deadlineAt = Number.isFinite(this.opts.maxTimeMs) ? Date.now() + this.opts.maxTimeMs : Infinity;
           this._timedOut = false;
           this._heapCapped = false;
+          this._nextDeadlineCheckAt = 1024;
           const frac = this.opts.maxHeapFraction;
           this._heapLimitBytes = Infinity;
           this._heapGrowthBytes = Infinity;
@@ -18119,17 +18143,19 @@ ${ex}`;
             }
           }
         }
-        // Checked every 1024 states from _dfs/_bfs's own per-node budget check —
-        // see maxTimeMs's doc comment in DEFAULT_OPTIONS for why this isn't
-        // called on every single node.
+        // Checked roughly every 1024 states from the per-node budget checks in
+        // _dfs/_bfs/_astar — see maxTimeMs's doc comment in DEFAULT_OPTIONS for why
+        // this isn't evaluated on every single node.
         _checkDeadline() {
-          if ((this.statesExplored & 1023) !== 0) return;
+          if (this.statesExplored < this._nextDeadlineCheckAt) return;
+          this._nextDeadlineCheckAt = this.statesExplored + 1024;
           if (this._deadlineAt !== Infinity && Date.now() >= this._deadlineAt) {
             this._stopSearch = true;
             this._timedOut = true;
           }
           if (this._heapLimitBytes !== Infinity) {
             const used = process.memoryUsage().heapUsed;
+            if (used < this._heapAtStart) this._heapAtStart = used;
             if (used >= this._heapLimitBytes && used - this._heapAtStart >= this._heapGrowthBytes) {
               this._stopSearch = true;
               this._heapCapped = true;
