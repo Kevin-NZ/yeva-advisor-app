@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-17T04:03:29Z
-// Solver MD5 : e0451474bff4
+// Generated : 2026-08-17T22:58:57Z
+// Solver MD5 : 3708b2bdeb89
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -6184,6 +6184,29 @@
       function noteNarrowed(n = 1) {
         _narrowed += n;
       }
+      function _urbanBurgeoningLandIds(state) {
+        const ids = /* @__PURE__ */ new Set();
+        for (const p of state.battlefield) {
+          if (p.cardKey !== "urban_burgeoning") continue;
+          if (p.enchantedLandId === void 0) continue;
+          ids.add(p.enchantedLandId);
+        }
+        return ids;
+      }
+      function _untapUrbanBurgeoningLands(ns) {
+        const ids = _urbanBurgeoningLandIds(ns);
+        if (ids.size === 0) return false;
+        let did = false;
+        ns._ensureBF();
+        for (const p of ns.battlefield) {
+          if (!ids.has(p.id)) continue;
+          if (p.abilitiesUsed?.exert_two_lands) continue;
+          if (!p.tapped) continue;
+          p.tapped = false;
+          did = true;
+        }
+        return did;
+      }
       function generateActions(state, _presentHint = null, exhaustive = false, simulateOpponentTurns = true, wideTutors = exhaustive) {
         const actions = [];
         if (state.youLost()) return [];
@@ -6990,6 +7013,8 @@
         }
         const yevaInCommandZone = (state.commandZone ?? []).includes("yeva");
         const seedbornActive = state.hasPermanent("Seedborn Muse");
+        const urbanBurgeoningLandIds = _urbanBurgeoningLandIds(state);
+        const urbanActive = urbanBurgeoningLandIds.size > 0;
         const glademuseActive = state.hasPermanent("Glademuse");
         const runicArmasaurActive = state.hasPermanent("Runic Armasaur");
         const questCounters = state.getPermanent?.("Quest for Renewal")?.counters?.quest ?? 0;
@@ -7003,12 +7028,18 @@
           return Object.keys(leverDef.abilities).some((k) => !p.abilitiesUsed?.[k]);
         });
         const hasTappedLand = hasUnusedUntapLever && state.lands().some((l) => l.tapped);
-        const yevaInCZCastable = yevaInCommandZone && (state.mana.canPay("2GG") || seedbornActive || hasTappedLand);
+        const yevaInCZCastable = yevaInCommandZone && (state.mana.canPay("2GG") || seedbornActive || hasTappedLand || // [O-93] Urban Burgeoning on a TAPPED land is the same kind of mid-window
+        // mana as Seedborn's untap — the window itself unlocks it.
+        [...urbanBurgeoningLandIds].some((id) => state.getPermanentById?.(id)?.tapped));
         const glademuseHasValue = glademuseActive && (yevaOnBattlefield || yevaInCZCastable || state.hasPermanent("Emergence Zone"));
         const hasOpponentTurnValue = runicArmasaurActive || // draws on opponent non-mana activations (no flash needed)
         yevaOnBattlefield || // Yeva on BF: can cast green creatures at instant speed
         state.hasPermanent("Emergence Zone") || // all spells have flash this turn
-        seedbornActive && (yevaOnBattlefield || yevaInCZCastable || state.hasPermanent("Emergence Zone")) || questActive || // untaps creatures; only useful if we have a flash enabler too
+        seedbornActive && (yevaOnBattlefield || yevaInCZCastable || state.hasPermanent("Emergence Zone")) || // [O-93] Urban Burgeoning gates exactly like Seedborn: untapping a land on
+        // an opponent's turn is only worth a window if we can SPEND that mana at
+        // instant speed. Without a flash enabler the land just sits there untapped
+        // until our own turn, which our own untap step would have done anyway.
+        urbanActive && (yevaOnBattlefield || yevaInCZCastable || state.hasPermanent("Emergence Zone")) || questActive || // untaps creatures; only useful if we have a flash enabler too
         glademuseHasValue || // draws on YOUR casts — only if flash is accessible
         // [2026-07-11 — IMP-14] yevaInCZCastable's own untap-lever extension
         // (hasTappedLand, above) needs to justify opening the window ON ITS OWN —
@@ -7064,6 +7095,7 @@
                   p.abilitiesUsed = {};
                 }
               }
+              _untapUrbanBurgeoningLands(ns);
               if (ns.hasPermanent("Heartwood Storyteller")) {
                 const drawnKey = ns.players[0].library[0];
                 ns = ns.playerDraws(0, 1);
@@ -7085,7 +7117,11 @@
           const moreWindowsAvailable = simulateOpponentTurns && oppTurnsDoneNow < 3 && hasOpponentTurnValue;
           const seedbornWouldUntapSomething = seedbornActive && state.battlefield.some((p) => p.tapped && !p.abilitiesUsed?.exert_two_lands);
           const questWouldUntapSomething = questActive && state.creatures().some((p) => p.tapped && !p.abilitiesUsed?.exert_two_lands);
-          const transitionHasIntrinsicValue = seedbornWouldUntapSomething || questWouldUntapSomething || state.hasPermanent("Heartwood Storyteller") || runicArmasaurActive;
+          const urbanWouldUntapSomething = urbanActive && [...urbanBurgeoningLandIds].some((id) => {
+            const l = state.getPermanentById?.(id);
+            return l?.tapped && !l.abilitiesUsed?.exert_two_lands;
+          });
+          const transitionHasIntrinsicValue = seedbornWouldUntapSomething || questWouldUntapSomething || urbanWouldUntapSomething || state.hasPermanent("Heartwood Storyteller") || runicArmasaurActive;
           const chainingWouldBeNoOp = actions.length === 0 && !transitionHasIntrinsicValue;
           if (moreWindowsAvailable && !chainingWouldBeNoOp) {
             const nextOppNum = oppTurnsDoneNow + 1;
@@ -7124,6 +7160,7 @@
                     }
                   }
                 }
+                _untapUrbanBurgeoningLands(ns);
                 if (ns.hasPermanent("Heartwood Storyteller")) {
                   const drawnKey = ns.players[0].library[0];
                   ns = ns.playerDraws(0, 1);
@@ -11846,6 +11883,42 @@
             return state;
           }
         },
+        urban_burgeoning: {
+          name: "Urban Burgeoning",
+          types: ["enchantment"],
+          subtypes: ["Aura"],
+          cost: "G",
+          externallyImplemented: true,
+          // [drift-detector] untap impl in actions.js opponent_turn
+          // Oracle: "Enchant land / Enchanted land has 'Untap this land during each
+          // other player's untap step.'"
+          //
+          // Seedborn Muse for exactly one land, at {G} instead of {3}{G}{G}. The
+          // untap itself lives in actions.js's opponent-window apply() alongside
+          // Seedborn's and Quest for Renewal's, because that is where this engine
+          // models an opponent's untap step; this card only has to record WHICH land
+          // it enchants. Same single-land attachment model as Wild Growth / Utopia
+          // Sprawl directly below, and it reuses their `enchantedLandId` field, so
+          // fingerprint()'s aura encoding and removeFromBattlefield's dangling-aura
+          // cleanup (CR 704.5m) both already cover it.
+          //
+          // Target preference mirrors Elvish Guidance's: a big mana land is worth
+          // several times a Forest per untap, and untapping it on each of three
+          // opponent turns is the whole point of the card.
+          canCast(state) {
+            return state.battlefield.some((p) => p.types.includes("land"));
+          },
+          onEnter(state, perm) {
+            const lands = state.battlefield.filter((p) => p.types.includes("land"));
+            if (lands.length === 0) return state;
+            const best = lands.find((l) => l.name === "Gaea's Cradle") ?? lands.find((l) => l.name === "Itlimoc, Cradle of the Sun") ?? lands.find((l) => l.name === "Nykthos, Shrine to Nyx") ?? lands.find((l) => l.isForest) ?? lands[0];
+            if (perm && best) {
+              perm.enchantedLandId = best.id;
+              return state.log(`Urban Burgeoning attached to ${best.name}`);
+            }
+            return state;
+          }
+        },
         elvish_guidance: {
           name: "Elvish Guidance",
           types: ["enchantment"],
@@ -16082,6 +16155,11 @@ ${ex}`;
           if (cardKey === "wild_growth" || cardKey === "utopia_sprawl") {
             const lands = s.battlefield.filter((p) => p.is("land") && p.id !== perm.id);
             const target = lands.find((l) => l.isForest) ?? lands[0];
+            if (target) perm.enchantedLandId = target.id;
+          }
+          if (cardKey === "urban_burgeoning") {
+            const lands = s.battlefield.filter((p) => p.is("land") && p.id !== perm.id);
+            const target = lands.find((l) => l.name === "Gaea's Cradle") ?? lands.find((l) => l.name === "Itlimoc, Cradle of the Sun") ?? lands.find((l) => l.name === "Nykthos, Shrine to Nyx") ?? lands.find((l) => l.isForest) ?? lands[0];
             if (target) perm.enchantedLandId = target.id;
           }
           if (cardKey === "elvish_guidance") {
