@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-17T22:58:57Z
-// Solver MD5 : 3708b2bdeb89
+// Generated : 2026-08-18T10:38:40Z
+// Solver MD5 : 150dbd290b15
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -7873,6 +7873,95 @@
           }
         },
         forest: { name: "Forest", types: ["land"], subtypes: ["Forest"], cost: null, isBasic: true, tapForMana: simpleTap("{G}", [["G", 1]]) },
+        urzas_saga: {
+          name: "Urza's Saga",
+          types: ["enchantment", "land"],
+          subtypes: ["Urza's Saga"],
+          cost: null,
+          externallyImplemented: true,
+          // [drift-detector] chapter advance + III in GameState.startNewTurn
+          // Oracle: "(As this Saga enters and after your draw step, add a lore
+          // counter. Sacrifice after III.) / I — This Saga gains '{T}: Add {C}.' /
+          // II — This Saga gains '{2}, {T}: Create a 0/0 colorless Construct
+          // artifact creature token with "This token gets +1/+1 for each artifact
+          // you control."' / III — Search your library for an artifact card with
+          // mana cost {0} or {1}, put it onto the battlefield, then shuffle."
+          //
+          // A land with no mana cost, so it is played with a land drop like any
+          // other; being an enchantment as well changes nothing this engine models.
+          //
+          // The lore counter is `counters.lore`, which fingerprint() already encodes
+          // (its counters bag), so two boards differing only in chapter are never
+          // deduped together. It enters at I and advances in
+          // GameState.startNewTurn — "after your draw step" is once per YOUR turn,
+          // which is exactly that boundary — with chapter III's search-and-sacrifice
+          // living there too, since it fires automatically rather than being an
+          // action the solver chooses.
+          //
+          // What this card is actually worth in a mono-green deck: chapter III finds
+          // Sol Ring (the deck's only {1} artifact besides Expedition Map and
+          // Sensei's Divining Top; Lotus Petal, Mox Diamond and Chrome Mox are {0}).
+          // Chapter I's {C} matters mainly for generic costs, and the Construct is a
+          // body for Gaea's Cradle to count.
+          tapForMana(state, perm) {
+            if (perm.tapped) return [];
+            if ((perm.counters?.lore ?? 0) < 1) return [];
+            let s = state.tapPermanent(perm.id);
+            if (!s) return [];
+            s = s.addMana("C", 1);
+            return [s.log("Tap Urza's Saga \u2192 {C}")];
+          },
+          onEnter(state, perm) {
+            if (perm) perm.counters = { ...perm.counters, lore: 1 };
+            return state;
+          },
+          abilities: {
+            // ── Chapter II ────────────────────────────────────────────────────
+            make_construct: {
+              label: "{2}, {T}: Create a Construct token (+1/+1 per artifact)",
+              fn(state, perm) {
+                if (perm.tapped) return [];
+                if ((perm.counters?.lore ?? 0) < 2) return [];
+                const ap = state.payMana("2");
+                if (!ap) return [];
+                let s = ap.tapPermanent(perm.id);
+                if (!s) return [];
+                const artifacts = s.battlefield.filter((p) => p.is("artifact")).length;
+                const pt = artifacts + 1;
+                s = s.enterBattlefield(
+                  "construct_token",
+                  { power: pt, toughness: pt, isToken: true }
+                );
+                const tok = s.battlefield[s.battlefield.length - 1];
+                if (tok) {
+                  tok.power = pt;
+                  tok.toughness = pt;
+                  tok.isToken = true;
+                }
+                return [s.log(`Urza's Saga: create a ${pt}/${pt} Construct token`)];
+              }
+            }
+          }
+        },
+        construct_token: {
+          name: "Construct",
+          types: ["artifact", "creature"],
+          subtypes: ["Construct"],
+          cost: null,
+          power: 0,
+          toughness: 0,
+          // [O-94] tokenOnly: there is no CARD called Construct, so ref/card_data.md
+          // has no entry for it and never should. Food and Treasure are the existing
+          // token-only entries; this is simply the first that is also a CREATURE, and
+          // therefore the first to reach §101's "every creature needs a reference P/T
+          // line" guard. Marked explicitly rather than widening that guard's
+          // variablePT/prototypePT escape hatch, which §101 deliberately pins to
+          // exactly three real cards.
+          tokenOnly: true
+          // Token only — created by Urza's Saga chapter II, never cast. Its real P/T
+          // is set at creation from the artifact count; see that ability's own note
+          // on why the continuous +1/+1 is snapshotted.
+        },
         castle_garenbrig: {
           name: "Castle Garenbrig",
           types: ["land"],
@@ -8618,6 +8707,81 @@
         // Sylvan Scrying ~5833): they are not identical — the Growing Rites copy
         // omits 'emergence_zone' — so folding them together would silently change
         // that card's choice. Recorded rather than done; see ToDo.md.
+        sensei_divining_top: {
+          name: "Sensei's Divining Top",
+          types: ["artifact"],
+          subtypes: [],
+          cost: "1",
+          // Oracle: "{1}: Look at the top three cards of your library, then put them
+          // back in any order. / {T}: Draw a card, then put this artifact on top of
+          // its owner's library."
+          //
+          // No summoning-sickness check on the {T} ability: CR 302.6 restricts
+          // {T} abilities of CREATURES only, so an artifact may tap the turn it
+          // enters — same treatment as Expedition Map directly below.
+          abilities: {
+            // ── {1}: reorder the top three ────────────────────────────────────
+            // This solver has perfect, ordered library knowledge, so "look at the
+            // top three and put them back in any order" is exactly "choose which of
+            // the top three you will draw next". The six permutations of three cards
+            // collapse to three meaningfully different states for that purpose —
+            // WHICH card is on top — and the remaining two keep their relative
+            // order. Branching 3 ways instead of 6 follows the same bounded-choice
+            // convention as Expedition Map's single-best-target pick below; the
+            // difference from a full permutation is only the order of the two cards
+            // you did NOT choose, which no effect in this deck reads before the next
+            // reorder or draw.
+            reorder_top3: {
+              label: "{1}: Look at the top three cards, put them back in any order",
+              fn(state, perm) {
+                const ap = state.payMana("1");
+                if (!ap) return [];
+                const lib = ap.players[0].library;
+                if (!lib || lib.length < 2) return [];
+                const top = lib.slice(0, 3);
+                const results = [];
+                const seen = /* @__PURE__ */ new Set();
+                for (let i = 0; i < top.length; i++) {
+                  if (top[i] === "unknown") continue;
+                  if (seen.has(top[i])) continue;
+                  seen.add(top[i]);
+                  if (i === 0 && top.length > 1) {
+                    continue;
+                  }
+                  const rest = top.filter((_, j) => j !== i);
+                  const s2 = ap.clone();
+                  s2._ensurePlayers();
+                  s2.players[0] = s2.players[0].clone();
+                  s2.players[0].library = [top[i], ...rest, ...lib.slice(3)];
+                  results.push(s2.log(
+                    `Sensei's Divining Top: reorder top 3 \u2192 ${CARDS2[top[i]]?.name ?? top[i]} on top`
+                  ));
+                }
+                return results;
+              }
+            },
+            // ── {T}: draw a card, then Top goes on top of the library ─────────
+            // The order in the oracle text matters and is preserved: the draw
+            // happens FIRST (taking the current top card), and only then does the
+            // Top itself go on top — so the card you draw is not the Top, and the
+            // Top becomes the NEXT draw. Getting this backwards would draw the Top
+            // itself and leave the real top card buried.
+            draw_and_recycle: {
+              label: "{T}: Draw a card, then put Sensei's Divining Top on top of its owner's library",
+              fn(state, perm) {
+                if (perm.tapped) return [];
+                let s = state.playerDraws(0, 1);
+                if (!s) return [];
+                s = s.removeFromBattlefield(perm.id, null);
+                if (!s) return [];
+                s._ensurePlayers();
+                s.players[0] = s.players[0].clone();
+                s.players[0].library = ["sensei_divining_top", ...s.players[0].library];
+                return [s.log("Sensei's Divining Top: draw a card, Top to the top of the library")];
+              }
+            }
+          }
+        },
         expedition_map: {
           name: "Expedition Map",
           types: ["artifact"],
@@ -8653,7 +8817,7 @@
                   "yavimaya",
                   "ancient_tomb",
                   "wirewood_lodge",
-                  "geier_reach_sanitarium",
+                  "geier_reach",
                   "boseiju",
                   "emergence_zone",
                   "forest"
@@ -8665,7 +8829,7 @@
                   "yavimaya",
                   "ancient_tomb",
                   "wirewood_lodge",
-                  "geier_reach_sanitarium",
+                  "geier_reach",
                   "boseiju",
                   "emergence_zone"
                 ]);
@@ -12654,7 +12818,7 @@
               "yavimaya",
               "ancient_tomb",
               "wirewood_lodge",
-              "geier_reach_sanitarium",
+              "geier_reach",
               "boseiju",
               "forest"
             ];
@@ -13291,7 +13455,7 @@
               "yavimaya",
               "ancient_tomb",
               "wirewood_lodge",
-              "geier_reach_sanitarium",
+              "geier_reach",
               "boseiju",
               "emergence_zone",
               "forest"
@@ -13306,7 +13470,7 @@
               "yavimaya",
               "ancient_tomb",
               "wirewood_lodge",
-              "geier_reach_sanitarium",
+              "geier_reach",
               "boseiju",
               "emergence_zone"
             ]);
@@ -13643,7 +13807,7 @@
               "yavimaya",
               "ancient_tomb",
               "wirewood_lodge",
-              "geier_reach_sanitarium",
+              "geier_reach",
               "boseiju",
               "emergence_zone",
               "forest"
@@ -13655,7 +13819,7 @@
               "yavimaya",
               "ancient_tomb",
               "wirewood_lodge",
-              "geier_reach_sanitarium",
+              "geier_reach",
               "boseiju",
               "emergence_zone"
             ]);
@@ -14335,6 +14499,18 @@
         }
         return deck;
       }
+      var UTILITY_LAND_KEYS = /* @__PURE__ */ new Set([
+        "gaeas_cradle",
+        "itlimoc",
+        "nykthos",
+        "geier_reach",
+        "deserted_temple",
+        "yavimaya",
+        "ancient_tomb",
+        "wirewood_lodge",
+        "boseiju",
+        "emergence_zone"
+      ]);
       function _isEmptyBag(obj) {
         for (const k in obj) {
           if (obj[k]) return false;
@@ -16157,6 +16333,9 @@ ${ex}`;
             const target = lands.find((l) => l.isForest) ?? lands[0];
             if (target) perm.enchantedLandId = target.id;
           }
+          if (cardKey === "urzas_saga") {
+            perm.counters = { ...perm.counters, lore: 1 };
+          }
           if (cardKey === "urban_burgeoning") {
             const lands = s.battlefield.filter((p) => p.is("land") && p.id !== perm.id);
             const target = lands.find((l) => l.name === "Gaea's Cradle") ?? lands.find((l) => l.name === "Itlimoc, Cradle of the Sun") ?? lands.find((l) => l.name === "Nykthos, Shrine to Nyx") ?? lands.find((l) => l.isForest) ?? lands[0];
@@ -16312,9 +16491,75 @@ ${ex}`;
           p.abilitiesUsed = { ...p.abilitiesUsed, [abilityKey]: true };
           return s;
         }
+        /**
+         * [O-94] Advance every Urza's Saga by one lore counter, resolving chapter III
+         * (search for an artifact with mana cost {0} or {1} → battlefield, then
+         * sacrifice the Saga) for any that reach it. Returns a new state; `this` is
+         * expected to be a state the caller already owns.
+         *
+         * Chapter II needs nothing here — it only grants an activated ability, which
+         * cards.js gates on the counter it reads off the permanent.
+         */
+        _advanceUrzaSagas() {
+          let s = this;
+          s._ensureBF();
+          const finished = [];
+          for (const p of s.battlefield) {
+            if (p.cardKey !== "urzas_saga") continue;
+            const lore = (p.counters?.lore ?? 0) + 1;
+            p.counters = { ...p.counters, lore };
+            if (lore >= 3) finished.push(p.id);
+          }
+          if (finished.length === 0) return s;
+          const CARDS2 = _cards();
+          for (const id of finished) {
+            const lib = s.players?.[0]?.library ?? [];
+            const legal = [];
+            for (let i = 0; i < lib.length; i++) {
+              const k = lib[i];
+              if (k === "unknown" || isStax(k)) continue;
+              const def = CARDS2[k];
+              if (!def || !def.types.includes("artifact")) continue;
+              if (def.cost === null || def.cost === void 0) continue;
+              const parsed = parseCost(def.cost);
+              const colored = Object.values(parsed.colored).reduce((a, b) => a + b, 0);
+              if (colored > 0) continue;
+              if (parsed.generic > 1) continue;
+              legal.push({ i, k });
+            }
+            const utilityLandInLib = lib.some((k) => UTILITY_LAND_KEYS.has(k));
+            const rank = (k) => {
+              if (k === "expedition_map") return utilityLandInLib ? 0 : 3;
+              if (k === "sol_ring") return 1;
+              if (k === "sensei_divining_top") return 2;
+              return 4;
+            };
+            let bestIdx = -1, bestRank = Infinity;
+            for (const { i, k } of legal) {
+              const r = rank(k);
+              if (r < bestRank) {
+                bestRank = r;
+                bestIdx = i;
+              }
+            }
+            if (bestIdx >= 0) {
+              const key = lib[bestIdx];
+              s._ensurePlayers();
+              s.players[0] = s.players[0].clone();
+              s.players[0].library = [...lib.slice(0, bestIdx), ...lib.slice(bestIdx + 1)];
+              s = s.enterBattlefield(key);
+              s = s.log(`Urza's Saga III: search \u2192 ${CARDS2[key]?.name ?? key} onto the battlefield`);
+            } else {
+              s = s.log("Urza's Saga III: no artifact with mana cost {0} or {1} in library");
+            }
+            const after = s.removeFromBattlefield(id, "graveyard");
+            if (after) s = after.log("Urza's Saga: sacrificed after chapter III");
+          }
+          return s;
+        }
         // ── Turn management ───────────────────────────────────────────────────────
         startNewTurn() {
-          const s = this.clone();
+          let s = this.clone();
           s.turn++;
           s.landDrops = 1;
           s.landsPlayedThisTurn = 0;
@@ -16337,6 +16582,9 @@ ${ex}`;
             }
             p.summoningSick = false;
             p.abilitiesUsed = {};
+          }
+          if (s.battlefield.some((p) => p.cardKey === "urzas_saga")) {
+            s = s._advanceUrzaSagas();
           }
           if (s.pactOwed) {
             s.pactOwed = false;
