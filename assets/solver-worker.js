@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-18T10:38:40Z
-// Solver MD5 : 150dbd290b15
+// Generated : 2026-08-24T09:37:31Z
+// Solver MD5 : b5fd020a21b9
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -454,6 +454,7 @@
         }
         return out;
       }
+      var ENCHANT_LAND_RAMP = /* @__PURE__ */ new Set(["utopia_sprawl", "wild_growth", "urban_burgeoning"]);
       var TUTOR_PRIORITY_SCORE = {
         // Core combo pieces — highest priority
         "gaeas_cradle": 100,
@@ -701,7 +702,22 @@
       function isStax(cardKey) {
         return STAX_KEYS.has(cardKey);
       }
-      module.exports = { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, YISAN_LADDER, FUNCTIONAL_EQUIVALENTS, FINGERPRINT_EQUIVALENTS, STAX_KEYS, HOLD_FOR_WIN, isStax, ALWAYS_RELEVANT_TUTOR_TARGETS, BIG_MANA_DORK_KEYS, BIG_MANA_LAND_KEYS, FORMIDABLE_FETCH_PLAN, formidableFetchOrder };
+      module.exports = {
+        ENCHANT_LAND_RAMP,
+        COMBO_REQUIRED_KEYS,
+        TUTOR_PRIORITY_SCORE,
+        YISAN_LADDER,
+        FUNCTIONAL_EQUIVALENTS,
+        FINGERPRINT_EQUIVALENTS,
+        STAX_KEYS,
+        HOLD_FOR_WIN,
+        isStax,
+        ALWAYS_RELEVANT_TUTOR_TARGETS,
+        BIG_MANA_DORK_KEYS,
+        BIG_MANA_LAND_KEYS,
+        FORMIDABLE_FETCH_PLAN,
+        formidableFetchOrder
+      };
     }
   });
 
@@ -7529,7 +7545,20 @@
         if (!Array.isArray(order) || order.length === 0) return null;
         return new Map(order.map((k, i) => [k, i]));
       }
+      var _ctcCache = /* @__PURE__ */ new WeakMap();
       function _creatureTutorCandidates(state, maxCandidates = 3, opts = {}) {
+        const lib = state.players && state.players[0] && state.players[0].library;
+        if (!lib) return _creatureTutorCandidatesUncached(state, maxCandidates, opts);
+        let bucket = _ctcCache.get(lib);
+        if (bucket === void 0) _ctcCache.set(lib, bucket = /* @__PURE__ */ new Map());
+        const key = state.fingerprint() + "|" + maxCandidates + "|" + (Array.isArray(opts.preferOrder) ? opts.preferOrder.join(",") : "");
+        const hit = bucket.get(key);
+        if (hit !== void 0) return hit.slice();
+        const out = _creatureTutorCandidatesUncached(state, maxCandidates, opts);
+        bucket.set(key, out);
+        return out.slice();
+      }
+      function _creatureTutorCandidatesUncached(state, maxCandidates = 3, opts = {}) {
         const cards = CARDS2;
         const { COMBO_REQUIRED_KEYS, TUTOR_PRIORITY_SCORE, FUNCTIONAL_EQUIVALENTS, ALWAYS_RELEVANT_TUTOR_TARGETS } = require_combo_data();
         const { NAME_TO_KEY } = require_actions();
@@ -16920,7 +16949,7 @@ ${ex}`;
     "Solver.js"(exports, module) {
       "use strict";
       var { generateActions, narrowedCount, resetNarrowed, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, effectiveCost } = require_actions();
-      var { COMBO_REQUIRED_KEYS, FUNCTIONAL_EQUIVALENTS } = require_combo_data();
+      var { COMBO_REQUIRED_KEYS, FUNCTIONAL_EQUIVALENTS, ENCHANT_LAND_RAMP } = require_combo_data();
       var { checkVictory, checkSimulatedVictory, loopTypeCanWin, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
       var CARDS2 = require_cards();
       var __fastManaRegime = false;
@@ -17367,6 +17396,73 @@ ${ex}`;
         // exists for — adds hundreds of MB on its own and still trips.
         minHeapGrowthFraction: 0.25,
         strategy: "dfs",
+        // [O-113] Goldfish cross-turn planning. The plan heuristic scores each turn
+        // in isolation, so a turn-1 commitment can foreclose a turn-3 win that was
+        // available all along — measured (O-112), goldfish wins only 37.5% of the
+        // wins that need NO future card at all, where a perfect planner wins every
+        // one.
+        //
+        // The fix is replanning under a no-draw assumption: before committing, ask
+        // of each candidate "if I draw nothing from here on, can I still win by the
+        // turn limit?" and prefer one that can. Planning on cards you already hold
+        // is not foresight — a real player does exactly this — and assuming no draws
+        // is strictly pessimistic, so nothing leaks about what is actually on top of
+        // the library.
+        //
+        // goldfishLookahead: state budget per candidate probe; 0 restores the pure
+        // greedy commit. goldfishLookaheadTop: how many candidates to probe,
+        // best-first by plan key, since the probe is far dearer than the key.
+        goldfishLookahead: 25e3,
+        goldfishLookaheadTop: 6,
+        // [O-116] Which probe ranks the candidates.
+        //
+        //   'nodraw'  — can this candidate win if I draw NOTHING more? Strictly
+        //               pessimistic, and measured (O-115) to return Infinity on
+        //               100% of 316 probes across the turn-1-fatal hands, because
+        //               80.2% of this deck's turn-3 wins need a card drawn after
+        //               turn 1. Inert on exactly the hands that matter.
+        //
+        //   'sampled' — what FRACTION of possible futures does this candidate win?
+        //               Runs `goldfishProbeTrials` trials with the library RESHUFFLED
+        //               each time, so the probe sees the deck's composition — which a
+        //               real player knows, it is their own decklist — but never the
+        //               actual order. That is the barrier restated correctly: the
+        //               forbidden knowledge is which card is on top, not which cards
+        //               remain.
+        //   'hybrid'  — [O-117] try 'nodraw' first and use it whenever it
+        //               DISCRIMINATES (any candidate reaches a win unaided); fall
+        //               back to 'sampled' only when every candidate returns
+        //               Infinity, i.e. exactly the case where 'nodraw' is known to
+        //               be inert. Measured, the two are complementary rather than
+        //               competing: 'sampled' engages where 'nodraw' is blind
+        //               (turn-1-fatal 21 -> 17, +1 win) and LOSES where 'nodraw'
+        //               works (draw-independent 7 -> 5 wins), because 3 trials is a
+        //               coarse estimate and a reshuffled library enlarges what each
+        //               trial must cover within the same per-trial budget. Taking
+        //               each where it is strong is worth more than either alone,
+        //               and costs the cheap probe on the hands it already handles.
+        // Default stays 'nodraw' until a probe is MEASURED to beat it end-to-end.
+        // 'sampled' measured NET WORSE as a straight swap (7 wins -> 6 across both
+        // sets, at 3x the states): it engages where 'nodraw' is blind (turn-1-fatal
+        // 21 -> 17 fatal, +1 win) but loses where 'nodraw' works (draw-independent
+        // 7 -> 5 wins), because 3 trials is a coarse estimate and a reshuffled
+        // library enlarges what each trial must cover within the same budget.
+        //
+        // 'hybrid' should get both — and may yet — but it is NOT free on the hands
+        // 'nodraw' cannot help: there it pays full 'sampled' price, enough to blow a
+        // 200,000-state budget where 'nodraw' finishes well inside it. Left opt-in
+        // until the A/B says otherwise.
+        goldfishProbe: "nodraw",
+        goldfishProbeTrials: 3,
+        // [O-122] Two corrections to _goldfishPlanKey, each toggleable so they can be
+        // A/B'd independently against a fixed-library corpus.
+        //   goldfishManaAura:    count an attached mana aura (Utopia Sprawl, Wild
+        //                        Growth) as a mana source. It is not a land and has
+        //                        no tapForMana, so the structural test missed it.
+        //   goldfishComboReach:  count a combo piece only when its combo is
+        //                        completable from battlefield + hand.
+        goldfishManaAura: true,
+        goldfishComboReach: true,
         allLines: false,
         verbose: false,
         firstWin: false,
@@ -17431,6 +17527,8 @@ ${ex}`;
         for (const p of state.battlefield) if (p.tapped) tappedCount++;
         return (state.turn - 1) * 1e5 + depth * 10 + state.mana.total() * 1 + tappedCount * 1;
       }
+      var _goldfishComboKeys = null;
+      var _goldfishCombosByKey = null;
       function _bestPlayKey(depth, s) {
         return -depth * 1e7 + s;
       }
@@ -17533,7 +17631,7 @@ ${ex}`;
         if (!nm) return combo;
         return { ...combo, winCondition: nm.winCondition, nearMissHint: nm.hint };
       }
-      var Solver2 = class {
+      var Solver2 = class _Solver {
         constructor(options = {}) {
           this.opts = { ...DEFAULT_OPTIONS, ...options };
           this.bestLine = null;
@@ -17670,6 +17768,8 @@ ${ex}`;
             this._astar(initialState);
           } else if (this.opts.strategy === "iddfs") {
             this._iddfs(initialState);
+          } else if (this.opts.strategy === "goldfish") {
+            this._goldfish(initialState);
           } else {
             this._dfs(initialState, null, 0);
           }
@@ -18103,6 +18203,370 @@ ${ex}`;
         // block re-entry to the same state at depth D+k in a T3 pass (the depth-gate
         // at _dfs line 735 prunes revisits at the same or shallower depth). Resetting
         // ensures each pass is a clean search.
+        // ── Goldfish plan heuristic ─────────────────────────────────────────────
+        //
+        // [O-108] What a turn is worth, evaluated on the position BEFORE the clock
+        // advances. Lower is better, matching score()'s convention.
+        //
+        // The first version ranked by _bestPlayKey, i.e. "take the most actions" —
+        // measured inert (identical 3.00% with and without the minMissing term it
+        // was paired with) and actively wrong-headed: it rewards emptying your hand
+        // and tapping out for anything at all, because every extra action improves
+        // the key. This replaces it with terms that describe a POSITION rather than
+        // an activity count:
+        //
+        //   combo pieces on the battlefield   real progress, dominates everything
+        //   mana sources on the battlefield   what the next turn can actually spend
+        //   value still held in hand          optionality — and the term that stops
+        //                                     the churn, because a play that empties
+        //                                     the hand for no board gain now COSTS
+        //   floating mana at end of turn      about to be lost, so a small penalty
+        //
+        // Holding a tutor is valued through the hand term (TUTOR_PRIORITY_SCORE
+        // rates exactly the cards worth having), so firing one for nothing is a
+        // loss, while deploying a land or a combo piece is a gain that outweighs
+        // the card leaving hand. That is "hold mana and tutors" expressed as a
+        // position score rather than as a special case.
+        _goldfishPlanKey(state) {
+          if (!_goldfishComboKeys) {
+            _goldfishComboKeys = /* @__PURE__ */ new Set();
+            _goldfishCombosByKey = /* @__PURE__ */ new Map();
+            for (const combo of COMBO_REQUIRED_KEYS) for (const k of combo) {
+              _goldfishComboKeys.add(k);
+              let list = _goldfishCombosByKey.get(k);
+              if (!list) _goldfishCombosByKey.set(k, list = []);
+              list.push(combo);
+            }
+          }
+          const reach = this.opts.goldfishComboReach ? /* @__PURE__ */ new Set([...state.battlefield.map((p) => p.cardKey), ...state.hand]) : null;
+          let comboOnBoard = 0, manaSources = 0;
+          for (const p of state.battlefield) {
+            if (_goldfishComboKeys.has(p.cardKey) && (!reach || (_goldfishCombosByKey.get(p.cardKey) || []).some((c) => c.every((k) => reach.has(k))))) comboOnBoard++;
+            const def = CARDS2[p.cardKey];
+            if (def && (def.types.includes("land") || def.tapForMana || def.handAbilities)) manaSources++;
+            else if (this.opts.goldfishManaAura && ENCHANT_LAND_RAMP.has(p.cardKey) && p.enchantedLandId != null) manaSources++;
+          }
+          let handValue = 0;
+          for (const k of state.hand) handValue += TUTOR_PRIORITY_SCORE[k] ?? 1;
+          return -(comboOnBoard * 1e6 + manaSources * 1e4 + handValue * 10) + state.mana.total();
+        }
+        /**
+         * [O-113] Can this position still win by the turn limit if NOTHING further
+         * is drawn? Runs a bounded sub-search with drawForTurn cleared, so the plan
+         * is built only from cards already known. Returns the winning turn, or
+         * Infinity if no win is reachable without help from the library.
+         * @private
+         */
+        _goldfishWinTurnWithoutDraws(preState, budget) {
+          const probe = preState.clone();
+          probe.drawForTurn = false;
+          const sub = new _Solver({
+            maxTurns: this.opts.maxTurns,
+            maxDepth: this.opts.maxDepth,
+            maxStates: budget,
+            strategy: "iddfs",
+            // turn-bounded passes: reports the EARLIEST win
+            firstWin: true,
+            simulateOpponentTurns: this.opts.simulateOpponentTurns,
+            escalate: false,
+            verbose: false,
+            maxTimeMs: 5e3
+          });
+          const log = console.log, w = process.stdout.write.bind(process.stdout);
+          console.log = () => {
+          };
+          process.stdout.write = () => true;
+          let res;
+          try {
+            res = sub.solve(probe);
+          } catch {
+            res = null;
+          } finally {
+            console.log = log;
+            process.stdout.write = w;
+          }
+          this.statesExplored += sub.statesExplored;
+          if (!res || !res.combo || !res.combo.winCondition) return Infinity;
+          return res.line[res.line.length - 1].turn;
+        }
+        /**
+         * [O-116] What fraction of possible futures does this position win?
+         *
+         * Reshuffles the library before each trial, so the probe knows WHAT is left
+         * (public information — it is the player's own decklist minus what they have
+         * seen) but never the ORDER. The actual top card is therefore never
+         * consulted, which is the barrier goldfish exists to enforce; what changes
+         * from the 'nodraw' probe is only that drawing *something* is now modelled
+         * instead of assumed away.
+         *
+         * Deterministic: the shuffle is seeded from the position's own fingerprint
+         * plus the trial index, so the same position always yields the same estimate
+         * and the solver stays reproducible.
+         *
+         * @returns {number} wins / trials, in [0,1]
+         * @private
+         */
+        _goldfishSampledWinChance(preState, budget, trials) {
+          let hash = 2166136261;
+          const fp = preState.fingerprint();
+          for (let i = 0; i < fp.length; i++) {
+            hash ^= fp.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+          }
+          let wins = 0;
+          for (let t = 0; t < trials; t++) {
+            let seed = (hash ^ Math.imul(t + 1, 2654435761)) >>> 0;
+            const rnd = () => {
+              seed ^= seed << 13;
+              seed >>>= 0;
+              seed ^= seed >>> 17;
+              seed ^= seed << 5;
+              seed >>>= 0;
+              return seed / 4294967296;
+            };
+            const probe = preState.clone();
+            const p0 = probe.players[0].clone();
+            const lib = [...p0.library];
+            for (let j = lib.length - 1; j > 0; j--) {
+              const k = Math.floor(rnd() * (j + 1));
+              const tmp = lib[j];
+              lib[j] = lib[k];
+              lib[k] = tmp;
+            }
+            p0.library = lib;
+            probe.players = [...probe.players];
+            probe.players[0] = p0;
+            const sub = new _Solver({
+              maxTurns: this.opts.maxTurns,
+              maxDepth: this.opts.maxDepth,
+              maxStates: budget,
+              strategy: "iddfs",
+              firstWin: true,
+              simulateOpponentTurns: this.opts.simulateOpponentTurns,
+              escalate: false,
+              verbose: false,
+              maxTimeMs: 5e3
+            });
+            const log = console.log, w = process.stdout.write.bind(process.stdout);
+            console.log = () => {
+            };
+            process.stdout.write = () => true;
+            let res;
+            try {
+              res = sub.solve(probe);
+            } catch {
+              res = null;
+            } finally {
+              console.log = log;
+              process.stdout.write = w;
+            }
+            this.statesExplored += sub.statesExplored;
+            if (res && res.combo && res.combo.winCondition) wins++;
+            if (this._stopSearch || this.statesExplored > this.opts.maxStates) {
+              return wins / (t + 1);
+            }
+          }
+          return wins / trials;
+        }
+        // ── Goldfish: turn-by-turn play with no foresight ───────────────────────
+        //
+        // [O-107] Every other strategy searches the whole tree at once, which means
+        // it can choose a turn-1 play that only pays off because of a card it will
+        // draw on turn 3. The library is fixed and the draws are deterministic, so
+        // the search is effectively playing with knowledge of the top of the deck —
+        // information no goldfishing player has. Win rates measured that way are an
+        // upper bound: they answer "could this hand have won with perfect
+        // foresight", not "would it have won".
+        //
+        // This strategy puts an information barrier at each turn boundary. Within a
+        // turn it searches exhaustively — a real player DOES get to consider every
+        // line available with the cards in front of them — then COMMITS to one and
+        // never backtracks across the boundary. What it cannot do is revisit turn 1
+        // after seeing the turn-2 draw.
+        //
+        // Candidates are ranked on the state BEFORE the turn advances, so the
+        // decision is made without the next draw visible. Ranking is minMissing
+        // (distance to assembling a combo) first, then the existing bestPlay key
+        // (most actions taken, least mana and taps wasted) as a tiebreak.
+        //
+        // The number this produces is a LOWER bound, and the gap between it and the
+        // ordinary strategies is the value of perfect foresight. It is also partly a
+        // measurement of the ranking below rather than of the deck: a better plan
+        // than "minimise minMissing" would score higher. Read it as such.
+        _goldfish(initialState) {
+          const savedPor = this._porEnabled;
+          this._porEnabled = true;
+          try {
+            this._goldfishLoop(initialState);
+          } finally {
+            this._porEnabled = savedPor;
+          }
+        }
+        _goldfishLoop(initialState) {
+          let node = { state: initialState, parent: null };
+          let depth = 0;
+          while (!this._stopSearch && node.state.turn <= this.opts.maxTurns) {
+            const turn = node.state.turn;
+            const turnResult = this._playTurn(node, depth);
+            if (this._stopSearch || turnResult.won) return;
+            if (!turnResult.next) break;
+            node = turnResult.next;
+            depth = turnResult.depth;
+            if (node.state.turn <= turn) break;
+          }
+        }
+        /**
+         * Search one turn exhaustively, then pick the single line to commit to.
+         * @returns {{won: boolean, next: object|null, depth: number}}
+         * @private
+         */
+        _playTurn(startNode, startDepth) {
+          const startTurn = startNode.state.turn;
+          const seen = /* @__PURE__ */ new Set();
+          this.manaFrontier = /* @__PURE__ */ new Map();
+          const stack = [{ node: startNode, depth: startDepth, tapMark: null }];
+          const topN = Math.max(1, this.opts.goldfishLookaheadTop);
+          const cands = [];
+          while (stack.length) {
+            if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
+            const { node, depth, tapMark } = stack.pop();
+            const state = node.state;
+            this.statesExplored++;
+            this._checkDeadline();
+            if (this._timedOut || this._heapCapped) break;
+            if (depth > this.opts.maxDepth) continue;
+            if (state.youLost()) {
+              this.pruned++;
+              this.pruneReasons.youLost++;
+              continue;
+            }
+            const fp = state.fingerprint();
+            if (seen.has(fp)) {
+              this.pruned++;
+              continue;
+            }
+            seen.add(fp);
+            const simWin = checkSimulatedVictory(state);
+            if (simWin) {
+              this._recordWin(reconstructPath(node), simWin, score(state, depth));
+              this._stopSearch = true;
+              return { won: true, next: null, depth };
+            }
+            const infiniteMana = checkCombos(state);
+            const present = buildPresentSet(state);
+            const combo = checkVictory(state, infiniteMana, present);
+            if (combo) {
+              const s = score(state, depth);
+              if (combo.deployed && (combo.winCondition != null || !this._requireRealWin && !this.opts.exhaustive && loopTypeCanWin(combo.loopType))) {
+                this._recordWin(reconstructPath(node), combo, s);
+                this._stopSearch = true;
+                return { won: true, next: null, depth };
+              }
+              if (!this.fallbackWin || s < this.fallbackWin.score) {
+                this.fallbackWin = { line: reconstructPath(node), combo, score: s };
+              }
+            }
+            const analysis = analyzeState(state, infiniteMana, present);
+            const actions = generateActions(
+              state,
+              analysis.present,
+              this.opts.exhaustive,
+              this.opts.simulateOpponentTurns,
+              this.opts.exhaustive || this._escalating
+            );
+            for (const action of actions) {
+              if (this._porEnabled && action.porKey != null && tapMark != null && action.porKey <= tapMark) {
+                this.pruned++;
+                this.pruneReasons.tapOrder++;
+                continue;
+              }
+              let next;
+              try {
+                next = action.apply(state);
+              } catch (e) {
+                if (this.opts.verbose) console.warn(`[${action.label}]`, e.message);
+                continue;
+              }
+              if (!next) continue;
+              if (next.turn > startTurn) {
+                const key = this._goldfishPlanKey(state);
+                const cand = {
+                  node: { state: next, parent: node },
+                  depth: depth + 1,
+                  key,
+                  missing: analysis.minMissing,
+                  preState: state
+                };
+                let at = cands.length;
+                while (at > 0 && (cands[at - 1].missing > cand.missing || cands[at - 1].missing === cand.missing && cands[at - 1].key > cand.key)) at--;
+                if (at < topN) {
+                  cands.splice(at, 0, cand);
+                  if (cands.length > topN) cands.length = topN;
+                }
+                continue;
+              }
+              const childFp = next.fingerprint();
+              if (!this.opts.exhaustive && this._isManaDominated(next, childFp, this.manaFrontier)) {
+                this.pruned++;
+                this.pruneReasons.manaDominated++;
+                continue;
+              }
+              stack.push({
+                node: { state: next, parent: node },
+                depth: depth + 1,
+                tapMark: action.porKey != null ? action.porKey : null
+              });
+            }
+          }
+          if (!cands.length) return { won: false, next: null, depth: startDepth };
+          let best = cands[0];
+          const budget = this.opts.goldfishLookahead;
+          if (budget > 0 && cands.length > 1) {
+            const mode = this.opts.goldfishProbe;
+            let decided = false;
+            if (mode === "nodraw" || mode === "hybrid") {
+              let bestTurn = Infinity;
+              let pick = null;
+              for (const c of cands) {
+                if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
+                const t = this._goldfishWinTurnWithoutDraws(c.preState, budget);
+                if (t < bestTurn) {
+                  bestTurn = t;
+                  pick = c;
+                }
+                if (t === startTurn) break;
+              }
+              if (pick) {
+                best = pick;
+                decided = true;
+              }
+            }
+            if (!decided && (mode === "sampled" || mode === "hybrid")) {
+              let bestChance = -1;
+              for (const c of cands) {
+                if (this._stopSearch || this.statesExplored > this.opts.maxStates) break;
+                const p = this._goldfishSampledWinChance(
+                  c.preState,
+                  budget,
+                  this.opts.goldfishProbeTrials
+                );
+                if (p > bestChance) {
+                  bestChance = p;
+                  best = c;
+                }
+                if (p === 1) break;
+              }
+            }
+          }
+          if (this.opts.bestPlay) {
+            const k = _bestPlayKey(best.depth, score(best.node.state, best.depth));
+            if (k < this.bestPlayScore) {
+              this.bestPlayScore = k;
+              this.bestPlayLine = reconstructPath(best.node);
+            }
+          }
+          return { won: false, next: best.node, depth: best.depth };
+        }
         _iddfs(initialState) {
           const savedMaxTurns = this.opts.maxTurns;
           const savedFirstWin = this.opts.firstWin;
@@ -18620,6 +19084,9 @@ ${ex}`;
         }
         function inHand(cardKey) {
           return s.hand.includes(cardKey);
+        }
+        function inHandOrFieldLocal(cardName, cardKey) {
+          return onField(cardName) || inHand(cardKey);
         }
         function onField(cardName) {
           return s.hasPermanent(cardName);
@@ -19235,9 +19702,18 @@ ${ex}`;
               }
             } else if (!onField("Geier Reach Sanitarium")) {
               const stillPossible = [];
-              if (inHand("crop_rotation") || inGraveyard("Crop Rotation")) stillPossible.push("Crop Rotation");
-              if (inLibrary("elvish_reclaimer")) stillPossible.push("Elvish Reclaimer");
-              if (inHand("sylvan_scrying") || inLibrary("sylvan_scrying")) stillPossible.push("Sylvan Scrying");
+              const addRoute = (label, inHandNow) => stillPossible.push(
+                inHandNow ? `${label} (in hand)` : `${label} (tutor it first, then cast)`
+              );
+              const witnessReachable = inHandOrFieldLocal("Eternal Witness", "eternal_witness") || inLibrary("eternal_witness") || inHandOrFieldLocal("Timeless Witness", "timeless_witness") || inLibrary("timeless_witness");
+              if (inHand("crop_rotation")) addRoute("Crop Rotation", true);
+              else if (inGraveyard("Crop Rotation") && witnessReachable)
+                stillPossible.push("Crop Rotation (recur it with a Witness first)");
+              if (inHand("elvish_reclaimer")) addRoute("Elvish Reclaimer", true);
+              else if (inLibrary("elvish_reclaimer")) addRoute("Elvish Reclaimer", false);
+              if (inHand("sowing_mycospawn")) addRoute("Sowing Mycospawn", true);
+              else if (inLibrary("sowing_mycospawn")) addRoute("Sowing Mycospawn", false);
+              if (inHand("sylvan_scrying")) addRoute("Sylvan Scrying", true);
               steps.push(stillPossible.length > 0 ? `(Geier Reach Sanitarium in library \u2014 fetch via ${stillPossible.join(", ")})` : "(Geier Reach Sanitarium in library, but no remaining fetch method found in this line)");
             }
           }
@@ -20016,6 +20492,389 @@ ${ex}`;
         if (def.types.includes("artifact")) return "artifact";
         return "other";
       }
+      var _TUTOR_KEYS = null;
+      var FETCHLAND_KEYS = /* @__PURE__ */ new Set([
+        "misty_rainforest",
+        "verdant_catacombs",
+        "windswept_heath",
+        "wooded_foothills"
+      ]);
+      function tutorKeys() {
+        if (_TUTOR_KEYS) return _TUTOR_KEYS;
+        _TUTOR_KEYS = /* @__PURE__ */ new Set();
+        for (const [key, def] of Object.entries(CARDS2)) {
+          if (!def || typeof def !== "object" || FETCHLAND_KEYS.has(key)) continue;
+          let s;
+          try {
+            s = JSON.stringify(def, (k, v) => typeof v === "function" ? v.toString() : v);
+          } catch {
+            continue;
+          }
+          if (s && /searchLibrary/.test(s)) _TUTOR_KEYS.add(key);
+        }
+        return _TUTOR_KEYS;
+      }
+      var _COMBO_PIECE_KEYS = null;
+      function comboPieceKeys() {
+        if (_COMBO_PIECE_KEYS) return _COMBO_PIECE_KEYS;
+        const { COMBO_REQUIRED_KEYS } = require_combo_data();
+        _COMBO_PIECE_KEYS = /* @__PURE__ */ new Set();
+        for (const combo of COMBO_REQUIRED_KEYS) for (const k of combo) _COMBO_PIECE_KEYS.add(k);
+        return _COMBO_PIECE_KEYS;
+      }
+      function classifyOpeningHand(hand) {
+        const { HOLD_FOR_WIN } = require_combo_data();
+        const tutors_ = tutorKeys();
+        const pieces_ = comboPieceKeys();
+        let manaSources = 0, tutors = 0, comboPieces = 0, converters = 0, lands = 0;
+        for (const key of hand) {
+          const def = CARDS2[key];
+          if (!def) continue;
+          const isLand = def.types.includes("land");
+          if (isLand) lands++;
+          if (isLand || def.tapForMana || def.handAbilities) manaSources++;
+          if (tutors_.has(key)) tutors++;
+          if (pieces_.has(key)) comboPieces++;
+          if (HOLD_FOR_WIN.has(key)) converters++;
+        }
+        return { manaSources, tutors, comboPieces, converters, lands };
+      }
+      var COMPOSITION_CURVE = {
+        manaSources: [0, 7.4, 12.1, 14.4, 17.9, 13.4, 8.8],
+        tutors: [10, 13.5, 18.4, 10, 5.7],
+        comboPieces: [4, 6.3, 13.4, 17.3],
+        converters: [14.9, 14.9, 8.9, 4.5]
+      };
+      var { ENCHANT_LAND_RAMP } = require_combo_data();
+      var FAST_MANA_KEYS = /* @__PURE__ */ new Set(["chrome_mox", "mox_diamond", "lotus_petal", "elvish_spirit_guide"]);
+      var T0_GREEN_KEYS = /* @__PURE__ */ new Set(["gemstone_caverns", "chancellor_of_the_tangle"]);
+      var PREMIUM_TUTOR_KEYS = /* @__PURE__ */ new Set([
+        "shared_summons",
+        "worldly_tutor",
+        "green_suns_zenith",
+        "chord_of_calling",
+        "natural_order",
+        "summoners_pact",
+        "survival_fittest",
+        "fauna_shaman",
+        "yisan"
+      ]);
+      var _manaPropCache = /* @__PURE__ */ new Map();
+      function _manaProps(key) {
+        if (_manaPropCache.has(key)) return _manaPropCache.get(key);
+        const def = CARDS2[key];
+        let green = false, total = 0;
+        if (def && def.tapForMana) {
+          try {
+            const { GameState: GameState3 } = require_GameState();
+            let s = new GameState3({
+              players: [{ name: "You", life: 40, library: [], poison: 0 }],
+              hand: [],
+              landDrops: 9
+            });
+            s = s.enterBattlefield(key);
+            const perm = s.battlefield[s.battlefield.length - 1];
+            if (perm) {
+              perm.summoningSick = false;
+              for (const out of def.tapForMana(s, perm) || []) {
+                const m = out.mana || {};
+                const t = Object.values(m).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0);
+                if ((m.G || 0) > 0) green = true;
+                if (t > total) total = t;
+              }
+            }
+          } catch {
+          }
+        }
+        const r = { green, total, cmc: _cmcOf(def && def.cost) };
+        _manaPropCache.set(key, r);
+        return r;
+      }
+      function _cmcOf(cost) {
+        if (cost == null) return 0;
+        const generic = (cost.match(/\d+/) || ["0"])[0];
+        const colored = (cost.match(/[A-Za-z]/g) || []).length;
+        return Number(generic) + colored;
+      }
+      function handFeatures(hand) {
+        const { HOLD_FOR_WIN } = require_combo_data();
+        const tutors_ = tutorKeys(), pieces_ = comboPieceKeys();
+        const f = {
+          lands: 0,
+          greenLands: 0,
+          colorlessLands: 0,
+          dorks1: 0,
+          dorksBig: 0,
+          rocks: 0,
+          enchantRamp: 0,
+          tutors: 0,
+          combo: 0,
+          payoff: 0,
+          fastMana: 0,
+          t0green: 0,
+          cradle: 0,
+          cropRotation: 0
+        };
+        for (const key of hand) {
+          const def = CARDS2[key];
+          if (!def) continue;
+          const p = _manaProps(key);
+          const isLand = def.types.includes("land");
+          if (isLand) {
+            f.lands++;
+            if (p.green) f.greenLands++;
+            else f.colorlessLands++;
+          }
+          if (key === "gaeas_cradle") f.cradle++;
+          if (key === "crop_rotation") f.cropRotation++;
+          if (!isLand && def.types.includes("creature") && def.tapForMana) {
+            if (p.cmc <= 1) f.dorks1++;
+            else f.dorksBig++;
+          }
+          if (!isLand && def.types.includes("artifact") && (def.tapForMana || key === "lotus_petal")) {
+            if (key !== "chrome_mox" || hand.some((k) => k !== "chrome_mox" && CARDS2[k] && !CARDS2[k].types.includes("land"))) {
+              f.rocks++;
+            }
+          }
+          if (ENCHANT_LAND_RAMP.has(key)) f.enchantRamp++;
+          if (tutors_.has(key)) f.tutors++;
+          if (pieces_.has(key)) f.combo++;
+          if (HOLD_FOR_WIN.has(key)) f.payoff++;
+          if (FAST_MANA_KEYS.has(key)) f.fastMana++;
+          if (T0_GREEN_KEYS.has(key)) f.t0green++;
+        }
+        if (f.lands === 0) f.enchantRamp = 0;
+        f.greenSource = f.greenLands + f.dorks1 + f.dorksBig + f.enchantRamp + f.t0green;
+        f.manaSource = f.lands + f.rocks;
+        f.ramp = f.dorks1 + f.dorksBig + f.enchantRamp + f.rocks;
+        f.t1play = f.greenLands > 0 && (f.dorks1 > 0 || f.enchantRamp > 0) || f.fastMana > 0 && f.dorks1 > 0;
+        return f;
+      }
+      function handVerdict(hand) {
+        const f = handFeatures(hand);
+        const n = hand.length;
+        const out = (verdict, gate = null, passes2 = 0, threshold2 = 0) => ({ verdict, passes: passes2, threshold: threshold2, features: f, gate });
+        if (f.greenSource === 0) {
+          const escape = f.fastMana > 0 && f.dorks1 > 0 || f.colorlessLands > 0 && f.rocks > 0 && f.payoff > 0 || f.cradle > 0 && f.fastMana > 0 && f.payoff > 0 || f.t0green > 0;
+          if (!escape) return out("MULLIGAN", "no green source");
+        }
+        if (f.manaSource === 0) return out("MULLIGAN", "no mana sources at all");
+        let floor = null;
+        if (f.ramp === 0) {
+          const rampOut = f.tutors >= 2 || f.cropRotation > 0 && f.lands > 0 && f.combo > 0 || f.cradle > 0 && f.dorks1 > 0;
+          if (!rampOut) return out("MULLIGAN", "no ramp");
+          floor = "BORDERLINE";
+        }
+        if (f.lands >= 5 && f.tutors === 0 && f.ramp === 0) return out("MULLIGAN", "mana flood");
+        const A = f.t1play;
+        const B = f.ramp >= 2 || f.ramp >= 1 && f.tutors >= 1;
+        const C = f.tutors >= 1;
+        const D = f.lands >= 2 && f.lands <= 3;
+        const E = f.combo >= 1 || f.payoff >= 1;
+        const F = f.dorks1 > 0 && f.tutors > 0 || f.dorks1 > 0 && f.combo > 0 || hand.some((k) => PREMIUM_TUTOR_KEYS.has(k));
+        const passes = [A, B, C, D, E, F].filter(Boolean).length;
+        const threshold = Math.max(2, 5 - (7 - n));
+        let v = passes >= threshold ? "KEEP" : passes >= threshold - 1 ? "BORDERLINE" : "MULLIGAN";
+        if (v === "BORDERLINE" && f.dorks1 > 0 && f.tutors > 0 && E) v = "KEEP";
+        if (v === "KEEP" && f.lands >= 4 && !A) v = "BORDERLINE";
+        if (v === "KEEP" && f.ramp > 0 && f.ramp === f.fastMana) v = "BORDERLINE";
+        if (floor === "BORDERLINE" && v === "MULLIGAN") v = "BORDERLINE";
+        return out(v, floor ? "no ramp (rescued)" : null, passes, threshold);
+      }
+      function handCompositionScore(hand) {
+        const c = classifyOpeningHand(hand);
+        let score = 0;
+        for (const key of Object.keys(COMPOSITION_CURVE)) {
+          const curve = COMPOSITION_CURVE[key];
+          score += curve[Math.min(c[key], curve.length - 1)];
+        }
+        return score;
+      }
+      function cardKeepPriority(hand, idx) {
+        const { HOLD_FOR_WIN } = require_combo_data();
+        const key = hand[idx];
+        const def = CARDS2[key];
+        if (!def) return 0;
+        const isLand = def.types.includes("land");
+        const isMana = isLand || def.tapForMana || def.handAbilities;
+        const c = classifyOpeningHand(hand);
+        const rankAmong = (pred) => hand.slice(0, idx + 1).filter(pred).length;
+        if (tutorKeys().has(key)) return 100;
+        if (comboPieceKeys().has(key)) return 90;
+        if (isMana) {
+          return rankAmong((k) => {
+            const d = CARDS2[k];
+            return d && (d.types.includes("land") || d.tapForMana || d.handAbilities);
+          }) <= 4 ? 80 : 30;
+        }
+        if (HOLD_FOR_WIN.has(key)) {
+          return rankAmong((k) => HOLD_FOR_WIN.has(k)) <= 1 ? 70 : 20;
+        }
+        return 0;
+      }
+      function londonBottom(drawn, n) {
+        let kept = [...drawn];
+        const bottomed = [];
+        for (let i = 0; i < n && kept.length > 1; i++) {
+          let bestIdx = 0, bestKey = [Infinity, -Infinity];
+          for (let j = 0; j < kept.length; j++) {
+            const pri = cardKeepPriority(kept, j);
+            const cmc = _cmcOf(CARDS2[kept[j]] && CARDS2[kept[j]].cost);
+            if (pri < bestKey[0] || pri === bestKey[0] && cmc > bestKey[1]) {
+              bestKey = [pri, cmc];
+              bestIdx = j;
+            }
+          }
+          bottomed.push(kept[bestIdx]);
+          kept = kept.filter((_, k) => k !== bestIdx);
+        }
+        return { kept, bottomed };
+      }
+      function _stateForKeep(kept, library, bottomed) {
+        let s = new GameState2({
+          players: [
+            { name: "You", life: 40, library: [...library, ...bottomed], poison: 0 },
+            { name: "Opponent 1", life: 40, librarySize: 99, poison: 0 },
+            { name: "Opponent 2", life: 40, librarySize: 99, poison: 0 },
+            { name: "Opponent 3", life: 40, librarySize: 99, poison: 0 }
+          ],
+          hand: [...kept],
+          drawForTurn: true
+        });
+        s.pushHistory({ turn: 1, msg: "-- Begin Turn 1 --" });
+        if (s.players[0].library.length > 0) {
+          const drawnKey = s.players[0].library[0];
+          s.players[0] = s.players[0].draw(1);
+          if (drawnKey && drawnKey !== "unknown") s.hand = [...s.hand, drawnKey];
+        }
+        return s;
+      }
+      function _winsCheaply(kept, library, bottomed, opts) {
+        const solver = new Solver2({
+          maxTurns: opts.maxTurns,
+          maxDepth: opts.maxDepth,
+          maxStates: opts.maxStates,
+          strategy: "iddfs",
+          firstWin: true,
+          simulateOpponentTurns: true,
+          escalate: "auto",
+          maxTimeMs: opts.maxTimeMs
+        });
+        const r = quietSolve(solver, _stateForKeep(kept, library, bottomed));
+        return !!(r && r.combo && r.combo.winCondition);
+      }
+      function londonBottomBySolve(drawn, n, options = {}) {
+        const {
+          library = [],
+          maxTurns = 3,
+          maxDepth = 48,
+          maxStates = 15e4,
+          maxTimeMs = 5e3
+        } = options;
+        const opts = { maxTurns, maxDepth, maxStates, maxTimeMs };
+        if (n <= 0) return { kept: [...drawn], bottomed: [], probes: 0, solveChosen: false };
+        if (!library.length) return { ...londonBottom(drawn, n), probes: 0, solveChosen: false };
+        let kept = [...drawn];
+        const bottomed = [];
+        let probes = 0, solveChosen = false;
+        for (let round = 0; round < n && kept.length > 1; round++) {
+          probes++;
+          if (!_winsCheaply(kept, library, bottomed, opts)) break;
+          const order = kept.map((key, idx) => ({ key, idx, pri: cardKeepPriority(kept, idx) })).sort((a, b) => a.pri - b.pri || _cmcOf(CARDS2[b.key] && CARDS2[b.key].cost) - _cmcOf(CARDS2[a.key] && CARDS2[a.key].cost));
+          const tried = /* @__PURE__ */ new Set();
+          let chosen = null;
+          for (const cand of order) {
+            if (tried.has(cand.key)) continue;
+            tried.add(cand.key);
+            const trial = kept.filter((_, j) => j !== cand.idx);
+            probes++;
+            if (_winsCheaply(trial, library, [...bottomed, cand.key], opts)) {
+              chosen = cand;
+              break;
+            }
+          }
+          if (!chosen) break;
+          solveChosen = true;
+          bottomed.push(chosen.key);
+          kept = kept.filter((_, j) => j !== chosen.idx);
+        }
+        if (bottomed.length < n) {
+          const rest = londonBottom(kept, n - bottomed.length);
+          return { kept: rest.kept, bottomed: [...bottomed, ...rest.bottomed], probes, solveChosen };
+        }
+        return { kept, bottomed, probes, solveChosen };
+      }
+      function londonBottomCount(taken) {
+        return Math.max(0, taken - 1);
+      }
+      var DISCARD_RETENTION = {
+        3: { solveChosen: 0.88, heuristic: 0.4, random: 0.33, ceiling: 0.92 },
+        4: { solveChosen: 0.74, heuristic: 0.57, random: 0.43, ceiling: 0.96 }
+      };
+      var RUBRIC_BUCKET_VALUE = {
+        3: { KEEP: 21.58, BORDERLINE: 12.13, MULLIGAN: 8.61, baseline: 14.07 },
+        4: { KEEP: 56.79, BORDERLINE: 39.39, MULLIGAN: 37.5, baseline: 44.02 }
+      };
+      function shipReason(hand, taken, options = {}) {
+        const { maxTurns = 3, canBottomWell = false } = options;
+        const table = RUBRIC_BUCKET_VALUE[maxTurns] ?? RUBRIC_BUCKET_VALUE[3];
+        const { verdict, gate } = handVerdict(hand);
+        const value = table[verdict];
+        const why = gate ? gate : verdict.toLowerCase() + " hand";
+        if (taken === 0) {
+          if (value >= table.baseline) return null;
+          return `${why} \u2014 worth ${value}% against a ${table.baseline}% fresh seven`;
+        }
+        if (taken === 1) {
+          if (!canBottomWell) return null;
+          const retention = DISCARD_RETENTION[maxTurns] ?? DISCARD_RETENTION[3];
+          const sixValue = table.baseline * retention.solveChosen;
+          if (verdict !== "MULLIGAN" || value >= sixValue) return null;
+          return `${why} \u2014 worth ${value}% against a solve-chosen six worth ${sixValue.toFixed(1)}%`;
+        }
+        return null;
+      }
+      function simulateMulligans(dealSeven, options = {}) {
+        const {
+          maxMulligans = 2,
+          maxTurns = 3,
+          libraryFor = null,
+          // (drawn) => library; enables the solve-chosen discard
+          bottomBySolve = true,
+          // use londonBottomBySolve when a library is available
+          probeStates = 15e4,
+          probeTimeMs = 1e4
+        } = options;
+        const canBottomWell = !!(bottomBySolve && libraryFor);
+        let mulligans = 0, reason = null;
+        for (; ; ) {
+          const drawn = dealSeven();
+          const library = libraryFor ? libraryFor(drawn) : null;
+          const nBottom = londonBottomCount(mulligans);
+          const cut = canBottomWell && nBottom > 0 ? londonBottomBySolve(drawn, nBottom, {
+            library,
+            maxTurns,
+            maxStates: probeStates,
+            maxTimeMs: probeTimeMs
+          }) : londonBottom(drawn, nBottom);
+          const bad = mulligans < maxMulligans ? shipReason(cut.kept, mulligans, { maxTurns, canBottomWell }) : null;
+          if (bad) {
+            reason = bad;
+            mulligans++;
+            continue;
+          }
+          return {
+            hand: cut.kept,
+            bottomed: cut.bottomed,
+            drawn,
+            library,
+            mulligans,
+            reason,
+            solveChosen: !!cut.solveChosen,
+            probes: cut.probes || 0
+          };
+        }
+      }
       function mulliganAnalyze2(hand, options = {}) {
         const {
           trials = 200,
@@ -20036,6 +20895,26 @@ ${ex}`;
           // (mulberry32 over Math.random, restored on exit). The seed
           // is echoed in the result so any analysis can be re-run
           // exactly. Null (default) keeps true randomness.
+          // [O-97] How many times you have ALREADY mulliganed. This is what makes the
+          // verdict rules-correct, and it was previously absent entirely: the same
+          // 60%/35% thresholds were applied whether this was your free first look or
+          // your mulligan to five.
+          //
+          //   0 → you have not mulliganed. Under the Commander free-mulligan rule,
+          //       shipping this hand costs you NOTHING: you draw a fresh SEVEN. So the
+          //       break-even bar is simply "is this hand better than an average
+          //       opening hand", i.e. the population baseline.
+          //   n → the next mulligan is a London one: draw 7, bottom n, keep 7-n. That
+          //       hand is strictly worse, so the bar to keep what you are holding
+          //       DROPS steeply. Measured on this deck (300 hands per size, turns 3):
+          //       7 cards win 4.0%, 6 cards 1.3%, 5 cards 0.3% — each card off the
+          //       hand costs roughly two thirds of the win rate.
+          mulliganCount = 0,
+          // Population win/mana baseline for these settings, as a percentage. Used as
+          // the free-mulligan break-even bar. Defaults come from the committed
+          // sweeps; null (or an unknown maxTurns) falls back to the old absolute
+          // thresholds so nothing silently changes for a caller on other settings.
+          baseline = null,
           earlyStop = true
           // stop trialling once the KEEP/MULLIGAN verdict is
           // statistically decided (95% Wilson interval clear of
@@ -20062,7 +20941,12 @@ ${ex}`;
           const half = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom;
           return [Math.max(0, center - half), Math.min(1, center + half)];
         };
-        const KEEP_T = 0.6, BORDER_T = 0.35;
+        const MEASURED_BASELINE = { 3: 18.3, 4: 51.5 };
+        const baselinePct = baseline ?? MEASURED_BASELINE[maxTurns] ?? null;
+        const NEXT_HAND_VALUE = [1, 0.33, 0.08];
+        const nextValue = NEXT_HAND_VALUE[mulliganCount] ?? 0.02;
+        const KEEP_T = baselinePct != null ? Math.min(0.95, baselinePct / 100 * nextValue) : 0.6;
+        const BORDER_T = baselinePct != null ? KEEP_T * 0.7 : 0.35;
         const MIN_TRIALS = 30;
         let infiniteManaWins = 0;
         let fullWins = 0;
@@ -20155,19 +21039,27 @@ ${ex}`;
         for (const k of Object.keys(winByTurn)) {
           winByTurn[k] = Math.round(winByTurn[k] / trialsRun * 1e3) / 10;
         }
+        const keepPct = Math.round(KEEP_T * 1e3) / 10;
+        const borderPct = Math.round(BORDER_T * 1e3) / 10;
+        const barWhy = baselinePct == null ? "fixed threshold (no measured baseline for these settings)" : mulliganCount === 0 ? `break-even vs a free mulligan to seven (population ${baselinePct}%)` : `break-even vs a London mulligan to ${Math.max(0, 7 - mulliganCount)} (population ${baselinePct}% \xD7 ${nextValue} for the smaller hand)`;
         let verdict, reason;
-        if (infiniteManaPercent >= 60) {
+        if (infiniteManaPercent >= keepPct) {
           verdict = "KEEP";
-          reason = `${infiniteManaPercent}% of trials assemble infinite mana within ${maxTurns} turns`;
-        } else if (infiniteManaPercent >= 35) {
+          reason = `${infiniteManaPercent}% of trials assemble infinite mana within ${maxTurns} turns \u2014 above the ${keepPct}% bar: ${barWhy}`;
+        } else if (infiniteManaPercent >= borderPct) {
           verdict = "KEEP (borderline)";
-          reason = `${infiniteManaPercent}% of trials assemble infinite mana \u2014 marginal hand`;
+          reason = `${infiniteManaPercent}% of trials assemble infinite mana \u2014 just under the ${keepPct}% bar (${barWhy}), but not by enough to be worth the shipped card`;
         } else {
           verdict = "MULLIGAN";
-          reason = `Only ${infiniteManaPercent}% of trials assemble infinite mana within ${maxTurns} turns`;
+          reason = `Only ${infiniteManaPercent}% of trials assemble infinite mana within ${maxTurns} turns \u2014 below the ${borderPct}% floor under the ${keepPct}% bar: ${barWhy}`;
         }
         return {
           hand,
+          composition: classifyOpeningHand(hand),
+          mulliganCount,
+          baselinePercent: baselinePct,
+          keepThresholdPercent: keepPct,
+          borderThresholdPercent: borderPct,
           trials,
           // the requested cap
           trialsRun,
@@ -20196,6 +21088,8 @@ ${ex}`;
           const cost = def.cost ? `{${def.cost}}` : "(land)";
           const role = cardRole(key);
         }
+        const c = analysis.composition ?? classifyOpeningHand(analysis.hand);
+        const band = (n, lo, hi) => n < lo ? "\u2193 light" : n > hi ? "\u2191 heavy" : "\u2713";
         const manaByTurn = Object.entries(analysis.infiniteManaByTurn).sort(([a], [b]) => +a - +b);
         for (const [turn, pct] of manaByTurn) {
           const bar = "\u2588".repeat(Math.round(pct / 2.5));
@@ -20726,7 +21620,7 @@ ${ex}`;
           if (combo.description) console.log(`  ${combo.description.slice(0, 200)}`);
         }
       }
-      module.exports = { analyze: analyze2, analyzeMana, whatIfAnalysisSync, findNearMisses, mulliganAnalyze: mulliganAnalyze2, printMulliganAnalysis, tutorAdvisor: tutorAdvisor2, printTutorAdvice, staxAdvisor, printStaxAdvice, mulliganCutAdvisor: mulliganCutAdvisor2, printMulliganCutAdvice, printVerboseLine };
+      module.exports = { analyze: analyze2, analyzeMana, whatIfAnalysisSync, findNearMisses, mulliganAnalyze: mulliganAnalyze2, printMulliganAnalysis, classifyOpeningHand, handCompositionScore, londonBottom, londonBottomBySolve, cardKeepPriority, londonBottomCount, shipReason, simulateMulligans, handVerdict, handFeatures, RUBRIC_BUCKET_VALUE, DISCARD_RETENTION, tutorAdvisor: tutorAdvisor2, printTutorAdvice, staxAdvisor, printStaxAdvice, mulliganCutAdvisor: mulliganCutAdvisor2, printMulliganCutAdvice, printVerboseLine };
     }
   });
 
