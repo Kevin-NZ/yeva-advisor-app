@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-24T09:37:31Z
-// Solver MD5 : b5fd020a21b9
+// Generated : 2026-08-29T11:59:43Z
+// Solver MD5 : 0d1a7ddbaaef
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -5905,7 +5905,7 @@
       function loopTypeCanWin(loopType) {
         return _WINNABLE_LOOP_TYPES.has(loopType ?? LOOP_TYPE.MANA_POSITIVE);
       }
-      module.exports = { checkCombos, checkVictory, checkSimulatedVictory, loopTypeCanWin, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
+      module.exports = { maxCurrentlyPayableMana, checkCombos, checkVictory, checkSimulatedVictory, loopTypeCanWin, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
     }
   });
 
@@ -16950,7 +16950,7 @@ ${ex}`;
       "use strict";
       var { generateActions, narrowedCount, resetNarrowed, NAME_TO_KEY, TUTOR_PRIORITY_SCORE, effectiveCost } = require_actions();
       var { COMBO_REQUIRED_KEYS, FUNCTIONAL_EQUIVALENTS, ENCHANT_LAND_RAMP } = require_combo_data();
-      var { checkVictory, checkSimulatedVictory, loopTypeCanWin, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
+      var { maxCurrentlyPayableMana, checkVictory, checkSimulatedVictory, loopTypeCanWin, checkCombos, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable, LOOP_TYPE, DETECTORS } = require_combos();
       var CARDS2 = require_cards();
       var __fastManaRegime = false;
       var FAST_MANA_KEYS = /* @__PURE__ */ new Set([
@@ -17454,6 +17454,14 @@ ${ex}`;
         // until the A/B says otherwise.
         goldfishProbe: "nodraw",
         goldfishProbeTrials: 3,
+        // [O-131] Rank otherwise-undecided commitments by mana available next turn.
+        // Unlike the O-129/O-130 probes this needs no sub-search at all -- it is an
+        // untap simulation plus one board scan, so it is far cheaper than any of them.
+        goldfishManaFallback: true,
+        // [O-133] Use deployable LIBRARY VALUE rather than raw mana as the fallback
+        // metric. Composition-aware (reads what remains, never the order) and needs no
+        // sub-search. Off by default until measured.
+        goldfishDeployableValue: false,
         // [O-122] Two corrections to _goldfishPlanKey, each toggleable so they can be
         // A/B'd independently against a fixed-library corpus.
         //   goldfishManaAura:    count an attached mana aura (Utopia Sprawl, Wild
@@ -18251,6 +18259,86 @@ ${ex}`;
           return -(comboOnBoard * 1e6 + manaSources * 1e4 + handValue * 10) + state.mana.total();
         }
         /**
+         * [O-131] How much mana will this commitment have available NEXT turn?
+         *
+         * O-130 established that the whole minMissing family is dead for ranking
+         * turn-1 commitments: minMissing counts missing combo PIECES, a turn-1 play
+         * completes none, so it is a property of the HAND and measured IDENTICAL
+         * across all turn-1 candidates in 10/10 hands. A useful metric has to measure
+         * something a turn-1 play actually CHANGES. Mana development does — the same
+         * 10 hands give 2 to 5 distinct values here, discriminating in 10/10.
+         *
+         * This is finer than the plan key's `manaSources`, which counts PERMANENTS:
+         * Gaea's Cradle with three creatures is one source but three mana, and an
+         * untapped dork is a source that a summoning-sick one is not. maxCurrently-
+         * PayableMana already models all of that (Cradle's creature count, Shang-Chi's
+         * restricted mana, exerted permanents), so this reuses it rather than
+         * re-deriving it.
+         *
+         * BARRIER: computed from the PRE-boundary state with the untap step
+         * simulated, never from the post-boundary child. The child has already drawn,
+         * and although maxCurrentlyPayableMana reads only the battlefield, ranking on
+         * a state that has seen the draw is exactly the peek this strategy exists to
+         * forbid. Nothing here consults the library.
+         * @private
+         */
+        _goldfishManaNextTurn(state) {
+          const s = state.clone();
+          const { ManaPool } = require_GameState();
+          s.mana = new ManaPool();
+          s.restrictedG = 0;
+          s.restrictedCreatureG = 0;
+          s._ensureBF();
+          for (const p of s.battlefield) {
+            if (!p.abilitiesUsed?.exert_two_lands) p.tapped = false;
+            p.summoningSick = false;
+          }
+          let total = maxCurrentlyPayableMana(s);
+          for (const p of s.battlefield) {
+            if (!ENCHANT_LAND_RAMP.has(p.cardKey) || p.enchantedLandId == null) continue;
+            const land = s.battlefield.find((q) => q.id === p.enchantedLandId);
+            if (land && !land.tapped) total += 1;
+          }
+          return total;
+        }
+        /**
+         * [O-133] Composition-aware, sampling-free: how much VALUE in the remaining
+         * library does this commitment make castable next turn?
+         *
+         * The barrier argument from O-116 stands — a real player knows their own
+         * decklist, so what REMAINS in the library is public to them; only the ORDER
+         * is hidden. O-116 acted on that by SAMPLING futures, and it lost: to
+         * estimate P(win) by simulation each trial must actually find the win, which
+         * costs nearly what solving the hand costs, times trials times candidates.
+         * Measured here at 200,000 states/trial it ran ~18x the baseline per hand and
+         * the estimates were still mostly 0.00 — ranking on which trial got lucky.
+         *
+         * This reads composition directly instead of sampling it. For the mana that
+         * commitment leaves available next turn, sum the value of every remaining
+         * library card that becomes castable. It never touches library ORDER — only
+         * the multiset of what is left — so the barrier holds by construction, and it
+         * needs no sub-search at all: one pass over the library per candidate.
+         *
+         * Why it is not just O-131 restated: raw mana is linear, deployable value is
+         * not. Going 2 -> 3 mana can unlock a disproportionate share of the deck, and
+         * TUTOR_PRIORITY_SCORE already rates which cards are worth unlocking.
+         * @private
+         */
+        _goldfishDeployableValue(state) {
+          const mana = this._goldfishManaNextTurn(state);
+          const lib = state.players?.[0]?.library;
+          if (!lib) return 0;
+          let total = 0;
+          for (const k of lib) {
+            const def = CARDS2[k];
+            if (!def) continue;
+            const cost = def._parsedCost;
+            const cmc = cost ? cost.generic + (cost.coloredEntries || []).reduce((a, [, n]) => a + n, 0) : 0;
+            if (cmc <= mana) total += TUTOR_PRIORITY_SCORE[k] ?? 1;
+          }
+          return total;
+        }
+        /**
          * [O-113] Can this position still win by the turn limit if NOTHING further
          * is drawn? Runs a bounded sub-search with drawForTurn cleared, so the plan
          * is built only from cards already known. Returns the winning turn, or
@@ -18539,6 +18627,32 @@ ${ex}`;
               if (pick) {
                 best = pick;
                 decided = true;
+              }
+            }
+            if (!decided && this.opts.goldfishManaFallback) {
+              let bestMana = -1;
+              const vals = [];
+              const deployable = this.opts.goldfishDeployableValue;
+              for (const c of cands) {
+                if (this._stopSearch) break;
+                const m = deployable ? this._goldfishDeployableValue(c.preState) : this._goldfishManaNextTurn(c.preState);
+                vals.push(m);
+                if (m > bestMana) {
+                  bestMana = m;
+                  best = c;
+                  decided = true;
+                }
+              }
+              if (globalThis.__PROBE && vals.length) {
+                const P = globalThis.__PROBE, u = new Set(vals).size;
+                P.turns++;
+                P.cands += vals.length;
+                if (u > 1) P.disc++;
+                if (startTurn === 1) {
+                  P.t1++;
+                  if (u > 1) P.t1disc++;
+                }
+                if (P.vals.length < 20) P.vals.push(vals.join("/"));
               }
             }
             if (!decided && (mode === "sampled" || mode === "hybrid")) {
@@ -20548,6 +20662,16 @@ ${ex}`;
       var { ENCHANT_LAND_RAMP } = require_combo_data();
       var FAST_MANA_KEYS = /* @__PURE__ */ new Set(["chrome_mox", "mox_diamond", "lotus_petal", "elvish_spirit_guide"]);
       var T0_GREEN_KEYS = /* @__PURE__ */ new Set(["gemstone_caverns", "chancellor_of_the_tangle"]);
+      var DRAW_ENGINE_KEYS = /* @__PURE__ */ new Set([
+        "beast_whisperer",
+        "glademuse",
+        "regal_force",
+        "disciple_freyalise",
+        "eternal_witness",
+        "eladamri",
+        "war_room",
+        "heartwood_storyteller"
+      ]);
       var PREMIUM_TUTOR_KEYS = /* @__PURE__ */ new Set([
         "shared_summons",
         "worldly_tutor",
@@ -20613,7 +20737,8 @@ ${ex}`;
           fastMana: 0,
           t0green: 0,
           cradle: 0,
-          cropRotation: 0
+          cropRotation: 0,
+          engine: 0
         };
         for (const key of hand) {
           const def = CARDS2[key];
@@ -20642,6 +20767,7 @@ ${ex}`;
           if (HOLD_FOR_WIN.has(key)) f.payoff++;
           if (FAST_MANA_KEYS.has(key)) f.fastMana++;
           if (T0_GREEN_KEYS.has(key)) f.t0green++;
+          if (DRAW_ENGINE_KEYS.has(key)) f.engine++;
         }
         if (f.lands === 0) f.enchantRamp = 0;
         f.greenSource = f.greenLands + f.dorks1 + f.dorksBig + f.enchantRamp + f.t0green;
@@ -20666,6 +20792,7 @@ ${ex}`;
           floor = "BORDERLINE";
         }
         if (f.lands >= 5 && f.tutors === 0 && f.ramp === 0) return out("MULLIGAN", "mana flood");
+        if (f.tutors === 0 && f.engine === 0) return out("MULLIGAN", "no tutor or draw engine");
         const A = f.t1play;
         const B = f.ramp >= 2 || f.ramp >= 1 && f.tutors >= 1;
         const C = f.tutors >= 1;
@@ -20812,8 +20939,24 @@ ${ex}`;
         4: { solveChosen: 0.74, heuristic: 0.57, random: 0.43, ceiling: 0.96 }
       };
       var RUBRIC_BUCKET_VALUE = {
-        3: { KEEP: 21.58, BORDERLINE: 12.13, MULLIGAN: 8.61, baseline: 14.07 },
-        4: { KEEP: 56.79, BORDERLINE: 39.39, MULLIGAN: 37.5, baseline: 44.02 }
+        3: {
+          KEEP: 17.97,
+          BORDERLINE: 13.22,
+          MULLIGAN: 9.24,
+          baseline: 13.07,
+          shipBar: 13.07,
+          six: 6.58,
+          sixSource: "measured, n=669"
+        },
+        4: {
+          KEEP: 60.51,
+          BORDERLINE: 45.24,
+          MULLIGAN: 34.33,
+          baseline: 45.71,
+          shipBar: 45.71,
+          six: 26.05,
+          sixSource: "modelled: baseline x heuristic retention (no six-card data \u2014 the second mulligan is closed at four turns)"
+        }
       };
       function shipReason(hand, taken, options = {}) {
         const { maxTurns = 3, canBottomWell = false } = options;
@@ -20822,15 +20965,16 @@ ${ex}`;
         const value = table[verdict];
         const why = gate ? gate : verdict.toLowerCase() + " hand";
         if (taken === 0) {
-          if (value >= table.baseline) return null;
-          return `${why} \u2014 worth ${value}% against a ${table.baseline}% fresh seven`;
+          const bar = table.shipBar ?? table.baseline;
+          if (value >= bar) return null;
+          return `${why} \u2014 worth ${value}% against a next look worth ${bar}%`;
         }
         if (taken === 1) {
           if (!canBottomWell) return null;
           const retention = DISCARD_RETENTION[maxTurns] ?? DISCARD_RETENTION[3];
-          const sixValue = table.baseline * retention.solveChosen;
+          const sixValue = table.six ?? table.baseline * retention.heuristic;
           if (verdict !== "MULLIGAN" || value >= sixValue) return null;
-          return `${why} \u2014 worth ${value}% against a solve-chosen six worth ${sixValue.toFixed(1)}%`;
+          return `${why} \u2014 worth ${value}% against a six worth ${sixValue.toFixed(1)}% (${table.sixSource ?? "modelled"})`;
         }
         return null;
       }
