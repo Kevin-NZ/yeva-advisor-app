@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-30T04:28:18Z
-// Solver MD5 : 0d1a7ddbaaef
+// Generated : 2026-08-30T06:47:33Z
+// Solver MD5 : 9104c1320645
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -17458,6 +17458,9 @@ ${ex}`;
         // Unlike the O-129/O-130 probes this needs no sub-search at all -- it is an
         // untap simulation plus one board scan, so it is far cheaper than any of them.
         goldfishManaFallback: true,
+        // [O-141] Rank --best-play by POSITION quality rather than action count. The
+        // depth-based key rewards churn (cast-then-bounce, sacrifice-for-unused-mana).
+        bestPlayPosition: true,
         // [O-133] Use deployable LIBRARY VALUE rather than raw mana as the fallback
         // metric. Composition-aware (reads what remains, never the order) and needs no
         // sub-search. Off by default until measured.
@@ -17539,6 +17542,17 @@ ${ex}`;
       var _goldfishCombosByKey = null;
       function _bestPlayKey(depth, s) {
         return -depth * 1e7 + s;
+      }
+      function _bestPlayPositionKey(solver, state, depth) {
+        let board = 0;
+        for (const p of state.battlefield) {
+          board += TUTOR_PRIORITY_SCORE[p.cardKey] ?? 1;
+          const def = CARDS2[p.cardKey];
+          if (def && (def.types.includes("land") || def.tapForMana)) board += 5;
+        }
+        let hand = 0;
+        for (const k of state.hand) hand += TUTOR_PRIORITY_SCORE[k] ?? 1;
+        return -(board * 10 + hand * 3 + state.mana.total()) * 1e3 - depth;
       }
       var _HISTORY_WEIGHT = 40;
       function _historyKey(action) {
@@ -17993,7 +18007,7 @@ ${ex}`;
           }
           const s = pre && pre.score !== void 0 ? pre.score : score(state, depth);
           if (this.opts.bestPlay) {
-            const k = _bestPlayKey(depth, s);
+            const k = this.opts.bestPlayPosition ? _bestPlayPositionKey(this, state, depth) : _bestPlayKey(depth, s);
             if (k < this.bestPlayScore) {
               this.bestPlayScore = k;
               this.bestPlayLine = reconstructPath({ state, parent: parentNode });
@@ -18673,7 +18687,7 @@ ${ex}`;
             }
           }
           if (this.opts.bestPlay) {
-            const k = _bestPlayKey(best.depth, score(best.node.state, best.depth));
+            const k = this.opts.bestPlayPosition ? _bestPlayPositionKey(this, best.node.state, best.depth) : _bestPlayKey(best.depth, score(best.node.state, best.depth));
             if (k < this.bestPlayScore) {
               this.bestPlayScore = k;
               this.bestPlayLine = reconstructPath(best.node);
@@ -18731,7 +18745,7 @@ ${ex}`;
                 }
               }
               if (this.opts.bestPlay) {
-                const k = _bestPlayKey(depth, score(state, depth));
+                const k = this.opts.bestPlayPosition ? _bestPlayPositionKey(this, state, depth) : _bestPlayKey(depth, score(state, depth));
                 if (k < this.bestPlayScore) {
                   this.bestPlayScore = k;
                   this.bestPlayLine = reconstructPath(node);
@@ -18895,7 +18909,7 @@ ${ex}`;
                   }
                 }
                 if (this.opts.bestPlay) {
-                  const k = _bestPlayKey(depth, score(state, depth));
+                  const k = this.opts.bestPlayPosition ? _bestPlayPositionKey(this, state, depth) : _bestPlayKey(depth, score(state, depth));
                   if (k < this.bestPlayScore) {
                     this.bestPlayScore = k;
                     this.bestPlayLine = reconstructPath(node);
