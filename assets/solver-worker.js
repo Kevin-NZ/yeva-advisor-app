@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-30T06:47:33Z
-// Solver MD5 : 9104c1320645
+// Generated : 2026-08-30T09:26:25Z
+// Solver MD5 : bc09607b5d96
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -17552,7 +17552,7 @@ ${ex}`;
         }
         let hand = 0;
         for (const k of state.hand) hand += TUTOR_PRIORITY_SCORE[k] ?? 1;
-        return -(board * 10 + hand * 3 + state.mana.total()) * 1e3 - depth;
+        return -(board * 10 + hand * 3 - state.mana.total()) * 1e3 - depth;
       }
       var _HISTORY_WEIGHT = 40;
       function _historyKey(action) {
@@ -18566,6 +18566,13 @@ ${ex}`;
               }
               if (!this.fallbackWin || s < this.fallbackWin.score) {
                 this.fallbackWin = { line: reconstructPath(node), combo, score: s };
+              }
+            }
+            if (this.opts.bestPlay) {
+              const k = this.opts.bestPlayPosition ? _bestPlayPositionKey(this, state, depth) : _bestPlayKey(depth, score(state, depth));
+              if (k < this.bestPlayScore) {
+                this.bestPlayScore = k;
+                this.bestPlayLine = reconstructPath(node);
               }
             }
             const analysis = analyzeState(state, infiniteMana, present);
