@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-30T11:16:43Z
-// Solver MD5 : bc09607b5d96
+// Generated : 2026-08-31T03:59:18Z
+// Solver MD5 : 7bd1b1e8321e
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -812,6 +812,9 @@
       function shangChiActive(state) {
         return state.battlefield.some((p) => p.cardKey === "shang_chi");
       }
+      function abilityHasteActive(state) {
+        return state.battlefield.some((p) => p.cardKey === "shang_chi" || p.cardKey === "thousand_year_elixir");
+      }
       function teamUntapManaProduction(state) {
         let total = 0;
         for (const p of state.creatures()) {
@@ -1070,7 +1073,7 @@
       }
       function maxCurrentlyPayableMana(state, excludeNames) {
         let total = state.mana ? state.mana.total() : 0;
-        const scActive = shangChiActive(state);
+        const scActive = abilityHasteActive(state);
         const CARDS2 = _cards();
         for (const p of state.battlefield) {
           if (p.tapped) continue;
@@ -1126,9 +1129,10 @@
         if (hasBeastWithinCreatureLoop(state)) return true;
         return false;
       }
-      function hasSelfRecastBounce(state, selfName) {
+      function hasSelfRecastBounce(state, selfName, selfCardKey) {
         if (!canCastAnyCreatureNow(state)) return false;
-        if (inHandOrField(state, "Temur Sabertooth", "temur_sabertooth") || inHandOrField(state, "Kogla, the Titan Ape", "kogla")) {
+        const selfIsHuman = !!_cards()[selfCardKey]?.subtypes?.includes("Human");
+        if (inHandOrField(state, "Temur Sabertooth", "temur_sabertooth") || selfIsHuman && inHandOrField(state, "Kogla, the Titan Ape", "kogla")) {
           return true;
         }
         if (hasPerm(state, "Cloudstone Curio")) {
@@ -1236,10 +1240,13 @@
         // transform name here is sufficient and consistent.
         hasPerm(state, "Ulvenwald Behemoth");
       }
+      function hasRealAttackHaste(state) {
+        return hasPerm(state, "Concordant Crossroads") || hasPerm(state, "Surrak and Goreclaw") || hasPerm(state, "Lightning Greaves") || hasPerm(state, "Ulvenwald Behemoth");
+      }
       function hasGreenTapper(state) {
         const CARDS2 = _cards();
         const beforeG = state.mana?.G ?? 0;
-        const scActive = shangChiActive(state);
+        const scActive = abilityHasteActive(state);
         return state.creatures().some((c) => {
           if (c.tapped) return false;
           const isRanger = c.name === "Quirion Ranger" || c.name === "Scryb Ranger";
@@ -1264,7 +1271,7 @@
         });
       }
       function bestOtherGreenOutput(state, excludeNames) {
-        const scActive = shangChiActive(state);
+        const scActive = abilityHasteActive(state);
         let best = 0;
         for (const p of state.battlefield) {
           if (excludeNames.has(p.name)) continue;
@@ -1335,7 +1342,7 @@
             if (!quirionAvailable(state)) return false;
             if (!canCastGreenCreatureNow(state)) return false;
             if (permReady(state, "Hope Tender") && cradleUntapped(state) && creatureCount(state) >= 2) return true;
-            const scActive = shangChiActive(state);
+            const scActive = abilityHasteActive(state);
             const dorkBonus = hasPerm(state, "Badgermole Cub") || hasPerm(state, "Leyline of Abundance") ? 1 : 0;
             const rangerSelfTapBonus = hasGlobalHaste(state) ? 1 : 0;
             return state.battlefield.some((p) => {
@@ -1354,7 +1361,7 @@
             if (!ashayaOut(state)) return false;
             if (!scrybAvailable(state)) return false;
             if (!canCastGreenCreatureNow(state)) return false;
-            const scActive = shangChiActive(state);
+            const scActive = abilityHasteActive(state);
             const dorkBonus = hasPerm(state, "Badgermole Cub") || hasPerm(state, "Leyline of Abundance") ? 1 : 0;
             const rangerSelfTapBonus = hasGlobalHaste(state) ? 1 : 0;
             return state.battlefield.some((p) => {
@@ -1485,7 +1492,7 @@
             if (!canCastGreenCreatureNow(state)) return false;
             if (!hasPerm(state, "Badgermole Cub")) return false;
             const CARDS2 = _cards();
-            const scActive = shangChiActive(state);
+            const scActive = abilityHasteActive(state);
             return state.battlefield.some((p) => {
               if (p.name === "Badgermole Cub" || p.name === "Quirion Ranger" || p.name === "Scryb Ranger") return false;
               if (p.summoningSick && !scActive) return false;
@@ -2512,7 +2519,7 @@
               }
               return best;
             }
-            const scActive = shangChiActive(state);
+            const scActive = abilityHasteActive(state);
             return state.creatures().some((p) => {
               if (p.summoningSick && !scActive) return false;
               const feedElfCost = cheapestFeedElfExcluding(p);
@@ -3455,7 +3462,7 @@
           check(state) {
             if (!permReadyOrSCActive(state, "Argothian Elder") && !permReadyOrSCActive(state, "Ley Weaver")) return false;
             if (!permUntapped(state, "Maze of Ith")) return false;
-            const scActive = shangChiActive(state);
+            const scActive = abilityHasteActive(state);
             const elderOrWeaverCount = state.battlefield.filter(
               (p) => (p.name === "Argothian Elder" || p.name === "Ley Weaver") && !p.tapped && (!p.summoningSick || scActive)
             ).length;
@@ -3928,7 +3935,7 @@
             if (!canCastGreenCreatureNow(state)) return false;
             if (quirionAvailable(state)) return true;
             if (scrybAvailable(state)) {
-              const scActive = shangChiActive(state);
+              const scActive = abilityHasteActive(state);
               const dorkBonus = hasPerm(state, "Badgermole Cub") || hasPerm(state, "Leyline of Abundance") ? 1 : 0;
               return state.battlefield.some((p) => {
                 if (p.tapped) return false;
@@ -4453,7 +4460,7 @@
             if (nykthos && devotionG(state) > loopCost + 2) return true;
             if (ashayaOut(state)) {
               const dorkBonus = hasPerm(state, "Badgermole Cub") || hasPerm(state, "Leyline of Abundance") ? 1 : 0;
-              const scActive = shangChiActive(state);
+              const scActive = abilityHasteActive(state);
               const hasDork = state.battlefield.some((p) => {
                 if (p.name === "Arbor Elf") return false;
                 if (p.summoningSick && !scActive) return false;
@@ -4843,7 +4850,7 @@
               if (hasLoop) return true;
             }
             if (inHandOrField(state, "Regal Force", "regal_force")) {
-              if (hasSelfRecastBounce(state, "Regal Force")) return true;
+              if (hasSelfRecastBounce(state, "Regal Force", "regal_force")) return true;
             }
             if (inHandOrField(state, "Glademuse", "glademuse")) {
               const hasFlash = hasPerm(state, "Yeva, Nature's Herald") || (state.commandZone ?? []).includes("yeva") || !!state.flashThisTurn;
@@ -5124,7 +5131,7 @@
             const hasRecastEngine = hasPerm(state, "Temur Sabertooth") || hasPerm(state, "Cloudstone Curio");
             if (!hasRecastEngine) return false;
             const yeva = state.battlefield.find((p) => p.name === "Yeva, Nature's Herald");
-            if (yeva.summoningSick && !hasGlobalHaste(state)) return false;
+            if (yeva.summoningSick && !hasRealAttackHaste(state)) return false;
             return true;
           },
           deployed(state) {
@@ -5133,7 +5140,7 @@
             const hasRecastEngine = hasPerm(state, "Temur Sabertooth") || hasPerm(state, "Cloudstone Curio");
             if (!hasRecastEngine) return false;
             const yeva = state.battlefield.find((p) => p.name === "Yeva, Nature's Herald");
-            if (yeva.summoningSick && !hasGlobalHaste(state)) return false;
+            if (yeva.summoningSick && !hasRealAttackHaste(state)) return false;
             return true;
           }
         },
@@ -5535,7 +5542,8 @@
             "surrak_goreclaw",
             "shang_chi",
             "lightning_greaves"
-          ]
+          ],
+          hasRealAttackHaste: ["concordant_crossroads", "surrak_goreclaw", "lightning_greaves"]
         };
         const _delegatedTableFns = { namedDorkOutput, dorkGrossOutput, flatDorkOutput };
         for (const d of DETECTORS) {
@@ -5905,7 +5913,7 @@
       function loopTypeCanWin(loopType) {
         return _WINNABLE_LOOP_TYPES.has(loopType ?? LOOP_TYPE.MANA_POSITIVE);
       }
-      module.exports = { maxCurrentlyPayableMana, checkCombos, checkVictory, checkSimulatedVictory, loopTypeCanWin, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
+      module.exports = { maxCurrentlyPayableMana, abilityHasteActive, checkCombos, checkVictory, checkSimulatedVictory, loopTypeCanWin, DETECTORS, WIN_CONDITIONS, LOOP_TYPE, hasCreatureToDiscard, formidableSpeakerCanRetutor, formidableSpeakerLooseRetutor, hasGlobalHaste, ashayaOut, rangerAvailable };
     }
   });
 
@@ -5914,7 +5922,7 @@
     "actions.js"(exports, module) {
       "use strict";
       var CARDS2 = require_cards();
-      var { DETECTORS, checkCombos, LOOP_TYPE } = require_combos();
+      var { DETECTORS, checkCombos, LOOP_TYPE, abilityHasteActive } = require_combos();
       var {
         isStax,
         COMBO_REQUIRED_KEYS,
@@ -6089,28 +6097,35 @@
         return names;
       }
       function callCreatureAbilityFn(state, perm, isCreature, fn) {
-        if (!isCreature || (state.restrictedG ?? 0) === 0) {
+        const R0 = state.restrictedG ?? 0;
+        const U0 = state.restrictedCreatureUseG ?? 0;
+        if (!isCreature || R0 + U0 === 0) {
           return fn(state, perm);
         }
-        const R0 = state.restrictedG;
         const G0 = state.mana.G;
         const merged = state.clone();
         merged.mana = state.mana.clone();
-        merged.mana.G = G0 + R0;
+        merged.mana.G = G0 + R0 + U0;
         merged.restrictedG = 0;
+        merged.restrictedCreatureUseG = 0;
         const raw = fn(merged, perm);
         if (raw === null || raw === void 0) return raw;
         const reconcile = (r) => {
           if (!r) return r;
-          const totalDelta = G0 + R0 - r.mana.G;
+          const totalDelta = G0 + R0 + U0 - r.mana.G;
+          const madeR = r.restrictedG ?? 0;
+          const madeU = r.restrictedCreatureUseG ?? 0;
           const s2 = r.clone();
           s2.mana = r.mana.clone();
           if (totalDelta >= 0) {
-            const spentFromRestricted = Math.min(totalDelta, R0);
-            s2.restrictedG = R0 - spentFromRestricted;
-            s2.mana.G = G0 - (totalDelta - spentFromRestricted);
+            const fromRestricted = Math.min(totalDelta, R0);
+            const fromUse = Math.min(totalDelta - fromRestricted, U0);
+            s2.restrictedG = madeR + (R0 - fromRestricted);
+            s2.restrictedCreatureUseG = madeU + (U0 - fromUse);
+            s2.mana.G = G0 - (totalDelta - fromRestricted - fromUse);
           } else {
-            s2.restrictedG = R0;
+            s2.restrictedG = madeR + R0;
+            s2.restrictedCreatureUseG = madeU + U0;
             s2.mana.G = G0 - totalDelta;
           }
           return s2;
@@ -6118,23 +6133,27 @@
         return Array.isArray(raw) ? raw.map(reconcile) : reconcile(raw);
       }
       function payManaForCreatureCast(state, costStr, isCreature) {
-        if (!isCreature || (state.restrictedCreatureG ?? 0) === 0) {
+        const R0 = state.restrictedCreatureG ?? 0;
+        const U0 = state.restrictedCreatureUseG ?? 0;
+        if (!isCreature || R0 + U0 === 0) {
           return state.payMana(costStr);
         }
-        const R0 = state.restrictedCreatureG;
         const G0 = state.mana.G;
         const merged = state.clone();
         merged.mana = state.mana.clone();
-        merged.mana.G = G0 + R0;
+        merged.mana.G = G0 + R0 + U0;
         merged.restrictedCreatureG = 0;
+        merged.restrictedCreatureUseG = 0;
         const raw = merged.payMana(costStr);
         if (!raw) return null;
-        const totalDelta = G0 + R0 - raw.mana.G;
+        const totalDelta = G0 + R0 + U0 - raw.mana.G;
         const s2 = raw.clone();
         s2.mana = raw.mana.clone();
-        const spentFromRestricted = Math.min(totalDelta, R0);
-        s2.restrictedCreatureG = R0 - spentFromRestricted;
-        s2.mana.G = G0 - (totalDelta - spentFromRestricted);
+        const fromRestricted = Math.min(totalDelta, R0);
+        const fromUse = Math.min(totalDelta - fromRestricted, U0);
+        s2.restrictedCreatureG = R0 - fromRestricted;
+        s2.restrictedCreatureUseG = U0 - fromUse;
+        s2.mana.G = G0 - (totalDelta - fromRestricted - fromUse);
         return s2;
       }
       function effectiveCost(state, def) {
@@ -6269,7 +6288,7 @@
         const flashThisTurn = state.flashThisTurn ?? false;
         const isOpponentTurn = state.isOpponentTurn ?? false;
         const endStepReached = state.endStepReached ?? false;
-        const shangChiActive = state.battlefield.some((p) => p.cardKey === "shang_chi");
+        const shangChiActive = abilityHasteActive(state);
         function canCastNow(def) {
           if (def.types.includes("instant")) return true;
           if (def.hasFlash) return true;
@@ -6392,7 +6411,7 @@
           if (def.canCast && !def.canCast(state)) continue;
           const costStr = effectiveCost(state, def);
           const isCreature = def.types.includes("creature");
-          const testPay = isCreature && (state.restrictedCreatureG ?? 0) > 0 ? payManaForCreatureCast(state, costStr, true) : state.mana.pay(costStr);
+          const testPay = isCreature && ((state.restrictedCreatureG ?? 0) > 0 || (state.restrictedCreatureUseG ?? 0) > 0) ? payManaForCreatureCast(state, costStr, true) : state.mana.pay(costStr);
           if (testPay === null) continue;
           if (vexingBaubleBlocks(state, def, costStr)) continue;
           const isEnchantment = def.types.includes("enchantment");
@@ -6822,7 +6841,7 @@
               apply(s) {
                 const live = s.getPermanentById(perm.id);
                 if (!live || live.tapped) return null;
-                const scActive = s.battlefield.some((p) => p.cardKey === "shang_chi");
+                const scActive = abilityHasteActive(s);
                 if (live.is("creature") && live.summoningSick && !scActive) return null;
                 const liveForAbil = scActive && live.summoningSick && live.is("creature") ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false }) : live;
                 const results = def.tapForMana(s, liveForAbil);
@@ -6846,7 +6865,7 @@
                 apply(s) {
                   const live = s.getPermanentById(perm.id);
                   if (!live || live.tapped) return null;
-                  const scActive = s.battlefield.some((p) => p.cardKey === "shang_chi");
+                  const scActive = abilityHasteActive(s);
                   if (live.is("creature") && live.summoningSick && !scActive) return null;
                   const liveForAbil = scActive && live.summoningSick && live.is("creature") ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false }) : live;
                   const results = def.tapForMana(s, liveForAbil);
@@ -6891,7 +6910,7 @@
             apply(s) {
               const live = s.getPermanentById(perm.id);
               if (!live || live.tapped) return null;
-              const scActive = s.battlefield.some((p) => p.cardKey === "shang_chi");
+              const scActive = abilityHasteActive(s);
               if (live.summoningSick && !scActive) return null;
               let ns = s.tapPermanent(live.id);
               if (!ns) return null;
@@ -6919,7 +6938,7 @@
               apply(s) {
                 const live = s.getPermanentById(capturedPerm.id);
                 if (!live || live.tapped) return null;
-                const scNowActive = s.battlefield.some((p) => p.cardKey === "shang_chi");
+                const scNowActive = abilityHasteActive(s);
                 if (live.summoningSick && !scNowActive) return null;
                 const liveForAbil = scNowActive && live.summoningSick ? Object.assign(Object.create(Object.getPrototypeOf(live)), live, { summoningSick: false }) : live;
                 const results = capturedGraftedDef.tapForMana(s, liveForAbil);
@@ -6939,6 +6958,7 @@
             if (perm.abilitiesUsed?.[abilKey]) continue;
             if (typeof ability.fn !== "function") continue;
             if (fluteBlocked && !ability.manaAbility) continue;
+            if (ability.sorcerySpeed && (isOpponentTurn || endStepReached)) continue;
             let permForAbility = perm;
             if (shangChiActive && def.types.includes("creature") && perm.summoningSick) {
               permForAbility = Object.create(Object.getPrototypeOf(perm));
@@ -6963,7 +6983,7 @@
                   const liveState = _s;
                   const livePerm = liveState.getPermanentById(capturedPermId);
                   if (!livePerm) return null;
-                  const scLive = liveState.battlefield.some((p) => p.cardKey === "shang_chi");
+                  const scLive = abilityHasteActive(liveState);
                   const livePermForAbil = scLive && livePerm.summoningSick && def.types.includes("creature") ? Object.assign(Object.create(Object.getPrototypeOf(livePerm)), livePerm, { summoningSick: false }) : livePerm;
                   const liveRaw = callCreatureAbilityFn(liveState, livePermForAbil, def.types.includes("creature"), ability.fn);
                   const liveResults = liveRaw === null || liveRaw === void 0 ? [] : Array.isArray(liveRaw) ? liveRaw : [liveRaw];
@@ -6989,7 +7009,7 @@
           const coloredPart = Object.entries(parsed.colored).flatMap(([c, n]) => Array(n).fill(c)).join("");
           const taxedCost = totalGeneric > 0 ? `${totalGeneric}${coloredPart}` : coloredPart || "0";
           const cmdIsCreature = def.types.includes("creature");
-          const testPay = cmdIsCreature && (state.restrictedCreatureG ?? 0) > 0 ? payManaForCreatureCast(state, taxedCost, true) : state.mana.pay(taxedCost);
+          const testPay = cmdIsCreature && ((state.restrictedCreatureG ?? 0) > 0 || (state.restrictedCreatureUseG ?? 0) > 0) ? payManaForCreatureCast(state, taxedCost, true) : state.mana.pay(taxedCost);
           if (testPay === null) continue;
           actions.push({
             type: "cast_commander",
@@ -8001,15 +8021,24 @@
             big_green: {
               manaAbility: true,
               // [2026-07-10] excepted from Disruptor Flute's activation lock (real card exempts mana abilities)
-              label: "{2}{G}{G}, {T}: Add {G}x6 (for creatures)",
+              // [O-147 found it, O-148 fixed it] Oracle: "Spend this mana only to
+              // cast creature spells or activate abilities of creatures." That is
+              // the UNION of the two restricted pools this engine had
+              // (restrictedCreatureG = creature spells, restrictedG = creature
+              // abilities), so neither could express it and the six mana used to
+              // land in the GENERAL pool — six free mana for costs the card does
+              // not pay for. It now has its own third pool,
+              // GameState.restrictedCreatureUseG, drawn on by both spend paths in
+              // actions.js. See ToDo.md O-148.
+              label: "{2}{G}{G}, {T}: Add {G}x6 (creature spells or creature abilities)",
               fn(state, perm) {
                 if (perm.tapped) return [];
                 const ap = state.payMana("2GG");
                 if (!ap) return [];
                 let s = ap.tapPermanent(perm.id);
                 if (!s) return [];
-                s = s.addMana("G", 6);
-                return [s.log(`Castle Garenbrig \u2192 {G}x6`)];
+                s = s.addRestrictedCreatureUseMana(6);
+                return [s.log(`Castle Garenbrig \u2192 {G}x6 (creature spells or creature abilities)`)];
               }
             }
           }
@@ -8897,6 +8926,10 @@
           // Only useful to equip onto a summoning-sick creature — skip others.
           abilities: {
             equip: {
+              // [O-147] Equip is a sorcery-speed action (CR 702.6b) — it cannot be
+              // activated during an opponent's turn or your own end step. Nothing
+              // enforced that before; generateActions() now honours this flag.
+              sorcerySpeed: true,
               label: "Equip {0}: Give a creature haste (remove summoning sickness)",
               fn(state, perm) {
                 const results = [];
@@ -9234,9 +9267,15 @@
           },
           abilities: {
             level_up: {
+              // [O-147] "Level up only as a sorcery." This used to be asserted by
+              // the comment below only — it claimed generateActions() treated
+              // levelUp abilities as sorcery-speed, and nothing in generateActions
+              // ever looked for such a marking, so the ability was activatable in
+              // opponent-turn windows. The sorcerySpeed flag is now real.
+              sorcerySpeed: true,
               label: "{1}{G}: Level up Joraga Treespeaker (sorcery speed)",
               fn(state, perm) {
-                if (perm.tapped || perm.summoningSick) return [];
+                if (perm.tapped) return [];
                 const lvl = perm.levelCounters ?? 0;
                 if (lvl >= 5) return [];
                 const ns = state.payMana("1G");
@@ -9912,9 +9951,18 @@
           // [2026-08-14] The comment used to say "in any combination of colors";
           // Scryfall says one color. No behaviour change — three of one color is
           // three green here either way — but the note was describing a card that
-          // does not exist. The creature-only restriction is still not modelled in
-          // the mana pool; the solver overwhelmingly spends mana on creatures.
-          tapForMana: simpleTap("{G}{G}{G}", [["G", 3]])
+          // does not exist.
+          // [O-147] The creature-only restriction used to be unmodelled, so all
+          // three mana were general — three free mana for any cost the card does
+          // not actually pay for. It is the same restriction Shaman of Forgotten
+          // Ways already models, so it now uses the same restrictedCreatureG pool.
+          tapForMana(state, perm) {
+            if (perm.tapped || perm.summoningSick) return [];
+            let s = state.tapPermanent(perm.id);
+            if (!s) return [];
+            s = s.addRestrictedCreatureMana(3);
+            return [s.log(`Tap ${perm.name} \u2192 {G}x3 (creature spells only)`)];
+          }
         },
         // ─── NEW DRAW-ENGINE CREATURES (added 2026) ───────────────────────────────
         elvish_visionary: {
@@ -14965,6 +15013,7 @@ ${ex}`;
           this.mana = data.mana instanceof ManaPool ? data.mana : new ManaPool(data.mana ?? {});
           this.restrictedG = data.restrictedG ?? 0;
           this.restrictedCreatureG = data.restrictedCreatureG ?? 0;
+          this.restrictedCreatureUseG = data.restrictedCreatureUseG ?? 0;
           this.storm = data.storm ?? 0;
           this.comboAchieved = data.comboAchieved ?? false;
           this.comboName = data.comboName ?? null;
@@ -15286,6 +15335,7 @@ ${ex}`;
           s.mana = this.mana.clone();
           s.restrictedG = this.restrictedG;
           s.restrictedCreatureG = this.restrictedCreatureG;
+          s.restrictedCreatureUseG = this.restrictedCreatureUseG;
           s.storm = this.storm;
           s.comboAchieved = this.comboAchieved;
           s.comboName = this.comboName;
@@ -15447,6 +15497,7 @@ ${ex}`;
           s.mana = this.mana;
           s.restrictedG = this.restrictedG;
           s.restrictedCreatureG = this.restrictedCreatureG;
+          s.restrictedCreatureUseG = this.restrictedCreatureUseG;
           s.storm = this.storm;
           s.comboAchieved = this.comboAchieved;
           s.comboName = this.comboName;
@@ -15531,6 +15582,17 @@ ${ex}`;
         addRestrictedCreatureMana(amount = 1) {
           const s = this.clone();
           s.restrictedCreatureG += amount;
+          return s;
+        }
+        /** [O-148] Castle Garenbrig's "{2}{G}{G}, {T}: Add six {G}. Spend this mana
+         *  only to cast creature spells or activate abilities of creatures."
+         *  The UNION of the two pools above — see the constructor comment on
+         *  restrictedCreatureUseG. Spent by BOTH callCreatureAbilityFn() and
+         *  payManaForCreatureCast() in actions.js, each after its own narrower
+         *  pool is exhausted. */
+        addRestrictedCreatureUseMana(amount = 1) {
+          const s = this.clone();
+          s.restrictedCreatureUseG += amount;
           return s;
         }
         // ── Player zone mutations (return new GameState) ──────────────────────────
@@ -15757,7 +15819,7 @@ ${ex}`;
             perm.toughness = 1;
             perm.summoningSick = true;
           }
-          if (perm.is("creature") && (s.hasPermanent("Concordant Crossroads") || s.hasPermanent("Thousand-Year Elixir"))) {
+          if (perm.is("creature") && s.hasPermanent("Concordant Crossroads")) {
             perm.summoningSick = false;
           }
           if (perm.is("land") && s.hasPermanent("Yavimaya, Cradle of Growth")) {
@@ -16602,6 +16664,7 @@ ${ex}`;
           s.mana = new ManaPool();
           s.restrictedG = 0;
           s.restrictedCreatureG = 0;
+          s.restrictedCreatureUseG = 0;
           s._ensureBF();
           for (const p of s.battlefield) {
             if (p.abilitiesUsed?.exert_two_lands) {
@@ -16857,7 +16920,7 @@ ${ex}`;
           }
           const bf = _insertionSortStrings(segs).join("|");
           const mn = this.mana;
-          const m = mn.W + ":" + mn.U + ":" + mn.B + ":" + mn.R + ":" + mn.G + ":" + mn.C + ":" + this.restrictedG + ":" + this.restrictedCreatureG + ":" + this.opponentTurnsThisRound;
+          const m = mn.W + ":" + mn.U + ":" + mn.B + ":" + mn.R + ":" + mn.G + ":" + mn.C + ":" + this.restrictedG + ":" + this.restrictedCreatureG + ":" + this.restrictedCreatureUseG + ":" + this.opponentTurnsThisRound;
           const p0 = this.players[0], p1 = this.players[1], p2 = this.players[2], p3 = this.players[3];
           const gy0 = p0.graveyard.length ? [...p0.graveyard].sort().join(";") : "";
           const players = p0.life + "/" + p0.librarySize + "/" + p0.poison + "/" + gy0 + "/" + p0.exile.length + (p0._drewFromEmpty ? "/X" : "") + "," + p1.life + "/" + p1.librarySize + "/" + p1.poison + "/" + p1.graveyard.length + "/" + p1.exile.length + (p1._drewFromEmpty ? "/X" : "") + "," + p2.life + "/" + p2.librarySize + "/" + p2.poison + "/" + p2.graveyard.length + "/" + p2.exile.length + (p2._drewFromEmpty ? "/X" : "") + "," + p3.life + "/" + p3.librarySize + "/" + p3.poison + "/" + p3.graveyard.length + "/" + p3.exile.length + (p3._drewFromEmpty ? "/X" : "");
@@ -17892,29 +17955,30 @@ ${ex}`;
           const W = m.W, U = m.U, B = m.B, R = m.R, G = m.G, C = m.C;
           const RG = next.restrictedG ?? 0;
           const RCG = next.restrictedCreatureG ?? 0;
+          const RCU = next.restrictedCreatureUseG ?? 0;
           const OW = 3 - (next.opponentTurnsThisRound ?? 0);
           const existingList = frontier.get(structKey);
           if (!existingList) {
-            frontier.set(structKey, [[W, U, B, R, G, C, RG, RCG, OW]]);
+            frontier.set(structKey, [[W, U, B, R, G, C, RG, RCG, RCU, OW]]);
             return false;
           }
           for (const existing of existingList) {
-            if (existing[0] >= W && existing[1] >= U && existing[2] >= B && existing[3] >= R && existing[4] >= G && existing[5] >= C && existing[6] >= RG && existing[7] >= RCG && existing[8] >= OW && (existing[0] > W || existing[1] > U || existing[2] > B || existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG || existing[7] > RCG)) {
+            if (existing[0] >= W && existing[1] >= U && existing[2] >= B && existing[3] >= R && existing[4] >= G && existing[5] >= C && existing[6] >= RG && existing[7] >= RCG && existing[8] >= RCU && existing[9] >= OW && (existing[0] > W || existing[1] > U || existing[2] > B || existing[3] > R || existing[4] > G || existing[5] > C || existing[6] > RG || existing[7] > RCG || existing[8] > RCU)) {
               return true;
             }
           }
           let exactTieFound = false;
           for (let i = existingList.length - 1; i >= 0; i--) {
             const existing = existingList[i];
-            if (W === existing[0] && U === existing[1] && B === existing[2] && R === existing[3] && G === existing[4] && C === existing[5] && RG === existing[6] && RCG === existing[7] && OW === existing[8]) {
+            if (W === existing[0] && U === existing[1] && B === existing[2] && R === existing[3] && G === existing[4] && C === existing[5] && RG === existing[6] && RCG === existing[7] && RCU === existing[8] && OW === existing[9]) {
               exactTieFound = true;
               continue;
             }
-            if (W >= existing[0] && U >= existing[1] && B >= existing[2] && R >= existing[3] && G >= existing[4] && C >= existing[5] && RG >= existing[6] && RCG >= existing[7] && OW >= existing[8] && (W > existing[0] || U > existing[1] || B > existing[2] || R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6] || RCG > existing[7])) {
+            if (W >= existing[0] && U >= existing[1] && B >= existing[2] && R >= existing[3] && G >= existing[4] && C >= existing[5] && RG >= existing[6] && RCG >= existing[7] && RCU >= existing[8] && OW >= existing[9] && (W > existing[0] || U > existing[1] || B > existing[2] || R > existing[3] || G > existing[4] || C > existing[5] || RG > existing[6] || RCG > existing[7] || RCU > existing[8])) {
               existingList.splice(i, 1);
             }
           }
-          if (!exactTieFound) existingList.push([W, U, B, R, G, C, RG, RCG, OW]);
+          if (!exactTieFound) existingList.push([W, U, B, R, G, C, RG, RCG, RCU, OW]);
           return false;
         }
         // [O-73] Generic mana-loop detection — a sound, hand-authored-detector-free
@@ -17948,12 +18012,13 @@ ${ex}`;
         // through unchanged.
         _detectGenericManaLoop(next, chainHead) {
           const m = next.mana;
-          if (m.W === 0 && m.U === 0 && m.B === 0 && m.R === 0 && m.G === 0 && m.C === 0 && (next.restrictedG ?? 0) === 0 && (next.restrictedCreatureG ?? 0) === 0) {
+          if (m.W === 0 && m.U === 0 && m.B === 0 && m.R === 0 && m.G === 0 && m.C === 0 && (next.restrictedG ?? 0) === 0 && (next.restrictedCreatureG ?? 0) === 0 && (next.restrictedCreatureUseG ?? 0) === 0) {
             return null;
           }
           const structKey = next.structKey();
           const RG = next.restrictedG ?? 0;
           const RCG = next.restrictedCreatureG ?? 0;
+          const RCU = next.restrictedCreatureUseG ?? 0;
           const OW = 3 - (next.opponentTurnsThisRound ?? 0);
           for (let n = chainHead; n !== null; n = n.parent) {
             const anc = n.state;
@@ -17961,8 +18026,9 @@ ${ex}`;
             const am = anc.mana;
             const aRG = anc.restrictedG ?? 0;
             const aRCG = anc.restrictedCreatureG ?? 0;
+            const aRCU = anc.restrictedCreatureUseG ?? 0;
             const aOW = 3 - (anc.opponentTurnsThisRound ?? 0);
-            if (m.W >= am.W && m.U >= am.U && m.B >= am.B && m.R >= am.R && m.G >= am.G && m.C >= am.C && RG >= aRG && RCG >= aRCG && OW >= aOW && (m.W > am.W || m.U > am.U || m.B > am.B || m.R > am.R || m.G > am.G || m.C > am.C)) {
+            if (m.W >= am.W && m.U >= am.U && m.B >= am.B && m.R >= am.R && m.G >= am.G && m.C >= am.C && RG >= aRG && RCG >= aRCG && RCU >= aRCU && OW >= aOW && (m.W > am.W || m.U > am.U || m.B > am.B || m.R > am.R || m.G > am.G || m.C > am.C)) {
               return anc;
             }
           }
@@ -18302,6 +18368,7 @@ ${ex}`;
           s.mana = new ManaPool();
           s.restrictedG = 0;
           s.restrictedCreatureG = 0;
+          s.restrictedCreatureUseG = 0;
           s._ensureBF();
           for (const p of s.battlefield) {
             if (!p.abilitiesUsed?.exert_two_lands) p.tapped = false;
@@ -19153,6 +19220,7 @@ ${ex}`;
           if (manaStr !== "{0}") console.log(`       \u2514\u2500 Mana: ${manaStr}`);
           if (state.restrictedG > 0) console.log(`       \u2514\u2500 Ability Mana: {G}x${state.restrictedG}`);
           if (state.restrictedCreatureG > 0) console.log(`       \u2514\u2500 Creature-Spell Mana: {G}x${state.restrictedCreatureG}`);
+          if (state.restrictedCreatureUseG > 0) console.log(`       \u2514\u2500 Creature Mana: {G}x${state.restrictedCreatureUseG}`);
           const losses = state.getLosses();
           if (losses.length) for (const l of losses) console.log(`       \u26A0  ${l.reason}`);
         }
