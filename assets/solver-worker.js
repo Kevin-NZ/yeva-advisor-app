@@ -1,6 +1,6 @@
 // Yeva Solver Web Worker — bundled from Solver/*.js via esbuild, do not edit directly
-// Generated : 2026-08-31T03:59:18Z
-// Solver MD5 : 7bd1b1e8321e
+// Generated : 2026-09-06T08:53:08Z
+// Solver MD5 : 8e3876f2ab89
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -1073,6 +1073,9 @@
       }
       function maxCurrentlyPayableMana(state, excludeNames) {
         let total = state.mana ? state.mana.total() : 0;
+        if (state.hasPermanent && state.hasPermanent("Orochi Leafcaller")) {
+          total += (state.restrictedG ?? 0) + (state.restrictedCreatureUseG ?? 0);
+        }
         const scActive = abilityHasteActive(state);
         const CARDS2 = _cards();
         for (const p of state.battlefield) {
@@ -6083,7 +6086,11 @@
         }
         return 0;
       }
-      var { parseCost: _parseCost, ManaPool: _ManaPool } = require_GameState();
+      var {
+        parseCost: _parseCost,
+        ManaPool: _ManaPool,
+        preserveEntryScoped: _preserveEntryScoped
+      } = require_GameState();
       function fluteNamedCardSet(state) {
         const names = /* @__PURE__ */ new Set();
         for (const p of state.battlefield) {
@@ -6155,6 +6162,34 @@
         s2.restrictedCreatureUseG = U0 - fromUse;
         s2.mana.G = G0 - (totalDelta - fromRestricted - fromUse);
         return s2;
+      }
+      function callGraveyardAbilityFn(state, cardName, isCreatureCard, fn) {
+        const R0 = state.restrictedG ?? 0;
+        if (!isCreatureCard || R0 === 0) return fn(state, cardName);
+        const G0 = state.mana.G;
+        const merged = state.clone();
+        merged.mana = state.mana.clone();
+        merged.mana.G = G0 + R0;
+        merged.restrictedG = 0;
+        const raw = fn(merged, cardName);
+        if (raw === null || raw === void 0) return raw;
+        const reconcile = (r) => {
+          if (!r) return r;
+          const totalDelta = G0 + R0 - r.mana.G;
+          const made = r.restrictedG ?? 0;
+          const s2 = r.clone();
+          s2.mana = r.mana.clone();
+          if (totalDelta >= 0) {
+            const fromRestricted = Math.min(totalDelta, R0);
+            s2.restrictedG = made + (R0 - fromRestricted);
+            s2.mana.G = G0 - (totalDelta - fromRestricted);
+          } else {
+            s2.restrictedG = made + R0;
+            s2.mana.G = G0 - totalDelta;
+          }
+          return s2;
+        };
+        return Array.isArray(raw) ? raw.map(reconcile) : reconcile(raw);
       }
       function effectiveCost(state, def) {
         if (!state._hasSTAX) {
@@ -6734,13 +6769,17 @@
             const key = NAME_TO_KEY[cardName];
             const def = key ? CARDS2[key] : null;
             if (!def?.graveyardAbilities) continue;
+            const isCreatureCard = def.types.includes("creature");
             for (const [, ability] of Object.entries(def.graveyardAbilities)) {
+              if (ability.sorcerySpeed && (isOpponentTurn || endStepReached)) continue;
+              const probe = callGraveyardAbilityFn(state, cardName, isCreatureCard, ability.fn);
+              if (!probe || probe.length === 0) continue;
               actions.push({
                 type: "graveyard_ability",
                 label: `${cardName} (GY): ${ability.label}`,
                 priority: 40,
                 apply(_s) {
-                  const results = ability.fn(_s, cardName);
+                  const results = callGraveyardAbilityFn(_s, cardName, isCreatureCard, ability.fn);
                   if (!results || results.length === 0) return null;
                   return results[0];
                 }
@@ -6965,7 +7004,8 @@
               Object.assign(permForAbility, perm);
               permForAbility.summoningSick = false;
             }
-            const raw = callCreatureAbilityFn(state, permForAbility, def.types.includes("creature"), ability.fn);
+            const isCreatureNow = permForAbility.types.includes("creature");
+            const raw = ability.seesRestrictedPools ? ability.fn(state, permForAbility) : callCreatureAbilityFn(state, permForAbility, isCreatureNow, ability.fn);
             const results = raw === null || raw === void 0 ? [] : Array.isArray(raw) ? raw : [raw];
             for (let i = 0; i < results.length; i++) {
               const result = results[i];
@@ -6985,7 +7025,12 @@
                   if (!livePerm) return null;
                   const scLive = abilityHasteActive(liveState);
                   const livePermForAbil = scLive && livePerm.summoningSick && def.types.includes("creature") ? Object.assign(Object.create(Object.getPrototypeOf(livePerm)), livePerm, { summoningSick: false }) : livePerm;
-                  const liveRaw = callCreatureAbilityFn(liveState, livePermForAbil, def.types.includes("creature"), ability.fn);
+                  const liveRaw = ability.seesRestrictedPools ? ability.fn(liveState, livePermForAbil) : callCreatureAbilityFn(
+                    liveState,
+                    livePermForAbil,
+                    livePermForAbil.types.includes("creature"),
+                    ability.fn
+                  );
                   const liveResults = liveRaw === null || liveRaw === void 0 ? [] : Array.isArray(liveRaw) ? liveRaw : [liveRaw];
                   const liveResult = liveResults[capturedIdx] ?? null;
                   if (!liveResult) return null;
@@ -7003,11 +7048,14 @@
         for (const cmdKey of state.commandZone ?? []) {
           const def = CARDS2[cmdKey];
           if (!def) continue;
-          const baseCost = def.cost ?? "0";
+          const baseCost = effectiveCost(state, def);
+          if (chaliceBlocks(state, def)) continue;
+          if (!canCastNow(def)) continue;
           const parsed = _parseCost(baseCost);
           const totalGeneric = parsed.generic + (state.commanderTax ?? 0) * 2;
           const coloredPart = Object.entries(parsed.colored).flatMap(([c, n]) => Array(n).fill(c)).join("");
           const taxedCost = totalGeneric > 0 ? `${totalGeneric}${coloredPart}` : coloredPart || "0";
+          if (vexingBaubleBlocks(state, def, taxedCost)) continue;
           const cmdIsCreature = def.types.includes("creature");
           const testPay = cmdIsCreature && ((state.restrictedCreatureG ?? 0) > 0 || (state.restrictedCreatureUseG ?? 0) > 0) ? payManaForCreatureCast(state, taxedCost, true) : state.mana.pay(taxedCost);
           if (testPay === null) continue;
@@ -7016,7 +7064,7 @@
             label: `Cast ${def.name} from command zone {${taxedCost}}`,
             priority: 9,
             apply(s) {
-              const p2 = _parseCost(def.cost ?? "0");
+              const p2 = _parseCost(effectiveCost(s, def));
               const g2 = p2.generic + (s.commanderTax ?? 0) * 2;
               const col2 = Object.entries(p2.colored).flatMap(([c, n]) => Array(n).fill(c)).join("");
               const ec = g2 > 0 ? `${g2}${col2}` : col2 || "0";
@@ -7107,8 +7155,7 @@
               ns._ensureBF();
               for (const p of ns.battlefield) {
                 if (!p.abilitiesUsed) continue;
-                const preserved = p.abilitiesUsed.exert_two_lands ? { exert_two_lands: true } : {};
-                p.abilitiesUsed = preserved;
+                p.abilitiesUsed = _preserveEntryScoped(p.abilitiesUsed, ["exert_two_lands"]);
               }
               if (ns.hasPermanent("Quest for Renewal")) {
                 const questPerm = ns.getPermanent("Quest for Renewal");
@@ -7119,7 +7166,7 @@
                     if (!p.is("creature")) continue;
                     if (p.abilitiesUsed?.exert_two_lands) continue;
                     p.tapped = false;
-                    p.abilitiesUsed = {};
+                    p.abilitiesUsed = _preserveEntryScoped(p.abilitiesUsed);
                   }
                 }
               }
@@ -7128,7 +7175,7 @@
                 for (const p of ns.battlefield) {
                   if (p.abilitiesUsed?.exert_two_lands) continue;
                   p.tapped = false;
-                  p.abilitiesUsed = {};
+                  p.abilitiesUsed = _preserveEntryScoped(p.abilitiesUsed);
                 }
               }
               _untapUrbanBurgeoningLands(ns);
@@ -7173,15 +7220,14 @@
                 ns._ensureBF();
                 for (const p of ns.battlefield) {
                   if (!p.abilitiesUsed) continue;
-                  const preserved = p.abilitiesUsed.exert_two_lands ? { exert_two_lands: true } : {};
-                  p.abilitiesUsed = preserved;
+                  p.abilitiesUsed = _preserveEntryScoped(p.abilitiesUsed, ["exert_two_lands"]);
                 }
                 if (ns.hasPermanent("Seedborn Muse")) {
                   ns._ensureBF();
                   for (const p of ns.battlefield) {
                     if (p.abilitiesUsed?.exert_two_lands) continue;
                     p.tapped = false;
-                    p.abilitiesUsed = {};
+                    p.abilitiesUsed = _preserveEntryScoped(p.abilitiesUsed);
                   }
                 }
                 if (ns.hasPermanent("Quest for Renewal")) {
@@ -7192,7 +7238,7 @@
                       if (!p.is("creature")) continue;
                       if (p.abilitiesUsed?.exert_two_lands) continue;
                       p.tapped = false;
-                      p.abilitiesUsed = {};
+                      p.abilitiesUsed = _preserveEntryScoped(p.abilitiesUsed);
                     }
                   }
                 }
@@ -9079,26 +9125,57 @@
           types: ["artifact"],
           subtypes: [],
           cost: "3",
-          // Triggered: whenever a nonartifact permanent you control enters, you MAY return
-          // another permanent you control that shares a permanent type with it to its owner's hand.
-          // Modeled as an activated ability that fires on the cast_spell action completion.
-          // The engine calls this as an optional "trigger" action when a nonartifact enters.
+          // Oracle: "Whenever a nonartifact permanent you control ENTERS, you may
+          // return another permanent you control that shares a permanent type with
+          // it to its owner's hand."
+          //
+          // Modelled as an optional activated ability, because this engine has no
+          // trigger queue — but a trigger and a free activated ability are not the
+          // same thing, and [O-149] the difference was the whole bug. The old
+          // version had NO entry condition at all: it picked "the last nonartifact
+          // in battlefield order" as a stand-in for the entrant and offered the
+          // bounce every time generateActions ran, unlimited times, whether or not
+          // anything had entered. That let the solver bounce permanents to hand for
+          // free at moments the real card grants nothing — and the stand-in entrant
+          // was stale as well, since any artifact entering later does not displace
+          // it. Two fixes:
+          //
+          //  (1) The entrant is the ACTUAL most recent entry — enterBattlefield
+          //      appends, so it is the battlefield tail. Anything entering after it
+          //      (artifact included) displaces it and the window closes, which is
+          //      the conservative direction.
+          //  (2) The trigger is consumed once per entry, marked on the ENTRANT via
+          //      abilitiesUsed (fingerprinted, so two states differing only in
+          //      whether this trigger is still live can never alias). A recast
+          //      creature is a NEW permanent with a new id, so genuine Curio loops
+          //      — combos 53/54/55 — still get exactly one trigger per cycle.
+          //
+          // [O-158] This used to carry a "residual gap" note: abilitiesUsed was
+          // cleared at end of turn, so an entrant still at the battlefield tail could
+          // offer its trigger once more next turn. That gap is CLOSED —
+          // curio_trigger is an ENTRY-SCOPED marker (GameState's
+          // ENTRY_SCOPED_ABILITY_FLAGS) and now survives every untap and every turn
+          // boundary. O-158 also found the sharper version of the same hole: Seedborn
+          // Muse's untap wiped abilitiesUsed on every permanent, re-arming this
+          // trigger mid-round.
           abilities: {
             bounce_on_enter: {
               label: "Curio trigger: return a permanent sharing a type with the new entrant",
               fn(state, perm) {
-                const cards = CARDS2;
-                const results = [];
-                const nonArtifacts = state.battlefield.filter(
-                  (p) => !p.types.includes("artifact") && p.id !== perm.id
-                );
-                if (nonArtifacts.length === 0) return [];
-                const entrant = nonArtifacts[nonArtifacts.length - 1];
-                const targets = state.battlefield.filter(
+                const bf = state.battlefield;
+                const entrant = bf[bf.length - 1];
+                if (!entrant) return [];
+                if (entrant.id === perm.id) return [];
+                if (entrant.types.includes("artifact")) return [];
+                if (entrant.abilitiesUsed?.curio_trigger) return [];
+                const targets = bf.filter(
                   (p) => p.id !== entrant.id && p.id !== perm.id && p.types.some((t) => entrant.types.includes(t))
                 );
+                const results = [];
                 for (const target of targets) {
-                  let s = state.removeFromBattlefield(target.id, null);
+                  let s = state.markAbilityUsed(entrant.id, "curio_trigger");
+                  if (!s) continue;
+                  s = s.removeFromBattlefield(target.id, null);
                   if (!s) continue;
                   const ck = _nameToKey()[target.name];
                   if (ck) s = s.addToHand(ck);
@@ -9180,7 +9257,20 @@
           cost: "XX",
           externallyImplemented: true
           // [drift-detector] impl in GameState/actions/combos
-          // chargeCounters stored on the permanent at placement time (default 1)
+          // [O-157] The comment here used to claim "chargeCounters stored on the
+          // permanent at placement time (default 1)". Nothing stores it: the whole
+          // engine mentions `chargeCounters` exactly once, and that is the READ in
+          // chaliceBlocks() (actions.js ~188). `(p.chargeCounters ?? 1)` is therefore
+          // a constant 1, so a Chalice on YOUR OWN battlefield is always X=1.
+          //
+          // That is the intended default rather than a behavioural bug — X=1 is the
+          // cedh-relevant case and `--battlefield` has no @param syntax to ask for
+          // another — but the comment was describing a mechanism that does not exist,
+          // the same shape as Joraga's imaginary sorcery-speed gate (O-147) and
+          // Woodland Bellower's undispatched onEnter (O-149).
+          //
+          // For a Chalice at any other X, use an OPPONENT one, which IS parameterised
+          // and fully honoured: `--opponent-stax chalice_of_the_void@4`.
           // Static effect modelled in effectiveCost / action generation (see actions.js)
         },
         // Disruptor Flute: {2}, enters naming a card. Activated abilities of permanents
@@ -9560,6 +9650,9 @@
           // Modelled as a graveyard activated ability: pay cost, exile self, enter as 4/4 token.
           graveyardAbilities: {
             eternalize: {
+              // [O-152] "Eternalize only as a sorcery." Honoured by section 3c of
+              // generateActions, which had no timing gate at all before this.
+              sorcerySpeed: true,
               label: "{2}{G}{G}: Eternalize \u2014 exile from graveyard \u2192 4/4 Zombie Snake token",
               fn(state, cardName) {
                 const ap = state.payMana("2GG");
@@ -9653,6 +9746,80 @@
             if (!s) return [];
             s = s.addMana("G", maxP);
             return [s.log(`Tap ${perm.name} \u2192 {G}x${maxP} (paid {G}, net ${maxP - 1}G)`)];
+          }
+        },
+        // ── Orochi Leafcaller ──────────────────────────────────────────────────────
+        // Oracle: "{G}: Add one mana of any color."
+        //
+        // [O-151] In a mono-green deck the colour-fixing is worthless — G in, G out.
+        // What makes this card matter here is the ZONE of the mana, not its colour.
+        //
+        // Orochi Leafcaller is a CREATURE SOURCE, so its activated ability is a legal
+        // sink for both of this engine's ability-spendable restricted pools:
+        //
+        //   restrictedG           Shang-Chi — "spend only to activate abilities of
+        //                         creature sources"
+        //   restrictedCreatureUseG  Castle Garenbrig — "creature spells or abilities
+        //                         of creatures"
+        //
+        // The mana it PRODUCES carries no restriction at all. So one activation
+        // launders one restricted mana into general mana, and Shang-Chi's output
+        // stops being a dead end: it can now cast creatures, pay a land's activation
+        // cost, or fund anything else. `restrictedCreatureG` (Shaman of Forgotten
+        // Ways — creature SPELLS only) is deliberately NOT drained here: it cannot
+        // pay for an ability, so it cannot pay for this one.
+        //
+        // WHY THIS NEEDS `seesRestrictedPools`. Every other creature ability reaches
+        // its restricted funding through callCreatureAbilityFn (actions.js), which
+        // temporarily folds the restricted pools into mana.G, calls the fn, and then
+        // reconciles by comparing green TOTALS. That wrapper cannot express this
+        // card: paying {G} and adding {G} is a net green delta of ZERO, so the
+        // reconciler concludes nothing was spent, restores both pools untouched, and
+        // the activation is a complete no-op. The delta is the wrong instrument for
+        // an effect whose entire job is to change the COMPOSITION of the mana rather
+        // than its amount — so this ability opts out of the merge and moves the mana
+        // between pools itself. Confirmed by test: the naive version converts
+        // nothing.
+        //
+        // Only the useful direction is offered. "Pay a general {G}, add a general
+        // {G}" is legal and is a strict no-op; generating it would add a branch to
+        // every search node that can never improve a line.
+        orochi_leafcaller: {
+          name: "Orochi Leafcaller",
+          types: ["creature"],
+          subtypes: ["Snake", "Shaman"],
+          cost: "G",
+          power: 1,
+          toughness: 1,
+          // The cost IS paid — one mana leaves a restricted pool per activation —
+          // just not through payMana(), which only ever sees the general pool. See
+          // the composition-vs-amount note above for why this cannot route through
+          // the shared wrapper.
+          costFidelityWaiver: ["mana"],
+          abilities: {
+            filter_restricted: {
+              // A mana ability, so Disruptor Flute cannot lock it (the real card
+              // exempts mana abilities), matching every other manaAbility here.
+              manaAbility: true,
+              // Opt out of callCreatureAbilityFn's merge — see above.
+              seesRestrictedPools: true,
+              label: "{G}: Add one mana of any color (restricted \u2192 general)",
+              fn(state, perm) {
+                const rg = state.restrictedG ?? 0;
+                const ru = state.restrictedCreatureUseG ?? 0;
+                if (rg + ru === 0) return [];
+                const s = state.clone();
+                let from;
+                if (rg > 0) {
+                  s.restrictedG = rg - 1;
+                  from = "Ability Mana";
+                } else {
+                  s.restrictedCreatureUseG = ru - 1;
+                  from = "Creature Mana";
+                }
+                return [s.addMana("G", 1).log(`Orochi Leafcaller: {G} from ${from} \u2192 {G} (unrestricted)`)];
+              }
+            }
           }
         },
         marwyn: {
@@ -10076,6 +10243,10 @@
           // ETB return in GameState.enterBattlefield
           graveyardAbilities: {
             eternalize: {
+              // [O-153] "Eternalize only as a sorcery" — card_data.md's own ⚖ line
+              // spells it out. O-152 flagged Fanatic of Rhonas's eternalize and
+              // missed this one, which is the same ability on the sibling card.
+              sorcerySpeed: true,
               label: "{5}{G}{G}: Eternalize \u2014 exile from graveyard \u2192 4/4 Zombie Human Shaman token",
               fn(state, cardName) {
                 const ap = state.payMana("5GG");
@@ -10676,39 +10847,24 @@
           // [drift-detector] impl in GameState/actions/combos
           cost: "4GG",
           power: 6,
-          toughness: 5,
-          // ETB: search library for a nonlegendary green creature with MV ≤ 3, put it on BF.
-          // Modeled as: on entry, generate states for each eligible card in hand.
-          // (Library search is approximated by hand for the solver.)
-          onEnterAbilities: {
-            tutor_small_green: {
-              label: "ETB: Put a nonlegendary green creature (MV\u22643) from library onto battlefield",
-              fn(state, perm) {
-                const cards = CARDS2;
-                const results = [];
-                const eligible = [...new Set(state.hand)].filter((k) => {
-                  const def = cards[k];
-                  if (!def || !def.types.includes("creature")) return false;
-                  if (def.subtypes && def.subtypes.includes("Legendary")) return false;
-                  const cost = def.cost || "";
-                  const cmc = cost.split("").reduce((n, c) => {
-                    if (/\d/.test(c)) return n + parseInt(c);
-                    if ("WUBRGC".includes(c)) return n + 1;
-                    return n;
-                  }, 0);
-                  return cmc <= 3 && cost.includes("G");
-                });
-                for (const k of eligible) {
-                  let s = state.removeFromHand(k);
-                  if (!s) continue;
-                  s = s.enterBattlefield(k);
-                  results.push(s.log(`Woodland Bellower ETB: put ${cards[k].name} onto battlefield`));
-                }
-                if (results.length === 0) results.push(state.log("Woodland Bellower ETB: no valid target"));
-                return results;
-              }
-            }
-          }
+          toughness: 5
+          // ETB: "search your library for a nonlegendary green creature card with
+          // mana value 3 or less, put it onto the battlefield, then shuffle."
+          //
+          // Implemented in Solver.js's ETB-chain fast path (~5292, Bellower →
+          // Duskwatch Recruiter) and gated by the matching detector in combos.js
+          // (~7386) — hence externallyImplemented above. Deliberately narrow: the
+          // chain exists to find the one MV≤3 target that matters to this deck.
+          //
+          // [O-149] There used to be an onEnterAbilities/tutor_small_green block
+          // here that looked like the implementation and was not. NOTHING in
+          // the codebase reads that key — it appeared exactly once,
+          // in this file — so the block had never executed. It also searched the
+          // HAND rather than the library, i.e. it described putting a creature you
+          // already hold onto the battlefield for free, which is not what the card
+          // does in either direction. Removed rather than wired up: dead code that
+          // reads as the implementation is worse than no code, because the next
+          // person to "fix" Bellower fixes the copy that never runs.
         },
         great_oak_guardian: {
           name: "Great Oak Guardian",
@@ -10741,58 +10897,79 @@
            * Evoke — Exile a green card from your hand (alternative cast cost).
            *         If evoked, the ETB trigger still fires, then Endurance is sacrificed.
            */
+          // [O-154] Both of the entries below were TRIGGERS and CAST-TIME costs
+          // living in `abilities:`, which is the freely-repeatable battlefield
+          // activated-ability dispatcher. Found by the same scan that re-found
+          // Cloudstone Curio (O-149): a card that declares `abilities` while its
+          // oracle text contains no activated ability is modelling something that is
+          // not one.
           abilities: {
-            // Normal ETB — target any player's graveyard
+            // "When this creature enters, up to one target player puts all the cards
+            // from their graveyard on the bottom of their library in a random order."
+            //
+            // [O-154] A TRIGGER, and it had no entry condition at all — it was
+            // offered every time generateActions ran, unlimited times, for as long as
+            // Endurance stayed on the battlefield. Each activation is a no-op once a
+            // graveyard is empty, so it looked self-limiting; what it actually did was
+            // turn a one-shot ETB into a permanent, free, re-armable graveyard-recycle
+            // engine that fires again every time a graveyard refills.
+            //
+            // Gated exactly like Cloudstone Curio's trigger (O-149), for the same
+            // reasons and with the same two parts:
+            //   (1) Endurance must be the battlefield TAIL — the most recent entry.
+            //       Anything entering afterwards closes the window.
+            //   (2) The trigger is consumed once per entry, marked on Endurance via
+            //       abilitiesUsed, which is fingerprinted so two states differing only
+            //       in whether it is still live can never alias.
+            // A bounced-and-recast Endurance is a new permanent with a new id, so it
+            // correctly gets a fresh trigger.
+            //
+            // Not moved to `onEnter`: that hook keeps only the FIRST branch for a
+            // cast (see actions.js ~1616) and is never called from the tutor,
+            // --battlefield or test-setup entry paths, so it would both collapse the
+            // target choice and miss most of the ways this card arrives.
             etb_shuffle_graveyard: {
               label: "ETB: Shuffle target player's graveyard into their library",
               fn(state, perm) {
+                const bf = state.battlefield;
+                if (bf[bf.length - 1]?.id !== perm.id) return [];
+                if (perm.abilitiesUsed?.etb_shuffle_graveyard) return [];
                 const results = [];
                 for (let pi = 0; pi < state.players.length; pi++) {
                   const player = state.players[pi];
                   if (player.graveyard.length === 0 && pi !== 0) continue;
-                  let s = state.shuffleGraveyardIntoLibrary(pi);
+                  let s = state.markAbilityUsed(perm.id, "etb_shuffle_graveyard");
+                  if (!s) continue;
+                  s = s.shuffleGraveyardIntoLibrary(pi);
                   s = s.log(
                     `Endurance ETB: ${player.name}'s graveyard (${player.graveyard.length} card${player.graveyard.length !== 1 ? "s" : ""}) shuffled into library`
                   );
                   results.push(s);
                 }
-                results.push(state.log("Endurance ETB: no target chosen"));
-                return results;
-              }
-            },
-            // Evoke — exile a green card from hand as the alternative cost
-            evoke: {
-              label: "Evoke: Exile a green card from hand (ETB fires, then sacrifice)",
-              fn(state, perm) {
-                const cards = CARDS2;
-                const greenCards = state.hand.filter((k) => {
-                  const def = cards[k];
-                  return def && !def.types.includes("land") && (def.cost || "").includes("G");
-                });
-                if (greenCards.length === 0) return [];
-                const results = [];
-                for (const cardKey of [...new Set(greenCards)]) {
-                  let s = state.removeFromHand(cardKey);
-                  if (!s) continue;
-                  const cardName = cards[cardKey]?.name ?? cardKey;
-                  s = s.addToExile(0, cardName);
-                  for (let pi = 0; pi < s.players.length; pi++) {
-                    const player = s.players[pi];
-                    if (player.graveyard.length === 0 && pi !== 0) continue;
-                    let ns2 = s.shuffleGraveyardIntoLibrary(pi);
-                    ns2 = ns2.removeFromBattlefield(perm.id, "graveyard", 0);
-                    if (!ns2) continue;
-                    ns2 = ns2.log(
-                      `Endurance evoke (exile ${cardName}): ${player.name}'s graveyard shuffled; Endurance sacrificed`
-                    );
-                    results.push(ns2);
-                  }
-                  let ns = s.removeFromBattlefield(perm.id, "graveyard", 0);
-                  if (ns) results.push(ns.log(`Endurance evoke (exile ${cardName}): no target chosen; Endurance sacrificed`));
-                }
+                const none = state.markAbilityUsed(perm.id, "etb_shuffle_graveyard");
+                if (none) results.push(none.log("Endurance ETB: no target chosen"));
                 return results;
               }
             }
+            // [O-154] `evoke` USED TO LIVE HERE and was removed, not fixed.
+            //
+            // "Evoke—Exile a green card from your hand" is an ALTERNATIVE COST FOR
+            // CASTING THE SPELL. It was modelled as an activated ability of Endurance
+            // ON THE BATTLEFIELD, which is not a legal action in any game state: a
+            // permanent that is already on the battlefield cannot be evoked. The
+            // modelled action let an in-play Endurance exile a green card, re-fire its
+            // ETB, and sacrifice itself — a way to shuffle a graveyard that the real
+            // card does not offer.
+            //
+            // The LEGAL line — cast Endurance from hand for its evoke cost, ETB
+            // fires, sacrifice it — is now UNMODELLED. That is a deliberate gap, not
+            // an oversight. Re-homing it to `handAbilities` was considered and
+            // rejected for this pass: that dispatcher keeps only ONE branch per
+            // ability (actions.js ~866), so it would have collapsed the (green card
+            // to exile) x (target player) choice into a single arbitrary pick —
+            // trading an illegal action for a new approximation, inside an audit
+            // whose whole purpose is removing over-permission. Under-permission is
+            // the safe direction; see ToDo.md O-154.
           }
         },
         collector_ouphe: { externallyImplemented: true, name: "Collector Ouphe", types: ["creature"], subtypes: ["Ouphe"], cost: "1G", power: 2, toughness: 2 },
@@ -11151,26 +11328,21 @@
           subtypes: ["Beast"],
           cost: "2G",
           power: 2,
-          toughness: 2,
+          toughness: 2
           // ETB: destroy target artifact.
           // Static: artifacts opponents control enter tapped (not modelled — no opponent).
-          onEnter(state) {
-            const artifacts = state.battlefield.filter(
-              (p) => p.is("artifact") && p.name !== "Manglehorn"
-            );
-            if (artifacts.length === 0) return state;
-            const seen = /* @__PURE__ */ new Set();
-            const results = [state.log("Manglehorn ETB: no artifact target")];
-            for (const t of artifacts) {
-              const s = state.removeFromBattlefield(t.id, "graveyard");
-              if (!s) continue;
-              const fp = s.fingerprint();
-              if (seen.has(fp)) continue;
-              seen.add(fp);
-              results.push(s.log(`Manglehorn ETB: destroy ${t.name}`));
-            }
-            return results.length === 1 ? results[0] : results;
-          }
+          // [O-156] The `onEnter` that used to sit here was dead AND misleading.
+          // cards.js's onEnter hook is called only from the cast path, and that call
+          // site keeps only the FIRST branch (actions.js ~1622) — this fn returned
+          // `[no-target, ...destroy options]`, so the no-target branch won every
+          // time. Casting Manglehorn with two artifacts on the battlefield destroyed
+          // NEITHER and logged "Manglehorn ETB: no artifact target", which was simply
+          // false. Verified directly before removing it.
+          //
+          // The working implementation is in GameState.enterBattlefield (~2444),
+          // fires on every entry path, and deliberately targets only STAX artifacts:
+          // this solver has no reason to blow up its own Sol Ring, which is exactly
+          // what the removed branches offered.
         },
         warping_wail: {
           name: "Warping Wail",
@@ -11260,7 +11432,22 @@
           //   summoning sickness, and so Quirion/Scryb Ranger can bounce them via Ashaya.
           // Static: whenever you tap a creature for mana, add {G}.
           //   Already modeled in actions.js tap_for_mana (same as Leyline of Abundance).
-          onEnter(state) {
+          //
+          // [O-156] Named `etbEarthbend`, not `onEnter`, ON PURPOSE. cards.js's
+          // `onEnter` hook has exactly ONE call site — the cast_spell path in
+          // actions.js (~1616) — so an `onEnter` ETB simply does not happen when the
+          // card arrives any other way. Badgermole Cub is in DEFAULT_DECKLIST with a
+          // tutor score of 60, so it arrives via Green Sun's Zenith, Chord, Natural
+          // Order, Yisan, Finale and the Bellower chain constantly, and every one of
+          // those routes silently produced no earthbend at all. Measured before the
+          // fix: cast animated Gaea's Cradle, tutored animated nothing — the card's
+          // own stated key use, missing on most of the ways it reaches play.
+          //
+          // Now fired from GameState.enterBattlefield, which every entry path goes
+          // through. The rename is what prevents a DOUBLE earthbend: leaving it
+          // called `onEnter` would have it fire once in enterBattlefield and again
+          // from the cast hook, animating two lands.
+          etbEarthbend(state) {
             const pureLandCandidates = state.battlefield.filter(
               (p) => p.is("land") && !p.is("creature") && p.name !== "Badgermole Cub"
             );
@@ -12040,10 +12227,31 @@
           types: ["enchantment"],
           subtypes: [],
           cost: "1G",
-          // Draw step: may draw 2 extra cards; put back or pay 4 life each.
-          // Modeled as: once per turn, pay 4 life to draw a card.
+          // Oracle: "At the beginning of your draw step, you may draw two additional
+          // cards. If you do, choose two cards in your hand drawn this turn. For each
+          // of those cards, pay 4 life or put the card on top of your library."
+          //
+          // Modelled as: once per turn, pay 4 life to draw a card. Two deviations,
+          // and [O-154] they point in opposite directions:
+          //
+          //   TIMING (was over-permissive, now fixed). This is a TRIGGER on your own
+          //   draw step, but it lived in the freely-activatable dispatcher with no
+          //   timing gate, so it was usable on opponents' turns and in your end step
+          //   — windows in which the real card offers nothing. It now carries
+          //   sorcerySpeed, whose gate (`!isOpponentTurn && !endStepReached`) is the
+          //   closest bound this engine can express: it has no draw step to hang a
+          //   trigger on. The flag's name is about sorcery TIMING, not about the
+          //   ability being an activated one — the gate is what is wanted here.
+          //
+          //   QUANTITY (still under-permissive, deliberately left). The real card
+          //   draws up to TWO extra cards for 4 life each; this draws one. Under-
+          //   permission only ever costs the solver lines, and correcting it means
+          //   modelling "cards drawn this turn", which nothing else here needs.
           abilities: {
             draw_pay_life: {
+              // [O-154] See the timing note above — this gates a TRIGGER to your own
+              // turn, it does not claim the ability is sorcery-speed in the rules.
+              sorcerySpeed: true,
               label: "Pay 4 life: Draw a card (Sylvan Library)",
               fn(state, perm) {
                 if (perm.abilitiesUsed?.draw_pay_life) return [];
@@ -14556,6 +14764,14 @@
         "yisan",
         "yeva"
       ];
+      var ENTRY_SCOPED_ABILITY_FLAGS = /* @__PURE__ */ new Set(["curio_trigger", "etb_shuffle_graveyard"]);
+      function preserveEntryScoped(used, extraKeys = []) {
+        const out = {};
+        if (!used) return out;
+        for (const k of ENTRY_SCOPED_ABILITY_FLAGS) if (used[k]) out[k] = true;
+        for (const k of extraKeys) if (used[k]) out[k] = true;
+        return out;
+      }
       var _DECKLIST_COUNTS = /* @__PURE__ */ new Map();
       for (const k of DEFAULT_DECKLIST) _DECKLIST_COUNTS.set(k, (_DECKLIST_COUNTS.get(k) ?? 0) + 1);
       function buildDefaultLibrary(opts = {}) {
@@ -15764,11 +15980,10 @@ ${ex}`;
             }
           }
           if (_hasUsedKeys) {
-            const preserved = {};
-            for (const k of ["exert_two_lands", "bounce_forest", "bounce_elf"]) {
-              if (p.abilitiesUsed[k]) preserved[k] = true;
-            }
-            p.abilitiesUsed = preserved;
+            p.abilitiesUsed = preserveEntryScoped(
+              p.abilitiesUsed,
+              ["exert_two_lands", "bounce_forest", "bounce_elf"]
+            );
           }
           return s;
         }
@@ -15811,6 +16026,11 @@ ${ex}`;
             if (!perm.types.includes("land")) perm.types.push("land");
             if (!perm.subtypes.includes("Forest")) perm.subtypes.push("Forest");
           }
+          if (perm.is("land") && s.hasPermanent("Yavimaya, Cradle of Growth")) {
+            if (perm._cow) perm._ensureOwnTypes();
+            if (!perm.subtypes.includes("Forest")) perm.subtypes.push("Forest");
+            perm.isForest = true;
+          }
           if (perm.isForest && !perm.is("creature") && s.hasPermanent("Ambush Commander")) {
             if (perm._cow) perm._ensureOwnTypes();
             perm.types.push("creature");
@@ -15821,11 +16041,6 @@ ${ex}`;
           }
           if (perm.is("creature") && s.hasPermanent("Concordant Crossroads")) {
             perm.summoningSick = false;
-          }
-          if (perm.is("land") && s.hasPermanent("Yavimaya, Cradle of Growth")) {
-            if (perm._cow) perm._ensureOwnTypes();
-            if (!perm.subtypes.includes("Forest")) perm.subtypes.push("Forest");
-            perm.isForest = true;
           }
           if (cardKey === "ashaya") {
             for (const bf of s.battlefield) {
@@ -16170,6 +16385,13 @@ ${ex}`;
             if (target !== null) {
               s = s.dealDamage(target, { damage: 1 });
               s = s.log(`Sunscorched Desert ETB: 1 damage to ${s.players[target].name} (life ${s.players[target].life})`);
+            }
+          }
+          if (!skipETB && cardKey === "badgermole_cub") {
+            const fn = _cards().badgermole_cub?.etbEarthbend;
+            if (typeof fn === "function") {
+              const after = fn(s);
+              if (after) s = Array.isArray(after) ? after[0] : after;
             }
           }
           if (!skipETB && cardKey === "manglehorn") {
@@ -16668,12 +16890,11 @@ ${ex}`;
           s._ensureBF();
           for (const p of s.battlefield) {
             if (p.abilitiesUsed?.exert_two_lands) {
-              p.abilitiesUsed = {};
             } else {
               p.tapped = false;
             }
             p.summoningSick = false;
-            p.abilitiesUsed = {};
+            p.abilitiesUsed = preserveEntryScoped(p.abilitiesUsed);
           }
           if (s.battlefield.some((p) => p.cardKey === "urzas_saga")) {
             s = s._advanceUrzaSagas();
@@ -17003,7 +17224,17 @@ ${ex}`;
         const headSet = new Set(head);
         return [...head, ...tail.filter((k) => !headSet.has(k))];
       }
-      module.exports = { GameState: GameState2, ManaPool, Permanent, Player, parseCost, buildDefaultLibrary, DEFAULT_DECKLIST };
+      module.exports = {
+        ENTRY_SCOPED_ABILITY_FLAGS,
+        preserveEntryScoped,
+        GameState: GameState2,
+        ManaPool,
+        Permanent,
+        Player,
+        parseCost,
+        buildDefaultLibrary,
+        DEFAULT_DECKLIST
+      };
     }
   });
 
